@@ -1808,17 +1808,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#autonomous-scientific-optimization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Autonomous scientific optimization
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#known-limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2446,17 +2435,6 @@
     <span class="md-ellipsis">
       
         Dynamic model selection (opt-in, hub only)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#autonomous-scientific-optimization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Autonomous scientific optimization
       
     </span>
   </a>
@@ -3886,15 +3864,6 @@ IDs, and review both aggregate quality and the realism gap before promotion.</p>
 <p>Per task, <code>--model &lt;name&gt;</code> pins a model by name and <code>--model-strength 1..10</code>
 pins by capability (resolved via the strength ladder; <strong>hub agent only</strong> until
 ladder distribution lands).</p>
-<h2 id="autonomous-scientific-optimization">Autonomous scientific optimization<a class="headerlink" href="#autonomous-scientific-optimization" title="Permanent link">&para;</a></h2>
-<p>The hub can continuously test bounded execution-policy changes against task
-quality, rework, latency, tokens, and cost. The durable experiment registry,
-database-backed singleton scheduler, mandatory delayed-quality guardrails, and
-promotion/rollback workflow are documented in
-<a href="../scientific-optimizer/">scientific-optimizer.md</a>. New systemd deployments
-leave the scheduler disabled in <code>mac.env.example</code>. Enable
-<code>MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1</code> only after a manual optimizer tick and
-ordinary task-flow queries have both met the deployment's latency budget.</p>
 <h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Dynamic model selection is opt-in and does not override the explicit router

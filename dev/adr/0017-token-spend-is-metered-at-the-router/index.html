@@ -1908,7 +1908,8 @@
 <p>MAC records model usage as one observability event per request, <code>llm.route</code>,
 whose token counts live inside <code>observability_events.detail</code> — a <code>text</code> column
 holding JSON. There is no token table and no token column. Cost is not stored;
-<code>estimate_route_cost()</code> in <code>src/mac/scientific_optimizer.py</code> prices
+<code>estimate_route_cost()</code> in <code>src/mac/task_kpis.py</code> (moved there from the
+scientific optimizer when it was removed on 2026-09-30) prices
 <code>resolved_model</code> against a models catalog at read time and returns
 <code>(cost, was_priceable)</code>.</p>
 <p>Measured over the seven days to 2026-08-19, on 28,352 <code>llm.route</code> events:</p>
