@@ -1942,7 +1942,13 @@ verifier is unable to finish, which matches a large frozen cohort that shares a
 single failing verify path. This is distinct from the "no evidence to verify"
 case, which is deliberately <em>allowed</em> to fall through to the agent-nudge path
 (<code>src/mac/services.py:22070</code> comment).</p>
-<p><em>Pinned by:</em> <code>test_waiting_for_hub_verify_has_no_iteration_ceiling</code>,
+<p><em>Status:</em> fixed by the landing budget (<code>metadata.landing</code>). Each
+<code>waiting_for_hub_verify</code> return charges the task's deadline
+(<code>MAC_LANDING_DEADLINE_SECONDS</code>), and each <code>hub_verify_unavailable</code> or
+<code>hub_verify_error</code> run charges one of <code>MAC_LANDING_MAX_ATTEMPTS</code> with a 5 to 60
+minute backoff. When the budget runs out the task moves to BLOCKED with
+<code>reason="landing_budget_exhausted"</code>.</p>
+<p><em>Pinned by:</em> <code>test_waiting_for_hub_verify_is_bounded_by_the_landing_budget</code>,
 <code>test_hub_verifiable_evidence_holds_the_merge_gate</code>.</p>
 <h2 id="ruled-out-hypotheses">Ruled-out hypotheses<a class="headerlink" href="#ruled-out-hypotheses" title="Permanent link">&para;</a></h2>
 <h3 id="r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3">R1 — cursor starvation / durable-cursor parking (task hypothesis 3)<a class="headerlink" href="#r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3" title="Permanent link">&para;</a></h3>

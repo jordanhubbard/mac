@@ -5777,6 +5777,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: journal path.</td>
 </tr>
 <tr>
+<td><code>MAC_LANDING_DEADLINE_SECONDS</code></td>
+<td>int</td>
+<td>86400</td>
+<td>core</td>
+<td>Wall-clock deadline, from the first landing attempt, for every review/landing wait (reviewer, hub verify, publication target/evidence, checks pending, release barrier). Past it the task moves to BLOCKED with <code>landing_budget_exhausted</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_LANDING_MAX_ATTEMPTS</code></td>
+<td>int</td>
+<td>8</td>
+<td>core</td>
+<td>Landing attempts (publication retries, unavailable hub verifies) a task may spend between review and landing before it moves to BLOCKED with <code>landing_budget_exhausted</code>. Attempts back off from 5 to 60 minutes.</td>
+</tr>
+<tr>
 <td><code>MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS</code></td>
 <td>int</td>
 <td>consumer-defined</td>
