@@ -195,7 +195,7 @@ def test_dispatch_snapshots_batch_queries_and_bound_learning_per_agent(
         store.close()
 
 
-def test_no_eligible_agent_records_capacity_demand_without_assigning(
+def test_no_eligible_agent_assigns_nothing(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
@@ -205,8 +205,6 @@ def test_no_eligible_agent_records_capacity_demand_without_assigning(
         task = cp.create_task("needs a worker", required_capabilities=["python"])
 
         assert cp.dispatch_once() is None
-
-        requests = cp.list_provisioning_requests()
-        assert [request.task_id for request in requests] == [task.id]
+        assert cp.get_task(task.id).state == "open"
     finally:
         store.close()

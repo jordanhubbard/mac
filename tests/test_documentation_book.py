@@ -105,12 +105,13 @@ def test_documentation_ci_covers_platforms_live_boundaries_and_versioning():
         "ubuntu-latest",
         "macos-14",
         "tests/test_postgres_live.py",
-        "helm/kind-action@",
         "--platform linux/arm64",
         "mike deploy --push --update-aliases dev",
         'mike deploy --push --update-aliases "$version" latest',
     ):
         assert required in workflow
+    # The Kubernetes manifests were deleted with the k8s runner.
+    assert "helm/kind-action@" not in workflow
 
 
 def test_documentation_ci_uses_supported_postgres_on_macos():

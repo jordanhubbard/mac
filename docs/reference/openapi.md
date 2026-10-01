@@ -244,11 +244,6 @@ request and response definitions.
 | `GET` | `/projects/{project}` | Get Project |
 | `PUT` | `/projects/{project}` | Update Project |
 | `POST` | `/projects/{project}/dispatch` | Set Project Dispatch |
-| `GET` | `/provisioning/requests` | List Provisioning Requests |
-| `POST` | `/provisioning/requests` | Create Provisioning Request |
-| `GET` | `/provisioning/requests/{request_id}` | Get Provisioning Request |
-| `POST` | `/provisioning/requests/{request_id}/cancel` | Cancel Provisioning Request |
-| `POST` | `/provisioning/requests/{request_id}/fulfill` | Fulfill Provisioning Request |
 | `POST` | `/publications` | Publish |
 | `POST` | `/repository-refs/reconcile` | Reconcile Repository Refs |
 | `GET` | `/repository-refs/reconciler` | Repository Ref Reconciler Status |

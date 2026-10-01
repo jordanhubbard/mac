@@ -4049,7 +4049,6 @@ def test_repository_contract_host_git_gap_does_not_gate_dispatch(cp):
     assert assignment is not None
     assert assignment["task"]["id"] == task.id
     assert assignment["agent"]["id"] == agent.id
-    assert cp.provisioning.list_pending_requests() == []
 
 
 def test_beads_repository_registration_requires_runtime_contract(cp, tmp_path):

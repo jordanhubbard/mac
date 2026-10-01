@@ -1147,8 +1147,7 @@ def _reconcile_task_sandboxes_from_lease_authority_best_effort(
     """Fail-closed reconcile of task sandboxes against durable lease authority.
 
     The dead-PID reaper only proves orphanhood on the *creating* host. This
-    sweep additionally consults the authoritative lease store (the same source
-    of truth the k8s controller uses for stuck Jobs): a Ready task sandbox whose
+    sweep additionally consults the authoritative lease store: a Ready task sandbox whose
     ``mac.task.id`` maps to a terminal, unleased, lease-expired, or
     lease-superseded task is reaped even when its recorded creator PID cannot be
     proven dead. Sandboxes without identity labels, with an unresolvable task,

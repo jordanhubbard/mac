@@ -77,7 +77,6 @@ from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
-from mac.hgx_autoscaler import HgxAutoscaler, HgxAutoscalerConfig
 from mac.http_routes.system import SystemRouteServices, build_system_router
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
@@ -951,24 +950,6 @@ class RoleAssign(BaseModel):
 
 class RoleSeed(BaseModel):
     replace: bool = False
-
-
-class ProvisioningRequestCreate(BaseModel):
-    reason: str
-    role_slug: Optional[str] = None
-    capabilities: List[str] = Field(default_factory=list)
-    hardware: Dict[str, Any] = Field(default_factory=dict)
-    task_id: Optional[str] = None
-    tenant_id: Optional[str] = None
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ProvisioningRequestFulfill(BaseModel):
-    agent_id: str
-
-
-class ProvisioningRequestCancel(BaseModel):
-    reason: str = "operator-cancelled"
 
 
 class WorkflowCreate(BaseModel):
@@ -2218,11 +2199,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "roles"
     if path.startswith("/workflows"):
         return "workflow"
-    if path.startswith("/provisioning"):
-        # Provisioning rows are operational signals; treat them as
-        # deploy-level (a future provisioner that polls + spawns agents
-        # is doing infra work, not user-facing writes).
-        return "deploy"
     if path.startswith("/reviews/default"):
         # The automated review tick is the closest thing the swarm has to an
         # auto-merge button, so it does not fall under the generic `write`
@@ -3296,9 +3272,6 @@ def _dashboard_state(
     task_dicts = [task.to_dict() for task in tasks]
     dead_letters = [task.to_dict() for task in cp.list_dead_letters()]
     roles = [role.to_dict() for role in cp.list_roles()]
-    provisioning_requests = [
-        request.to_dict() for request in cp.provisioning.list_requests(limit=120)
-    ]
     secrets = [secret.to_dict() for secret in cp.list_secrets()]
     secret_audits = [audit.to_dict() for audit in cp.list_secret_audits()]
     workflows = [workflow.to_dict() for workflow in cp.list_workflows()]
@@ -3370,9 +3343,6 @@ def _dashboard_state(
                 "secrets": len(secrets),
                 "secret_audits": len(secret_audits),
                 "roles": len(roles),
-                "pending_provisioning_requests": sum(
-                    1 for request in provisioning_requests if request["status"] == "pending"
-                ),
                 "workflows": len(workflows),
                 "workflow_drafts": len(workflow_drafts),
                 "workflow_runs": workflow_runs.get("total", 0),
@@ -3407,7 +3377,6 @@ def _dashboard_state(
         ),
         "platform_bindings": bindings,
         "roles": roles,
-        "provisioning_requests": provisioning_requests,
         "machines": [machine.to_dict() for machine in machines],
         "fleets": fleets,
         "agents": [_dashboard_agent_base(cp, agent, tasks, machines_by_id) for agent in agents],
@@ -4266,11 +4235,6 @@ def create_app(
     # for any project that has not set metadata["github_issue_ingest"], so
     # enabling it fleet-wide is safe.
     github_ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
-    # Durable provisioning requests wake a background HGX reconciler. Provider
-    # calls never run on dispatch or HTTP threads; sustained-demand and
-    # step/cooldown policy prevent transient backlog from creating a worker
-    # cascade. Default-off outside explicitly configured HGX hubs.
-    hgx_autoscaler = HgxAutoscaler(cp, HgxAutoscalerConfig.from_env())
     # mac-pg-backup: scheduled, restore-verified PostgreSQL authority
     # backups for the hub — consistent pg_dump, owner-only artifacts,
     # retention, failure telemetry, and a periodic restore-to-scratch drill.
@@ -4316,7 +4280,6 @@ def create_app(
                 repository_ref_reconciler.stop,
             ),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
-            ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
             # Last, and started from the lifespan so it runs on the SAME loop
             # uvicorn accepts connections on. A gap between its beats is time
@@ -4373,7 +4336,6 @@ def create_app(
     app.state.local_console_service = local_console_service
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
-    app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
     # integration. Routing decisions now come from the in-mac router.
@@ -6502,53 +6464,6 @@ def create_app(
     @app.get("/agents/{agent_id}/identity")
     def get_agent_identity(agent_id: str) -> Dict[str, Any]:
         return cp.agent_identity(agent_id)
-
-    # Agent provisioning hook --------------------------------------
-
-    @app.post("/provisioning/requests")
-    def create_provisioning_request(
-        body: ProvisioningRequestCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.assert_tenant(body.tenant_id)
-        return cp.provisioning.request_agent(**_data(body)).to_dict()
-
-    @app.get("/provisioning/requests")
-    def list_provisioning_requests(
-        status: Optional[str] = Query(default=None),
-        role_slug: Optional[str] = Query(default=None),
-        tenant_id: Optional[str] = Query(default=None),
-        limit: int = Query(default=100),
-    ) -> List[Dict[str, Any]]:
-        return [
-            request.to_dict()
-            for request in cp.provisioning.list_requests(
-                status=status,
-                role_slug=role_slug,
-                tenant_id=tenant_id,
-                limit=limit,
-            )
-        ]
-
-    @app.get("/provisioning/requests/{request_id}")
-    def get_provisioning_request(request_id: str) -> Dict[str, Any]:
-        return cp.provisioning.get_request(request_id).to_dict()
-
-    @app.post("/provisioning/requests/{request_id}/fulfill")
-    def fulfill_provisioning_request(
-        request_id: str,
-        body: ProvisioningRequestFulfill,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.provisioning.fulfill_request(request_id, body.agent_id).to_dict()
-
-    @app.post("/provisioning/requests/{request_id}/cancel")
-    def cancel_provisioning_request(
-        request_id: str,
-        body: ProvisioningRequestCancel,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.provisioning.cancel_request(request_id, reason=body.reason).to_dict()
 
     # Workflows (data-driven, definable) -----------------------------
 

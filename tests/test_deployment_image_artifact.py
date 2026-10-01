@@ -51,8 +51,8 @@ def test_deployment_image_uses_immutable_bases_and_frozen_lock() -> None:
     # the actual image build failed with "Extra `hermes-gateway` is not defined
     # in the project's optional-dependencies table". Two gates asserting
     # opposite things is why main stayed red.
-    for extra in ("postgres", "k8s"):
-        assert f"--extra {extra}" in dockerfile
+    assert "--extra postgres" in dockerfile
+    assert "--extra k8s" not in dockerfile
     assert "--extra hermes-gateway" not in dockerfile
     assert "pip install" not in dockerfile
     assert "COPY --from=builder /opt/mac-venv /opt/mac-venv" in dockerfile
@@ -266,7 +266,7 @@ def test_main_deployment_publication_is_anonymously_executable_on_both_arches() 
     assert '"/bin/sh"' in verifier
     assert 'test "$(id -u)" = 10001' in verifier
     assert "test -x /opt/mac-venv/bin/mac-git-askpass" in verifier
-    assert "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml" in verifier
+    assert "import cryptography, fastapi, mac.api, psycopg, uvicorn, yaml" in verifier
 
 
 def test_deployed_hub_blackbox_explicitly_migrates_before_startup() -> None:

@@ -75,7 +75,7 @@ def _referenced_extras(text: str) -> set[str]:
 
 def test_pyproject_declares_the_extras_we_expect():
     """Pin the set, so removing one is a deliberate edit to this list."""
-    assert declared_extras() == {"dev", "docs", "postgres", "k8s", "relay"}
+    assert declared_extras() == {"dev", "docs", "postgres", "relay"}
 
 
 @pytest.mark.parametrize("relpath", _INSTALL_SITES)

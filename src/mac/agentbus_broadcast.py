@@ -98,7 +98,7 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     # cut from. A worker that hears it and recognises its own base knows it
     # must rebase before it pushes, instead of discovering it at push time.
     "git.canonical_advanced",
-    # Capacity pressure, consumed by the HGX autoscaler.
+    # Capacity pressure: a worker reporting it cannot take more work.
     "capacity.saturated",
     # The sandbox guardrail moved. ``sandbox.policy_changed`` says WHICH
     # direction it moved in (see mac.openshell_policy_diff); a worker that

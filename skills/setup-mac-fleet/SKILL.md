@@ -194,47 +194,33 @@ available".
 
 ### Containerized agents
 
-An agent inside a container/pod with **no init system**. Two supported models:
+An agent inside a container/pod with **no init system** runs as
+**SSH-into-pod + supervisord** (operate the pod like a host). The pod runs
+`sshd`; the deploy reaches it over SSH and supervises the agent with
+**supervisord**. In-cluster pods (in-cluster DNS such as
+`*.svc.cluster.local`) are reached via a **bastion ProxyJump** declared
+fleet-wide in `~/.mac/fleets.yaml`:
 
-1. **SSH-into-pod + supervisord** (operate the pod like a host). The pod runs
-   `sshd`; the deploy reaches it over SSH and supervises the agent with
-   **supervisord**. In-cluster pods (in-cluster DNS such as
-   `*.svc.cluster.local`) are reached via a **bastion ProxyJump** declared
-   fleet-wide in `~/.mac/fleets.yaml`:
+```yaml
+ssh_jump: "user@bastion.example:2222"
+```
 
-   ```yaml
-   ssh_jump: "user@bastion.example:2222"
-   ```
-
-   `deploy-mac-fleet.sh` applies `-o ProxyJump=<jump>` automatically (no
-   `~/.ssh/config` edits), and the deploy prints
-   `==> ssh: operator->node via -o ProxyJump=…`. Spokes register to the hub
-   through the reverse tunnel rather than a mesh IP.
-   - **OS:** `linux`. **Supervisor:** `supervisord` (`auto` selects it when
-     systemd is absent).
-   - **Deploy:** the same `make deploy HUB=<node>`; the fleet's `ssh_jump`
-     routes it through the bastion.
-   - *Worked example:* the generic GKE sample `deploy/fleet/samples/gke.fleet.yaml`
-     — hub pod `gke-hub` + workers `gke-worker-1/2` under supervisord, reached
-     via the bastion ProxyJump, workers registering through the reverse tunnel.
-     Copy it with `scripts/setup-fleet.py --init-from gke --name <fleet>`, fill
-     in the `<placeholders>`, then `--spec ~/.mac/specs/<fleet>.fleet.yaml`. The
-     same `mac.fleet_setup.v1` schema covers EKS/AKS/OKE; see
-     `deploy/fleet/samples/README.md`. (Real, named fleets live outside git in
-     `~/.mac/specs/` — never check one in.)
-
-2. **K8s-native, image-based** (`deploy/k8s/`). A stateless `mac-api`
-   Deployment plus a `mac-runner` orchestrator that creates one Job per task,
-   backed by an externally-managed Postgres (`MAC_DATABASE_URL`). Here the unit
-   of deploy is a **container image**, not an SSH push:
-
-   ```bash
-   scripts/build-and-push-image.sh --registry <registry>   # build + push
-   kubectl apply -k deploy/k8s/mac-api                      # and mac-runner
-   ```
-
-   or sync via ArgoCD from a platform-config repo. Use this for
-   horizontally-scaled, no-SSH clusters. See `deploy/k8s/README.md`.
+`deploy-mac-fleet.sh` applies `-o ProxyJump=<jump>` automatically (no
+`~/.ssh/config` edits), and the deploy prints
+`==> ssh: operator->node via -o ProxyJump=…`. Spokes register to the hub
+through the reverse tunnel rather than a mesh IP.
+- **OS:** `linux`. **Supervisor:** `supervisord` (`auto` selects it when
+  systemd is absent).
+- **Deploy:** the same `make deploy HUB=<node>`; the fleet's `ssh_jump`
+  routes it through the bastion.
+- *Worked example:* the generic GKE sample `deploy/fleet/samples/gke.fleet.yaml`
+  — hub pod `gke-hub` + workers `gke-worker-1/2` under supervisord, reached
+  via the bastion ProxyJump, workers registering through the reverse tunnel.
+  Copy it with `scripts/setup-fleet.py --init-from gke --name <fleet>`, fill
+  in the `<placeholders>`, then `--spec ~/.mac/specs/<fleet>.fleet.yaml`. The
+  same `mac.fleet_setup.v1` schema covers EKS/AKS/OKE; see
+  `deploy/fleet/samples/README.md`. (Real, named fleets live outside git in
+  `~/.mac/specs/` — never check one in.)
 
 ## Validation
 
@@ -248,10 +234,3 @@ bash -n deploy/install-headscale.sh
 .venv/bin/python -m pytest tests/test_deploy_agent_configs.py tests/test_hermes_startup.py
 ```
 
-When touching the K8s-native (image-based container) path, also validate the
-manifests render:
-
-```bash
-kubectl kustomize deploy/k8s/mac-api >/dev/null
-kubectl kustomize deploy/k8s/mac-runner >/dev/null
-```

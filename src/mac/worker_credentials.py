@@ -18,13 +18,11 @@ readiness facts that the API/dispatcher consume:
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import os
 import re
 import secrets
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -32,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from mac import mac_paths
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from mac.client_principals import (
     ClientPrincipalError,
@@ -63,7 +61,6 @@ PACKAGE_CAPABILITY = "work_package_v1"
 WORKER_SCOPES = ("agent", "dispatch", "read", "write", "review:advance")
 ACTIVE_AGENT_STATUSES = frozenset({"idle", "busy", "draining"})
 
-_K8S_NAME = re.compile(r"[^a-z0-9-]+")
 _SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 # In the compatibility bootstrap these gateway aliases may carry the same
@@ -446,17 +443,9 @@ class WorkerCredentialLifecycle:
         if receipt.get("token_fingerprint") != record.get("token_fingerprint"):
             raise WorkerCredentialError("install receipt fingerprint does not match issuance")
         expected_destination = bool(
-            (
-                record.get("environment") == "vm"
-                and destination == "vm_env"
-                and verification.get("method") == "vm_env_readback"
-            )
-            or (
-                record.get("environment") == "k8s"
-                and destination.startswith("k8s_secret:")
-                and len(destination) > len("k8s_secret:")
-                and verification.get("method") == "k8s_secret_readback"
-            )
+            record.get("environment") == "vm"
+            and destination == "vm_env"
+            and verification.get("method") == "vm_env_readback"
         )
         if not expected_destination:
             raise WorkerCredentialError(
@@ -873,8 +862,8 @@ class WorkerCredentialLifecycle:
     ) -> WorkerCredentialIssue:
         exact_agent = _validate_agent_id(agent_id)
         environment = str(environment or "").strip().lower()
-        if environment not in {"vm", "k8s"}:
-            raise WorkerCredentialError("worker environment must be vm or k8s")
+        if environment != "vm":
+            raise WorkerCredentialError("worker environment must be vm")
         ttl_seconds = int(expires_in)
         if ttl_seconds < 60:
             raise WorkerCredentialError("worker credential expires-in must be at least 60 seconds")
@@ -1183,7 +1172,7 @@ def _validated_manifest(
     if expected_agent_id and agent_id != expected_agent_id:
         raise WorkerCredentialError("credential manifest is bound to a different agent")
     environment = str(manifest.get("environment") or "")
-    if environment not in {"vm", "k8s"}:
+    if environment != "vm":
         raise WorkerCredentialError("credential manifest has an invalid environment")
     if expected_environment and environment != expected_environment:
         raise WorkerCredentialError("credential manifest is bound to a different environment")
@@ -1295,116 +1284,6 @@ def install_vm_manifest(
         "destination": "vm_env",
         "installed_at": _timestamp(),
         "destination_verification": verification,
-    }
-
-
-def kubernetes_secret_name(agent_id: str) -> str:
-    """Return the Kubernetes Secret name for a worker agent id."""
-    value = _K8S_NAME.sub("-", agent_id.lower()).strip("-")
-    digest = _worker_key(agent_id)[:8]
-    prefix = (value or "worker")[:42].rstrip("-")
-    return "mac-worker-%s-%s" % (prefix, digest)
-
-
-def build_kubernetes_secret(
-    manifest: Mapping[str, Any],
-    *,
-    namespace: str = "mac",
-    name: str = "",
-    expected_agent_id: str = "",
-) -> Dict[str, Any]:
-    """Build a Kubernetes Secret manifest from a worker install manifest."""
-    agent_id, token = _validated_manifest(manifest, expected_agent_id, expected_environment="k8s")
-    secret_name = name or kubernetes_secret_name(agent_id)
-    return {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": secret_name,
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "mac",
-                "mac.agent/id-hash": _worker_key(agent_id),
-            },
-        },
-        "type": "Opaque",
-        "stringData": _install_env_values(manifest, token),
-    }
-
-
-def apply_kubernetes_secret(
-    manifest: Mapping[str, Any],
-    *,
-    namespace: str = "mac",
-    name: str = "",
-    expected_agent_id: str = "",
-    runner: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
-    """Apply a per-agent Secret without putting its token in argv or output."""
-
-    secret = build_kubernetes_secret(
-        manifest,
-        namespace=namespace,
-        name=name,
-        expected_agent_id=expected_agent_id,
-    )
-    run = runner or subprocess.run
-    proc = run(
-        ["kubectl", "apply", "-f", "-"],
-        input=json.dumps(secret, separators=(",", ":")),
-        capture_output=True,
-        text=True,
-    )
-    if getattr(proc, "returncode", 1) != 0:
-        # kubectl diagnostics are intentionally not reflected: admission
-        # webhooks can echo object content.  The token was supplied only on
-        # stdin, never argv, but error handling remains secret-blind.
-        raise WorkerCredentialError("kubectl failed to apply the worker credential Secret")
-    secret_name = str(secret["metadata"]["name"])
-    readback = run(
-        [
-            "kubectl",
-            "get",
-            "secret",
-            secret_name,
-            "--namespace",
-            namespace,
-            "-o",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if getattr(readback, "returncode", 1) != 0:
-        raise WorkerCredentialError("kubectl failed to verify the worker credential Secret")
-    try:
-        observed = json.loads(str(getattr(readback, "stdout", "") or ""))
-        encoded = observed.get("data") if isinstance(observed, Mapping) else None
-        if not isinstance(encoded, Mapping):
-            raise ValueError("missing data")
-        expected_values = secret["stringData"]
-        decoded = {
-            str(key): base64.b64decode(str(value), validate=True).decode("utf-8")
-            for key, value in encoded.items()
-        }
-    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise WorkerCredentialError("worker credential Secret readback was invalid") from exc
-    if any(decoded.get(key) != value for key, value in expected_values.items()):
-        raise WorkerCredentialError("worker credential Secret readback did not match")
-    destination = "k8s_secret:%s/%s" % (namespace, secret_name)
-    return {
-        "schema": INSTALL_RECEIPT_SCHEMA,
-        "agent_id": manifest["agent_id"],
-        "principal_id": manifest["principal_id"],
-        "worker_credential_version": manifest["worker_credential_version"],
-        "token_fingerprint": manifest["token_fingerprint"],
-        "destination": destination,
-        "installed_at": _timestamp(),
-        "destination_verification": _destination_verification(
-            manifest,
-            destination=destination,
-            method="k8s_secret_readback",
-        ),
     }
 
 
@@ -2004,7 +1883,7 @@ def _build_parser() -> argparse.ArgumentParser:
     issue = sub.add_parser("issue")
     issue.add_argument("--agent-id", required=True)
     issue.add_argument("--fleet", default="")
-    issue.add_argument("--environment", choices=("vm", "k8s"), required=True)
+    issue.add_argument("--environment", choices=("vm",), required=True)
     issue.add_argument("--expected-source-commit", default="")
     issue.add_argument("--expected-runtime-digest", default="")
     issue.add_argument("--capability", action="append", default=[])
@@ -2018,13 +1897,6 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--agent-id", required=True)
     install.add_argument("--env-file", required=True)
     install.add_argument("--receipt-out", required=True)
-
-    install_k8s = sub.add_parser("install-k8s")
-    install_k8s.add_argument("--manifest", required=True)
-    install_k8s.add_argument("--agent-id", required=True)
-    install_k8s.add_argument("--namespace", default="mac")
-    install_k8s.add_argument("--secret-name", default="")
-    install_k8s.add_argument("--receipt-out", required=True)
 
     activate = sub.add_parser("activate")
     activate.add_argument("--agent-id", required=True)
@@ -2127,17 +1999,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             receipt = install_vm_manifest(
                 manifest,
                 Path(args.env_file),
-                expected_agent_id=args.agent_id,
-            )
-            _write_private_json(Path(args.receipt_out), receipt)
-            _safe_print({**receipt, "receipt_written": True})
-            return 0
-        if args.command == "install-k8s":
-            manifest = _read_json(args.manifest)
-            receipt = apply_kubernetes_secret(
-                manifest,
-                namespace=args.namespace,
-                name=args.secret_name,
                 expected_agent_id=args.agent_id,
             )
             _write_private_json(Path(args.receipt_out), receipt)
