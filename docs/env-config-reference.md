@@ -8,9 +8,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ACP_AGENT_CMD` | str | consumer-defined | acp | Acp setting: acp agent cmd. |
 | `MAC_ACP_BACKEND_CMD` | str | consumer-defined | acp | Acp setting: acp backend cmd. |
 | `MAC_ACP_PERMISSION_MODE` | str | consumer-defined | acp | Acp setting: acp permission mode. |
-| `MAC_ACTIVATION_PROBE_ACTIVATIONS_FILE` | str | consumer-defined | core | Core setting: activation probe activations file. |
-| `MAC_ACTIVATION_PROBE_CHECKPOINT` | str | consumer-defined | core | Core setting: activation probe checkpoint. |
-| `MAC_ACTIVATION_PROBE_ENABLED` | bool | consumer-defined | core | Core setting: activation probe enabled. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS` | int | consumer-defined | core | Core setting: agentbus service result publish attempts. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS` | int | consumer-defined | core | Core setting: agentbus service result publish retry seconds. |
 | `MAC_AGENTFS_URL` | str | consumer-defined | core | Core setting: agentfs url. |
@@ -884,7 +881,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_READ_ONLY_AUTHORITATIVE_VERIFIER` | str | consumer-defined | core | Core setting: read only authoritative verifier. |
 | `MAC_RECONCILER_LEASE_SECONDS` | int | consumer-defined | core | Core setting: reconciler lease seconds. |
 | `MAC_RECORD_HTTP_OBSERVATIONS` | str | consumer-defined | core | Core setting: record http observations. |
-| `MAC_RECOVERY_REFLEX_ENABLED` | bool | consumer-defined | core | Core setting: recovery reflex enabled. |
 | `MAC_RECOVERY_TEST_TIMEOUT` | int | consumer-defined | core | Core setting: recovery test timeout. |
 | `MAC_REFLECT_ENABLED` | bool | consumer-defined | core | Core setting: reflect enabled. |
 | `MAC_REFLECT_TIMEOUT` | int | consumer-defined | core | Core setting: reflect timeout. |

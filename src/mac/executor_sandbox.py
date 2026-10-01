@@ -242,11 +242,9 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
     _cooperative_integration_check,
     _finalizer_phase_timeout,
     _git,
-    _load_harness_recovery_log,
     _new_file_finalize_message,
     _preserve_executor_state_before_refusal,
     _read_executor_evidence_payload,
-    _record_recovery_learnings,
     _sign_verdict,
     _split_porcelain_status,
     _untracked_finalize_message,
@@ -6771,13 +6769,6 @@ def _run_executor(
         ):
             record_deployment_learning(task, outcome)
             record_curated_lessons(task, outcome)
-            # recovery-learn-01: if mid-flight recoveries occurred, feed each
-            # choice+outcome into the deployment-learning loop so selection
-            # quality improves future recovery choices.
-            try:
-                _record_recovery_learnings(task_workspace, task, outcome)
-            except Exception:  # noqa: BLE001
-                pass
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

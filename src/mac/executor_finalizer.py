@@ -1045,56 +1045,6 @@ def _write_git_finalizer_refusal_manifest(
     )
 
 
-def _load_harness_recovery_log(task_workspace: Path) -> List[Dict[str, Any]]:
-    """Read harness-recovery-log.json from task_workspace if present.
-
-    Returns a list of recovery step records [{step, choice, result}, ...].
-    Returns an empty list when the file is absent, empty, or unparseable.
-    """
-    log_path = task_workspace / "harness-recovery-log.json"
-    if not log_path.exists():
-        return []
-    try:
-        raw = json.loads(log_path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return []
-    if isinstance(raw, list):
-        return [r for r in raw if isinstance(r, dict)]
-    return []
-
-
-def _record_recovery_learnings(
-    task_workspace: Path,
-    task: Dict[str, Any],
-    outcome: Dict[str, Any],
-) -> None:
-    """Feed each harness recovery choice+outcome into the deployment-learning loop.
-
-    Reads harness-recovery-log.json and posts one learning record per entry so
-    the fleet's selection algorithm can improve future recovery choices.
-    Best-effort: silently returns on any error.
-    """
-    recovery_log = _load_harness_recovery_log(task_workspace)
-    if not recovery_log:
-        return
-    for entry in recovery_log:
-        if not isinstance(entry, dict):
-            continue
-        recovery_outcome = {
-            "evidence_type": outcome.get("evidence_type", "recovery"),
-            "outcome": outcome.get("outcome", "unknown"),
-            "signals": dict(outcome.get("signals") or {}),
-            "error_signature": outcome.get("error_signature") or "",
-            "recovery_step": entry.get("step"),
-            "recovery_choice": entry.get("choice"),
-            "recovery_result": entry.get("result"),
-        }
-        try:
-            record_deployment_learning(task, recovery_outcome)
-        except Exception:  # noqa: BLE001
-            pass
-
-
 _FINALIZER_PHASE_DEFAULTS: Dict[str, float] = {
     "repository_snapshot": 60.0,
     "canonical_sync": 300.0,
@@ -1692,9 +1642,6 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         manifest["freshness_error"] = freshness_error
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
-    recovery_log = _load_harness_recovery_log(task_workspace)
-    if recovery_log:
-        manifest["recovery"] = recovery_log
     stamped = host_still_valid_reconcile(task, reconcile_block)
     _stamp_canonical_reconcile(manifest, stamped)
     with _FinalizerPhaseContext(
@@ -2113,9 +2060,6 @@ def write_fallback_evidence_manifest(
             "schema": "mac.late_exit_candidate.v1",
             "original_returncode": result.returncode,
         }
-    recovery_log = _load_harness_recovery_log(task_workspace)
-    if recovery_log:
-        manifest["recovery"] = recovery_log
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

@@ -2294,8 +2294,6 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    recovery_entries = [{"step": "bootstrap", "choice": "retry", "result": "ok"}]
-    (ws / "harness-recovery-log.json").write_text(json.dumps(recovery_entries), encoding="utf-8")
     _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
@@ -2315,7 +2313,6 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert manifest["evidence_type"] == "repo_change"
     assert manifest["repo"]["pushed"] is True
     assert "README.md" in manifest["repo"]["files_changed"]
-    assert manifest["recovery"] == recovery_entries
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
@@ -4809,181 +4806,6 @@ def test_sandbox_verifier_script_clips_head_and_tail():
     heredoc_region = src[max(0, i - 6000) : i + 3000]
     assert "def clip(value" in heredoc_region
     assert "clip(stdout)" in heredoc_region
-
-
-# ---------------------------------------------------------------------------
-# Harness recovery log: _load_harness_recovery_log
-# ---------------------------------------------------------------------------
-
-
-def test_load_harness_recovery_log_absent(tmp_path):
-    """No file → empty list."""
-    assert te._load_harness_recovery_log(tmp_path) == []
-
-
-def test_load_harness_recovery_log_present(tmp_path):
-    entries = [
-        {"step": "bootstrap", "choice": "retry", "result": "success"},
-        {"step": "test", "choice": "skip_flaky", "result": "passed"},
-    ]
-    (tmp_path / "harness-recovery-log.json").write_text(json.dumps(entries))
-    result = te._load_harness_recovery_log(tmp_path)
-    assert result == entries
-
-
-def test_load_harness_recovery_log_filters_non_dicts(tmp_path):
-    (tmp_path / "harness-recovery-log.json").write_text(
-        json.dumps([{"step": "ok"}, "bad", 42, None])
-    )
-    result = te._load_harness_recovery_log(tmp_path)
-    assert result == [{"step": "ok"}]
-
-
-def test_load_harness_recovery_log_invalid_json(tmp_path):
-    (tmp_path / "harness-recovery-log.json").write_text("not json{{{{")
-    assert te._load_harness_recovery_log(tmp_path) == []
-
-
-def test_load_harness_recovery_log_non_list_json(tmp_path):
-    """Top-level dict (malformed log) → empty list."""
-    (tmp_path / "harness-recovery-log.json").write_text(json.dumps({"step": "x"}))
-    assert te._load_harness_recovery_log(tmp_path) == []
-
-
-def test_load_harness_recovery_log_empty_list(tmp_path):
-    (tmp_path / "harness-recovery-log.json").write_text("[]")
-    assert te._load_harness_recovery_log(tmp_path) == []
-
-
-# ---------------------------------------------------------------------------
-# Recovery key in write_fallback_evidence_manifest
-# ---------------------------------------------------------------------------
-
-
-def test_fallback_manifest_includes_recovery_key_when_log_present(tmp_path):
-    """write_fallback_evidence_manifest includes 'recovery' when log file exists."""
-    recovery_entries = [{"step": "env_check", "choice": "patch_env", "result": "recovered"}]
-    (tmp_path / "harness-recovery-log.json").write_text(json.dumps(recovery_entries))
-
-    task = {"id": "t1", "title": "x", "project": "demo"}
-    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(0, stdout="Done."), None)
-
-    manifest = json.loads((tmp_path / "mac-evidence.json").read_text())
-    assert "recovery" in manifest
-    assert manifest["recovery"] == recovery_entries
-
-
-def test_fallback_manifest_omits_recovery_key_when_no_log(tmp_path):
-    """write_fallback_evidence_manifest omits 'recovery' when no log file exists."""
-    task = {"id": "t1", "title": "x", "project": "demo"}
-    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(0, stdout="Done."), None)
-
-    manifest = json.loads((tmp_path / "mac-evidence.json").read_text())
-    assert "recovery" not in manifest
-
-
-# ---------------------------------------------------------------------------
-# _record_recovery_learnings: per-entry deployment learning
-# ---------------------------------------------------------------------------
-
-
-def test_record_recovery_learnings_posts_per_entry(tmp_path, monkeypatch):
-    """Each recovery log entry triggers one record_deployment_learning call."""
-    recovery_entries = [
-        {"step": "bootstrap", "choice": "retry", "result": "success"},
-        {"step": "test", "choice": "skip_flaky", "result": "passed"},
-    ]
-    (tmp_path / "harness-recovery-log.json").write_text(json.dumps(recovery_entries))
-
-    calls = []
-    monkeypatch.setattr(
-        finalizer, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True
-    )
-
-    task = {"id": "t1", "project": "demo"}
-    outcome = {
-        "evidence_type": "repo_change",
-        "outcome": "success",
-        "signals": {},
-        "error_signature": "",
-    }
-    te._record_recovery_learnings(tmp_path, task, outcome)
-
-    assert len(calls) == 2
-    assert calls[0]["recovery_step"] == "bootstrap"
-    assert calls[0]["recovery_choice"] == "retry"
-    assert calls[0]["recovery_result"] == "success"
-    assert calls[1]["recovery_step"] == "test"
-    assert calls[0]["outcome"] == "success"
-
-
-def test_record_recovery_learnings_no_log_no_calls(tmp_path, monkeypatch):
-    """When recovery log is absent, no learning calls are made."""
-    calls = []
-    monkeypatch.setattr(
-        finalizer, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True
-    )
-
-    task = {"id": "t1", "project": "demo"}
-    outcome = {
-        "evidence_type": "repo_change",
-        "outcome": "success",
-        "signals": {},
-        "error_signature": "",
-    }
-    te._record_recovery_learnings(tmp_path, task, outcome)
-
-    assert calls == []
-
-
-def test_record_recovery_learnings_empty_log_no_calls(tmp_path, monkeypatch):
-    """Empty recovery log → no learning calls."""
-    (tmp_path / "harness-recovery-log.json").write_text("[]")
-    calls = []
-    monkeypatch.setattr(
-        finalizer, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True
-    )
-
-    task = {"id": "t1", "project": "demo"}
-    outcome = {
-        "evidence_type": "repo_change",
-        "outcome": "failure",
-        "signals": {},
-        "error_signature": "test failed",
-    }
-    te._record_recovery_learnings(tmp_path, task, outcome)
-
-    assert calls == []
-
-
-def test_record_recovery_learnings_tolerates_individual_errors(tmp_path, monkeypatch):
-    """If record_deployment_learning raises for one entry, others still fire."""
-    recovery_entries = [
-        {"step": "a", "choice": "x", "result": "ok"},
-        {"step": "b", "choice": "y", "result": "ok"},
-    ]
-    (tmp_path / "harness-recovery-log.json").write_text(json.dumps(recovery_entries))
-
-    call_count = [0]
-
-    def boom_first(task, outcome):
-        call_count[0] += 1
-        if call_count[0] == 1:
-            raise RuntimeError("transient hub error")
-        return True
-
-    monkeypatch.setattr(finalizer, "record_deployment_learning", boom_first)
-
-    task = {"id": "t1", "project": "demo"}
-    outcome = {
-        "evidence_type": "repo_change",
-        "outcome": "success",
-        "signals": {},
-        "error_signature": "",
-    }
-    # Should not raise; second entry still tried
-    te._record_recovery_learnings(tmp_path, task, outcome)
-    assert call_count[0] == 2
 
 
 # ---------------------------------------------------------------------------

@@ -180,6 +180,11 @@ automated soul rewrite from mac event data.
 
 ### Module 4: `memory_vetting.py` + `memory_service.decay_memory` — **Stay in mac; these are operational infrastructure**
 
+> **Update 2026-09-30:** `memory_vetting.py` and its `mac admin fleet
+> memory-export` / `memory-prune` commands were removed with MAC's other
+> autonomy leaf modules. `memory_service.decay_memory` (`mac admin memory
+> decay`) is unaffected and the decision below still holds for it.
+
 **Finding:**
 
 **`memory_vetting.py` (112 lines):** Exports Qdrant vector points from
