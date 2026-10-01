@@ -527,10 +527,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-native-merge-queue" class="md-nav__link">
+  <a href="#the-serial-land-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The native merge queue
+        The serial land loop
       
     </span>
   </a>
@@ -1924,10 +1924,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-native-merge-queue" class="md-nav__link">
+  <a href="#the-serial-land-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The native merge queue
+        The serial land loop
       
     </span>
   </a>
@@ -2066,22 +2066,19 @@ is on the canonical branch and the ledger can <em>prove</em> it:</p>
 human opening and merging a PR — does not produce it, and such a task cannot be
 marked completed even with <code>force-complete</code>. This is deliberate: the gate
 refuses to believe a claim it cannot verify.</p>
-<h3 id="the-native-merge-queue">The native merge queue<a class="headerlink" href="#the-native-merge-queue" title="Permanent link">&para;</a></h3>
-<p>GitHub merge queues are organization-only, so personal repositories get no
-forge-side serialization. mac provides its own, with two properties worth
-knowing:</p>
+<h3 id="the-serial-land-loop">The serial land loop<a class="headerlink" href="#the-serial-land-loop" title="Permanent link">&para;</a></h3>
+<p>Approved work lands one change at a time per repository, and one test gate
+decides each landing: the repository's required status checks where it has
+them, otherwise the worker's own verifier run. Two properties worth knowing:</p>
 <ul>
-<li><strong>Tree identity, not SHA identity.</strong> An entry records the tree it was tested
-  against and refuses to land unless the canonical tip's tree matches
-  byte-for-byte. This is what makes speculation safe and what survives a squash
-  merge changing the SHA.</li>
-<li><strong>Fail toward not landing.</strong> Every failure kind — deferred, waiting,
-  unreadable state, slot lost, speculation unavailable — routes through the
-  existing backoff. None can reach "merge anyway".</li>
+<li><strong>The hub runs no tests.</strong> On a repository without required checks, a
+  canonical tip that moved past the base the worker verified (or conflicts
+  with the change) sends the same task back to its worker to rebase and
+  retest. The task's metadata carries a <code>rebase_onto_tip</code> directive; after two
+  send-backs it blocks.</li>
+<li><strong>Fail toward not landing.</strong> Pending checks wait, failed checks block, and a
+  tip that moves during the merge refuses it. None can reach "merge anyway".</li>
 </ul>
-<p>The AIMD window grows by one on a land and halves on a failure, floor 1 and
-ceiling 4. <code>MAC_MERGE_QUEUE_WINDOW_CEILING=1</code> disables speculation without
-disabling the queue.</p>
 <h2 id="dispatch-why-a-task-is-or-is-not-claimable">Dispatch: why a task is or is not claimable<a class="headerlink" href="#dispatch-why-a-task-is-or-is-not-claimable" title="Permanent link">&para;</a></h2>
 <p>Claimability is a conjunction, and all of it must hold:</p>
 <ul>

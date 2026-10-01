@@ -2030,7 +2030,7 @@ front door is <code>/ui</code>.</p>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        C3[&quot;Agents · Projects&quot;]
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        C3b[&quot;Mission Control&quot;]
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        C4[&quot;Pipelines&quot;]
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        C5[&quot;Merge queue · Telemetry&quot;]
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        C5[&quot;Telemetry&quot;]
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        C6[&quot;Task drill-down&quot;]
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    end
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    subgraph &quot;Fleet IDE — ide/ (prototype, not served)&quot;
@@ -2090,10 +2090,6 @@ also be the one that commands.</p>
 <td>publication and review progress</td>
 </tr>
 <tr>
-<td><strong>Merge queue</strong></td>
-<td>depth against the AIMD window, and why changes did not land</td>
-</tr>
-<tr>
 <td><strong>Telemetry</strong></td>
 <td>model and command usage</td>
 </tr>
@@ -2106,10 +2102,10 @@ also be the one that commands.</p>
 <h3 id="two-properties-it-will-not-trade">Two properties it will not trade<a class="headerlink" href="#two-properties-it-will-not-trade" title="Permanent link">&para;</a></h3>
 <p><strong>A section it could not read is absent, not zero.</strong> If the hub fails to answer
 for one section, that section is omitted and named in <code>degraded</code> — never
-rendered as a plausible empty result. A merge queue showing "depth 0" because a
-table is missing is exactly the failure the queue exists to catch.</p>
-<p><strong>Unknown is not a default.</strong> A queue that has never sized its window shows
-<code>—</code>, not <code>1</code>; a land rate with no attempts shows <code>—</code>, not <code>0%</code>. Never-happened
+rendered as a plausible empty result. A section showing "0 failures" because a
+table is missing is exactly the failure the console exists to catch.</p>
+<p><strong>Unknown is not a default.</strong> A land rate with no attempts shows <code>—</code>, not
+<code>0%</code>. Never-happened
 and happened-badly are different facts.</p>
 <h3 id="a-useful-next-action">A useful next action<a class="headerlink" href="#a-useful-next-action" title="Permanent link">&para;</a></h3>
 <p>The Task view separates reported tests, operator acceptance, publication, and

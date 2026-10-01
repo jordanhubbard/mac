@@ -5476,34 +5476,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Hub setting: hub min test jobs.</td>
 </tr>
 <tr>
-<td><code>MAC_HUB_REVIEWER_AGENT_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Hub setting: hub reviewer agent id.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_REVIEWER_AGENT_NAME</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Hub setting: hub reviewer agent name.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_REVIEWER_AUTO_REGISTER</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Hub setting: hub reviewer auto register.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_REVIEWER_MACHINE_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Hub setting: hub reviewer machine id.</td>
-</tr>
-<tr>
 <td><code>MAC_HUB_SELF_UPGRADE_ENABLED</code></td>
 <td>bool</td>
 <td>consumer-defined</td>
@@ -5567,46 +5539,11 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Hub setting: hub verify image.</td>
 </tr>
 <tr>
-<td><code>MAC_HUB_VERIFY_PG_DATADIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Data directory for the dedicated hub-verify Postgres started by <code>scripts/start-test-postgres.sh</code>. Defaults to a temp <code>mac-hubverify-pgdata</code> directory, never the live hub cluster.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_VERIFY_PG_HOST</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Hostname substituted for <code>127.0.0.1</code>/<code>localhost</code>/<code>::1</code> in the hub-verify test DSN. Default <code>host.openshell.internal</code> (OpenShell's host-bridge alias). Does not select the live hub Postgres.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_VERIFY_PG_PORT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Port passed to <code>scripts/start-test-postgres.sh</code> when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_VERIFY_PG_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as <code>MAC_TEST_PG_URL</code>. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to <code>host.openshell.internal</code> (or <code>MAC_HUB_VERIFY_PG_HOST</code> / <code>MAC_OPENSHELL_HOST_ALIAS</code>) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs <code>scripts/start-test-postgres.sh</code> on a dedicated port (default 55432) and rewrites that DSN the same way.</td>
-</tr>
-<tr>
 <td><code>MAC_HUB_VERIFY_PROFILE</code></td>
 <td>str</td>
 <td>default</td>
 <td>hub</td>
 <td>Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or <code>default</code> preserves driver defaults. <code>bounded-tmpfs</code> requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected.</td>
-</tr>
-<tr>
-<td><code>MAC_HUB_VERIFY_RUNNER</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hub</td>
-<td>Hub setting: hub verify runner.</td>
 </tr>
 <tr>
 <td><code>MAC_HUB_VERIFY_TIMEOUT</code></td>
@@ -6209,41 +6146,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>memory</td>
 <td>Memory setting: memory topology file.</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>merge-queue</td>
-<td>Merge Queue setting: merge queue capability ttl seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_LEASE_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>merge-queue</td>
-<td>Merge Queue setting: merge queue lease seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_WINDOW_CEILING</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>merge-queue</td>
-<td>Merge Queue setting: merge queue window ceiling.</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_WINDOW_FLOOR</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>merge-queue</td>
-<td>Merge Queue setting: merge queue window floor.</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_WINDOW_INCREMENT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>merge-queue</td>
-<td>Merge Queue setting: merge queue window increment.</td>
 </tr>
 <tr>
 <td><code>MAC_MIGRATION_DATABASE_URL</code></td>
@@ -8220,48 +8122,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: reviewed uv version.</td>
 </tr>
 <tr>
-<td><code>MAC_REVIEW_HUB_VERIFY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review hub verify.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review id.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_NUDGE_MAX_ATTEMPTS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review nudge max attempts.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_RETRACTION_CAP</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review retraction cap.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_SEMANTIC_REVIEWER</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review semantic reviewer.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_TARGET_EVIDENCE_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review target evidence id.</td>
-</tr>
-<tr>
 <td><code>MAC_REVIEW_TICK_HUB_AGENT</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -8295,20 +8155,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>review</td>
 <td>Review setting: review tick on heartbeat.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_VERDICT_WAIT_CAP</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review verdict wait cap.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_WORKSPACE_ROOT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>review</td>
-<td>Review setting: review workspace root.</td>
 </tr>
 <tr>
 <td><code>MAC_ROLLBACK_ACTIVE_GATEWAY</code></td>
@@ -9520,13 +9366,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: test stall timeout.</td>
-</tr>
-<tr>
-<td><code>MAC_TICK_BLOCKING_HUB_VERIFY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: tick blocking hub verify.</td>
 </tr>
 <tr>
 <td><code>MAC_TICK_RUNS_REVIEW_SWEEP</code></td>

@@ -1988,8 +1988,9 @@ no-ops with a <code>workflow.default_review.skipped</code> observation. The firs
 to make that per-task opt-out the <em>project default</em> for one project — an
 <code>agent_initiated</code> (opt-in) review mode — so the mandatory controller stands
 down for that project and review runs only when an agent asks for it. This
-mirrors the opt-in shape of <code>MAC_REVIEW_HUB_VERIFY</code> (<code>_hub_review_verify_enabled</code>,
-off by default, one flag): a single, revertible switch.</p>
+mirrors the opt-in shape of the former <code>MAC_REVIEW_HUB_VERIFY</code> flag (off by
+default, one flag; hub-verify was deleted on 2026-10-01): a single, revertible
+switch.</p>
 <p>Then compare completion rate and tokens-per-completed-task between the two paths
 on the same project over a few hundred tasks (the arms already tracked by the
 scientific optimizer, since removed on 2026-09-30). If peer-to-peer wins, there is evidence to dismantle the

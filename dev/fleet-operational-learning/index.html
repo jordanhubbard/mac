@@ -1771,21 +1771,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#success-first-reviewer-routing" class="md-nav__link">
+  <a href="#reviewer-repository-access" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Success-first reviewer routing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bounded-retries" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bounded retries
+        Reviewer repository access
       
     </span>
   </a>
@@ -1896,16 +1885,14 @@ workflow tick after the memory write.</p>
 <p>The control plane's pushed-ref evidence check uses the same authentication
 resolver. A control-plane authentication, authorization, or network failure is
 treated as indeterminate rather than as proof that a pushed ref is absent; the
-independently routed reviewer remains responsible for verification. A
+worker's pre-push verifier run remains responsible for verification. A
 successful lookup with no matching ref still rejects phantom-push evidence.</p>
-<h3 id="success-first-reviewer-routing">Success-first reviewer routing<a class="headerlink" href="#success-first-reviewer-routing" title="Permanent link">&para;</a></h3>
-<p>For the task's repository host, reviewer candidates are ordered as follows:</p>
-<ol>
-<li>agents with a recent successful <code>review_clone</code> learning;</li>
-<li>agents with no recent matching learning.</li>
-</ol>
-<p>An agent whose newest matching learning is an authentication or authorization
-failure is ineligible during the failure cooldown. A later success immediately
+<h3 id="reviewer-repository-access">Reviewer repository access<a class="headerlink" href="#reviewer-repository-access" title="Permanent link">&para;</a></h3>
+<p>The default review workflow no longer selects reviewer agents: the hub-reviewer
+approves from validated worker evidence. Repository-access learning still gates
+reviewers assigned explicitly through the review API. For the task's repository
+host, an agent whose newest matching learning is an authentication or
+authorization failure is ineligible during the failure cooldown. A later success immediately
 supersedes the failure. After the cooldown, the agent becomes unknown rather
 than permanently banned, so credential repairs can be proven naturally.</p>
 <p>Configuration:</p>
@@ -1913,12 +1900,6 @@ than permanently banned, so credential repairs can be proven naturally.</p>
 <li><code>MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS</code> defaults to 1800;</li>
 <li><code>MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS</code> defaults to 86400.</li>
 </ul>
-<h3 id="bounded-retries">Bounded retries<a class="headerlink" href="#bounded-retries" title="Permanent link">&para;</a></h3>
-<p>Review nudge attempts are counted from durable delivered nudge messages for
-the specific review. Idempotent claim calls are not an attempt counter. Once
-<code>MAC_REVIEW_NUDGE_MAX_ATTEMPTS</code> is reached, the review is retracted through the
-existing bounded review workflow instead of producing an unbounded retry
-storm.</p>
 <h3 id="prompt-recall">Prompt recall<a class="headerlink" href="#prompt-recall" title="Permanent link">&para;</a></h3>
 <p>Structured fleet learnings are recalled alongside project deployment lessons.
 The prompt shows the outcome and actionable recommendation, not credentials or

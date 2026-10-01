@@ -1632,10 +1632,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#macs-own-merge-queue" class="md-nav__link">
+  <a href="#the-serial-land-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        mac's own merge queue
+        The serial land loop
       
     </span>
   </a>
@@ -2266,10 +2266,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#macs-own-merge-queue" class="md-nav__link">
+  <a href="#the-serial-land-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        mac's own merge queue
+        The serial land loop
       
     </span>
   </a>
@@ -2718,12 +2718,7 @@ database variable is reintroduced.</p>
 <tr>
 <td><code>MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS</code></td>
 <td>no</td>
-<td>How long a successful repository-access learning receives reviewer-selection preference. Default <code>86400</code>.</td>
-</tr>
-<tr>
-<td><code>MAC_REVIEW_NUDGE_MAX_ATTEMPTS</code></td>
-<td>no</td>
-<td>Maximum durable delivered verdict nudges for one review before it is retracted. Default <code>10</code>.</td>
+<td>How long a successful repository-access learning stays current and supersedes an older failure. Default <code>86400</code>.</td>
 </tr>
 <tr>
 <td><code>MAC_SUPERVISOR_KIND</code></td>
@@ -3167,24 +3162,19 @@ prematurely:</p>
 without claiming migrated ACC work. Start the <code>--loop</code> form only after the
 executor command is the intended production worker. Successful executions write
 log evidence, move tasks to <code>needs_review</code>, and ask the control plane to run
-the default review workflow. The default workflow prefers a healthy reviewer
-that has never owned the task. If no independent reviewer is currently
-eligible, it may assign the least-conflicted healthy review-capable agent and
-records <code>reviewer_independence=fallback</code> plus the reason in task history and
-observability. A newly available independent reviewer supersedes a pending
-fallback review. Set task metadata <code>review.require_independent_reviewer: true</code>
-(or <code>review.allow_independence_fallback: false</code>) for work that must wait instead.
-Every path still requires a separate signed <code>review_verdict</code>; agent-generated
-work still requires a reviewer LLM different from the executor LLM. The
-workflow publishes/completes the task only when executor evidence and reviewer
-verdict are verifiable.
+the default review workflow. The worker's pre-push verifier run, on a fresh
+clone of the exact pushed commit, is the review verdict: once the executor
+evidence validates (for repository changes that includes a real verifier pass),
+the virtual hub-reviewer signs a separate <code>review_verdict</code> over it and the
+workflow publishes/completes the task. No reviewer agent is selected and no
+tests are re-run on the hub. A reviewer assigned explicitly through the review
+API must be independent of the executor; its signed verdict is honoured.
 Failed executions fail the task with evidence attached.</p>
 <p>For high-risk work, set <code>metadata.review.risk_level</code> to <code>high</code> or <code>critical</code>.
 Approval then fails closed unless the signed executor and verdict manifests
 identify different model families and different upstream providers; merely
 using two versions of Claude, GPT, or another single lineage is insufficient.
-Unknown lineage/provider metadata also blocks approval, and reviewer
-independence fallback is disabled. The same constraints can be enabled
+Unknown lineage/provider metadata also blocks approval. The same constraints can be enabled
 individually with <code>review.require_different_model_family: true</code> and
 <code>review.require_different_model_provider: true</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="p">{</span>
@@ -3215,8 +3205,8 @@ already asks of humans:</p>
 <li>The forge lands that pull request, pinned to the reviewed head SHA (the
    pull-request equivalent of <code>--force-with-lease</code>: if the branch moved
    underneath us, the merge is refused rather than landing something nobody
-   reviewed) — through the branch's <strong>merge queue</strong> when it has one, and
-   otherwise through a plain squash merge, see below.</li>
+   reviewed) — through a squash merge, one landing at a time per repository,
+   see <em>The serial land loop</em> below.</li>
 <li>The hub verifies the resulting canonical tip and records it as the
    canonical-integration proof.</li>
 </ol>
@@ -3250,145 +3240,81 @@ list is a <em>different case</em> from a required list that is still pending, an
 two are recorded separately in the publication evidence
 (<code>required_check_verification.case</code>: <code>none_configured</code>, <code>pending</code>, <code>failed</code>,
 <code>unverifiable</code>, or <code>verified</code>) — an unprotected repository is gated by the
-hub's own contract run instead, and a repository whose checks simply have not
-started is not mistaken for one.</p>
-<p><strong>How the merge is serialized.</strong> <code>merge_queue.py</code> validates against the
-<em>projected post-merge</em> state — the "Not Rocket Science Rule": test the tree
-that will actually land, serialize the merges, and post-merge testing is then
-redundant. A plain forge squash merge does <strong>not</strong> preserve that: if the
-canonical branch advances between the required checks completing and the merge
-executing, the tree that lands was never tested as such. Required status checks
-alone do not close this; a <strong>merge queue</strong> does, and unlike
-<code>strict_required_status_checks_policy</code> it serializes the <em>merges</em> without
-serializing the <em>test runs</em> (which here take ~2 hours, so strict rebasing never
-converges with several open pull requests).</p>
-<p>Every pull-request landing goes through <strong>mac's own merge queue</strong>
-(<code>mac_native_queue</code>): it orders the change, tests it against the tree it will
-land on, and refuses the merge unless the canonical tip's tree is still that
-exact tree — what was tested is what lands. mac never enqueues into a forge
-merge queue; that path was removed on 2026-10-01 because no repository used it.
-The mode and its guarantee are recorded in the publication evidence as a
-<code>merge_serialization</code> entry, and on the canonical-integration proof as
-<code>merge_serialization</code>.</p>
-<h3 id="macs-own-merge-queue">mac's own merge queue<a class="headerlink" href="#macs-own-merge-queue" title="Permanent link">&para;</a></h3>
-<p><strong>Why it exists.</strong> GitHub merge queues are available only on
-<strong>organization-owned</strong> repositories, and GitHub has said it does not plan to
-open them to personal accounts. Adding a <code>merge_queue</code> rule to a User-owned
-repository's ruleset returns HTTP 422 <code>Invalid rule 'merge_queue'</code> even with no
-parameters. So on every personal repository mac manages there is no forge queue
-to borrow serialization from, and <code>mac_native_queue</code> is the only path. <code>src/mac/native_merge_queue.py</code> provides the queue itself.</p>
-<p><strong>What it does.</strong> Approved changes awaiting land are ordered per (repository,
-canonical branch) in the <code>merge_queue_entries</code> table. Entry <em>N</em> is projected on
-top of entries <em>1..N-1</em> (Zuul's speculative merge train) so several entries can
-be tested in parallel, and they land in order. If entry <em>K</em> fails it is
-<strong>evicted</strong>, and every speculative result behind it is <strong>discarded</strong> — those
-entries were green against a state that will never exist — and the survivors are
-re-planned in a new speculation epoch without <em>K</em>.</p>
-<p><strong>The invariant.</strong> <em>Never land an untested tree.</em> Each entry records the tree it
-was tested against; the land gate refuses the merge unless the canonical tip's
-tree is byte-identical to it. Comparing trees rather than commit SHAs is what
-makes speculation safe and what survives squash merges, which change the commit
-but not the tree. Every ambiguous state — an unreadable tip, a lost lease, a PR
-whose state the forge will not report — defers through the existing publication
-retry backoff. None of them can reach "merge anyway".</p>
-<p><strong>Never double-land.</strong> Before merging, the queue reads the pull request's state.
-A PR already merged (by the forge, a human, or an attempt of ours that died
-after the merge) is <em>observed</em> and recorded as landed, not merged again. Landing
-is idempotent in the ledger, so a hub restart mid-flight cannot credit one land
-twice.</p>
-<p><strong>Bounded.</strong> An AIMD window — the same control law as TCP congestion control,
-which is where Zuul got it — caps how many entries may speculate at once. It
-starts at the floor (so a fresh queue is strictly serial), grows by
-<code>MAC_MERGE_QUEUE_WINDOW_INCREMENT</code> on each successful land up to
-<code>MAC_MERGE_QUEUE_WINDOW_CEILING</code>, and <strong>halves</strong> on any failure down to
-<code>MAC_MERGE_QUEUE_WINDOW_FLOOR</code>. Entries outside the window defer; they keep
-their place in line.</p>
-<table>
-<thead>
-<tr>
-<th>knob</th>
-<th>default</th>
-<th>what it bounds</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>MAC_MERGE_QUEUE_WINDOW_FLOOR</code></td>
-<td><code>1</code></td>
-<td>the narrowest window; <code>1</code> is a strictly serial queue</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_WINDOW_CEILING</code></td>
-<td><code>4</code></td>
-<td>the most entries that may speculate at once, and therefore the most workers speculation can occupy. Set to <code>1</code> to disable speculation without disabling the queue</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_WINDOW_INCREMENT</code></td>
-<td><code>1</code></td>
-<td>how fast the window recovers after a failure</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_LEASE_SECONDS</code></td>
-<td><code>5400</code></td>
-<td>how long a slot may be held before a dead hub's slot is reclaimable. Deliberately longer than a full contract run (~45 min)</td>
-</tr>
-<tr>
-<td><code>MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS</code></td>
-<td><code>86400</code></td>
-<td>how long a resolved forge capability record is trusted before it is re-resolved</td>
-</tr>
-</tbody>
-</table>
-<p><strong>What is observable.</strong> Every publication records a <code>merge_serialization</code>
-command carrying a queue snapshot: <code>queue_depth</code>, <code>window_size</code>,
-<code>window_floor</code>/<code>window_ceiling</code>, <code>entries_testing</code>/<code>entries_tested</code>,
-<code>landed_count</code>, <code>failure_count</code>, <code>speculation_discarded</code>, and the last ten
-evictions with their reasons. The same numbers are emitted as metrics under
-<code>merge_queue.*</code> (<code>GET /observability/metrics?name=merge_queue.evicted</code>), and the
-per-attempt commands name each decision: <code>merge_serialization_capability</code>,
-<code>merge_queue_slot</code>, <code>merge_queue_speculative_base</code>, <code>merge_queue_tested</code>,
-<code>merge_queue_observe_pull_request</code>, <code>merge_queue_land_gate</code>,
-<code>merge_queue_landed</code>, <code>merge_queue_eviction</code>.</p>
-<p><strong>The forge capability is a stored project attribute, not a per-merge probe.</strong>
-<code>mac.merge_capability</code> resolves the forge's capability once and stores it on the
-project's repository record in <code>project_repositories.metadata</code> under
-<code>merge_serialization_capability</code>. It is evidence only — it no longer selects a
-mechanism. It records <em>supported</em> (an org-owned GitHub repo could have a forge
-queue) and <em>enabled</em> (always <code>false</code>: mac does not use a forge queue), the forge kind, whether a credential resolved, and when and by what it was
-determined — so an operator can see that an answer is six weeks old rather than
-trusting it silently. The existing GitHub ingest poller refreshes it on its
-normal pass, behind <code>MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS</code>, and reports the
-outcome in its run report under <code>merge_queue_capability</code>. To force a refresh
-now, run the poller: <code>mac admin fleet github-ingest run</code> (<code>POST /github-ingest/run</code>).
-A missing or expired answer is re-resolved at publication time. Whatever it
-says, the landing routes to mac's queue, which serializes correctly regardless
-of what the forge does.</p>
-<blockquote>
-<p><strong>Live-hub note.</strong> <code>schema.sql</code> is <code>CREATE TABLE IF NOT EXISTS</code> with no
-migration framework, and <code>PostgresStore.initialize()</code> only creates missing
-tables. <code>merge_queue_entries</code> and <code>merge_queue_windows</code> therefore appear on a
-hub the next time the schema is applied; on an already-running hub, apply the
-DDL from <code>src/mac/data/postgres/schema.sql</code> (the block headed <em>"mac's own
-merge queue"</em>) once by hand. Until they exist, pull-request publication will
-fail rather than fall back to an unserialized squash — which is the correct
-direction to fail.</p>
-</blockquote>
-<p><strong>Who gates the merge.</strong> Both, at different moments. mac's own reviewer verdict
-plus the merge gate decide whether a pull request is opened and a merge is
-requested <em>at all</em>; the forge's required status checks decide whether that merge
-is <em>permitted</em>. When the forge reports required status checks for the canonical
-branch, the hub skips its own local re-projection of the contract suite —
-GitHub runs those checks against the merge result it will actually produce,
-which is a better question than the hub's approximation and does not cost the
-15–45 minutes that previously made approved tasks time out unpublished. When
-the forge reports <strong>no</strong> required checks, the hub keeps its own contract gate:
-an unprotected repository must not silently lose its gate.</p>
+worker's own verifier run instead, and a repository whose checks simply have
+not started is not mistaken for one.</p>
+<h3 id="the-serial-land-loop">The serial land loop<a class="headerlink" href="#the-serial-land-loop" title="Permanent link">&para;</a></h3>
+<p><strong>One test gate per landing.</strong> A repository with required status checks is
+gated by those checks; a repository without them is gated by the worker's own
+verifier run, which ran the contract on a fresh clone of the reviewed head
+after the finalizer synced it onto the canonical tip
+(<code>repo.canonical_sync.canonical_tip</code> in the evidence). The hub runs no tests.</p>
+<p><strong>One land step per publication attempt, serialized per repository.</strong> Each
+publication attempt takes a PostgreSQL advisory lock keyed on (repository,
+canonical branch) for the whole land step. A second land step for the same
+repository does not queue behind it; it waits a tick
+(<code>publication_failure_kind=landing_serialized</code>, charged to the landing deadline
+only). Inside the lock, <code>ControlPlane._publish_git_target_attempt</code>:</p>
+<ol>
+<li>clones the current canonical tip and fetches the reviewed head;</li>
+<li>runs <code>git merge-tree</code> (<code>mac.merge_queue.validate_projected_merge</code>, no
+   tests) — a conflict sends the task back to its worker to rebase;</li>
+<li><strong>with required checks</strong>: opens or reuses the pull request, reads
+   <code>required_check_verdicts</code> for the reviewed head, and requests the squash
+   merge once they pass. Pending checks wait under the landing deadline;
+   failed checks block the task with the failing checks named;</li>
+<li><strong>without required checks</strong>: lands only if the canonical tip is still the
+   base the worker verified (it is an ancestor of the reviewed head) — through
+   the pull request, or by a fast-forward <code>--force-with-lease</code> push on the
+   direct-push path — re-validating the tip immediately before the merge. A
+   tip that has moved sends the task back to its worker to rebase and retest.</li>
+</ol>
+<p><strong>Optimistic concurrency.</strong> If the tip moves between the land step's read and
+its merge (someone pushed outside mac), the guarded push or the re-validation
+refuses, and the step retries once at once; the retry then sees a tip the
+worker never verified and sends the task back.</p>
+<p><strong>Rebase and retest.</strong> A send-back moves the SAME task from review
+(<code>needs_review</code>, or a legacy <code>reviewing</code> row) to OPEN with a <code>rebase_onto_tip</code>
+directive in its metadata (the canonical tip, the verified base, the reviewed
+head and branch, any conflicted paths). The executor prompt renders it as a
+"Sent back to rebase" section: rebase onto the tip, resolve the named
+conflicts, keep the previous work. The next claim re-runs the worker, whose
+finalizer rebases onto the current tip before the verifier runs, so the new
+evidence is verified against the tip it will land on. The previous attempt's
+pull request (the agent's, or the one a land step was working on) is closed
+with a "Superseded" comment; a forge that refuses is logged
+(<code>workflow.default_review.superseded_pr_close_failed</code>) and never blocks the
+send-back. Send-backs are counted in <code>metadata.landing.rebases</code> and capped at two;
+the third blocks the task (<code>landing_rebase_cap_exhausted</code>). New evidence resets
+the rest of the landing budget but not this count.</p>
+<p><strong>Never double-land.</strong> Before merging, the land step reads the pull request's
+state. A PR already merged (by the forge, a human, or an attempt of ours that
+died after the merge) is <em>observed</em> and recorded as landed, not merged again.</p>
+<p>The mode and its gate are recorded in the publication evidence as a
+<code>merge_serialization</code> command (<code>mode: serial_land_loop</code>, <code>test_gate:
+required_checks | worker_verifier</code>) and on the canonical-integration proof.</p>
+<p>mac's native speculative merge queue was removed on 2026-10-01 (it landed 4.7%
+of its entries); migration <code>0005_drop_native_merge_queue_tables</code> drops its
+<code>merge_queue_entries</code> and <code>merge_queue_windows</code> tables. Approved tasks that were
+waiting on it are still <code>reviewing</code> and land through the loop on the next tick.</p>
 <p><strong>Checks still running.</strong> A merge the forge refuses because its own gates have
 not finished is not a failure. Publication defers with
 <code>publication_failure_kind=pull_request_checks_pending</code> and the existing
 publication-retry backoff re-attempts later; the pull request is reused rather
-than reopened, so retries are cheap. The task stays in <code>reviewing</code> — approved
-but not completed — until the change is genuinely on the canonical branch.</p>
+than reopened, so retries are cheap. The task stays in <code>needs_review</code> (or a
+legacy <code>reviewing</code>) — approved but not completed — until the change is
+genuinely on the canonical branch.</p>
+<p><strong>Branches that must be up to date.</strong> A ruleset with "require branches to be up
+to date before merging" (<code>strict_required_status_checks_policy</code>, read by
+<code>gitops.required_status_check_policy</code>) will not merge a pull request that is
+behind the base, and nothing else updates it — it used to wait out the landing
+deadline. When the forge reports the PR <code>behind</code> (or the canonical tip is not in
+its head), the land step calls GitHub's update-branch
+(<code>gitops.update_pull_request_branch</code>, pinned to the observed head) and waits
+for the required checks on the updated head
+(<code>publication_failure_kind=pull_request_branch_updated</code>, charged to the
+deadline only). The updated head — the reviewed head plus merges of the
+canonical branch, nothing else — is what the checks verify and the merge is
+pinned to. If the forge reports a conflict, the task is sent back to rebase.</p>
 <p><strong>Squash and the integration proof.</strong> A squash merge lands the reviewed
 <em>content</em> under a new SHA, so the reviewed commit is deliberately not an
 ancestor of the canonical tip afterwards. The canonical-integration proof
@@ -3410,7 +3336,7 @@ squashing destroys, and task completion accepts that proof shape.</p>
 </tr>
 <tr>
 <td><code>direct_push</code></td>
-<td>the legacy path: merge locally in a disposable clone and push the canonical branch under optimistic concurrency (<code>push_main_occ</code>)</td>
+<td>the legacy path: fast-forward the canonical branch to the verified head in a disposable clone and push it under optimistic concurrency (<code>push_main_occ</code>)</td>
 </tr>
 </tbody>
 </table>
@@ -3433,9 +3359,9 @@ pull request on its next attempt against the branch it had already pushed.</p>
 repository host, operation, agent, credential source name, outcome, failure
 class, bounded redacted error signature, recommendation, and task/review IDs.
 It never stores a credential value or authenticated URL.</p>
-<p>For the task's repository host, reviewer selection prefers agents with a
-recent successful <code>review_clone</code>, then agents with no recent matching record.
-An agent whose newest matching record is an authentication or authorization
+<p>For the task's repository host, a reviewer assigned through the review API is
+checked against these records (the default review workflow approves from worker
+evidence and selects no reviewer agent). An agent whose newest matching record is an authentication or authorization
 failure is ineligible during the configured cooldown. A newer success restores
 eligibility immediately; cooldown expiry returns the agent to unknown status.
 This lookup reads the authoritative PostgreSQL ledger directly, so routing changes immediately and does not

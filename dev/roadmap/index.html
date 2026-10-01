@@ -1988,8 +1988,9 @@ transaction or equivalent durable evidence.</p>
 <h2 id="known-defects-from-the-v130-capabilities-deck-slide-12">Known defects from the v1.3.0 capabilities deck (slide 12)<a class="headerlink" href="#known-defects-from-the-v130-capabilities-deck-slide-12" title="Permanent link">&para;</a></h2>
 <p>Source: <a href="https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit?slide=id.p12">MAC capabilities at <code>d8d491d6</code></a>,
 captured 2026-08-28. Items stay unchecked until they meet the completion rule
-above. Large ADRs are held <code>--no-dispatch</code> until hub-verify can land
-repository work (<code>task_321b8e8d</code>).</p>
+above. Large ADRs were held <code>--no-dispatch</code> until hub-verify could land
+repository work (<code>task_321b8e8d</code>); hub-verify was deleted on 2026-10-01 and the
+worker's verifier run is now the review verdict.</p>
 <ul>
 <li>[ ] Default <code>mac --help</code> reports the real <code>mac admin</code> subcommand count, not
       zero. Ledger <code>task_2d33cc69</code>.</li>
@@ -2010,10 +2011,10 @@ repository work (<code>task_321b8e8d</code>).</p>
 <li>[ ] ADR 0012 (native steward + containerized execution) stays deferred until
       a fleet measurement exists. ADR 0015 already narrowed the containerized
       half to Linux. Ledger <code>task_3a48fd75</code>.</li>
-<li>[ ] Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
-      (not the live hub database) so a repository canary can complete.
-      Ledger <code>task_321b8e8d</code>. Blocked the v1.3.1 canary <code>task_d894080c</code> /
-      PR #681.</li>
+<li>[x] ~~Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
+      (not the live hub database) so a repository canary can complete.~~
+      Hub-verify was deleted on 2026-10-01; verifier sandboxes start their own
+      PostgreSQL. Ledger <code>task_321b8e8d</code>.</li>
 </ul>
 
 

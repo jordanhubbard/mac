@@ -1874,6 +1874,17 @@ The subsystem has been refactored since the parent task was filed (the review
 sweep moved off <code>ControlPlane.tick()</code> onto a dedicated publication worker), so
 the anchors in the task description no longer match; the mechanisms they
 describe still exist and are re-anchored here.</p>
+<blockquote>
+<p><strong>Update (2026-10-01).</strong> Hub-side review verification ("Option C", hub-verify)
+has been deleted. The worker's verifier run, on a fresh clone of the exact
+pushed commit after the final rebase, is now the review verdict: the default
+review workflow approves from validated worker evidence through the virtual
+hub-reviewer and proceeds to publication in the same call. The blocking /
+non-blocking sweep distinction (<code>allow_blocking_hub_verify</code>) and the
+<code>waiting_for_hub_verify</code> status no longer exist, so C2 below is resolved by
+removal and C1 now affects only the event-driven nudge issued on
+submission. The sections below are kept as the historical diagnosis.</p>
+</blockquote>
 <h2 id="how-advancement-is-wired-now">How advancement is wired now<a class="headerlink" href="#how-advancement-is-wired-now" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>ControlPlane.tick()</code> (<code>src/mac/services.py:17992</code>) no longer runs the review
@@ -1881,8 +1892,8 @@ describe still exist and are re-anchored here.</p>
   unless <code>MAC_TICK_RUNS_REVIEW_SWEEP=1</code> (<code>src/mac/services.py:18115</code>).</li>
 <li>The sweep runs on a dedicated daemon,
   <code>api._start_publication_worker</code> (<code>src/mac/api.py:4087</code>), which calls
-  <code>_advance_default_review_sweep_page(..., allow_blocking_hub_verify=True)</code>
-  (<code>src/mac/api.py:4140</code>). It is gated by
+  <code>_advance_default_review_sweep_page(...)</code> (<code>src/mac/api.py:4140</code>; at the time
+  of this diagnosis it passed <code>allow_blocking_hub_verify=True</code>). It is gated by
   <code>MAC_PUBLICATION_WORKER_INTERVAL_SECONDS</code>, whose default is <code>"30"</code> <strong>only when
   <code>MAC_HUB_TICK_INTERVAL_SECONDS &gt; 0</code></strong>, else <code>"0"</code> = off (<code>src/mac/api.py:4114</code>).</li>
 <li>Event-driven advancement (<code>enable_event_driven_review_advance</code>,
@@ -1921,7 +1932,6 @@ path that reaches the non-blocking branch with the consumer down (the tick's own
 <code>MAC_TICK_RUNS_REVIEW_SWEEP=1</code> escape hatch, or a heartbeat sweep) drops the
 nudge on the floor.</p>
 <p><em>Pinned by:</em> <code>test_nudge_is_a_noop_without_the_event_consumer</code>,
-<code>test_nonblocking_sweep_branch_only_nudges</code>,
 <code>test_event_consumer_is_gated_by_the_tick_interval</code>.</p>
 <h3 id="c2-an-uncapped-waiting_for_hub_verify-return-traps-a-task-whenever-hub-verify-cannot-produce-a-verdict">C2 — an uncapped <code>waiting_for_hub_verify</code> return traps a task whenever hub verify cannot produce a verdict<a class="headerlink" href="#c2-an-uncapped-waiting_for_hub_verify-return-traps-a-task-whenever-hub-verify-cannot-produce-a-verdict" title="Permanent link">&para;</a></h3>
 <p>In <code>advance_default_review_workflow</code>, when Option-C hub verify is enabled and no
@@ -1942,14 +1952,13 @@ verifier is unable to finish, which matches a large frozen cohort that shares a
 single failing verify path. This is distinct from the "no evidence to verify"
 case, which is deliberately <em>allowed</em> to fall through to the agent-nudge path
 (<code>src/mac/services.py:22070</code> comment).</p>
-<p><em>Status:</em> fixed by the landing budget (<code>metadata.landing</code>). Each
-<code>waiting_for_hub_verify</code> return charges the task's deadline
-(<code>MAC_LANDING_DEADLINE_SECONDS</code>), and each <code>hub_verify_unavailable</code> or
-<code>hub_verify_error</code> run charges one of <code>MAC_LANDING_MAX_ATTEMPTS</code> with a 5 to 60
-minute backoff. When the budget runs out the task moves to BLOCKED with
-<code>reason="landing_budget_exhausted"</code>.</p>
-<p><em>Pinned by:</em> <code>test_waiting_for_hub_verify_is_bounded_by_the_landing_budget</code>,
-<code>test_hub_verifiable_evidence_holds_the_merge_gate</code>.</p>
+<p><em>Status:</em> first bounded by the landing budget (<code>metadata.landing</code>), then
+resolved by removal: hub-verify was deleted on 2026-10-01, so there is no
+<code>waiting_for_hub_verify</code> branch left to trap a task. A task that was waiting on
+a hub-verify review when that change deployed is decided from its worker
+evidence on the next tick, or moved to BLOCKED with
+<code>reason="review_evidence_not_verifiable"</code> when that evidence had deferred its
+tests to the hub.</p>
 <h2 id="ruled-out-hypotheses">Ruled-out hypotheses<a class="headerlink" href="#ruled-out-hypotheses" title="Permanent link">&para;</a></h2>
 <h3 id="r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3">R1 — cursor starvation / durable-cursor parking (task hypothesis 3)<a class="headerlink" href="#r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3" title="Permanent link">&para;</a></h3>
 <p><code>advance_default_review_workflows</code> pages by <code>(priority DESC, created_at, id)</code> and
@@ -2011,12 +2020,8 @@ not the lease itself.) <em>Pinned by
    in-process queue that may be <code>None</code>. A dropped nudge must be observable — the
    no-op branch should record a diagnostic, not return silently
    (<code>src/mac/services.py:2378</code>).</li>
-<li><strong>Bound the <code>waiting_for_hub_verify</code> loop (C2).</strong> Add a per-review attempt
-   ceiling / age cap so a verify that never converges retracts the review and
-   re-selects a reviewer (mirroring the existing
-   <code>reviewer_protocol_failure:hub_verdict_invalid</code> retraction at
-   <code>src/mac/services.py:26884</code>) instead of returning <code>waiting_for_hub_verify</code>
-   forever. Emit a warning once, not once per tick.</li>
+<li><strong>Bound the <code>waiting_for_hub_verify</code> loop (C2).</strong> Superseded: hub-verify
+   and the loop were deleted.</li>
 </ol>
 <p>Both fixes are behavioral and belong to the parent's sibling fix tasks; this
 child only characterizes and pins the current behavior.</p>

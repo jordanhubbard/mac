@@ -2490,10 +2490,10 @@ re-add it. If darwin confinement needs strengthening, strengthen it here — a
 <code>sandbox-exec</code> profile or a hardened launchd job — not by filtering data
 elsewhere in the system.</p>
 <h2 id="verifier-resources">Verifier resources<a class="headerlink" href="#verifier-resources" title="Permanent link">&para;</a></h2>
-<p>The hub runs pushed repository code on its configured Linux OpenShell gateway.
-A macOS hub may own the CLI/tunnel connection, but does not host that runtime.
-The same verifier execution path serves independent review and projected-merge
-publication checks.</p>
+<p>Verifiers run repository code on the configured Linux OpenShell gateway.
+A macOS host may own the CLI/tunnel connection, but does not host that runtime.
+The same verifier execution path serves the worker's pre-push verification
+(whose result is the review verdict) and projected-merge publication checks.</p>
 <p><code>MAC_HUB_VERIFY_PROFILE</code> is an opt-in setting on each hub and Linux OpenShell
 worker process. Unset, empty,
 or <code>default</code> retains the driver's existing behavior. <code>bounded-tmpfs</code> requests
@@ -3091,7 +3091,7 @@ usernames, hostnames, tokens, Slack team names, or local fleet identities.</p>
 </ul>
 <h3 id="openshell-0072-compatibility-validated-2026-07-04">OpenShell 0.0.72 compatibility — validated 2026-07-04<a class="headerlink" href="#openshell-0072-compatibility-validated-2026-07-04" title="Permanent link">&para;</a></h3>
 <p>OpenShell 0.0.72 has been validated against all three MAC sandbox surfaces
-(executor sandbox create, hub-verify tar-upload verify, gateway confinement).
+(executor sandbox create, verifier tar-upload verify, gateway confinement).
 The fleet pin was advanced from 0.0.62 to 0.0.72 in bootstrap-openshell.sh,
 openshell_reconcile.py, and cli.py. The existing mac-hermes-policy.yaml
 template is fully forward-compatible; no policy adjustments are needed.</p>

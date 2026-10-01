@@ -492,10 +492,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#publication-and-the-merge-queue" class="md-nav__link">
+  <a href="#publication-the-serial-land-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Publication and the merge queue
+        Publication: the serial land loop
       
     </span>
   </a>
@@ -1933,10 +1933,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#publication-and-the-merge-queue" class="md-nav__link">
+  <a href="#publication-the-serial-land-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Publication and the merge queue
+        Publication: the serial land loop
       
     </span>
   </a>
@@ -2023,7 +2023,7 @@ local disk is scratch, and the ledger is the truth.</p>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        DB[(&quot;PostgreSQL&lt;br/&gt;the ledger&quot;)]
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        SWEEP[&quot;publication worker&lt;br/&gt;review → publish&quot;]
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        RET[&quot;retention loop&quot;]
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        MQ[&quot;native merge queue&quot;]
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        LAND[&quot;serial land loop&lt;br/&gt;one landing per repository&quot;]
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    end
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    subgraph Workers[&quot;Worker agents (many)&quot;]
@@ -2040,7 +2040,7 @@ local disk is scratch, and the ledger is the truth.</p>
 <a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    API --- DB
 <a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    SWEEP --- DB
 <a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    RET --- DB
-<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    MQ --- DB
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    LAND --- DB
 <a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    W1 --&gt;|heartbeat, claim-next| API
 <a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>    W1 --&gt; SB --&gt; CA
 <a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>    SWEEP --&gt;|open / merge PR| FORGE
@@ -2091,7 +2091,6 @@ runtimes, AgentBus, observability, memory, reviews, publications.</p>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    MACHINE ||--o{ AGENT : hosts
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    AGENT ||--o{ LEASE : holds
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    FLEET ||--o{ AGENT : registers
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    TASK ||--o{ MERGE_QUEUE_ENTRY : &quot;lands through&quot;
 </code></pre></div>
 <h2 id="actors">Actors<a class="headerlink" href="#actors" title="Permanent link">&para;</a></h2>
 <p>An <strong>actor</strong> is anything that can change the ledger. Naming them matters
@@ -2120,34 +2119,42 @@ from <code>TASK_TRANSITIONS</code> in <code>src/mac/models.py</code>:</p>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    open --&gt; claimed
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    claimed --&gt; running
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    running --&gt; needs_review
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    needs_review --&gt; reviewing
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    reviewing --&gt; completed
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    open --&gt; waiting
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    open --&gt; blocked
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    running --&gt; blocked
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    running --&gt; needs_input
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    needs_input --&gt; open
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    blocked --&gt; open
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    waiting --&gt; open
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    running --&gt; failed
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    reviewing --&gt; failed
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    failed --&gt; open
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>    open --&gt; cancelled
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>    cancelled --&gt; open
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>    completed --&gt; [*]
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    needs_review --&gt; completed
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    needs_review --&gt; open
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    needs_review --&gt; reviewing
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    reviewing --&gt; completed
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    open --&gt; waiting
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    open --&gt; blocked
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    running --&gt; blocked
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    running --&gt; needs_input
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    needs_input --&gt; open
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    blocked --&gt; open
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    waiting --&gt; open
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    running --&gt; failed
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>    reviewing --&gt; failed
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>    failed --&gt; open
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    open --&gt; cancelled
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>    cancelled --&gt; open
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>    completed --&gt; [*]
 </code></pre></div>
 <p>Two properties surprise people, and both are deliberate:</p>
 <ul>
 <li><strong><code>completed</code> is the only truly terminal state.</strong> <code>failed</code> and <code>cancelled</code>
   both allow <code>-&gt; open</code>, because a task that died is often a task to retry.</li>
-<li><strong>You cannot jump to <code>completed</code>.</strong> It is reachable only from <code>reviewing</code>,
-  and only with durable canonical integration proof — a merged commit on the
-  canonical branch. <code>mac task force-complete</code> exists as audited break-glass and
-  still refuses without that proof.</li>
+<li><strong>You cannot jump to <code>completed</code>.</strong> It is reachable only from review
+  (<code>needs_review</code>, or <code>reviewing</code>), only with an approved review, and only with
+  durable canonical integration proof — a merged commit on the canonical
+  branch. <code>mac task force-complete</code> exists as audited break-glass and still
+  refuses without that proof.</li>
 </ul>
+<p>The default workflow never enters <code>reviewing</code>: the hub-reviewer approves from
+the worker's verified evidence and the land loop publishes straight from
+<code>needs_review</code> (a rejection or a rebase send-back reopens the task). Only a
+human-requested review (<code>POST /tasks/{id}/reviews</code>) moves a task to
+<code>reviewing</code>; older rows in that state still complete through the land loop.</p>
 <h2 id="how-work-actually-flows">How work actually flows<a class="headerlink" href="#how-work-actually-flows" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sequenceDiagram
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    participant H as Human
@@ -2170,25 +2177,27 @@ from <code>TASK_TRANSITIONS</code> in <code>src/mac/models.py</code>:</p>
 <p>The lease is the concurrency primitive: one live lease per task, renewed by
 heartbeat, reclaimed on expiry. A worker that dies mid-task loses its lease and
 the task returns to the pool rather than being stranded.</p>
-<h2 id="publication-and-the-merge-queue">Publication and the merge queue<a class="headerlink" href="#publication-and-the-merge-queue" title="Permanent link">&para;</a></h2>
-<p>GitHub merge queues are an <strong>organization-only</strong> feature, so a personal
-repository gets no forge-side serialization. mac provides its own
-(<code>src/mac/native_merge_queue.py</code>): an ordered queue per
-<code>(repository, canonical branch)</code> with an AIMD speculation window.</p>
-<p>The safety property is structural rather than bookkeeping: each entry records
-the <em>tree</em> it was tested against, and the land gate refuses unless the
-canonical tip's tree is byte-identical. Trees rather than SHAs is what survives
-a squash merge.</p>
+<h2 id="publication-the-serial-land-loop">Publication: the serial land loop<a class="headerlink" href="#publication-the-serial-land-loop" title="Permanent link">&para;</a></h2>
+<p>Approved work lands one change at a time per <code>(repository, canonical branch)</code>,
+under a PostgreSQL advisory lock. One test gate decides each landing: the
+repository's required status checks where it has them, otherwise the worker's
+own verifier run. The hub runs no tests itself.</p>
+<p>Without required checks, the worker's result covers the landed tree only while
+the canonical tip is still the base it verified. A moved tip, or a conflict
+with it, sends the same task back to its worker to rebase and retest, at most
+twice before the task blocks.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>graph LR
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    A[&quot;approved task&quot;] --&gt; B[&quot;claim_slot&quot;]
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    B --&gt; C{&quot;window has room?&quot;}
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    C --&gt;|no| D[&quot;defer&lt;br/&gt;keeps its place&quot;]
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    C --&gt;|yes| E[&quot;test on projected base&quot;]
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    E --&gt; F{&quot;tree matches tip?&quot;}
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    F --&gt;|no| G[&quot;evict, with a reason&quot;]
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    F --&gt;|yes| H[&quot;merge → landed&quot;]
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    H --&gt; I[&quot;window += 1&quot;]
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    G --&gt; J[&quot;window ÷ 2&quot;]
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    A[&quot;approved task&quot;] --&gt; L[&quot;land lock&lt;br/&gt;per repository&quot;]
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    L --&gt; C{&quot;conflicts with tip?&quot;}
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    C --&gt;|yes| R[&quot;send back:&lt;br/&gt;rebase + retest&quot;]
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    C --&gt;|no| K{&quot;required checks?&quot;}
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    K --&gt;|yes| P{&quot;checks&quot;}
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    P --&gt;|pending| W[&quot;wait&quot;]
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    P --&gt;|failed| B[&quot;blocked&quot;]
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    P --&gt;|passed| M[&quot;squash merge → landed&quot;]
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    K --&gt;|no| T{&quot;tip = verified base?&quot;}
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    T --&gt;|no| R
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    T --&gt;|yes| M
 </code></pre></div>
 <h2 id="sandboxing">Sandboxing<a class="headerlink" href="#sandboxing" title="Permanent link">&para;</a></h2>
 <p>Task execution is confined by OpenShell, and the gate fails closed: if no
