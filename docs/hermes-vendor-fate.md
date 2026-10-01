@@ -203,3 +203,12 @@ A new node's Hermes gateway now goes through the same transactional
 prepare/verify/finalize/withdraw cutover `deploy-mac-fleet.sh` already
 orchestrates for OpenClaw -- no more manual `install-hermes-gateway.sh
 prepare` runs against individual nodes.
+
+## Update (2026-10-01): fleet orchestration deleted
+
+`deploy/deploy-mac-fleet.sh` and `deploy/fleet-node-install.sh` have been
+deleted; hosts are updated with `scripts/fleet-update` (see
+[Updating the fleet with fleet-update](operations/fleet-update.md)). A new
+node's Hermes gateway is again prepared by running
+`deploy/hermes/install-hermes-gateway.sh prepare` on it, as the "Provision a new
+host" checklist says; `scripts/fleet-update --hermes` restarts it on update.

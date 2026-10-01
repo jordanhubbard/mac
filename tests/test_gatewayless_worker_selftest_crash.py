@@ -17,13 +17,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _startup_self_test_source() -> str:
     """Extract the embedded mac-agent-startup-self-test Python (the inner PY heredoc)."""
-    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    script = (ROOT / "deploy" / "bin" / "mac-agent-startup-self-test").read_text(encoding="utf-8")
     match = re.search(
         r"exec \"\$selftest_python\" - <<'PY'\n(?P<source>.*?)\nPY\n",
         script,
         re.DOTALL,
     )
-    assert match, "self-test PY heredoc not found in fleet-node-install.sh"
+    assert match, "self-test PY heredoc not found in deploy/bin/mac-agent-startup-self-test"
     return match.group("source")
 
 

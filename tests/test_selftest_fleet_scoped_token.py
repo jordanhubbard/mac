@@ -4,7 +4,7 @@ Crash fingerprint (crash_1473ec862b1b4c52b99c26407eac9129): on a node migrated t
 fleet-scoped credentials (mac-g55y) the correct hub bearer lives in
 ``MAC_WORKER_TOKEN__<FLEET>`` while the legacy flat ``MAC_WORKER_TOKEN`` is stale
 or absent. The embedded ``mac-agent-startup-self-test`` Python heredoc and the
-``mac-agent-service`` wrapper in ``deploy/fleet-node-install.sh`` previously read
+``mac-agent-service`` wrapper (now ``deploy/bin/``) previously read
 the flat form only, so the startup heartbeat was rejected with ``HTTP Error 403``.
 
 Both call sites must now mirror :mod:`mac.fleet_env`: prefer the fleet-scoped
@@ -24,11 +24,14 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
+SCRIPTS = (
+    ROOT / "deploy" / "bin" / "mac-agent-startup-self-test",
+    ROOT / "deploy" / "bin" / "mac-agent-service",
+)
 
 
 def _script_text() -> str:
-    return SCRIPT.read_text(encoding="utf-8")
+    return "\n".join(path.read_text(encoding="utf-8") for path in SCRIPTS)
 
 
 def _self_test_resolver() -> "callable":

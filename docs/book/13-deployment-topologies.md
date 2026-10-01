@@ -21,7 +21,7 @@ Spokes are API clients. They must not retain a private `MAC_DB` or
 ```bash
 test -f "$DOCS_ROOT/deploy/systemd/mac.service"
 test -f "$DOCS_ROOT/Dockerfile"
-bash "$DOCS_ROOT/deploy/deploy-mac-fleet.sh" --help >/dev/null
+test -x "$DOCS_ROOT/scripts/fleet-update"
 ```
 
 Choose the smallest topology that satisfies availability and write-load needs.

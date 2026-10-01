@@ -137,14 +137,6 @@ def test_d_snapshot_obligation_and_revendor_job_are_gone() -> None:
     assert not re.search(r"^\s*(?:COPY|RUN|ADD).*\.pth", containerfile, flags=re.MULTILINE)
 
 
-def test_deploy_env_does_not_default_agent_dir_to_removed_vendor_tree() -> None:
-    source = (SRC_MAC / "deploy_env.py").read_text(encoding="utf-8")
-    path_values = source.split("def _path_values", 1)[1].split("\ndef ", 1)[0]
-    assert '"MAC_HERMES_AGENT_DIR"' not in path_values
-    assert "'MAC_HERMES_AGENT_DIR'" not in path_values
-    assert "/_hermes" not in path_values
-
-
 def test_adr_0001_records_vendoring_premise_ended() -> None:
     text = ADR_0001.read_text(encoding="utf-8")
     assert "Superseded" in text

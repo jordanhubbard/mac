@@ -30,9 +30,6 @@ request and response definitions.
 | `GET` | `/agents` | List Agents |
 | `POST` | `/agents` | Register Agent |
 | `POST` | `/agents/bulk` | Bulk Update Agents |
-| `GET` | `/agents/dispatch-hold/epochs/{epoch_id}` | Dispatch Hold Epoch Status |
-| `POST` | `/agents/dispatch-hold/release-batch` | Release Dispatch Holds Batch |
-| `POST` | `/agents/dispatch-hold/transition-batch` | Transition Dispatch Holds Batch |
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |
 | `GET` | `/agents/{agent_id}` | Get Agent |
 | `PUT` | `/agents/{agent_id}` | Update Agent |

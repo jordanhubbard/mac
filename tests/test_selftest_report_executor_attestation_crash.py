@@ -13,8 +13,8 @@ self-test exit 0 while the service keeps running.  A genuine blocking
 misconfiguration (invalid ``MAC_OPENSHELL_CREATE_ARGS`` or a non-executable
 ``MAC_OPENSHELL_BIN``) must still fail closed with exit 1 / status ``failed``.
 
-This extracts the embedded ``mac-agent-startup-self-test`` Python body from
-``install_mac_agent_wrapper`` in ``deploy/fleet-node-install.sh`` and execs it in
+This extracts the embedded Python body from
+``deploy/bin/mac-agent-startup-self-test`` and execs it in
 a temporary HOME configured as an OpenShell loop worker
 (``MAC_OPENSHELL_SANDBOX`` truthy, ``MAC_WORKER_MODE=loop``) with the mandatory
 probes stubbed to pass, following the extract-and-run pattern used by
@@ -35,13 +35,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _startup_self_test_source() -> str:
     """Extract the embedded mac-agent-startup-self-test Python (the inner PY heredoc)."""
-    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    script = (ROOT / "deploy" / "bin" / "mac-agent-startup-self-test").read_text(encoding="utf-8")
     match = re.search(
         r"exec \"\$selftest_python\" - <<'PY'\n(?P<source>.*?)\nPY\n",
         script,
         re.DOTALL,
     )
-    assert match, "self-test PY heredoc not found in fleet-node-install.sh"
+    assert match, "self-test PY heredoc not found in deploy/bin/mac-agent-startup-self-test"
     return match.group("source")
 
 

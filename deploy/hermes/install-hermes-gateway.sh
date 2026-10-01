@@ -464,10 +464,8 @@ PY_VERIFY
 
 ensure_chat_gateway_impl_env() {
   # mac-agent's own startup self-test derives its OpenClaw-required-or-not
-  # branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env (see
-  # deploy/fleet-node-install.sh's embedded self-test:
-  # `openclaw_required = MAC_CHAT_GATEWAY_IMPL == "openclaw"`) -- but only
-  # fleet-node-install.sh's own full deploy path ever wrote that variable.
+  # branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env -- but only the
+  # old fleet installer's full deploy path ever wrote that variable.
   # A cutover run through this standalone installer (as every node's Hermes
   # cutover was, this session) never touched it, so mac.env kept claiming
   # "openclaw" after the gateway was gone. Confirmed live: mac-agent then

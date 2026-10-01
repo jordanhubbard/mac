@@ -193,9 +193,8 @@ def test_two_fleets_in_one_env_file_do_not_collide(tmp_path: Path):
     env_path = tmp_path / ".env"
     env_path.write_text("MAC_API_TOKEN=rocky-token\n")
     fleet_env.migrate_env_file(env_path, "rocky", keep_legacy=False)
-    # Now jordanh-hub's setup writes its token — into the SCOPED form,
-    # not the legacy form. (This mirrors what the updated setup-fleet.py
-    # would do.)
+    # Now jordanh-hub's token is written in the SCOPED form, not the
+    # legacy form.
     contents = env_path.read_text() + "MAC_API_TOKEN__JORDANH_HUB=jh-token\n"
     env_path.write_text(contents)
     parsed = fleet_env.parse_env_file(env_path)

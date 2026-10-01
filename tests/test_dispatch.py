@@ -1159,7 +1159,7 @@ def test_remote_dispatch_memory_list_via_cli_uses_hub(monkeypatch):
     assert url == "http://hub.example:8789/memory/remembered?project=mac"
 
 
-def test_remote_dispatch_fleet_refresh_source_via_cli_uses_hub(monkeypatch):
+def test_remote_dispatch_agentbus_repo_update_via_cli_uses_hub(monkeypatch):
     import json as _json
 
     from mac.cli import main
@@ -1194,10 +1194,10 @@ def test_remote_dispatch_fleet_refresh_source_via_cli_uses_hub(monkeypatch):
                 "--hub-url",
                 "http://hub.example:8789",
                 "admin",
-                "fleet",
-                "refresh-source",
-                "--sender-agent-id",
+                "agentbus",
+                "repo-update",
                 "agent_hub",
+                "--all-agents",
                 "--request-id",
                 "refresh-1",
                 "--restart-service",

@@ -1172,25 +1172,6 @@ class DispatchHoldAcquireRequest(BaseModel):
     expected_reason: Optional[str] = None
 
 
-class DispatchHoldBatchItem(BaseModel):
-    agent_id: str
-    reason: str
-    generation: str
-    baseline_seen: str
-    principal_id: Optional[str] = None
-    require_authenticated: bool = True
-    require_report_executor: bool = False
-
-
-class DispatchHoldBatchReleaseRequest(BaseModel):
-    epoch_id: str
-    holds: List[DispatchHoldBatchItem] = Field(default_factory=list)
-
-
-class DispatchHoldBatchTransitionRequest(DispatchHoldBatchReleaseRequest):
-    successor_reason: str
-
-
 class BreakGlassAuthorizeRequest(BaseModel):
     agent_id: str
     reason: str
@@ -4283,7 +4264,7 @@ def create_app(
         to write a uvicorn access line for every request, synchronously, on the
         event loop; that log reached 626MB / 5.4M lines and a thread dump caught
         the loop inside logging flush() instead of serving, which is what got
-        the hub restarted mid-publication (see deploy/fleet-node-install.sh).
+        the hub restarted mid-publication (see deploy/bin/mac-service).
         So: nothing is written on the normal path, and a slow request costs one
         line.
 
@@ -6105,76 +6086,6 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         return cp.roles.unassign_role(agent_id).to_dict()
-
-    @app.post("/agents/dispatch-hold/release-batch")
-    def release_dispatch_holds_batch(
-        body: DispatchHoldBatchReleaseRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Commit an exact fleet release epoch as one database transaction."""
-
-        principal.require_admin()
-        agents = cp.release_agent_dispatch_holds_batch(
-            ((item.agent_id, item.reason) for item in body.holds),
-            epoch_id=body.epoch_id,
-            expectations={
-                item.agent_id: {
-                    "generation": item.generation,
-                    "baseline_seen": item.baseline_seen,
-                    "principal_id": item.principal_id,
-                    "require_authenticated": item.require_authenticated,
-                    "require_report_executor": item.require_report_executor,
-                }
-                for item in body.holds
-            },
-        )
-        return {
-            "released": True,
-            "epoch_id": body.epoch_id,
-            "agents": [agent.to_dict() for agent in agents],
-        }
-
-    @app.get("/agents/dispatch-hold/epochs/{epoch_id}")
-    def dispatch_hold_epoch_status(
-        epoch_id: str,
-        identity_sha256: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Read one durable fleet-release epoch without replaying it."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.agent_dispatch_hold_epoch_status(epoch_id, identity_sha256)
-
-    @app.post("/agents/dispatch-hold/transition-batch")
-    def transition_dispatch_holds_batch(
-        body: DispatchHoldBatchTransitionRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Atomically hand an exact fleet hold epoch to one successor hold."""
-
-        principal.require_admin()
-        agents = cp.release_agent_dispatch_holds_batch(
-            ((item.agent_id, item.reason) for item in body.holds),
-            epoch_id=body.epoch_id,
-            expectations={
-                item.agent_id: {
-                    "generation": item.generation,
-                    "baseline_seen": item.baseline_seen,
-                    "principal_id": item.principal_id,
-                    "require_authenticated": item.require_authenticated,
-                    "require_report_executor": item.require_report_executor,
-                }
-                for item in body.holds
-            },
-            successor_reason=body.successor_reason,
-        )
-        return {
-            "transitioned": True,
-            "epoch_id": body.epoch_id,
-            "successor_reason": body.successor_reason.strip(),
-            "agents": [agent.to_dict() for agent in agents],
-        }
 
     @app.post("/agents/{agent_id}/dispatch-hold")
     def set_dispatch_hold(

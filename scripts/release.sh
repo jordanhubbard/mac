@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Create an immutable MAC release from main and optionally roll it out.
+# Create an immutable MAC release from main. Roll it out with scripts/fleet-update.
 set -euo pipefail
 
-usage() { echo 'usage: scripts/release.sh [major|minor|patch] --docs-dir DIR [--fleet NAME]'; }
+usage() { echo 'usage: scripts/release.sh [major|minor|patch] --docs-dir DIR'; }
 die() { echo "release: $*" >&2; exit 1; }
 
-bump=patch; fleet=""; docs_dir=""
+bump="patch"; docs_dir=""
 while (($#)); do case "$1" in
   major|minor|patch) bump="$1";;
   --docs-dir) shift; (($#)) || die '--docs-dir requires a path'; docs_dir="$1";;
-  --fleet) shift; (($#)) || die '--fleet requires a name'; fleet="$1";;
   -h|--help) usage; exit 0;;
   *) die "unknown argument: $1";;
 esac; shift; done
@@ -60,5 +59,4 @@ git pull --ff-only origin main
 git tag -a "$tag" -m "Release $tag"
 git push origin "$tag"
 gh run watch "$(gh run list --workflow release.yml --branch "$tag" --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
-if [ -n "$fleet" ]; then make deploy HUB="$fleet"; fi
 echo "release: $tag is published"

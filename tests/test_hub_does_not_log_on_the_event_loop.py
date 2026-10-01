@@ -30,8 +30,8 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def test_the_fleet_installer_starts_hub_serve():
-    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+def test_the_hub_wrapper_starts_hub_serve():
+    script = (ROOT / "deploy" / "bin" / "mac-service").read_text(encoding="utf-8")
 
     launch = [
         line
@@ -39,7 +39,7 @@ def test_the_fleet_installer_starts_hub_serve():
         if "mac.hub_serve" in line and line.strip().startswith("exec")
     ]
 
-    assert launch, "no mac.hub_serve launch line found in the installer"
+    assert launch, "no mac.hub_serve launch line found in deploy/bin/mac-service"
 
 
 def test_hub_serve_disables_the_access_log():
@@ -65,10 +65,9 @@ def test_the_hub_launcher_raises_its_descriptor_limit():
     mac-agent-service has always raised this limit. The hub, which needs it far
     more, never did.
     """
-    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    script = (ROOT / "deploy" / "bin" / "mac-service").read_text(encoding="utf-8")
 
-    launcher = script[script.index("HERMES_REDACT_SECRETS") - 2000 :]
-    launcher = launcher[: launcher.index("mac.hub_serve") + 40]
+    launcher = script[: script.index("mac.hub_serve") + 40]
 
     assert "ulimit -n" in launcher
     assert "MAC_SERVICE_NOFILE_LIMIT" in launcher

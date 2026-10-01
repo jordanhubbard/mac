@@ -70,7 +70,7 @@ REQUEST_FIELDS = (
 )
 
 #: MAC advertises toolchains as bare capability strings, probed inside the
-#: sandbox (see the toolchain block in deploy/fleet-node-install.sh). Only the
+#: sandbox. Only the
 #: probed set can be required; asking for anything else produces a task no agent
 #: can claim, which is how "permanently undispatchable while eight idle agents
 #: watched" happened once already.

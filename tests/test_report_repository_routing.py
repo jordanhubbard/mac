@@ -712,15 +712,14 @@ def test_retargeted_python_symlink_cannot_change_approved_invocation(
 
 
 def test_deployed_report_wrapper_execs_only_approved_absolute_artifacts():
-    installer = (
-        Path(__file__).resolve().parents[1] / "deploy" / "fleet-node-install.sh"
+    block = (
+        Path(__file__).resolve().parents[1] / "deploy" / "bin" / "mac-task-executor"
     ).read_text(encoding="utf-8")
-    block = installer.split("cat > \"$executor\" <<'EOF'", 1)[1].split("\nEOF", 1)[0]
-    assert block.startswith("\n#!/bin/bash")
+    assert block.startswith("#!/bin/bash")
     assert '. "$HOME/.mac/mac.env"' not in block
     assert 'exec "$MAC_TASK_EXECUTOR_PYTHON" "$MAC_TASK_EXECUTOR_SCRIPT"' in block
     assert 'exec "$HOME/.mac/venv/bin/python"' not in block
-    assert "mac-report-python" not in installer
+    assert "mac-report-python" not in block
 
 
 def test_stale_configured_report_python_falls_back_to_running_interpreter(

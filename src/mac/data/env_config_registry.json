@@ -103,17 +103,6 @@
   },
   {
     "default": null,
-    "description": "Agent setting: agent footprint reinstall.",
-    "family": "agent",
-    "name": "MAC_AGENT_FOOTPRINT_REINSTALL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Agent setting: agent gen audio base url.",
     "family": "agent",
     "name": "MAC_AGENT_GEN_AUDIO_BASE_URL",
@@ -130,8 +119,6 @@
     "name": "MAC_AGENT_GEN_AUDIO_MODELS",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -143,9 +130,6 @@
     "name": "MAC_AGENT_GEN_AUDIO_PORT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "int"
@@ -157,20 +141,7 @@
     "name": "MAC_AGENT_GEN_BASE_URL",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent gen hf home.",
-    "family": "agent",
-    "name": "MAC_AGENT_GEN_HF_HOME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -181,8 +152,6 @@
     "name": "MAC_AGENT_GEN_HOST",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -194,8 +163,6 @@
     "name": "MAC_AGENT_GEN_MODEL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/local_gen_catalog.py",
       "src/mac/worker.py"
     ],
@@ -208,9 +175,6 @@
     "name": "MAC_AGENT_GEN_PORT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "int"
@@ -233,8 +197,6 @@
     "name": "MAC_AGENT_GEN_VIDEO_MODELS",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -246,9 +208,6 @@
     "name": "MAC_AGENT_GEN_VIDEO_PORT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "int"
@@ -260,7 +219,6 @@
     "name": "MAC_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac-agent-journal.service",
@@ -269,7 +227,6 @@
       "scripts/run-contract-tests.sh",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
-      "src/mac/deploy_env.py",
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
@@ -291,24 +248,12 @@
   },
   {
     "default": null,
-    "description": "Agent setting: agent launchd label.",
-    "family": "agent",
-    "name": "MAC_AGENT_LAUNCHD_LABEL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Agent setting: agent media routes.",
     "family": "agent",
     "name": "MAC_AGENT_MEDIA_ROUTES",
     "retired": false,
     "sources": [
       "deploy/local-gen/openai_image_server.py",
-      "src/mac/deploy_env.py",
       "src/mac/local_gen_catalog.py",
       "src/mac/worker.py"
     ],
@@ -321,34 +266,11 @@
     "name": "MAC_AGENT_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py",
       "scripts/run-contract-tests.sh",
       "src/mac/journal.py",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent plist backup.",
-    "family": "agent",
-    "name": "MAC_AGENT_PLIST_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent plist mutated.",
-    "family": "agent",
-    "name": "MAC_AGENT_PLIST_MUTATED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -381,7 +303,6 @@
     "name": "MAC_AGENT_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -396,62 +317,6 @@
       "src/mac/services.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent startup self test.",
-    "family": "agent",
-    "name": "MAC_AGENT_STARTUP_SELF_TEST",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent startup self test report.",
-    "family": "agent",
-    "name": "MAC_AGENT_STARTUP_SELF_TEST_REPORT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent startup self test timeout.",
-    "family": "agent",
-    "name": "MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent unit backup.",
-    "family": "agent",
-    "name": "MAC_AGENT_UNIT_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent unit mutated.",
-    "family": "agent",
-    "name": "MAC_AGENT_UNIT_MUTATED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -471,9 +336,7 @@
     "name": "MAC_ALLOW_UNSANDBOXED_YOLO",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/openshell_supervisor.py"
     ],
@@ -508,25 +371,19 @@
     "name": "MAC_API_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac.service",
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/agent_migrate.py",
       "src/mac/api.py",
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/fleet_creds.py",
       "src/mac/fleet_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
       "src/mac/ide_launcher.py",
@@ -571,7 +428,6 @@
     "name": "MAC_API_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/cli.py",
       "src/mac/dispatch.py",
@@ -600,7 +456,6 @@
     "name": "MAC_ATTESTATION_KEY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/deployment_attestation.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_sandbox.py",
@@ -670,10 +525,8 @@
     "name": "MAC_BIND_HOST",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/systemd/mac.service",
       "src/mac/api.py",
-      "src/mac/deploy_env.py",
       "src/mac/hub_serve.py",
       "src/mac/mesh_bind.py",
       "src/mac/worker.py"
@@ -797,9 +650,7 @@
     "name": "MAC_CHAT_GATEWAY_IMPL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -845,8 +696,7 @@
     "retired": false,
     "sources": [
       "src/mac/api.py",
-      "src/mac/client_principals.py",
-      "src/mac/deploy_env.py"
+      "src/mac/client_principals.py"
     ],
     "type": "str"
   },
@@ -1170,17 +1020,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: contract description.",
-    "family": "core",
-    "name": "MAC_CONTRACT_DESCRIPTION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: contract git.",
     "family": "core",
     "name": "MAC_CONTRACT_GIT",
@@ -1192,45 +1031,12 @@
   },
   {
     "default": null,
-    "description": "Core setting: contract marker.",
-    "family": "core",
-    "name": "MAC_CONTRACT_MARKER",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: contract runtime venv.",
     "family": "core",
     "name": "MAC_CONTRACT_RUNTIME_VENV",
     "retired": false,
     "sources": [
       "scripts/run-contract-tests.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: contract snapshot.",
-    "family": "core",
-    "name": "MAC_CONTRACT_SNAPSHOT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: contract source.",
-    "family": "core",
-    "name": "MAC_CONTRACT_SOURCE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1252,7 +1058,6 @@
     "name": "MAC_CONTROL_PLANE_ROLE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/hub_serve.py",
       "src/mac/pg_backup_scheduler.py",
@@ -1336,12 +1141,9 @@
     "name": "MAC_DATABASE_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/install-postgres-service.sh",
       "deploy/systemd/mac.service",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py",
@@ -1360,12 +1162,9 @@
     "name": "MAC_DB",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac.service",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/mac_paths.py",
       "src/mac/router_service.py",
@@ -1444,717 +1243,13 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy agent.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen audio models.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen audio port.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_AUDIO_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen base url.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_BASE_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen hf home.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_HF_HOME",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen host.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_HOST",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen model.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen port.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen torch index url.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen video models.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Agent Generation setting: deploy agent gen video port.",
-    "family": "deploy-agent-generation",
-    "name": "MAC_DEPLOY_AGENT_GEN_VIDEO_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy agent media routes.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_AGENT_MEDIA_ROUTES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy allow degraded services.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ALLOW_DEGRADED_SERVICES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy allow legacy cas bootstrap.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy allow legacy worker token.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy allow local openshell image build.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy allow sample config.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ALLOW_SAMPLE_CONFIG",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy allow untested image.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ALLOW_UNTESTED_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy api timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_API_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy archive.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ARCHIVE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy attestation manifest.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ATTESTATION_MANIFEST",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy attestation probe b64.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ATTESTATION_PROBE_B64",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy attest agent.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ATTEST_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy attest generation.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ATTEST_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy attest rev.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ATTEST_REV",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy attest ts.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ATTEST_TS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy authorize existing schema baseline.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy authorize legacy schema prune.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy barrier file.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_BARRIER_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy chat gateway impl.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CHAT_GATEWAY_IMPL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy clear repo update blocker.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy configured agent ids.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CONFIGURED_AGENT_IDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy container runtime paths.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CONTAINER_RUNTIME_PATHS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy controller nonce.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CONTROLLER_NONCE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-cohort-transaction.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy controller pid.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CONTROLLER_PID",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-cohort-transaction.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy control bind host.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CONTROL_BIND_HOST",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy control port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CONTROL_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon command timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon inject receipt post replace failure.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_INJECT_RECEIPT_POST_REPLACE_FAILURE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon lease drain timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon preservation timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon quiescence poll seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon quiescence timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon runtime paths.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_RUNTIME_PATHS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon runtime paths configured.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_RUNTIME_PATHS_CONFIGURED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon test mode.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_TEST_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy daemon total timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy database url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DATABASE_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy defer agent restart.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DEFER_AGENT_RESTART",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy defer clear drain.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DEFER_CLEAR_DRAIN",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy direct hub.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DIRECT_HUB",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy drain mode.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DRAIN_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy drain poll seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DRAIN_POLL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy drain timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy env file.",
     "family": "deployment",
     "name": "MAC_DEPLOY_ENV_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "scripts/purge-dead-tokenhub-keys.sh",
       "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy fence ready.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FENCE_READY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy firecrawl bind addr.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FIRECRAWL_BIND_ADDR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy firecrawl install.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FIRECRAWL_INSTALL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy firecrawl port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FIRECRAWL_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy firecrawl url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FIRECRAWL_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy first hub bootstrap.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FIRST_HUB_BOOTSTRAP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2165,37 +1260,8 @@
     "name": "MAC_DEPLOY_FLEETS_CONFIG",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "scripts/prepublish-fleet-qualification.py",
-      "scripts/setup-fleet.py",
-      "src/mac/fleet_setup.py",
       "src/mac/hermes_config_surface.py",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy fleet config.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FLEET_CONFIG",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/fleet_setup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy fleet name.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FLEET_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2212,237 +1278,12 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy fleet registry file.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_FLEET_REGISTRY_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": "0",
-    "description": "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, and therefore the whole deploy cohort; unset or `0` records the failure, retains the failed successor for diagnosis, and continues. Non-fatal by default because task execution is OpenShell plus the coding CLI plus mac-agent and none of them consult chat, so a node that cannot post is degraded for conversation and fully capable of work. Set it for a deploy whose purpose is to prove the chat surface.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATEWAY_PROBE_FATAL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate admin token.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_ADMIN_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate adopt reason.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_ADOPT_REASON",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate agent id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate allow missing.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_ALLOW_MISSING",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate baseline.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_BASELINE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate expected principal id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate generation.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate hold reason.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_HOLD_REASON",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate max wait.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_MAX_WAIT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate max wait seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_MAX_WAIT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate phase.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_PHASE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate prior hold reason.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_PRIOR_HOLD_REASON",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate prior owned.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_PRIOR_OWNED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate require authenticated.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate require owned.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_REQUIRE_OWNED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate require report executor.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy gate timeout.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GATE_TIMEOUT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy generation.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GENERATION",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy generation expected.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GENERATION_EXPECTED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -2453,24 +1294,9 @@
     "name": "MAC_DEPLOY_GH_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy github credentials required.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
   },
   {
     "default": null,
@@ -2479,302 +1305,9 @@
     "name": "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "src/mac/fleet_env.py"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy git branch.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GIT_BRANCH",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy git rev.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GIT_REV",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy git url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GIT_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale dns.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_DNS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale fleet url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_FLEET_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale health url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_HEALTH_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale ip prefix.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_IP_PREFIX",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale login server.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_LOGIN_SERVER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale manage.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_MANAGE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale preauthkey.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_PREAUTHKEY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet/config.yaml",
-      "scripts/setup-fleet.py",
-      "src/mac/fleet_setup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale preauth key env.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_ENV",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale preauth key source.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy headscale public addr.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HEADSCALE_PUBLIC_ADDR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hermes gateway base url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HERMES_GATEWAY_BASE_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hermes gateway model.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HERMES_GATEWAY_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hermes gateway provider.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HERMES_GATEWAY_PROVIDER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hermes slack home channel name.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hermes surface b64.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HERMES_SURFACE_B64",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hold adoptions file.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HOLD_ADOPTIONS_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hub agent.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HUB_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/fleet_setup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hub route proof attempts.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HUB_ROUTE_PROOF_ATTEMPTS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hub route proof interval seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HUB_ROUTE_PROOF_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hub tick interval seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
   },
   {
     "default": null,
@@ -2783,24 +1316,8 @@
     "name": "MAC_DEPLOY_HUB_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "scripts/setup-fleet.py",
       "src/mac/fleet_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/ide_launcher.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hub tunnel pubkey.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HUB_TUNNEL_PUBKEY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2811,954 +1328,7 @@
     "name": "MAC_DEPLOY_HUB_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "src/mac/mesh_bind.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy ide handoff file.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_IDE_HANDOFF_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy launchd lifecycle.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LAUNCHD_LIFECYCLE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy lock dir.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LOCK_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy lock guard fd.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LOCK_GUARD_FD",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy lock id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LOCK_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy lock renew seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LOCK_RENEW_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy lock stale seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LOCK_STALE_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy lock takeover.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_LOCK_TAKEOVER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy network hostname prefix.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy network install.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NETWORK_INSTALL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy network provider.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NETWORK_PROVIDER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub control port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_CONTROL_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub fleet name.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_FLEET_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub headscale login server.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub headscale preauth key.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub home channel.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_HOME_CHANNEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub model.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub network provider.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_NETWORK_PROVIDER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub os.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_OS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub supervisor.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy new hub url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NEW_HUB_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy node action.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NODE_ACTION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy node identity sha256.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NODE_IDENTITY_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy node parallelism.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_NODE_PARALLELISM",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openclaw live canary.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENCLAW_LIVE_CANARY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openclaw public identity.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENCLAW_PUBLIC_IDENTITY",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openclaw representation mode.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENCLAW_REPRESENTATION_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openclaw represented by.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENCLAW_REPRESENTED_BY",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openclaw slack account id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENCLAW_SLACK_ACCOUNT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openclaw telegram account id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENCLAW_TELEGRAM_ACCOUNT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell args.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL_ARGS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell effective args.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell enabled.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell required.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell runtime image.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy openshell runtime input sha256.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy os.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_OS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy phase1 required.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PHASE1_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres bind addr.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_BIND_ADDR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres data dir.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_DATA_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres db.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_DB",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres image.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres install.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_INSTALL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy postgres user.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_POSTGRES_USER",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy preflight agent ids b64.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite apply guard seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite bundle.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_BUNDLE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite expectations.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_EXPECTATIONS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite helper.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_HELPER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite helper sha256.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_HELPER_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite max age seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy prerequisite phase budget seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy publication barrier wait seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant bind addr.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_BIND_ADDR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant data dir.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_DATA_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant image.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant install.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_INSTALL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant memory limit.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_MEMORY_LIMIT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy qdrant url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_QDRANT_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy reconcile max retries.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RECONCILE_MAX_RETRIES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy recovery max attempts.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy recovery policy.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RECOVERY_POLICY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-substrate-adopt.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy recovery retry base seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy release commit retries.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RELEASE_COMMIT_RETRIES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy release generation.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RELEASE_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy release plan b64.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RELEASE_PLAN_B64",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy release ts.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RELEASE_TS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy remote phase timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy report agent id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REPORT_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy report required.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REPORT_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy repository ref reconciler grace days.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy repository ref reconciler initial delay seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy repository ref reconciler interval seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy repository ref reconciler mode.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy require firecrawl.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REQUIRE_FIRECRAWL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy require phase1 quiescence.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy require qdrant memory.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REQUIRE_QDRANT_MEMORY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy require release all selected.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy restart generation.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_RESTART_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -3775,370 +1345,11 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy reviewed openshell asset sha256.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy reviewed openshell cli sha256.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy reviewed openshell receipt sha256.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy reviewed openshell version.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy reviewed tool assets.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_REVIEWED_TOOL_ASSETS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy rollback supervisor helper.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_ROLLBACK_SUPERVISOR_HELPER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router audio upstream.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router backend.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_BACKEND",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router default model.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_DEFAULT_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router image upstream.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router port.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_PORT",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router providers.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_PROVIDERS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router url.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router video upstream.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_VIDEO_UPSTREAM",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deploy Router setting: deploy router wildcard models.",
-    "family": "deploy-router",
-    "name": "MAC_DEPLOY_ROUTER_WILDCARD_MODELS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy service action.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SERVICE_ACTION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy service role ops.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SERVICE_ROLE_OPS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy service ts.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SERVICE_TS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy shared services manager agent.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/fleet_setup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy ssh port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SSH_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy ssh session mode.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SSH_SESSION_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy stale lock seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STALE_LOCK_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy startup clear hold.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STARTUP_CLEAR_HOLD",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy state adopted from.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STATE_ADOPTED_FROM",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy state agent existed.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STATE_AGENT_EXISTED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy state id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STATE_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy state owns.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STATE_OWNS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy state reason.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STATE_REASON",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy state require owned.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_STATE_REQUIRE_OWNED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy successor hold reason.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SUCCESSOR_HOLD_REASON",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy supervisor.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy supervisor conf dir.",
     "family": "deployment",
     "name": "MAC_DEPLOY_SUPERVISOR_CONF_DIR",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-postgres-service.sh",
@@ -4155,25 +1366,8 @@
     "name": "MAC_DEPLOY_TAILSCALE_AUTH_KEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet/config.yaml",
       "deploy/install-tailscale.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/fleet_env.py",
-      "src/mac/fleet_setup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy tailscale auth key env.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
+      "src/mac/fleet_env.py"
     ],
     "type": "str"
   },
@@ -4201,47 +1395,12 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy takeover stale lock.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_TAKEOVER_STALE_LOCK",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy target.",
     "family": "deployment",
     "name": "MAC_DEPLOY_TARGET",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "src/mac/mesh_bind.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy test inject openclaw snapshot failure.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_TEST_INJECT_OPENCLAW_SNAPSHOT_FAILURE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy test interrupt after phase2 intent.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_TEST_INTERRUPT_AFTER_PHASE2_INTENT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -4298,299 +1457,6 @@
     "retired": false,
     "sources": [
       "scripts/purge-dead-tokenhub-keys.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy ts.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_TS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav bind addr.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_BIND_ADDR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav enabled.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav install.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_INSTALL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav max upload bytes.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav port.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav public path.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_PUBLIC_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav public url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_PUBLIC_URL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav root.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_ROOT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy webdav url.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WEBDAV_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker allowed projects.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_ALLOWED_PROJECTS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker capabilities.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CAPABILITIES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker claim only canary tasks.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential agent id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential fingerprint.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential id.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential retries.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential retry seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RETRY_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential runtime digest.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RUNTIME_DIGEST",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential source commit.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_SOURCE_COMMIT",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker credential version.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_VERSION",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker identity enforce.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_IDENTITY_ENFORCE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker mode.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker required metadata.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_REQUIRED_METADATA",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker token.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_TOKEN",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -4684,7 +1550,6 @@
     "name": "MAC_EVIDENCE_BLOB_DIR",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/evidence_blobs.py"
     ],
     "type": "str"
@@ -4762,83 +1627,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: finalize agent.",
-    "family": "core",
-    "name": "MAC_FINALIZE_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: finalize fleet.",
-    "family": "core",
-    "name": "MAC_FINALIZE_FLEET",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: finalize generation.",
-    "family": "core",
-    "name": "MAC_FINALIZE_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: finalize post manifest.",
-    "family": "core",
-    "name": "MAC_FINALIZE_POST_MANIFEST",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: finalize receipt.",
-    "family": "core",
-    "name": "MAC_FINALIZE_RECEIPT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: finalize revision.",
-    "family": "core",
-    "name": "MAC_FINALIZE_REVISION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: finalize rollback intent.",
-    "family": "core",
-    "name": "MAC_FINALIZE_ROLLBACK_INTENT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Firecrawl Gateway setting: firecrawl check timeout seconds.",
     "family": "firecrawl-gateway",
     "name": "MAC_FIRECRAWL_CHECK_TIMEOUT_SECONDS",
@@ -4910,7 +1698,6 @@
     "name": "MAC_FLEET",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
@@ -4929,7 +1716,6 @@
     "name": "MAC_FLEETS_CONFIG",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
       "src/mac/dispatch.py",
@@ -4944,63 +1730,16 @@
   },
   {
     "default": null,
-    "description": "Core setting: fleet cohort journal dir.",
-    "family": "core",
-    "name": "MAC_FLEET_COHORT_JOURNAL_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-cohort-transaction.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: fleet cohort journal retention days.",
-    "family": "core",
-    "name": "MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-cohort-transaction.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: fleet cohort journal retention keep count.",
-    "family": "core",
-    "name": "MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP_COUNT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-cohort-transaction.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: fleet name.",
     "family": "core",
     "name": "MAC_FLEET_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/api.py",
-      "src/mac/deploy_env.py",
       "src/mac/fleet_env.py",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: fleet phase failure evidence dir.",
-    "family": "core",
-    "name": "MAC_FLEET_PHASE_FAILURE_EVIDENCE_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -5011,43 +1750,8 @@
     "name": "MAC_FLEET_TENANT_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: gen audio service name.",
-    "family": "core",
-    "name": "MAC_GEN_AUDIO_SERVICE_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: gen service name.",
-    "family": "core",
-    "name": "MAC_GEN_SERVICE_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: gen video service name.",
-    "family": "core",
-    "name": "MAC_GEN_VIDEO_SERVICE_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -5058,7 +1762,6 @@
     "name": "MAC_GITHUB_INGEST_ENABLED",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/github_ingest.py"
     ],
     "type": "bool"
@@ -5137,7 +1840,6 @@
     "name": "MAC_HERMES_AGENT_DIR",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "src/mac/hermes_startup.py"
     ],
@@ -5153,28 +1855,6 @@
       "src/mac/hermes_config_surface.py"
     ],
     "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Hermes Runtime setting: hermes apply gateway runtime shim.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hermes Runtime setting: hermes apply slack account shim.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -5205,7 +1885,6 @@
     "name": "MAC_HERMES_FLEET_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh"
     ],
     "type": "str"
@@ -5221,7 +1900,6 @@
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
       "src/mac/worker_credentials.py",
@@ -5236,12 +1914,10 @@
     "name": "MAC_HERMES_GATEWAY_BASE_URL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
       "src/mac/hermes_startup.py"
@@ -5255,12 +1931,10 @@
     "name": "MAC_HERMES_GATEWAY_MODEL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py",
       "src/mac/router_app.py"
     ],
@@ -5273,11 +1947,9 @@
     "name": "MAC_HERMES_GATEWAY_PROVIDER",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "src/mac/agent_provider.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
       "src/mac/hermes_startup.py"
@@ -5324,10 +1996,8 @@
     "name": "MAC_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/worker.py"
@@ -5364,8 +2034,6 @@
     "name": "MAC_HERMES_PERSONA_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/worker.py"
     ],
@@ -5378,10 +2046,8 @@
     "name": "MAC_HERMES_PYTHON",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -5393,8 +2059,6 @@
     "name": "MAC_HERMES_RUNTIME_CONTEXT_FILE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
@@ -5407,14 +2071,12 @@
     "name": "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-fleet-context-service.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_release.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
@@ -5430,7 +2092,6 @@
     "sources": [
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
@@ -5477,11 +2138,9 @@
     "name": "MAC_HERMES_SLACK_HOME_CHANNEL_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/sync-hermes-home-channels.py",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -5493,7 +2152,6 @@
     "name": "MAC_HERMES_STARTUP_CHECK",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -5505,9 +2163,7 @@
     "name": "MAC_HERMES_SYNC_SLACK_HOME_CHANNELS",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/sync-hermes-home-channels.py",
-      "src/mac/deploy_env.py"
+      "deploy/sync-hermes-home-channels.py"
     ],
     "type": "str"
   },
@@ -5518,7 +2174,6 @@
     "name": "MAC_HERMES_WORKSPACE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
@@ -5532,10 +2187,6 @@
     "retired": false,
     "sources": [
       "deploy/agent-resource-health.sh",
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "deploy/fleet-node-substrate-adopt.py",
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
@@ -5735,8 +2386,7 @@
     "retired": false,
     "sources": [
       "scripts/test-docs.py",
-      "src/mac/api.py",
-      "src/mac/deploy_env.py"
+      "src/mac/api.py"
     ],
     "type": "int"
   },
@@ -5769,14 +2419,11 @@
     "name": "MAC_HUB_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/systemd/mac-fleet-context.service",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -5800,7 +2447,6 @@
     "name": "MAC_HUB_VERIFY_IMAGE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py",
       "src/mac/services.py"
     ],
@@ -6124,8 +2770,6 @@
     "name": "MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "int"
@@ -6137,23 +2781,10 @@
     "name": "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/lib/launchd-lifecycle.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: launchd label.",
-    "family": "core",
-    "name": "MAC_LAUNCHD_LABEL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -6162,7 +2793,6 @@
     "name": "MAC_LAUNCHD_LOG_PREFIX",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-postgres-service.sh",
@@ -6192,7 +2822,6 @@
     "name": "MAC_LAUNCHD_POLL_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "int"
@@ -6215,7 +2844,6 @@
     "name": "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "int"
@@ -6315,7 +2943,6 @@
     "name": "MAC_LAUNCHD_TX_MODE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "str"
@@ -6371,7 +2998,6 @@
     "name": "MAC_LAUNCHD_TX_RECOVERY_POLICY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "str"
@@ -6526,149 +3152,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: linux manager command timeout seconds.",
-    "family": "core",
-    "name": "MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx active.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_ACTIVE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx backup.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx dir.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx existed.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_EXISTED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx label.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_LABEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx mutating.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_MUTATING",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx path.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx rollback hook.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_ROLLBACK_HOOK",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx saved exit trap.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_SAVED_EXIT_TRAP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx saved hup trap.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_SAVED_HUP_TRAP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx saved int trap.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_SAVED_INT_TRAP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: linux service tx saved term trap.",
-    "family": "core",
-    "name": "MAC_LINUX_SERVICE_TX_SAVED_TERM_TRAP",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Client Auth setting: local console enabled.",
     "family": "client-auth",
     "name": "MAC_LOCAL_CONSOLE_ENABLED",
@@ -6738,17 +3221,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: managed reverse tunnel.",
-    "family": "core",
-    "name": "MAC_MANAGED_REVERSE_TUNNEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: max child tasks per parent.",
     "family": "core",
     "name": "MAC_MAX_CHILD_TASKS_PER_PARENT",
@@ -6798,8 +3270,6 @@
     "name": "MAC_MEMORY_TOPOLOGY_FILE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -6948,7 +3418,6 @@
     "sources": [
       "deploy/systemd/mac.service",
       "src/mac/api.py",
-      "src/mac/deploy_env.py",
       "src/mac/hub_serve.py"
     ],
     "type": "str"
@@ -7033,7 +3502,6 @@
     "name": "MAC_OPENCLAW_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/curiosity-sidecar.py",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
@@ -7057,7 +3525,6 @@
     "name": "MAC_OPENCLAW_BOOTSTRAP_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "scripts/provision-openclaw-personality.py"
     ],
     "type": "str"
@@ -7135,7 +3602,6 @@
     "name": "MAC_OPENCLAW_CREDENTIALS_FILE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py"
     ],
     "type": "str"
@@ -7224,7 +3690,6 @@
     "name": "MAC_OPENCLAW_FLEET_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -7270,7 +3735,6 @@
     "name": "MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -7362,7 +3826,6 @@
     "name": "MAC_OPENCLAW_LIVE_CANARY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -7397,7 +3860,6 @@
     "name": "MAC_OPENCLAW_MODEL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -7442,24 +3904,11 @@
     "name": "MAC_OPENCLAW_PUBLIC_IDENTITY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
-  },
-  {
-    "default": "20",
-    "description": "Seconds to wait for `[gateway] ready` in the host log after `verify` already proved the gateway reachable. Default 20. This is not the Slack `--probe` budget; reusing `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` here added 180s of no-op wait on Linux spokes whose journals never contain that line.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_READY_LOG_TIMEOUT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
   },
   {
     "default": null,
@@ -7468,9 +3917,7 @@
     "name": "MAC_OPENCLAW_REPRESENTATION_MODE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py"
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -7481,9 +3928,7 @@
     "name": "MAC_OPENCLAW_REPRESENTED_BY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py"
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -7494,7 +3939,6 @@
     "name": "MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "bool"
@@ -7517,7 +3961,6 @@
     "name": "MAC_OPENCLAW_ROUTER_URL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -7529,7 +3972,6 @@
     "name": "MAC_OPENCLAW_SANDBOX",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/reviewed-cli.py"
     ],
@@ -7542,8 +3984,6 @@
     "name": "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"
@@ -7626,11 +4066,9 @@
     "name": "MAC_OPENCLAW_SLACK_ACCOUNT_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openclaw/run-script-cron-job.py",
       "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/deploy_env.py",
       "src/mac/human_interface_profile.py"
     ],
     "type": "str"
@@ -7687,8 +4125,6 @@
     "name": "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"
@@ -7700,7 +4136,6 @@
     "name": "MAC_OPENCLAW_SUPERVISOR",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -7712,10 +4147,8 @@
     "name": "MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/deploy_env.py",
       "src/mac/human_interface_profile.py"
     ],
     "type": "str"
@@ -7746,17 +4179,6 @@
   },
   {
     "default": null,
-    "description": "Openclaw Runtime setting: openclaw upgrade token.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_UPGRADE_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Openclaw Runtime setting: openclaw verify startup interval.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL",
@@ -7773,7 +4195,6 @@
     "name": "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"
@@ -7830,8 +4251,6 @@
     "name": "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
@@ -7843,12 +4262,10 @@
     "name": "MAC_OPENSHELL_BIN",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/install-certifier-gateway-tunnel.sh",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_startup.py",
       "src/mac/openshell_supervisor.py",
@@ -7897,9 +4314,7 @@
     "name": "MAC_OPENSHELL_CREATE_ARGS",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/openshell_runtime.py"
     ],
@@ -7946,19 +4361,7 @@
     "name": "MAC_OPENSHELL_GATEWAY",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/openshell/gateway-default-policy.yaml"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openshell Sandbox setting: openshell gateway create args.",
-    "family": "openshell-sandbox",
-    "name": "MAC_OPENSHELL_GATEWAY_CREATE_ARGS",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -7970,7 +4373,6 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -7982,7 +4384,6 @@
     "name": "MAC_OPENSHELL_GATEWAY_POLICY",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/openshell/gateway-default-policy.yaml"
     ],
     "type": "str"
@@ -7995,7 +4396,6 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/services.py"
     ],
@@ -8008,7 +4408,6 @@
     "name": "MAC_OPENSHELL_GPU_AVAILABLE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/executor_sandbox.py"
     ],
@@ -8032,7 +4431,6 @@
     "name": "MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -8044,7 +4442,6 @@
     "name": "MAC_OPENSHELL_IMAGE_TAG",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -8073,7 +4470,6 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/acp/permission.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_startup.py",
       "src/mac/openshell/default-policy.yaml",
@@ -8180,7 +4576,6 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -8192,11 +4587,9 @@
     "name": "MAC_OPENSHELL_REQUIRED",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/systemd/mac-openshell-supervisor.service",
-      "src/mac/deploy_env.py",
       "src/mac/openshell_runtime.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/worker.py"
@@ -8210,7 +4603,6 @@
     "name": "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
@@ -8223,10 +4615,8 @@
     "name": "MAC_OPENSHELL_SANDBOX",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
-      "src/mac/deploy_env.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
@@ -8269,7 +4659,6 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/services.py"
     ],
@@ -8317,7 +4706,6 @@
     "name": "MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh"
     ],
     "type": "str"
@@ -8341,7 +4729,6 @@
     "name": "MAC_OPENSH_GW",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh"
     ],
     "type": "str"
@@ -8354,7 +4741,6 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/router_app.py"
     ],
@@ -8367,7 +4753,6 @@
     "name": "MAC_PG_BACKUP_DIR",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py"
     ],
@@ -8519,507 +4904,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: phase1 agent.",
-    "family": "core",
-    "name": "MAC_PHASE1_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 command timeout seconds.",
-    "family": "core",
-    "name": "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon functions file.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon functions sha256.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon functions snapshot.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_SNAPSHOT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon functions source.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_SOURCE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon receipt path.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_RECEIPT_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon restore contract path.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_RESTORE_CONTRACT_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 daemon restore receipt path.",
-    "family": "core",
-    "name": "MAC_PHASE1_DAEMON_RESTORE_RECEIPT_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 expected contract sha256.",
-    "family": "core",
-    "name": "MAC_PHASE1_EXPECTED_CONTRACT_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 expect agent.",
-    "family": "core",
-    "name": "MAC_PHASE1_EXPECT_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 expect generation.",
-    "family": "core",
-    "name": "MAC_PHASE1_EXPECT_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 expect restore sha256.",
-    "family": "core",
-    "name": "MAC_PHASE1_EXPECT_RESTORE_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 expect rev.",
-    "family": "core",
-    "name": "MAC_PHASE1_EXPECT_REV",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 fleet.",
-    "family": "core",
-    "name": "MAC_PHASE1_FLEET",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 functions.",
-    "family": "core",
-    "name": "MAC_PHASE1_FUNCTIONS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 generation.",
-    "family": "core",
-    "name": "MAC_PHASE1_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 helper.",
-    "family": "core",
-    "name": "MAC_PHASE1_HELPER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 helper source.",
-    "family": "core",
-    "name": "MAC_PHASE1_HELPER_SOURCE",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 local restore manifest.",
-    "family": "core",
-    "name": "MAC_PHASE1_LOCAL_RESTORE_MANIFEST",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 media readiness seconds.",
-    "family": "core",
-    "name": "MAC_PHASE1_MEDIA_READINESS_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 openshell enabled.",
-    "family": "core",
-    "name": "MAC_PHASE1_OPENSHELL_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 os.",
-    "family": "core",
-    "name": "MAC_PHASE1_OS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 osh asset sha.",
-    "family": "core",
-    "name": "MAC_PHASE1_OSH_ASSET_SHA",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 osh cli sha.",
-    "family": "core",
-    "name": "MAC_PHASE1_OSH_CLI_SHA",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 osh receipt sha.",
-    "family": "core",
-    "name": "MAC_PHASE1_OSH_RECEIPT_SHA",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 osh version.",
-    "family": "core",
-    "name": "MAC_PHASE1_OSH_VERSION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 poll seconds.",
-    "family": "core",
-    "name": "MAC_PHASE1_POLL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 receipt path.",
-    "family": "core",
-    "name": "MAC_PHASE1_RECEIPT_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 restore artifact dir.",
-    "family": "core",
-    "name": "MAC_PHASE1_RESTORE_ARTIFACT_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 restore contract path.",
-    "family": "core",
-    "name": "MAC_PHASE1_RESTORE_CONTRACT_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 restore contract sha256.",
-    "family": "core",
-    "name": "MAC_PHASE1_RESTORE_CONTRACT_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 restore executable.",
-    "family": "core",
-    "name": "MAC_PHASE1_RESTORE_EXECUTABLE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 restore receipt path.",
-    "family": "core",
-    "name": "MAC_PHASE1_RESTORE_RECEIPT_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 restore sha256.",
-    "family": "core",
-    "name": "MAC_PHASE1_RESTORE_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 retained daemon functions.",
-    "family": "core",
-    "name": "MAC_PHASE1_RETAINED_DAEMON_FUNCTIONS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 rev.",
-    "family": "core",
-    "name": "MAC_PHASE1_REV",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 supervisor.",
-    "family": "core",
-    "name": "MAC_PHASE1_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 supervisor compensate.",
-    "family": "core",
-    "name": "MAC_PHASE1_SUPERVISOR_COMPENSATE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 supervisor compensate proof path.",
-    "family": "core",
-    "name": "MAC_PHASE1_SUPERVISOR_COMPENSATE_PROOF_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 supervisor kind.",
-    "family": "core",
-    "name": "MAC_PHASE1_SUPERVISOR_KIND",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 supervisor proof path.",
-    "family": "core",
-    "name": "MAC_PHASE1_SUPERVISOR_PROOF_PATH",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 test media health max attempts.",
-    "family": "core",
-    "name": "MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 test mode.",
-    "family": "core",
-    "name": "MAC_PHASE1_TEST_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: phase1 total timeout seconds.",
-    "family": "core",
-    "name": "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: pi model.",
     "family": "core",
     "name": "MAC_PI_MODEL",
@@ -9031,38 +4915,14 @@
   },
   {
     "default": null,
-    "description": "Core setting: plist backup.",
-    "family": "core",
-    "name": "MAC_PLIST_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plist mutated.",
-    "family": "core",
-    "name": "MAC_PLIST_MUTATED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: port.",
     "family": "core",
     "name": "MAC_PORT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/systemd/mac.service",
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hub_serve.py",
       "src/mac/local_console.py"
     ],
@@ -9092,215 +4952,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: prereq agent.",
-    "family": "core",
-    "name": "MAC_PREREQ_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq agent id.",
-    "family": "core",
-    "name": "MAC_PREREQ_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq firecrawl required.",
-    "family": "core",
-    "name": "MAC_PREREQ_FIRECRAWL_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq firecrawl url.",
-    "family": "core",
-    "name": "MAC_PREREQ_FIRECRAWL_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq helper.",
-    "family": "core",
-    "name": "MAC_PREREQ_HELPER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq hub url.",
-    "family": "core",
-    "name": "MAC_PREREQ_HUB_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq identity.",
-    "family": "core",
-    "name": "MAC_PREREQ_IDENTITY",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq network provider.",
-    "family": "core",
-    "name": "MAC_PREREQ_NETWORK_PROVIDER",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq openshell required.",
-    "family": "core",
-    "name": "MAC_PREREQ_OPENSHELL_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq os.",
-    "family": "core",
-    "name": "MAC_PREREQ_OS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq qdrant required.",
-    "family": "core",
-    "name": "MAC_PREREQ_QDRANT_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq qdrant url.",
-    "family": "core",
-    "name": "MAC_PREREQ_QDRANT_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq root.",
-    "family": "core",
-    "name": "MAC_PREREQ_ROOT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq route hub required.",
-    "family": "core",
-    "name": "MAC_PREREQ_ROUTE_HUB_REQUIRED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq supervisor.",
-    "family": "core",
-    "name": "MAC_PREREQ_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq webdav enabled.",
-    "family": "core",
-    "name": "MAC_PREREQ_WEBDAV_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq webdav url.",
-    "family": "core",
-    "name": "MAC_PREREQ_WEBDAV_URL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prior env file.",
-    "family": "core",
-    "name": "MAC_PRIOR_ENV_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prior revision file.",
-    "family": "core",
-    "name": "MAC_PRIOR_REVISION_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: profile.",
     "family": "core",
     "name": "MAC_PROFILE",
@@ -9318,7 +4969,6 @@
     "name": "MAC_PROJECT_CONTRACT_FILE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
     "type": "str"
@@ -9378,7 +5028,6 @@
     "sources": [
       "deploy/install-webdav-server.sh",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
     ],
@@ -9392,7 +5041,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
     "type": "str"
@@ -9405,7 +5053,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
     ],
@@ -9419,7 +5066,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
     "type": "bool"
@@ -9431,23 +5077,9 @@
     "name": "MAC_PUBLISH_WEBDAV_URL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: python.",
-    "family": "core",
-    "name": "MAC_PYTHON",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -9469,7 +5101,6 @@
     "name": "MAC_QDRANT_MEMORY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -9481,9 +5112,7 @@
     "name": "MAC_QDRANT_MEMORY_ROLE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-qdrant-service.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -9594,7 +5223,6 @@
     "name": "MAC_RELAY_OBSERVABILITY",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/relay_observability.py"
     ],
     "type": "str"
@@ -9829,7 +5457,6 @@
     "name": "MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/repository_ref_reconciler.py"
     ],
     "type": "str"
@@ -9841,7 +5468,6 @@
     "name": "MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/repository_ref_reconciler.py"
     ],
     "type": "int"
@@ -9853,7 +5479,6 @@
     "name": "MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/repository_ref_reconciler.py"
     ],
     "type": "int"
@@ -9865,7 +5490,6 @@
     "name": "MAC_REPOSITORY_REF_RECONCILER_MODE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/repository_ref_reconciler.py"
     ],
     "type": "str"
@@ -9968,7 +5592,6 @@
     "name": "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/worker.py"
     ],
@@ -9998,25 +5621,12 @@
   },
   {
     "default": null,
-    "description": "Core setting: require firecrawl.",
-    "family": "core",
-    "name": "MAC_REQUIRE_FIRECRAWL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Core setting: require hermes startup ready.",
     "family": "core",
     "name": "MAC_REQUIRE_HERMES_STARTUP_READY",
     "retired": false,
     "sources": [
-      "src/mac/api.py",
-      "src/mac/deploy_env.py"
+      "src/mac/api.py"
     ],
     "type": "bool"
   },
@@ -10027,9 +5637,7 @@
     "name": "MAC_REQUIRE_QDRANT_MEMORY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/install-qdrant-service.sh",
-      "src/mac/deploy_env.py"
+      "deploy/install-qdrant-service.sh"
     ],
     "type": "bool"
   },
@@ -10052,8 +5660,7 @@
     "name": "MAC_RESOURCE_HEALTH_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/agent-resource-health.sh",
-      "deploy/fleet-node-install.sh"
+      "deploy/agent-resource-health.sh"
     ],
     "type": "int"
   },
@@ -10119,8 +5726,6 @@
     "name": "MAC_REVIEWED_PYTHON_VERSION",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/reviewed-tool-assets.sh",
       "scripts/bootstrap-verifier-python.sh"
     ],
@@ -10133,7 +5738,6 @@
     "name": "MAC_REVIEWED_UV_VERSION",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/reviewed-tool-assets.sh"
     ],
     "type": "str"
@@ -10145,7 +5749,6 @@
     "name": "MAC_REVIEW_TICK_HUB_AGENT",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/env_config.py",
       "src/mac/hub_load_shed.py",
       "src/mac/services.py"
@@ -10177,344 +5780,11 @@
   },
   {
     "default": null,
-    "description": "Core setting: rollback active gateway.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_ACTIVE_GATEWAY",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback agent.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_AGENT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback agent prior state.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_AGENT_PRIOR_STATE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback bin backup.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_BIN_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback completion.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_COMPLETION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback directory snapshot timeout seconds.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_DIRECTORY_SNAPSHOT_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback fleet.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_FLEET",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback generation.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback hermes.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_HERMES",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback hermes backup.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_HERMES_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback intent.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_INTENT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback lifecycle.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_LIFECYCLE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback lifecycle sha256.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_LIFECYCLE_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback node identity sha256.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_NODE_IDENTITY_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback openclaw backup.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_OPENCLAW_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback openclaw existed.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_OPENCLAW_EXISTED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback os.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_OS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback prerequisite bundle sha256.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_PREREQUISITE_BUNDLE_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback prerequisite expectations sha256.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_PREREQUISITE_EXPECTATIONS_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback prior generation.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_PRIOR_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback prior revision.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_PRIOR_REVISION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback revision.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_REVISION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback script.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_SCRIPT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback src.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_SRC",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback src backup.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_SRC_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback supervisor.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback supervisor helper.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_SUPERVISOR_HELPER",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback supervisor helper sha256.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_SUPERVISOR_HELPER_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback venv.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_VENV",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rollback venv backup.",
-    "family": "core",
-    "name": "MAC_ROLLBACK_VENV_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Router setting: router audio key.",
     "family": "router",
     "name": "MAC_ROUTER_AUDIO_KEY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -10537,7 +5807,6 @@
     "name": "MAC_ROUTER_AUDIO_UPSTREAM",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -10549,10 +5818,6 @@
     "name": "MAC_ROUTER_BACKEND",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/deploy_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/hermes_startup.py",
       "src/mac/router_app.py",
       "src/mac/router_service.py"
@@ -10588,10 +5853,6 @@
     "name": "MAC_ROUTER_DEFAULT_MODEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "scripts/setup-fleet.py",
-      "src/mac/deploy_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -10625,8 +5886,6 @@
     "name": "MAC_ROUTER_IMAGE_KEY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/media_routing.py",
       "src/mac/router_app.py"
     ],
@@ -10650,7 +5909,6 @@
     "name": "MAC_ROUTER_IMAGE_TIMEOUT",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/media_routing.py",
       "src/mac/router_app.py"
     ],
@@ -10663,7 +5921,6 @@
     "name": "MAC_ROUTER_IMAGE_UPSTREAM",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/media_routing.py",
       "src/mac/router_app.py"
     ],
@@ -10698,7 +5955,6 @@
     "name": "MAC_ROUTER_PORT",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/router_service.py"
     ],
     "type": "int"
@@ -10710,16 +5966,10 @@
     "name": "MAC_ROUTER_PROVIDERS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "scripts/setup-fleet.py",
       "src/mac/api.py",
-      "src/mac/deploy_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/inference_provider.py",
       "src/mac/media_routing.py",
       "src/mac/provider_router.py",
-      "src/mac/providers.py",
       "src/mac/router_service.py"
     ],
     "type": "str"
@@ -10775,8 +6025,6 @@
     "name": "MAC_ROUTER_VIDEO_KEY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -10799,7 +6047,6 @@
     "name": "MAC_ROUTER_VIDEO_UPSTREAM",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -10811,9 +6058,6 @@
     "name": "MAC_ROUTER_WILDCARD_MODELS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -10899,61 +6143,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: schema backup.",
-    "family": "core",
-    "name": "MAC_SCHEMA_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: schema preflight.",
-    "family": "core",
-    "name": "MAC_SCHEMA_PREFLIGHT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: schema quiescence.",
-    "family": "core",
-    "name": "MAC_SCHEMA_QUIESCENCE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: schema receipt status.",
-    "family": "core",
-    "name": "MAC_SCHEMA_RECEIPT_STATUS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: schema result.",
-    "family": "core",
-    "name": "MAC_SCHEMA_RESULT",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: scope unprojected tasks.",
     "family": "core",
     "name": "MAC_SCOPE_UNPROJECTED_TASKS",
@@ -10970,15 +6159,9 @@
     "name": "MAC_SECRET_KEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/systemd/mac.service",
       "scripts/prove-c26-inception.py",
-      "scripts/setup-fleet.py",
       "scripts/test-docs.py",
-      "src/mac/agent_migrate.py",
-      "src/mac/cli.py",
-      "src/mac/deploy_env.py",
-      "src/mac/fleet_setup.py",
       "src/mac/secrets_service.py",
       "src/mac/services.py"
     ],
@@ -10991,7 +6174,6 @@
     "name": "MAC_SECRET_VAULT_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py"
     ],
@@ -11004,7 +6186,6 @@
     "name": "MAC_SECRET_VAULT_URL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py"
     ],
@@ -11029,7 +6210,6 @@
     "retired": false,
     "sources": [
       "deploy/mac-crash-observer.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
@@ -11071,23 +6251,11 @@
   },
   {
     "default": null,
-    "description": "Core setting: service name.",
-    "family": "core",
-    "name": "MAC_SERVICE_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: service nofile limit.",
     "family": "core",
     "name": "MAC_SERVICE_NOFILE_LIMIT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh"
     ],
     "type": "int"
@@ -11099,7 +6267,6 @@
     "name": "MAC_SERVICE_ROLE_OPS",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -11111,8 +6278,6 @@
     "name": "MAC_SHARED_SERVICES_MANAGER_AGENT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/env_config.py",
       "src/mac/hermes_startup.py",
       "src/mac/hub_load_shed.py",
@@ -11160,7 +6325,6 @@
     "name": "MAC_SOURCE_COMMIT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/http_routes/system.py"
     ],
     "type": "str"
@@ -11172,7 +6336,6 @@
     "name": "MAC_SRC",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
@@ -11189,9 +6352,6 @@
     "name": "MAC_STARTUP_CLEAR_HOLD",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -11231,51 +6391,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: supervisord conf name.",
-    "family": "core",
-    "name": "MAC_SUPERVISORD_CONF_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisord prog.",
-    "family": "core",
-    "name": "MAC_SUPERVISORD_PROG",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor command timeout seconds.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor include root.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_INCLUDE_ROOT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: supervisor kind.",
     "family": "core",
     "name": "MAC_SUPERVISOR_KIND",
@@ -11286,8 +6401,7 @@
       "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
-      "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py"
+      "deploy/install-webdav-server.sh"
     ],
     "type": "str"
   },
@@ -11304,24 +6418,11 @@
   },
   {
     "default": null,
-    "description": "Core setting: systemd command timeout seconds.",
-    "family": "core",
-    "name": "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: tailscale hostname.",
     "family": "core",
     "name": "MAC_TAILSCALE_HOSTNAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-tailscale.sh"
     ],
     "type": "str"
@@ -11344,10 +6445,8 @@
     "name": "MAC_TAILSCALE_IP",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-tailscale.sh",
       "src/mac/api.py",
-      "src/mac/deploy_env.py",
       "src/mac/mesh_bind.py"
     ],
     "type": "str"
@@ -11405,8 +6504,6 @@
     "name": "MAC_TASK_EXECUTOR_PYTHON",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
@@ -11420,8 +6517,6 @@
     "name": "MAC_TASK_EXECUTOR_SCRIPT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
@@ -12015,7 +7110,6 @@
     "name": "MAC_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/fleet_env.py",
@@ -12096,37 +7190,13 @@
   },
   {
     "default": null,
-    "description": "Core setting: unit backup.",
-    "family": "core",
-    "name": "MAC_UNIT_BACKUP",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: unit mutated.",
-    "family": "core",
-    "name": "MAC_UNIT_MUTATED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: url.",
     "family": "core",
     "name": "MAC_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -12209,7 +7279,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/webdav_server.py"
     ],
     "type": "int"
@@ -12234,7 +7303,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/webdav_server.py"
     ],
@@ -12247,9 +7315,7 @@
     "name": "MAC_WEBDAV_PUBLIC_URL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
     ],
@@ -12263,7 +7329,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py",
       "src/mac/webdav_server.py"
@@ -12278,7 +7343,6 @@
     "retired": false,
     "sources": [
       "deploy/install-webdav-server.sh",
-      "src/mac/deploy_env.py",
       "src/mac/webdav_server.py"
     ],
     "type": "str"
@@ -12290,9 +7354,7 @@
     "name": "MAC_WEB_SEARCH_PROVIDER",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
     "type": "str"
@@ -12304,9 +7366,7 @@
     "name": "MAC_WEB_SEARCH_URL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/hermes_startup.py"
     ],
@@ -12319,10 +7379,8 @@
     "name": "MAC_WORKER_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/mac-crash-observer.py",
       "deploy/systemd/mac-fleet-context.service",
-      "src/mac/cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -12339,9 +7397,7 @@
     "name": "MAC_WORKER_AGENT_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/mac-crash-observer.py",
-      "src/mac/deploy_env.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
@@ -12356,8 +7412,6 @@
     "name": "MAC_WORKER_ALLOWED_PROJECTS",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12380,8 +7434,6 @@
     "name": "MAC_WORKER_CAPABILITIES",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12393,8 +7445,6 @@
     "name": "MAC_WORKER_CLAIM_ONLY_CANARY_TASKS",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12450,7 +7500,6 @@
     "name": "MAC_WORKER_CREDENTIAL_AGENT_ID",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -12462,7 +7511,6 @@
     "name": "MAC_WORKER_CREDENTIAL_FINGERPRINT",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -12474,7 +7522,6 @@
     "name": "MAC_WORKER_CREDENTIAL_ID",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -12497,7 +7544,6 @@
     "name": "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -12509,7 +7555,6 @@
     "name": "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -12521,7 +7566,6 @@
     "name": "MAC_WORKER_CREDENTIAL_VERSION",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -12544,8 +7588,6 @@
     "name": "MAC_WORKER_DEPLOY_BARRIER_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12568,11 +7610,6 @@
     "name": "MAC_WORKER_DEPLOY_GENERATION",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/fleet-node-machine-onboard.py",
-      "deploy/fleet-node-phase1-quiesce.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12591,38 +7628,12 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker executor.",
-    "family": "worker",
-    "name": "MAC_WORKER_EXECUTOR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker heartbeat interval.",
-    "family": "worker",
-    "name": "MAC_WORKER_HEARTBEAT_INTERVAL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Worker setting: worker hermes instance id.",
     "family": "worker",
     "name": "MAC_WORKER_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/worker.py"
@@ -12636,8 +7647,6 @@
     "name": "MAC_WORKER_HOSTNAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
     "type": "str"
@@ -12649,32 +7658,7 @@
     "name": "MAC_WORKER_IDENTITY_MODE",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker lease seconds.",
-    "family": "worker",
-    "name": "MAC_WORKER_LEASE_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker mode.",
-    "family": "worker",
-    "name": "MAC_WORKER_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -12691,24 +7675,11 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker poll interval.",
-    "family": "worker",
-    "name": "MAC_WORKER_POLL_INTERVAL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Worker setting: worker process revision.",
     "family": "worker",
     "name": "MAC_WORKER_PROCESS_REVISION",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/executor_sandbox.py"
     ],
     "type": "str"
@@ -12747,8 +7718,6 @@
     "name": "MAC_WORKER_REQUIRED_METADATA",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "bool"
@@ -12760,20 +7729,7 @@
     "name": "MAC_WORKER_RESOURCES",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker resources file.",
-    "family": "worker",
-    "name": "MAC_WORKER_RESOURCES_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -12784,7 +7740,6 @@
     "name": "MAC_WORKER_RUNNING_DIGEST",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
     ],
@@ -12819,11 +7774,8 @@
     "name": "MAC_WORKER_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
-      "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -12845,8 +7797,6 @@
     "name": "MAC_WORKER_WORKSPACE",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
       "src/mac/hardware.py"
     ],
     "type": "str"

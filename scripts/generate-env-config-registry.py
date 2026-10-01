@@ -112,10 +112,6 @@ CONSUMER_DEFAULTS = {
     # The contract runner deliberately bounds its default. Operators may still
     # request ``auto`` or another explicit worker count for a qualified host.
     "MAC_TEST_JOBS": "2",
-    # deploy/fleet-node-install.sh reads ``${MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0}``,
-    # so the non-fatal default is the installer's, not an invented one.
-    "MAC_DEPLOY_GATEWAY_PROBE_FATAL": "0",
-    "MAC_OPENCLAW_READY_LOG_TIMEOUT": "20",
     "MAC_LANDING_MAX_ATTEMPTS": "8",
     "MAC_LANDING_DEADLINE_SECONDS": "86400",
 }
@@ -145,15 +141,6 @@ CURATED_DESCRIPTIONS = {
         "including separate read-only verifiers; existing sandbox resources remain unchanged. "
         "Conflicting worker create resource overrides are rejected."
     ),
-    "MAC_DEPLOY_GATEWAY_PROBE_FATAL": (
-        "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, "
-        "and therefore the whole deploy cohort; unset or `0` records the failure, "
-        "retains the failed successor for diagnosis, and continues. Non-fatal by "
-        "default because task execution is OpenShell plus the coding CLI plus "
-        "mac-agent and none of them consult chat, so a node that cannot post is "
-        "degraded for conversation and fully capable of work. Set it for a deploy "
-        "whose purpose is to prove the chat surface."
-    ),
     "MAC_NETWORK_PROVIDER": (
         "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` "
         "or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / "
@@ -161,13 +148,6 @@ CURATED_DESCRIPTIONS = {
         "Not a host firewall by itself; it is the listen-address policy that "
         "makes the overlay the only worker path. Unset means no mesh bind "
         "policy (container/dev)."
-    ),
-    "MAC_OPENCLAW_READY_LOG_TIMEOUT": (
-        "Seconds to wait for `[gateway] ready` in the host log after `verify` "
-        "already proved the gateway reachable. Default 20. This is not the "
-        "Slack `--probe` budget; reusing `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` "
-        "here added 180s of no-op wait on Linux spokes whose journals never "
-        "contain that line."
     ),
 }
 

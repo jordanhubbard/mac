@@ -1431,8 +1431,7 @@ def cmd_fleet_connect(args: argparse.Namespace) -> None:
     terminals and CI logs. --show-token is the deliberate act.
     """
     from mac.fleet_env import resolve as resolve_fleet_env, scoped_var
-    from mac.fleet_move import fleet_hub_url, resolve_fleet_key
-    from mac.fleet_creds import load_fleets_config
+    from mac.fleet_creds import fleet_hub_url, load_fleets_config, resolve_fleet_key
     from mac import mac_paths
 
     registry = load_fleets_config(getattr(args, "fleets_config", None))
@@ -1441,7 +1440,7 @@ def cmd_fleet_connect(args: argparse.Namespace) -> None:
     fleet_key = resolve_fleet_key(registry, requested) if requested else None
     if fleet_key is None:
         # One fleet is the unambiguous case and by far the common one right
-        # after setup.sh; more than one must be named rather than guessed.
+        # for a single-hub install; more than one must be named rather than guessed.
         if not requested and len(fleets) == 1:
             fleet_key = next(iter(fleets))
         else:
@@ -1451,7 +1450,7 @@ def cmd_fleet_connect(args: argparse.Namespace) -> None:
                 % (requested or "(none given; pass --fleet)", known)
             )
     url = fleet_hub_url(registry, fleet_key)
-    # The environment first, then ~/.mac/.env. setup.sh WRITES the token to
+    # The environment first, then ~/.mac/.env. Fleet setup WRITES the token to
     # that file without exporting it, so a shell that has not sourced it -- the
     # shell you are in seconds after building a hub, which is exactly when you
     # want this -- would otherwise be told the token is unset while it sits on
@@ -4372,119 +4371,6 @@ def cmd_agent_delete(args: argparse.Namespace) -> None:
     _print({"deleted": args.agent_id})
 
 
-def cmd_agent_migrate(args: argparse.Namespace) -> None:
-    """Move an agent (soul + memory) to a new host. Dry-run by default; pass
-    --execute to run the backup -> retarget -> deploy -> restore -> verify
-    playbook. The agent NAME is preserved, so its hub-stored persona / memories
-    / mood follow ``agent_<name>`` automatically."""
-    import shutil
-    import time
-    from dataclasses import replace
-
-    import yaml
-
-    from mac import agent_migrate as am
-    from mac.fleet_deploy import canonicalize_mesh_ssh_target, parse_ssh_target
-    from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
-    from mac.hermes_config_surface import registry_path
-
-    reg_path = registry_path()
-    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
-    fleets = registry.get("fleets") or {}
-    fleet = args.fleet or next(
-        (
-            f
-            for f, d in fleets.items()
-            if any((a or {}).get("name") == args.name for a in (d.get("agents") or []))
-        ),
-        None,
-    )
-    if not fleet or fleet not in fleets:
-        raise SystemExit("agent %r not found in any fleet in %s" % (args.name, reg_path))
-    agents = fleets[fleet].get("agents") or []
-    cur = next((a for a in agents if (a or {}).get("name") == args.name), None)
-    if cur is None:
-        raise SystemExit("agent %r not in fleet %r" % (args.name, fleet))
-    src = args.from_target or cur.get("target")
-    if not src:
-        raise SystemExit("no source target for %r; pass --from" % args.name)
-
-    # Hub migration moves the durable hub state (DB + Qdrant + secret key), not
-    # just the soul. Auto-detect when the agent IS the fleet's hub/shared-service
-    # manager; --hub/--no-hub override.
-    fleet_cfg = fleets[fleet]
-    is_hub_agent = args.name in (
-        fleet_cfg.get("hub_agent"),
-        fleet_cfg.get("shared_services_manager_agent"),
-    )
-    hub = is_hub_agent if args.hub is None else args.hub
-    src_os = args.src_os or (cur.get("os") or "linux")
-    network = (fleet_cfg.get("defaults") or {}).get("network") or {}
-    network_provider = str(network.get("provider") or "none")
-
-    try:
-        src_route = resolve_fleet_ssh(registry, fleet, args.name)
-        parsed_src = parse_ssh_target(str(src), port=src_route.port)
-        src_route = replace(src_route, target=parsed_src.user_host, port=parsed_src.port)
-        dst_target = canonicalize_mesh_ssh_target(
-            args.to_target,
-            provider=network_provider,
-            port=args.to_ssh_port,
-        )
-        parsed_dst = parse_ssh_target(dst_target)
-        dst_route = replace(
-            src_route,
-            target=parsed_dst.user_host,
-            port=parsed_dst.port,
-            identity_file=(
-                str(Path(args.to_identity_file).expanduser())
-                if args.to_identity_file
-                else src_route.identity_file
-            ),
-            proxy_jump=(
-                args.to_proxy_jump if args.to_proxy_jump is not None else src_route.proxy_jump
-            ),
-            known_hosts_file=(
-                str(Path(args.to_known_hosts_file).expanduser())
-                if args.to_known_hosts_file
-                else src_route.known_hosts_file
-            ),
-            host_key_policy=args.to_host_key_policy or src_route.host_key_policy,
-            os_kind=args.to_os,
-        )
-        src_route.validate_portable()
-        dst_route.validate_portable()
-    except (FleetSshError, ValueError) as exc:
-        raise SystemExit("could not resolve migration SSH routes: %s" % exc) from exc
-
-    steps = am.migration_plan(
-        args.name,
-        src_target=src,
-        dst_target=dst_target,
-        fleet=fleet,
-        fleet_name=(fleet_cfg.get("fleet_name") or fleet),
-        to_os=args.to_os,
-        src_os=src_os,
-        keep_source=args.keep_source,
-        retire_source_agent=args.retire_source_agent,
-        hub=hub,
-        src_route=src_route,
-        dst_route=dst_route,
-    )
-    if hub:
-        print("# HUB migration: moving soul + mac.db + Qdrant + MAC_SECRET_KEY/MAC_API_TOKEN")
-    if not args.execute:
-        print(am.render_plan(args.name, steps))
-        return
-    # --execute: retarget fleets.yaml (backup first), then run the playbook.
-    backup = "%s.bak.%d" % (reg_path, int(time.time()))
-    shutil.copy2(reg_path, backup)
-    am.retarget_fleet_agent(registry, fleet, args.name, target=dst_target, os=args.to_os)
-    reg_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
-    print("retargeted %s -> %s in %s (backup: %s)" % (args.name, dst_target, reg_path, backup))
-    _print(am.execute_migration(args.name, steps))
-
-
 def cmd_agent_hardware(args: argparse.Namespace) -> None:
     """Fleet hardware inventory from self-reported resources["hardware"], with the
     hub-derived gen capability (can this agent host media generation, and is it
@@ -4613,144 +4499,6 @@ def cmd_agent_config_show(args: argparse.Namespace) -> None:
 
 def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
-
-
-def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
-    """Move an agent between fleets: rewrite fleets.yaml + optionally redeploy.
-
-    Dry-run by default (prints the plan).  Pass --execute to actually mutate
-    fleets.yaml, create a backup, and print the redeploy + DB reconcile commands.
-    """
-    from mac.fleet_move import (
-        execute_fleet_move,
-        find_agent_fleet,
-        fleet_hub_url,
-        plan_fleet_move,
-        render_move_plan,
-        resolve_fleet_key,
-    )
-    from mac.hermes_config_surface import registry_path
-
-    reg_path = registry_path()
-
-    try:
-        import yaml  # type: ignore[import]
-    except ImportError as exc:
-        raise SystemExit("PyYAML is required for fleet move-agent") from exc
-
-    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
-
-    agent_name = args.agent
-
-    # Resolve --from: explicit (registry KEY or fleet_name), else auto-detect.
-    if args.from_fleet:
-        from_fleet = resolve_fleet_key(registry, args.from_fleet)
-        if not from_fleet:
-            raise SystemExit(
-                "source fleet %r not found in %s (by registry key or fleet_name)"
-                % (args.from_fleet, reg_path)
-            )
-    else:
-        from_fleet = find_agent_fleet(registry, agent_name)
-        if not from_fleet:
-            raise SystemExit(
-                "agent %r not found in any fleet in %s; "
-                "pass --from to specify the source fleet" % (agent_name, reg_path)
-            )
-        print("auto-detected source fleet: %s" % from_fleet)
-
-    # Resolve --to (registry KEY or fleet_name); fail loudly — never emit a
-    # "<target-hub-url>" placeholder plan for an unresolvable / hubless target.
-    to_fleet = resolve_fleet_key(registry, args.to_fleet)
-    if not to_fleet:
-        raise SystemExit(
-            "target fleet %r not found in %s (by registry key or fleet_name)"
-            % (args.to_fleet, reg_path)
-        )
-    if not ((args.hub_url or "").strip() or fleet_hub_url(registry, to_fleet)):
-        raise SystemExit("target fleet %r has no hub_url (pass --hub-url to override)" % to_fleet)
-    if args.from_fleet not in (None, from_fleet) or args.to_fleet != to_fleet:
-        print("resolved fleets: %s -> %s" % (from_fleet, to_fleet))
-
-    if not args.execute:
-        # Dry-run: print the plan and the proposed registry diff.
-        steps = plan_fleet_move(
-            agent_name, from_fleet, to_fleet, registry, reconcile_db=not args.no_db_reconcile
-        )
-        print(render_move_plan(agent_name, from_fleet, to_fleet, steps))
-        return
-
-    result = execute_fleet_move(
-        agent_name,
-        from_fleet,
-        to_fleet,
-        fleets_config=reg_path,
-        to_os=args.to_os,
-        dry_run=False,
-        reconcile_db=not args.no_db_reconcile,
-        hub_url=args.hub_url or None,
-        run_redeploy=not args.no_redeploy,
-    )
-
-    if not result.get("ok"):
-        if result.get("registry_written"):
-            # The move landed in fleets.yaml but the live redeploy failed —
-            # surface both so the operator can re-run or revert from the backup.
-            print(
-                "registry moved (%s -> %s); backup: %s"
-                % (from_fleet, to_fleet, result.get("backup"))
-            )
-            print(
-                "redeploy FAILED (rc=%s); re-run: %s"
-                % (result.get("redeploy_returncode"), result.get("redeploy_cmd"))
-            )
-        raise SystemExit("fleet move-agent failed: %s" % result.get("error"))
-
-    if result.get("idempotent"):
-        print(result["message"])
-        return
-
-    print("agent %r moved: %s -> %s" % (agent_name, from_fleet, to_fleet))
-    if result.get("backup"):
-        print("registry backed up to %s" % result["backup"])
-    if result.get("registry_written"):
-        print("registry written to %s" % result["registry_written"])
-    if result.get("redeployed"):
-        print("redeployed at hub %s (--hub %s)" % (result.get("target_hub_url"), to_fleet))
-    if result.get("db_reconcile"):
-        print("DB: %s" % result["db_reconcile"])
-    for step in result.get("next_steps") or []:
-        print("next: %s" % step)
-
-
-def _sender_agent_id(args: argparse.Namespace) -> str:
-    sender = (
-        getattr(args, "sender_agent_id", None)
-        or os.environ.get("MAC_AGENT_ID")
-        or os.environ.get("MAC_WORKER_AGENT_ID")
-    )
-    if not sender:
-        raise MACError(
-            "admin/control sender agent id is required; pass --sender-agent-id or set MAC_AGENT_ID"
-        )
-    return sender
-
-
-def cmd_fleet_refresh_source(args: argparse.Namespace) -> None:
-    recipients = list(args.agent_id or [])
-    _print(
-        _plane(args).publish_agentbus_repo_update(
-            sender_agent_id=_sender_agent_id(args),
-            recipient_agent_ids=recipients,
-            all_agents=not recipients,
-            repo_path=args.repo_path,
-            remote=args.remote,
-            branch=args.branch,
-            restart=not args.no_restart,
-            restart_services=list(args.restart_service or []),
-            request_id=args.request_id,
-        )
-    )
 
 
 def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
@@ -5389,46 +5137,6 @@ def cmd_journal_restore(args: argparse.Namespace) -> None:
     home = _Path(args.home).expanduser() if getattr(args, "home", None) else None
     _print(
         _journal.restore(args.date, home=home, root=root, dry_run=getattr(args, "dry_run", False))
-    )
-
-
-def _fleet_setup_plan_from_args(args: argparse.Namespace) -> Dict[str, Any]:
-    from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan
-
-    root = Path(__file__).resolve().parents[2]
-    fleets_config = Path(args.fleets_config).expanduser()
-    env_file = Path(args.env_file).expanduser()
-    spec = load_setup_spec(Path(args.spec).expanduser())
-    return public_plan(
-        build_setup_plan(
-            spec,
-            root=root,
-            fleets_config=fleets_config,
-            env_file=env_file,
-        )
-    )
-
-
-def cmd_fleet_validate_setup(args: argparse.Namespace) -> None:
-    """Validate a declarative mac.fleet_setup.v1 spec."""
-    _print(_fleet_setup_plan_from_args(args))
-
-
-def cmd_fleet_doctor_setup(args: argparse.Namespace) -> None:
-    """Run LLM-friendly setup doctor checks for a declarative fleet spec."""
-    plan = _fleet_setup_plan_from_args(args)
-    _print(
-        {
-            "schema": "mac.fleet_setup_doctor.v1",
-            "status": plan.get("status"),
-            "hub": plan.get("hub"),
-            "fleet_name": plan.get("fleet_name"),
-            "checks": plan.get("checks"),
-            "required_env": plan.get("required_env"),
-            "warnings": plan.get("warnings"),
-            "errors": plan.get("errors"),
-            "next_steps": plan.get("next_steps"),
-        }
     )
 
 
@@ -8979,55 +8687,6 @@ def build_parser() -> argparse.ArgumentParser:
     agent_config_show.add_argument("agent", help="agent id or name")
     _set(cmd_agent_config_show, agent_config_show)
 
-    agent_migrate = agent.add_parser(
-        "migrate",
-        help="move an agent (soul + memory) to a new host; dry-run unless --execute",
-    )
-    agent_migrate.add_argument("name")
-    agent_migrate.add_argument(
-        "--to", dest="to_target", required=True, help="destination user@host"
-    )
-    agent_migrate.add_argument(
-        "--from", dest="from_target", help="source user@host (default: current fleets.yaml target)"
-    )
-    agent_migrate.add_argument("--to-os", default="linux")
-    agent_migrate.add_argument(
-        "--fleet", help="fleet name (default: auto-resolve from fleets.yaml)"
-    )
-    agent_migrate.add_argument(
-        "--execute", action="store_true", help="run it (default: print the plan)"
-    )
-    agent_migrate.add_argument(
-        "--keep-source", action="store_true", help="don't decommission the source host"
-    )
-    agent_migrate.add_argument(
-        "--retire-source-agent", help="agent_id to `mac agent delete` after migration"
-    )
-    hub_grp = agent_migrate.add_mutually_exclusive_group()
-    hub_grp.add_argument(
-        "--hub",
-        dest="hub",
-        action="store_true",
-        default=None,
-        help="full-fidelity HUB migration: also move mac.db + Qdrant + MAC_SECRET_KEY "
-        "(auto-detected when the agent is the fleet's hub_agent/shared_services_manager)",
-    )
-    hub_grp.add_argument(
-        "--no-hub",
-        dest="hub",
-        action="store_false",
-        help="force soul-only (spoke) migration even if the agent looks like the hub",
-    )
-    agent_migrate.add_argument(
-        "--src-os", help="source service manager (default: from fleets.yaml, else linux)"
-    )
-    agent_migrate.add_argument("--to-ssh-port", type=int)
-    agent_migrate.add_argument("--to-identity-file")
-    agent_migrate.add_argument("--to-proxy-jump")
-    agent_migrate.add_argument("--to-known-hosts-file")
-    agent_migrate.add_argument("--to-host-key-policy", choices=("strict", "accept-new", "insecure"))
-    _set(cmd_agent_migrate, agent_migrate)
-
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
         dest="fleet_command", required=True
     )
@@ -9053,37 +8712,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="require explicit identity and host-key material suitable for a clean HOME",
     )
     _set(cmd_fleet_ssh_spec, fleet_ssh_spec)
-
-    fleet_refresh = fleet.add_parser(
-        "refresh-source",
-        aliases=["refresh"],
-        help=(
-            "ask fleet agents to pull their self-update repo and restart themselves if HEAD changes"
-        ),
-    )
-    fleet_refresh.add_argument(
-        "--sender-agent-id",
-        help="registered admin/control agent id to send the message as; defaults to MAC_AGENT_ID",
-    )
-    fleet_refresh.add_argument(
-        "--agent-id",
-        action="append",
-        help="target one agent id; repeatable. Default targets every agent.",
-    )
-    fleet_refresh.add_argument("--repo-path")
-    fleet_refresh.add_argument("--remote", default="origin")
-    fleet_refresh.add_argument("--branch", default="main")
-    fleet_refresh.add_argument("--request-id")
-    fleet_refresh.add_argument("--no-restart", action="store_true")
-    fleet_refresh.add_argument(
-        "--restart-service",
-        action="append",
-        help=(
-            "systemd service to restart on hosts where it is installed after a "
-            "successful source update; repeatable"
-        ),
-    )
-    _set(cmd_fleet_refresh_source, fleet_refresh)
 
     # fleet-02: live group awareness for the team.
     fleet_snap = fleet.add_parser(
@@ -9154,21 +8782,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_fleet_refresh_context, fleet_refresh)
 
-    fleet_validate = fleet.add_parser(
-        "validate",
-        help="validate a declarative mac.fleet_setup.v1 setup spec",
-    )
-    fleet_validate.add_argument("--spec", required=True)
-    fleet_validate.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-    )
-    fleet_validate.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-    )
-    _set(cmd_fleet_validate_setup, fleet_validate)
-
     # journal-01: daily snapshots of an agent's soul + memory state so an
     # evolved personality can be restored if its files are ever lost. Local
     # file ops only — no hub/--db needed.
@@ -9208,21 +8821,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="show what would be restored, change nothing"
     )
     _set(cmd_journal_restore, journal_restore)
-
-    fleet_doctor = fleet.add_parser(
-        "doctor",
-        help="run setup doctor checks for a declarative fleet spec",
-    )
-    fleet_doctor.add_argument("--spec", required=True)
-    fleet_doctor.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-    )
-    fleet_doctor.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-    )
-    _set(cmd_fleet_doctor_setup, fleet_doctor)
 
     # auth-token-sync-01: recover/re-sync a client's bearer token from the hub.
     fleet_sync_token = fleet.add_parser(
@@ -9398,65 +8996,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="client env file to update (default ~/.mac/.env)",
     )
     _set(cmd_fleet_rotate_token, fleet_rotate_token)
-
-    fleet_move = fleet.add_parser(
-        "move-agent",
-        help=(
-            "move an agent between fleets: rewrite fleets.yaml entry, "
-            "print redeploy command, and emit DB reconcile commands. "
-            "Dry-run by default; pass --execute to mutate fleets.yaml."
-        ),
-    )
-    fleet_move.add_argument(
-        "--agent",
-        required=True,
-        help="agent name to move (e.g. worker-1)",
-    )
-    fleet_move.add_argument(
-        "--from",
-        dest="from_fleet",
-        default=None,
-        help="source fleet hub-name (default: auto-detect from fleets.yaml)",
-    )
-    fleet_move.add_argument(
-        "--to",
-        dest="to_fleet",
-        required=True,
-        help="target fleet hub-name",
-    )
-    fleet_move.add_argument(
-        "--to-os",
-        default="linux",
-        choices=["linux", "darwin"],
-        help="OS of the agent on the destination (default: linux)",
-    )
-    fleet_move.add_argument(
-        "--hub-url",
-        default="",
-        help=(
-            "override the hub_url written into the agent entry (default: inherit from target fleet)"
-        ),
-    )
-    fleet_move.add_argument(
-        "--no-db-reconcile",
-        action="store_true",
-        help="skip the DB fleet-membership reconcile note",
-    )
-    fleet_move.add_argument(
-        "--no-redeploy",
-        action="store_true",
-        help=(
-            "with --execute, only rewrite fleets.yaml and EMIT the redeploy "
-            "command instead of running it (inspect-first; default is to run "
-            "the redeploy end-to-end)"
-        ),
-    )
-    fleet_move.add_argument(
-        "--execute",
-        action="store_true",
-        help="actually mutate fleets.yaml + run the redeploy (default: dry-run plan only)",
-    )
-    _set(cmd_fleet_move_agent, fleet_move)
 
     mood = sub.add_parser(
         "mood",

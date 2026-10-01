@@ -1239,8 +1239,7 @@ run_live_confinement_probe() {
 # the agent as a plain host application: there is no gateway container, no
 # Docker Desktop requirement, and no runtime image to build or pull. This exit
 # is deliberately successful -- a macOS node with no OpenShell is correctly
-# provisioned, not broken -- and it is the same state fleet-node-install.sh
-# reaches on its "optional OpenShell runtime disabled" path.
+# provisioned, not broken.
 if [ "$(uname -s)" = "Darwin" ]; then
   log "macOS host install: the managed OpenShell runtime is Linux-only (ADR 0015); nothing to bootstrap"
   log "isolation posture on this node is macos_host: a standard macOS application, with no container, VM, seccomp filter or egress proxy"

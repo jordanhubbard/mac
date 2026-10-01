@@ -1223,7 +1223,8 @@ jobs:
     # silently, which is worse than the outage it fixes.
     #
     # This adds a `tested-<frozen-inputs-sha>` tag pointing at the SAME digest,
-    # only once every code gate is green. deploy-mac-fleet.sh requires it.
+    # only once every code gate is green. Pin a host's runtime image only to a
+    # digest that carries this tag.
     needs: [openshell-runtime-image, dead-code, mainline, compatibility, postgres-contract, upfront-validation, container-contract]
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||

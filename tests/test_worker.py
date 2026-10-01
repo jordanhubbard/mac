@@ -1633,7 +1633,7 @@ def test_mac_worker_adopts_agent_pushed_branch_when_worktree_matches(tmp_path: P
 
 def test_openshell_containerfile_changed_detects_sandbox_image_drift(tmp_path: Path):
     """The drift detector flags a pull that changed the sandbox Containerfile (so
-    refresh-source rebuilds the image) and ignores unrelated changes / no-ops."""
+    a repo update rebuilds the image) and ignores unrelated changes / no-ops."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init")
@@ -2770,7 +2770,7 @@ def test_worker_generation_barrier_heartbeats_draining_until_authorized(
 
 
 def test_worker_generation_barrier_self_releases_past_its_max_age(monkeypatch, tmp_path: Path):
-    # deploy-mac-fleet.sh's REMOTE_TYPED_BARRIER_RELEASE step removes this
+    # The deleted deploy-mac-fleet.sh's REMOTE_TYPED_BARRIER_RELEASE step removed this
     # file once it is safe to rejoin dispatch, but that release is not
     # atomic with the barrier's creation: an interrupted deploy (observed
     # live 2026-09-03, natasha stuck draining for hours after a deploy

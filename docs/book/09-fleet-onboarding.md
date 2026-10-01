@@ -14,22 +14,18 @@ systems. The registry records targets and roles; deployment discovers the
 supervisor, architecture, filesystem, container runtime, and available coding
 CLIs on each selected node.
 
-Before any fleet mutation, resolve targets from `~/.mac/fleets.yaml`. The
-prepublication qualifier performs a read-only cohort check and writes an
-owner-private receipt for the exact candidate.
+Hosts are provisioned by hand from the "Provision a new host" checklist in
+[Updating the fleet with fleet-update](../operations/fleet-update.md), then
+moved to a commit with `scripts/fleet-update`. Resolve targets from
+`~/.mac/fleets.yaml` and `~/.mac/fleet-hosts`.
 
 ```bash
-python3 "$DOCS_ROOT/scripts/prepublish-fleet-qualification.py" --help >/dev/null
-bash "$DOCS_ROOT/deploy/deploy-mac-fleet.sh" --help >/dev/null
+test -x "$DOCS_ROOT/scripts/fleet-update"
 python3 "$DOCS_ROOT/scripts/image-publication-identity.py" --help >/dev/null
-test -f "$DOCS_ROOT/docs/fleet-node-onboarding-checklist.md"
+test -f "$DOCS_ROOT/docs/operations/fleet-update.md"
 test -f "$DOCS_ROOT/docs/fleet-registry-schema.md"
 ```
 
-Onboarding is complete only when registry identity, route, prerequisites,
-credential projection, source convergence, runtime attestation, anonymous image
-readback, and a role-specific acceptance task all pass. Registration alone is
-not readiness.
-
-Read-only preflight aggregates every node failure so operators can repair the
-whole cohort. Mutation phases are bounded and fail fast to protect rollback.
+Onboarding is complete only when registry identity, route, credentials, the
+host's reported source commit, runtime attestation and a role-specific
+acceptance task all pass. Registration alone is not readiness.

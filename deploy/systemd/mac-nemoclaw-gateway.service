@@ -3,9 +3,8 @@ Description=mac NemoClaw chat-gateway (NemoClaw/OpenClaw replaces hermes gateway
 After=network-online.target
 Wants=network-online.target
 # NemoClaw replaces the hermes gateway role; the hermes gateway service must be
-# stopped and disabled before this unit is enabled.  The fleet deploy script
-# (deploy/deploy-mac-fleet.sh) handles ordering: it stops/disables the hermes
-# gateway service, then enables and starts this unit.
+# stopped and disabled before this unit is enabled: stop/disable the hermes
+# gateway service first, then enable and start this unit.
 # See deploy/nemoclaw/RUNBOOK.md for the per-host migration procedure.
 StartLimitIntervalSec=0
 

@@ -44,10 +44,10 @@ The credential stays inside the local Vite proxy; it is not printed, placed in
 the URL, or exposed to browser storage. Set `IDE_PROFILE=<name>` to select a
 non-active profile.
 
-If no client profile exists, the launcher falls back to the existing
-deploy handoff file, then the existing fleet-scoped environment token lookup,
-and finally to the browser's manual connection form. `deploy-mac-fleet.sh`
-writes the handoff as an owner-only JSON file and prints a token-free command:
+If no client profile exists, the launcher falls back to an existing
+handoff file, then the existing fleet-scoped environment token lookup,
+and finally to the browser's manual connection form. A handoff is an
+owner-only JSON file (the deleted fleet deploy script used to write one):
 
 ```bash
 IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make ide-run

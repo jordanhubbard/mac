@@ -224,9 +224,10 @@ def test_default_grace_fits_inside_the_units_stop_timeout(tmp_path: Path):
     # The whole point of the deadline is to release BEFORE systemd's SIGKILL.
     # mac-agent-service ships TimeoutStopSec=600 with KillMode=mixed, so a
     # default at or above that would abandon nothing.
-    unit = Path(__file__).resolve().parents[1] / "deploy" / "fleet-node-install.sh"
+    unit = Path(__file__).resolve().parents[1] / "deploy" / "systemd" / "mac-agent.service.in"
     text = unit.read_text(encoding="utf-8")
     assert "TimeoutStopSec=600" in text
+    assert "KillMode=mixed" in text
     assert 0 < DEFAULT_SHUTDOWN_GRACE_SECONDS < 600
 
     worker = MacWorker(

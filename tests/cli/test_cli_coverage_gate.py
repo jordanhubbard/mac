@@ -165,7 +165,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("agent", "tell"),
         ("agent", "hardware"),
         ("agent", "heartbeat"),
-        ("agent", "migrate"),
         # agentbus sub-commands (open/append/close covered in test_mac_cli.py indirectly;
         # explicit coverage of the remaining commands still needed)
         ("agentbus", "append"),
@@ -202,8 +201,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("events", "list"),
         # fleet domain
         ("fleet", "build-distribution"),
-        ("fleet", "doctor"),
-        ("fleet", "move-agent"),
         ("fleet", "refresh-context"),
         ("fleet", "rotate-token"),
         ("fleet", "snapshot"),
@@ -211,7 +208,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("fleet", "soul-audit"),
         ("fleet", "soul-push"),
         ("fleet", "sync-token"),
-        ("fleet", "validate"),
         # hermes domain
         ("persona-instance", "context"),
         ("persona-instance", "register"),

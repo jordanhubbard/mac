@@ -21,9 +21,6 @@ OPENCLAW_DIR = ROOT / "deploy" / "openclaw"
 INSTALLER = OPENCLAW_DIR / "install-openclaw-gateway.sh"
 CONTAINERFILE = OPENCLAW_DIR / "OpenClaw.Containerfile"
 POLICY = OPENCLAW_DIR / "openclaw-policy.yaml"
-DEPLOY = ROOT / "deploy" / "deploy-mac-fleet.sh"
-NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
-FLEET_CONFIG = ROOT / "deploy" / "fleet" / "config.yaml"
 SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "mac-openclaw-gateway.service"
 APPLY_CRON_PLAN = OPENCLAW_DIR / "apply-cron-plan.mjs"
 
@@ -216,29 +213,6 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "apply-cron-plan.mjs" in container
     assert "curiosity-sidecar.py /usr/local/bin/curiosity" in container
     assert "/opt/mac-openclaw/plugins/mac-continuity" in container
-
-
-def test_macos_host_adr_names_the_unresolved_openclaw_darwin_contradiction() -> None:
-    """The darwin OpenClaw gap must be recorded as a contradiction, not a decision.
-
-    `fleet-node-install.sh` installs a launchd OpenClaw job on darwin while the
-    installer it calls resolves only a Linux image, so a macOS hub silently ends
-    up with no gateway. Whoever closes this has to pick one side and delete the
-    other; the ADR has to say so, because the tempting one-line "refuse darwin"
-    fix breaks the live launchd route and its rollback hook.
-    """
-    adr = (ROOT / "docs" / "adr" / "0015-macos-nodes-are-host-installs.md").read_text(
-        encoding="utf-8"
-    )
-    consequences = adr.split("## Consequences", maxsplit=1)[1]
-    assert "OpenClaw" in consequences
-    assert "install_darwin_openclaw_service()" in consequences
-
-    # Both live halves of the contradiction must still exist, so that this test
-    # fails if one is removed without the ADR being updated to match.
-    installer_sh = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-    assert "install_darwin_openclaw_service() {" in installer_sh
-    assert "mac_launchd_transaction_set_rollback_hook withdraw_openclaw_gateway" in (installer_sh)
 
 
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
@@ -2105,40 +2079,6 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     assert "--account omgjkh --target channel:C456HOME" in calls_text
 
 
-def test_fleet_deploy_defaults_to_hermes_while_retaining_explicit_legacy_cleanup() -> None:
-    config = FLEET_CONFIG.read_text(encoding="utf-8")
-    deploy = (
-        DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
-    )
-    unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
-    assert "gateway_impl: hermes" in config
-    assert '*) MAC_CHAT_GATEWAY_IMPL="hermes"' in deploy
-    assert 'openclaw|"")\n      install_linux_openclaw_service' in deploy
-    assert "install_darwin_openclaw_service" in deploy
-    assert "OPENCLAW_SUPERVISORD_PROG" in deploy
-    assert "verify_openclaw_gateway" in deploy
-    assert "finalize_openclaw_gateway" in deploy
-    assert "ROLLBACK_SUPERVISOR_HELPER" in deploy
-    assert '--active-gateway "\\$ROLLBACK_ACTIVE_GATEWAY"' in deploy
-    assert "MAC_DEPLOY_OPENCLAW_LIVE_CANARY" in deploy
-    assert "MAC_WORKER_RESOURCES_FILE" in deploy
-    assert "representation_mode: delegated" in config
-    assert "OPENCLAW_REPRESENTATION_MODE" in deploy
-    assert 'disable_systemd_service_if_present "$HERMES_SERVICE_NAME"' in deploy
-    assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
-    assert "ExecStop=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
-    assert "ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
-    assert "SuccessExitStatus=143 SIGTERM" in unit
-    assert "TimeoutStopSec=600" in unit
-    assert "User=__MAC_USER__" in unit
-
-    launchd = deploy.split("install_darwin_openclaw_service() {", 1)[1].split(
-        "install_darwin_agent_service() {", 1
-    )[0]
-    assert "<key>ExitTimeOut</key><integer>600</integer>" in launchd
-    assert "<key>AbandonProcessGroup</key><false/>" in launchd
-
-
 def test_openclaw_prefers_reviewed_cli_over_stale_configured_runtime(
     tmp_path: Path,
 ) -> None:
@@ -2577,8 +2517,17 @@ def test_public_identity_without_any_channel_credentials_fails_closed(
 
 
 def test_shell_artifacts_parse() -> None:
-    for script in (INSTALLER, DEPLOY):
-        subprocess.run(["bash", "-n", str(script)], check=True, timeout=10)
+    subprocess.run(["bash", "-n", str(INSTALLER)], check=True, timeout=10)
+
+
+def test_systemd_openclaw_unit_stops_gracefully_as_the_service_user() -> None:
+    unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
+    assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
+    assert "ExecStop=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
+    assert "ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
+    assert "SuccessExitStatus=143 SIGTERM" in unit
+    assert "TimeoutStopSec=600" in unit
+    assert "User=__MAC_USER__" in unit
 
 
 def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(

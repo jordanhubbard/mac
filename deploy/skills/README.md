@@ -1,11 +1,17 @@
 # Vendored Omniverse 3D agent skills (GPU nodes)
 
 `omniverse-skills.tar.gz` bundles the NVIDIA Omniverse + physical-AI agent skills
-plus our authored `omniverse-kit-app` build skill. The deploy
-(`install_omniverse_gpu_skills` in `deploy-mac-fleet.sh`) extracts it into
-`$HOME/.hermes/skills/` **only on agents with an NVIDIA GPU** (`nvidia-smi`
-gate) — Omniverse Kit / CUDA can't run elsewhere — and re-extracts on every
-deploy, so the install is durable + repeatable + GPU-scoped.
+plus our authored `omniverse-kit-app` build skill. Install it by hand, and
+**only on agents with an NVIDIA GPU** (`nvidia-smi` works) — Omniverse Kit /
+CUDA can't run elsewhere:
+
+```bash
+mkdir -p ~/.hermes/skills
+tar xzf ~/.mac/src/mac/deploy/skills/omniverse-skills.tar.gz -C ~/.hermes/skills
+```
+
+Re-run it after the tarball changes. (The deleted fleet installer used to do
+this on every deploy.)
 
 ## Contents
 - `omniverse-kit-app` — authored here: build/run/package a 3D app via the Kit SDK
@@ -34,9 +40,10 @@ tar czf deploy/skills/omniverse-skills.tar.gz -C /tmp/omv-stage .
 
 ## Fleet-wide skills (`fleet/`, no GPU gate)
 
-`deploy/skills/fleet/<skill>/` is installed into `$HOME/.hermes/skills` on **every**
-agent by `install_fleet_skills` — these drive the hub's hosted models via the
-in-mac router and need no local GPU:
+`deploy/skills/fleet/<skill>/` belongs in `$HOME/.hermes/skills` on **every**
+agent (copy it there by hand; the deleted fleet installer's `install_fleet_skills`
+used to). These drive the hub's hosted models via the in-mac router and need no
+local GPU:
 
 - `nvidia-inference-multimodal` — vision (send images in chat) + image generation
   (`/v1/genai` proxy). Image-gen needs the hub's `nvidia-image` key to have public

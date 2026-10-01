@@ -66,8 +66,8 @@ The fleet is updated by a human with
 - [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
   Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and
-  gpu-worker after typed cohort `20260827T060057Z` (`make deploy HUB=<hub>`
-  with hold-adoptions after a retained roll-forward). Hub `/health` ok;
+  gpu-worker after typed cohort `20260827T060057Z` (the since-deleted
+  `make deploy HUB=<hub>` with hold-adoptions after a retained roll-forward). Hub `/health` ok;
   workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
 - [x] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation

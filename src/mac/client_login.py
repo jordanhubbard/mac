@@ -36,11 +36,11 @@ from mac.client_profiles import (
     validate_enrollment_manifest,
 )
 from mac.client_principals import mac_home
-from mac.fleet_deploy import parse_ssh_target
 from mac.fleet_ssh import (
     FleetSshError,
     FleetSshSpec,
     load_fleet_config,
+    parse_ssh_target,
     resolve_fleet_ssh,
     ssh_argv,
 )

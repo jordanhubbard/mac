@@ -57,7 +57,7 @@ wait_for() {  # wait_for SECONDS cmd...   (always checks at least once)
 }
 rssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"; }
 migs() { git -C "$SRC" ls-tree --name-only "$1" "$MIG_DIR/" | sed 's#.*/##' | grep '\.sql$' | sort || true; }
-deps_changed() { ! git -C "$SRC" diff --quiet "$1" "$SHA" -- pyproject.toml uv.lock setup.py; }
+deps_changed() { ! git -C "$SRC" diff --quiet "$1" "$SHA" -- pyproject.toml uv.lock; }
 
 host_entry() {  # name -> sets H_TARGET (ssh target) and H_AGENT (hub agent id)
   local line=""
@@ -180,7 +180,7 @@ sha=$1 hermes=$2 src="$HOME/.mac/src/mac" venv="$HOME/.mac/venv" bin="$HOME/.mac
 cd "$src"
 [ -z "$(git status --porcelain)" ] || { echo "remote: $src has local changes" >&2; exit 3; }
 old=$(git rev-parse HEAD)
-deps() { ! git diff --quiet "$old" "$sha" -- pyproject.toml uv.lock setup.py; }
+deps() { ! git diff --quiet "$old" "$sha" -- pyproject.toml uv.lock; }
 reinstall() { if command -v uv > /dev/null; then uv pip install -q --python "$venv/bin/python" -e "$src"; else "$venv/bin/pip" install -q -e "$src"; fi; }
 undo() { echo "remote: $1; restoring $old" >&2; git checkout -q --detach "$old"; if deps; then reinstall || true; fi; exit 4; }
 put() { install -m "$1" "$2" "$3.fleet-update.$$" && mv -f "$3.fleet-update.$$" "$3"; }

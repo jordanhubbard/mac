@@ -10,11 +10,11 @@ degrades the node (non-blocking) so the self-test exits 0 and the service keeps
 starting, while a genuine misconfiguration (a refused connection / bad endpoint)
 still blocks startup.
 
-This extracts the embedded ``mac-agent-startup-self-test`` Python body from
-``install_mac_agent_wrapper`` in ``deploy/fleet-node-install.sh`` and execs it in
+This extracts the embedded Python body from
+``deploy/bin/mac-agent-startup-self-test`` and execs it in
 a temporary HOME with the mandatory shared services configured and ``urllib``
 stubbed to raise the relevant error, following the extract-and-run pattern in
-tests/test_gatewayless_worker_selftest_crash.py and tests/test_fleet_node_install.py.
+tests/test_gatewayless_worker_selftest_crash.py.
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _startup_self_test_source() -> str:
     """Extract the embedded mac-agent-startup-self-test Python (the inner PY heredoc)."""
-    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    script = (ROOT / "deploy" / "bin" / "mac-agent-startup-self-test").read_text(encoding="utf-8")
     match = re.search(
         r"exec \"\$selftest_python\" - <<'PY'\n(?P<source>.*?)\nPY\n",
         script,
         re.DOTALL,
     )
-    assert match, "self-test PY heredoc not found in fleet-node-install.sh"
+    assert match, "self-test PY heredoc not found in deploy/bin/mac-agent-startup-self-test"
     return match.group("source")
 
 

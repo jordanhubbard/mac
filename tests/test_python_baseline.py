@@ -65,20 +65,7 @@ def test_bootstrap_checks_existing_venv_patch(monkeypatch, version, supported):
     assert module.venv_python_is_supported() is supported
 
 
-def test_standalone_onboarding_receipts_agree_with_policy():
-    for name in [
-        "deploy/fleet-node-machine-onboard.py",
-    ]:
-        tree = ast.parse((ROOT / name).read_text())
-        values = {
-            n.targets[0].id: ast.literal_eval(n.value)
-            for n in tree.body
-            if isinstance(n, ast.Assign)
-            and isinstance(n.targets[0], ast.Name)
-            and n.targets[0].id in {"PYTHON_VERSION", "UV_VERSION"}
-        }
-        assert values["PYTHON_VERSION"] == VERSION
-        assert values["UV_VERSION"] == "0.12.12"
+def test_reviewed_tool_assets_agree_with_policy():
     assets = (ROOT / "deploy/reviewed-tool-assets.sh").read_text()
     assert f'MAC_REVIEWED_PYTHON_VERSION="{VERSION}"' in assets
 

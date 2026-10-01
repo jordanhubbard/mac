@@ -31,15 +31,17 @@ def test_make_help_exposes_conventional_lifecycle() -> None:
     assert "Install, build and test targets require uv." in result.stdout
 
 
-def test_makefile_defaults_to_help_and_keeps_fleet_setup_distinct() -> None:
+def test_makefile_defaults_to_help_and_has_no_fleet_deploy_targets() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert ".DEFAULT_GOAL := help" in makefile
     assert "install: install-cli install-gui" in makefile
     assert "build: build-cli build-gui" in makefile
     assert "clean: clean-cli clean-gui" in makefile
-    assert "setup: require-python" in makefile
-    assert "Configure a fleet and deploy it (not a local CLI install)." in makefile
+    # Fleet setup/deploy moved to scripts/fleet-update; make no longer drives it.
+    assert "\nsetup:" not in makefile
+    assert "\ndeploy:" not in makefile
+    assert "setup.py" not in makefile
     assert "rm -rf dist\n" not in makefile
     assert "updating the existing MAC-managed pre-push hook" in makefile
 
@@ -78,7 +80,6 @@ def test_package_cli_verifies_the_current_console_script_contract() -> None:
 
 def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     launcher = (ROOT / "src" / "mac" / "ide_launcher.py").read_text(encoding="utf-8")
     vite_config = (ROOT / "ide" / "vite.config.ts").read_text(encoding="utf-8")
     app = (ROOT / "ide" / "src" / "App.tsx").read_text(encoding="utf-8")
@@ -105,12 +106,6 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert 'proxyRequest.setHeader("Authorization"' in vite_config
     assert "hasManagedAuth" in app
     assert "authLabel" in app
-    assert "http://localhost:8789/ui?t=${hub_token}" not in deploy
-    assert "write_ide_handoff_file" in deploy
-    assert "mac.ide_handoff.v1" in deploy
-    assert "IDE_OPEN=1 make ide-run" in deploy
-    # The deploy banner sends operators to the UI the hub is running.
-    assert "http://127.0.0.1:8789/ui" in deploy
 
 
 def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:
