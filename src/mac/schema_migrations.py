@@ -276,6 +276,14 @@ MIGRATIONS: tuple[Migration, ...] = (
         ]) AS name
         """,
     ),
+    Migration(
+        "0005_drop_native_merge_queue_tables",
+        _load_sql(MIGRATION_PATH / "0005_drop_native_merge_queue_tables.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.merge_queue_entries') IS NULL
+           AND to_regclass(current_schema() || '.merge_queue_windows') IS NULL
+        """,
+    ),
 )
 
 

@@ -11,12 +11,9 @@ over ~6 hours because nobody could read why they failed.
 from __future__ import annotations
 
 import subprocess
-import types
 
-import pytest
 
 from mac import gitops, services
-from mac.services import ControlPlane
 
 HEAD_SHA = "a" * 40
 
@@ -80,9 +77,8 @@ def _capture(monkeypatch):
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
-    plane = types.SimpleNamespace()  # no _contract_test_runner -> the real path
-    return ControlPlane._run_contract_gate(
-        plane, "https://example.invalid/r.git", "b", HEAD_SHA, "scripts/run-contract-tests.sh"
+    return services.run_repository_contract_test_in_openshell(
+        "https://example.invalid/r.git", "b", HEAD_SHA, "scripts/run-contract-tests.sh"
     )
 
 
@@ -122,9 +118,7 @@ def test_hub_verify_runs_bootstrap_before_test_command(monkeypatch):
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
-    plane = types.SimpleNamespace()
-    ControlPlane._run_contract_gate(
-        plane,
+    services.run_repository_contract_test_in_openshell(
         "https://example.invalid/r.git",
         "b",
         HEAD_SHA,
@@ -141,8 +135,7 @@ def test_hub_verify_runs_bootstrap_before_test_command(monkeypatch):
 def test_hub_verify_refuses_the_obsolete_local_hermes_image(monkeypatch):
     monkeypatch.setenv("MAC_HUB_VERIFY_IMAGE", "localhost/mac-hermes:net")
 
-    rc, output = ControlPlane._run_contract_gate(
-        types.SimpleNamespace(),
+    rc, output = services.run_repository_contract_test_in_openshell(
         "https://example.invalid/r.git",
         "b",
         HEAD_SHA,

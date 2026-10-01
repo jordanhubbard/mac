@@ -91,8 +91,7 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     # ``tree_sha`` is the load-bearing field on ``git.merged``. Every merge
     # this fleet performs is a SQUASH, which mints a new commit sha, so a
     # consumer keyed on the commit sha would miss every one of them. Tree
-    # identity is what the native merge queue lands on (see
-    # ``native_merge_queue.landing_is_safe``) and it survives squashing.
+    # identity survives squashing.
     "git.merged",
     # The canonical branch moved. Distinct from ``git.merged``: the merge is
     # about ONE task's work, this is about the trunk every other worktree was
@@ -166,8 +165,7 @@ BROADCAST_COALESCE_SECONDS = 10.0
 #: the terminal git events for the same reason. Two squash merges landing on
 #: the same branch inside the window are DIFFERENT facts, and the field that
 #: distinguishes them for a consumer is the resulting tree — the commit sha is
-#: minted fresh by the squash, which is precisely why tree identity is what
-#: the merge queue trusts.
+#: minted fresh by the squash.
 BROADCAST_COALESCE_FIELDS = (
     "project",
     "task_id",

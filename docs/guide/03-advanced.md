@@ -50,23 +50,19 @@ human opening and merging a PR — does not produce it, and such a task cannot b
 marked completed even with `force-complete`. This is deliberate: the gate
 refuses to believe a claim it cannot verify.
 
-### The native merge queue
+### The serial land loop
 
-GitHub merge queues are organization-only, so personal repositories get no
-forge-side serialization. mac provides its own, with two properties worth
-knowing:
+Approved work lands one change at a time per repository, and one test gate
+decides each landing: the repository's required status checks where it has
+them, otherwise the worker's own verifier run. Two properties worth knowing:
 
-- **Tree identity, not SHA identity.** An entry records the tree it was tested
-  against and refuses to land unless the canonical tip's tree matches
-  byte-for-byte. This is what makes speculation safe and what survives a squash
-  merge changing the SHA.
-- **Fail toward not landing.** Every failure kind — deferred, waiting,
-  unreadable state, slot lost, speculation unavailable — routes through the
-  existing backoff. None can reach "merge anyway".
-
-The AIMD window grows by one on a land and halves on a failure, floor 1 and
-ceiling 4. `MAC_MERGE_QUEUE_WINDOW_CEILING=1` disables speculation without
-disabling the queue.
+- **The hub runs no tests.** On a repository without required checks, a
+  canonical tip that moved past the base the worker verified (or conflicts
+  with the change) sends the same task back to its worker to rebase and
+  retest. The task's metadata carries a `rebase_onto_tip` directive; after two
+  send-backs it blocks.
+- **Fail toward not landing.** Pending checks wait, failed checks block, and a
+  tip that moves during the merge refuses it. None can reach "merge anyway".
 
 ## Dispatch: why a task is or is not claimable
 

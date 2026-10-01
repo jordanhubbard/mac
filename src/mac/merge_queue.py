@@ -24,24 +24,14 @@ Science Rule" (bors → GitHub Merge Queue → Zuul → Google TAP): *automatica
 maintain a trunk that always passes the tests, by testing every change against
 the state it will actually be merged into, serialized so there is no skew.*
 
-This module implements the OCC **validation phase** for a code merge:
-
-1. **Serialize** landings per repository (a landing lease) so the "current tip"
-   is stable across the check → merge window — the serialization point that
-   makes the schedule equivalent to a serial one.
-2. **Validate** the branch against the *current* tip (not the stale base it was
-   authored on): compute the merge with ``git merge-tree`` — which produces the
-   merged tree and reports conflicts *without mutating any working tree* — and
-   fail the gate on textual conflict. A failed gate routes the task to
-   integration (the third agent: rebase, resolve, re-verify) instead of a dirty
-   or skew merge.
-3. The caller then runs the test suite against that projected merged tree (the
-   "test the projected state" half of the Not-Rocket-Science rule) before the
-   merge is allowed to fast-forward.
-
-Textual clean-merge is necessary but not sufficient (it does not catch semantic
-write-skew); step 3 (re-running the contract suite on the merged state) is what
-closes that gap. This module owns steps 1–2 and the contract for step 3.
+This module implements the OCC **validation phase** for a code merge. The
+hub's serial land loop (``ControlPlane._publish_git_target_if_needed``)
+serializes landings per repository, so the "current tip" is stable across the
+check -> merge window, and calls :func:`validate_projected_merge` to compute the
+merge with ``git merge-tree`` -- which produces the merged tree and reports
+conflicts *without mutating any working tree*. A conflict, or a tip that moved
+past the base the worker verified, sends the task back to its worker to rebase
+and re-run its verifier; the hub runs no tests of its own.
 
 References: Hoare, "The Not Rocket Science Rule"; bors-ng; GitHub Merge Queue;
 Zuul project gating (speculative merge trains over a DAG of dependent changes);
@@ -51,13 +41,10 @@ Kung & Robinson, "On Optimistic Methods for Concurrency Control" (ACM TODS 1981)
 from __future__ import annotations
 
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence
 
 GitRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess"]
-ContractTestRunner = Callable[[str, str, str, str], Tuple[int, str]]
 
 
 @dataclass(frozen=True)
@@ -80,35 +67,6 @@ class MergeGateVerdict:
             "conflicted_files": list(self.conflicted_files),
             "error": self.error,
             "merged_tree_sha": self.merged_tree_sha,
-        }
-
-
-@dataclass(frozen=True)
-class ProjectedMergeContractVerdict:
-    """Full repository-contract result for one projected publication tree."""
-
-    passed: bool
-    base_sha: str
-    topic_sha: str
-    merged_tree_sha: str
-    projected_sha: str
-    test_command: str
-    test_returncode: int = -1
-    output_tail: str = ""
-    error: str = ""
-
-    def to_dict(self) -> dict:
-        return {
-            "schema": "mac.projected_merge_contract_gate.v1",
-            "passed": self.passed,
-            "base_sha": self.base_sha,
-            "topic_sha": self.topic_sha,
-            "merged_tree_sha": self.merged_tree_sha,
-            "projected_sha": self.projected_sha,
-            "test_command": self.test_command,
-            "test_returncode": self.test_returncode,
-            "output_tail": self.output_tail,
-            "error": self.error,
         }
 
 
@@ -187,8 +145,11 @@ def validate_projected_merge(
             )
         return MergeGateVerdict(True, base_sha, topic_sha, merged_tree_sha=lines[0])
     if proc.returncode == 1:
-        # Conflicts. Output is: <merged-tree-oid>\n\n<conflicted path>\n...
-        lines = [line for line in proc.stdout.splitlines() if line.strip()]
+        # Conflicts. Output is: <merged-tree-oid>\n<conflicted path>\n...
+        # then a blank line and informational messages ("Auto-merging x",
+        # "CONFLICT (content): ..."), which are not paths.
+        names_section = proc.stdout.split("\n\n", 1)[0]
+        lines = [line for line in names_section.splitlines() if line.strip()]
         conflicted = lines[1:] if len(lines) > 1 else []
         return MergeGateVerdict(
             False, base_sha, topic_sha, conflicted_files=conflicted or ["<unknown>"]
@@ -202,176 +163,7 @@ def validate_projected_merge(
     )
 
 
-def _failure_excerpt(exc: BaseException, *, head: int = 220, tail: int = 320) -> str:
-    """Keep the head AND tail of a gate failure.
-
-    Taking the first 500 characters spent every one of them on the argv --
-    `openshell sandbox create --no-auto-providers --policy ... --label ...` is
-    itself about that long -- so the part that says what actually happened
-    ("timed out after 2400 seconds", "returned non-zero exit status 3") was cut
-    off every time. Two separate debugging sessions ended with the same
-    unfinished sentence, and one of them chased an OpenShell bug that did not
-    exist.
-    """
-
-    text = str(exc).strip()
-    if len(text) <= head + tail:
-        return text
-    return "%s ... [%d chars omitted] ... %s" % (
-        text[:head],
-        len(text) - head - tail,
-        text[-tail:],
-    )
-
-
-def validate_projected_merge_contract(
-    repo_dir: str,
-    base_ref: str,
-    topic_ref: str,
-    test_command: str,
-    *,
-    test_runner: ContractTestRunner,
-    merge_gate: Optional[MergeGateVerdict] = None,
-) -> ProjectedMergeContractVerdict:
-    """Run the full repository contract on the CURRENT-main projected tree.
-
-    The projected tree comes from :func:`validate_projected_merge`. It is
-    materialized in a disposable standalone clone, never in the caller's main
-    worktree. ``test_runner`` owns the execution boundary (the control plane
-    supplies its existing OpenShell verifier); this module only prepares the
-    exact checkout and refuses publication on every preparation or test error.
-    """
-
-    command = str(test_command or "").strip()
-    gate = merge_gate or validate_projected_merge(repo_dir, base_ref, topic_ref)
-
-    def verdict(
-        passed: bool,
-        *,
-        projected_sha: str = "",
-        returncode: int = -1,
-        output_tail: str = "",
-        error: str = "",
-    ) -> ProjectedMergeContractVerdict:
-        return ProjectedMergeContractVerdict(
-            passed=passed,
-            base_sha=gate.base_sha,
-            topic_sha=gate.topic_sha,
-            merged_tree_sha=gate.merged_tree_sha,
-            projected_sha=projected_sha,
-            test_command=command,
-            test_returncode=returncode,
-            output_tail=output_tail[-2000:],
-            error=error,
-        )
-
-    if not gate.clean:
-        return verdict(False, error=gate.error or "projected merge is not clean")
-    if not gate.merged_tree_sha:
-        return verdict(False, error="projected merge has no merged tree")
-    if not command:
-        return verdict(False, error="repository contract test command is empty")
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="mac-projected-merge-") as raw:
-            checkout = Path(raw) / "repo"
-            clone = subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--no-checkout",
-                    "--no-hardlinks",
-                    "--",
-                    str(Path(repo_dir).resolve()),
-                    str(checkout),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if clone.returncode != 0:
-                return verdict(
-                    False,
-                    error="could not clone projected merge checkout: %s"
-                    % ((clone.stderr or clone.stdout) or "non-zero exit").strip()[:500],
-                )
-            run = _default_git_runner(str(checkout))
-            base_contains_topic = (
-                run(["merge-base", "--is-ancestor", gate.topic_sha, gate.base_sha]).returncode == 0
-            )
-            topic_contains_base = (
-                run(["merge-base", "--is-ancestor", gate.base_sha, gate.topic_sha]).returncode == 0
-            )
-            if base_contains_topic:
-                projected_sha = gate.base_sha
-            elif topic_contains_base:
-                projected_sha = gate.topic_sha
-            else:
-                commit = run(
-                    [
-                        "-c",
-                        "user.name=MAC Merge Queue",
-                        "-c",
-                        "user.email=merge-queue@mac.invalid",
-                        "commit-tree",
-                        gate.merged_tree_sha,
-                        "-p",
-                        gate.base_sha,
-                        "-p",
-                        gate.topic_sha,
-                        "-m",
-                        "MAC projected publication gate",
-                    ]
-                )
-                projected_sha = commit.stdout.strip() if commit.returncode == 0 else ""
-                if not projected_sha:
-                    return verdict(
-                        False,
-                        error="could not commit projected merge tree: %s"
-                        % ((commit.stderr or commit.stdout) or "non-zero exit").strip()[:500],
-                    )
-            branch = "mac-projected-publication"
-            checkout_result = run(["checkout", "-q", "-B", branch, projected_sha])
-            if checkout_result.returncode != 0:
-                return verdict(
-                    False,
-                    projected_sha=projected_sha,
-                    error="could not check out projected merge: %s"
-                    % (
-                        (checkout_result.stderr or checkout_result.stdout) or "non-zero exit"
-                    ).strip()[:500],
-                )
-            actual_tree = _rev_parse_object(run, "HEAD^{tree}")
-            if actual_tree != gate.merged_tree_sha:
-                return verdict(
-                    False,
-                    projected_sha=projected_sha,
-                    error="projected checkout tree does not match merge-tree result",
-                )
-            returncode, output = test_runner(str(checkout), branch, projected_sha, command)
-            rc = int(returncode)
-            tail = str(output or "")
-            if rc != 0:
-                return verdict(
-                    False,
-                    projected_sha=projected_sha,
-                    returncode=rc,
-                    output_tail=tail,
-                    error="full repository contract test failed",
-                )
-            return verdict(
-                True,
-                projected_sha=projected_sha,
-                returncode=0,
-                output_tail=tail,
-            )
-    except Exception as exc:  # noqa: BLE001 - publication gate must fail closed.
-        return verdict(False, error="projected contract gate failed: %s" % _failure_excerpt(exc))
-
-
 __all__ = [
     "MergeGateVerdict",
-    "ProjectedMergeContractVerdict",
     "validate_projected_merge",
-    "validate_projected_merge_contract",
 ]

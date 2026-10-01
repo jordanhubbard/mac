@@ -240,10 +240,7 @@ def test_setup_failure_stops_only_the_created_vm(tmp_path, config, request_data,
 
 
 @pytest.mark.parametrize("wrong_tree", [False, True])
-@pytest.mark.parametrize("through_control_plane", [False, True])
-def test_service_stages_exact_source_without_openshell(
-    tmp_path, monkeypatch, config, wrong_tree, through_control_plane
-):
+def test_service_stages_exact_source_without_openshell(tmp_path, monkeypatch, config, wrong_tree):
     repo = tmp_path / "source"
     repo.mkdir()
 
@@ -278,11 +275,7 @@ def test_service_stages_exact_source_without_openshell(
         return 7, "unchanged suite failed"
 
     monkeypatch.setattr(controller, "run_staged_vm_verification", verify)
-    run = (
-        object.__new__(services.ControlPlane)._run_contract_gate
-        if through_control_plane
-        else services.run_repository_contract_test_in_openshell
-    )
+    run = services.run_repository_contract_test_in_openshell
     result = run(
         config["repositories"][0],
         "main",
@@ -299,78 +292,3 @@ def test_service_stages_exact_source_without_openshell(
         assert calls[0]["head_sha"] == head
         assert calls[0]["tree_sha"] == tree
         assert calls[0]["test_command"] == "make test-host"
-
-
-@pytest.mark.parametrize("returncode", [0, 7])
-def test_publication_routes_projected_merge_by_canonical_repository(
-    tmp_path, monkeypatch, config, returncode
-):
-    import tarfile
-
-    from mac.models import TaskState, ValidationError
-    from tests.test_publication_pull_request import (
-        FakeForge,
-        build_repo,
-        drive_to_approval,
-        git,
-        install_forge,
-        published_detail,
-    )
-
-    cp = services.ControlPlane.in_memory()
-    remote, source, _, task_head = build_repo(tmp_path)
-    (source / "mainline.txt").write_text("main moved independently\n")
-    git(source, "add", "mainline.txt")
-    git(source, "commit", "-m", "advance main")
-    git(source, "push", "origin", "main")
-    base = git(source, "rev-parse", "HEAD")
-    forge = FakeForge(remote, tmp_path / "forge")
-    install_forge(monkeypatch, forge, checks=())
-    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-
-    # A local bare repository stands in for the configured canonical remote.
-    # The temporary projected checkout is deliberately not allowlisted.
-    config["repositories"] = [str(remote)]
-    path = tmp_path / "vm.json"
-    path.write_text(json.dumps(config))
-    path.chmod(0o600)
-    monkeypatch.setenv("MAC_HUB_VERIFY_VM_CONFIG", str(path))
-    monkeypatch.delenv("MAC_HUB_VERIFY_IMAGE", raising=False)
-    calls = []
-
-    def verify(selected, archive, **kwargs):
-        assert selected["repositories"] == [str(remote)]
-        assert kwargs["remote_url"] == str(remote)
-        assert kwargs["head_sha"] not in (base, task_head)
-        assert kwargs["test_command"] == "make suite"
-        with tarfile.open(archive) as staged:
-            assert staged.extractfile("repo/feature.txt").read() == b"feature\n"
-            assert staged.extractfile("repo/mainline.txt").read() == b"main moved independently\n"
-        kwargs["verifier_identity"].update(
-            execution_environment="dedicated_kvm",
-            head_sha=kwargs["head_sha"],
-            tree_sha=kwargs["tree_sha"],
-        )
-        calls.append(kwargs)
-        return returncode, "projected suite result"
-
-    monkeypatch.setattr(controller, "run_staged_vm_verification", verify)
-    if returncode:
-        with pytest.raises(ValidationError, match="full repository contract test failed"):
-            cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-        assert not forge.merges
-        assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == base
-        assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-    else:
-        publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-        assert publication.status == "published"
-        assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-        git(source, "fetch", "origin", "main")
-        assert git(source, "rev-parse", "origin/main^{tree}") == calls[0]["tree_sha"]
-        gate = next(
-            item
-            for item in published_detail(cp, task.id)["commands"]
-            if item["name"] == "publication_contract_gate"
-        )
-        assert gate["verifier_runtime"] == calls[0]["verifier_identity"]
-    assert len(calls) == 1

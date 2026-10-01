@@ -253,9 +253,13 @@ def test_landing_failure_classification_reads_publication_hints():
     wait = ValidationError("checks pending")
     wait.publication_retry_after_seconds = 600
     wait.publication_failure_kind = "pull_request_checks_pending"
-    conflict = ValidationError("merge gate: does not integrate")
-    conflict.conflict_integration_context = {"task_id": "t"}
+    checks_failed = ValidationError("required checks failed: test")
+    checks_failed.publication_failure_kind = "pull_request_checks_failed"
+    serialized = ValidationError("another landing on this repository")
+    serialized.publication_retry_after_seconds = 60
+    serialized.publication_failure_kind = "landing_serialized"
 
     assert services._landing_failure_mode(retry) == "retry"
     assert services._landing_failure_mode(wait) == "wait"
-    assert services._landing_failure_mode(conflict) == "wait"
+    assert services._landing_failure_mode(checks_failed) == "permanent"
+    assert services._landing_failure_mode(serialized) == "wait"

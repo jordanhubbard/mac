@@ -263,8 +263,7 @@ def test_pushed_branch_gate_refuses_a_clone_at_another_head(monkeypatch, tmp_pat
     policy = tmp_path / "policy.yaml"
     policy.write_text("version: 1\n")
     monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(policy))
-    rc, output = ControlPlane._run_contract_gate(
-        SimpleNamespace(),
+    rc, output = services.run_repository_contract_test_in_openshell(
         "https://example.invalid/repo.git",
         "main",
         "a" * 40,

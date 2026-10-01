@@ -187,8 +187,6 @@ EXPECTED_TABLES = [
     "machines",
     "managed_task_publication_rollout",
     "memory_records",
-    "merge_queue_entries",
-    "merge_queue_windows",
     "messages",
     "mood_overlays",
     "notifier_channels",
@@ -495,6 +493,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0002_dream_candidate_store",
         "0003_drop_leftover_work_package_triggers",
         "0004_drop_removed_feature_tables",
+        "0005_drop_native_merge_queue_tables",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -508,6 +507,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0004_drop_removed_feature_tables": (
             "c225e99d45d394c89efb02d71b3e186eb9b6460aa553715187397868ce431b98"
+        ),
+        "0005_drop_native_merge_queue_tables": (
+            "3cfc5b4536aee2fa783c2ad90ac3f84b1c52db7f33a4062c42eedf679d9e9d0f"
         ),
     }
     for migration in MIGRATIONS:

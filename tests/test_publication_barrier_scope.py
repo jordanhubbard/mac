@@ -2,8 +2,8 @@
 
 Thread dump taken on the hub while it was unresponsive, 2026-08-14:
 
-    Thread A   publish_task -> validate_projected_merge_contract
-               -> _run_contract_gate -> subprocess wait
+    Thread A   publish_task -> (the hub's projected contract gate, since
+               removed) -> subprocess wait
                ...holding _PUBLICATION_BARRIER_THREAD_LOCK
 
     Threads B..H  publish_task -> publication_serialization  (blocked)

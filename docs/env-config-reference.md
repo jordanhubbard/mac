@@ -603,11 +603,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MAX_TASK_LEASE_SECONDS` | int | consumer-defined | core | Core setting: max task lease seconds. |
 | `MAC_MEMORY_EMBEDDING_DIM` | int | consumer-defined | memory | Memory setting: memory embedding dim. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
-| `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue capability ttl seconds. |
-| `MAC_MERGE_QUEUE_LEASE_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue lease seconds. |
-| `MAC_MERGE_QUEUE_WINDOW_CEILING` | str | consumer-defined | merge-queue | Merge Queue setting: merge queue window ceiling. |
-| `MAC_MERGE_QUEUE_WINDOW_FLOOR` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue window floor. |
-| `MAC_MERGE_QUEUE_WINDOW_INCREMENT` | str | consumer-defined | merge-queue | Merge Queue setting: merge queue window increment. |
 | `MAC_MIGRATION_DATABASE_URL` | str | consumer-defined | core | Core setting: migration database url. |
 | `MAC_MODELS_DEV_CACHE_FILE` | str | consumer-defined | core | Core setting: models dev cache file. |
 | `MAC_NEMOCLAW_AGENT_ID` | str | consumer-defined | core | Core setting: nemoclaw agent id. |
