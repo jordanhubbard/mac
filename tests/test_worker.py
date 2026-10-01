@@ -694,22 +694,11 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
         review_executor,
         attestation_key=cp._agent_attestation_key(reviewer.id),
     )
-    publication_gate_calls: list[tuple[str, str, str, str]] = []
-
-    def publication_gate(
-        repo_dir: str, projected_branch: str, projected_sha: str, command: str
-    ) -> tuple[int, str]:
-        publication_gate_calls.append((repo_dir, projected_branch, projected_sha, command))
-        return 0, "projected full contract passed"
-
-    cp._publication_merge_test_runner = publication_gate
-
     result = worker.run_once()
 
     assert result.status == "review_verdict_recorded"
     verdict_manifest = cp.list_evidence(task.id)[-1].metadata["verification"]
     assert verdict_manifest["repo"]["remote_ref"] == "refs/heads/%s" % branch
-    assert len(publication_gate_calls) == 1
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     assert cp.list_publications(task.id)[0].target == "git://main"
     # Publication is isolated from the long-lived hub checkout. The remote

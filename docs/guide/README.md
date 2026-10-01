@@ -6,7 +6,7 @@ Read in order if you are new; jump if you are not.
 |---|---|
 | **[1. System Architecture](01-architecture.md)** | What the pieces are and how work flows. Mostly diagrams. |
 | **[2. Getting Started](02-getting-started.md)** | Stand up a fleet, run a task, diagnose one that does not move. |
-| **[3. Advanced Concepts](03-advanced.md)** | Leases, evidence, review, publication, the merge queue — and the known gaps. |
+| **[3. Advanced Concepts](03-advanced.md)** | Leases, evidence, review, publication, the serial land loop — and the known gaps. |
 | **[4. The UI](04-ui.md)** | The read-only console and the mutating Fleet IDE. |
 | **[5. Developer Guide](05-developer-guide.md)** | How to hack on mac: tests, gates, schema, deploys. |
 | **[6. Trust workflow](06-trust-workflow.md)** | One request, explicit acceptance, recovery, and cohort measurement. |

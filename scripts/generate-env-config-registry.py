@@ -58,7 +58,6 @@ FAMILIES = (
     ("MAC_QDRANT_", "qdrant-memory"),
     ("MAC_TOKENHUB_", "tokenhub-legacy"),
     ("MAC_WEBDAV_", "webdav-publish"),
-    ("MAC_MERGE_QUEUE_", "merge-queue"),
     ("MAC_PUBLISH_", "publication"),
     ("MAC_MEMORY_", "memory"),
     ("MAC_RUNNER_", "kubernetes-runner"),

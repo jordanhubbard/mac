@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import functools
 import hashlib
 import json
 import logging
 import os
 import re
-import shlex
 import shutil
-import socket
 import subprocess
 import tempfile
 import threading
@@ -33,6 +32,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Mapping,
     Optional,
@@ -426,23 +426,6 @@ def _repository_contract_test_command_for_task(task: "Task") -> str:
     return ""
 
 
-def _repository_contract_bootstrap_command_for_task(task: "Task") -> str:
-    """The repository contract's bootstrap command for a task, or "" if none
-    is declared. Mirrors ``_repository_contract_test_command_for_task``."""
-    metadata = ensure_json_object(task.metadata)
-    for path in (
-        ("execution_contract", "bootstrap"),
-        ("execution_contract", "repository_contract", "bootstrap"),
-        ("origin", "repository_contract", "bootstrap"),
-        ("repository_contract", "bootstrap"),
-    ):
-        node = _nested_json_object(metadata, *path)
-        command = str(node.get("command") or "").strip()
-        if command:
-            return command
-    return ""
-
-
 def _repository_contracts_from_metadata(metadata: JsonDict) -> List[JsonDict]:
     contracts: List[JsonDict] = []
     seen: set[str] = set()
@@ -632,16 +615,21 @@ DEFAULT_LANDING_MAX_ATTEMPTS = 8
 DEFAULT_LANDING_DEADLINE_SECONDS = 86400
 LANDING_BACKOFF_MIN_SECONDS = 300
 LANDING_BACKOFF_MAX_SECONDS = 3600
-# Publication failure kinds that are waits on someone else (forge checks, the
-# merge queue): they count against the deadline, not the attempt cap.
+# Publication failure kinds that are waits on someone else (forge checks,
+# another landing on the same repository): they count against the deadline,
+# not the attempt cap.
 _LANDING_WAIT_FAILURE_KINDS = frozenset(
     {
         "pull_request_checks_pending",
-        "pull_request_queued",
-        "merge_queue_waiting",
-        "merge_queue_deferred",
+        "landing_serialized",
     }
 )
+# Failure kinds retrying cannot change: the repository's one test gate (its
+# required checks) failed for this exact head. The task blocks at once.
+_LANDING_PERMANENT_FAILURE_KINDS = frozenset({"pull_request_checks_failed"})
+# How many times one task is sent back to its worker to rebase onto a moved
+# canonical tip (or resolve a conflict with it) before it blocks.
+LANDING_MAX_REBASES = 2
 # A ValidationError normally states a fact retrying cannot change. These
 # markers say the fact was a transport fault (git fetch over a flaky network
 # raises a plain ValidationError), so it consumes the budget instead.
@@ -665,6 +653,10 @@ def _landing_failure_mode(exc: BaseException) -> str:
     """
     if isinstance(exc, PublicationDeferredError):
         return "wait"
+    if str(getattr(exc, "publication_failure_kind", "") or "") in (
+        _LANDING_PERMANENT_FAILURE_KINDS
+    ):
+        return "permanent"
     try:
         retry_after = int(getattr(exc, "publication_retry_after_seconds", 0) or 0)
     except (TypeError, ValueError):
@@ -672,9 +664,6 @@ def _landing_failure_mode(exc: BaseException) -> str:
     if retry_after > 0:
         kind = str(getattr(exc, "publication_failure_kind", "") or "")
         return "wait" if kind in _LANDING_WAIT_FAILURE_KINDS else "retry"
-    if isinstance(getattr(exc, "conflict_integration_context", None), Mapping):
-        # A linked integration repair task owns the fix; wait for it.
-        return "wait"
     if isinstance(exc, TransitionError):
         # A concurrent consumer moved the task mid-publish.
         return "retry"
@@ -1278,6 +1267,48 @@ class _PublicationBaseMovedError(ValidationError):
         )
 
 
+class _LandingRebaseRequiredError(ValidationError):
+    """The reviewed head no longer lands as verified: its worker must rebase.
+
+    Raised when the canonical tip is not the base the worker's verifier ran
+    on (the tip moved) or when the head conflicts with the tip. The hub runs
+    no tests of its own, so the fix is the worker's: rebase onto the tip and
+    re-run its verifier. The default review workflow turns this into a
+    send-back of the SAME task (``_send_back_for_rebase``).
+    """
+
+    publication_failure_kind = "rebase_required"
+
+    def __init__(
+        self,
+        *,
+        canonical_tip: str,
+        verified_base: str,
+        head_sha: str,
+        conflicted_files: Sequence[str] = (),
+        error: str = "",
+    ) -> None:
+        self.canonical_tip = str(canonical_tip or "")
+        self.verified_base = str(verified_base or "")
+        self.head_sha = str(head_sha or "")
+        self.conflicted_files = [str(path) for path in conflicted_files]
+        self.conflict = bool(self.conflicted_files or error)
+        if self.conflict:
+            why = "conflicts with the canonical tip %s: %s" % (
+                self.canonical_tip[:12] or "?",
+                ", ".join(self.conflicted_files[:10]) or str(error)[:200] or "unknown",
+            )
+        else:
+            why = "was verified on %s but the canonical tip is now %s" % (
+                self.verified_base[:12] or "an older base",
+                self.canonical_tip[:12] or "?",
+            )
+        super().__init__(
+            "git publication: reviewed head %s %s; the worker must rebase onto the "
+            "tip and re-run its verifier" % (self.head_sha[:12], why)
+        )
+
+
 # Sandbox git preflight for hub verification. The repo is tar-uploaded into the
 # sandbox, so its files can be owned by a different uid than the user running
 # the tests (HOME=/tmp guarantees no .gitconfig safe.directory whitelist).
@@ -1320,13 +1351,13 @@ def _serialize_runtime_source_publication(function: Callable[..., Optional[JsonD
         if not self._publication_targets_runtime_source(task_id):
             return function(self, task_id, target, evidence_id)
         # Hold the barrier only long enough to READ it. It used to wrap the
-        # publication itself, and a publication runs a contract gate in a
-        # sandbox for 45-90 minutes.
+        # publication itself, and a publication then ran a contract gate in a
+        # sandbox for 45-90 minutes (the hub no longer runs one).
         #
         # Thread dump taken on the hub mid-hang, 2026-08-14:
         #
-        #   one thread:  publish_task -> validate_projected_merge_contract
-        #                -> (the contract gate runner) -> subprocess wait
+        #   one thread:  publish_task -> (the hub's projected contract gate)
+        #                -> subprocess wait
         #                (holding _PUBLICATION_BARRIER_THREAD_LOCK)
         #   seven more:  publish_task -> publication_serialization (blocked),
         #                one of them the hub TICK thread
@@ -1364,232 +1395,6 @@ def _generate_attestation_key() -> str:
         .decode("ascii")
         .rstrip("=")
     )
-
-
-# ---------------------------------------------------------------------------
-# Legacy single-task publication: conflict-to-integration context payload.
-#
-# When the merge-gate (``mac.merge_queue.validate_projected_merge``) reports a
-# textual conflict for an approved single-task publication, the task cannot
-# fast-forward onto the moving canonical ``main`` tip. Rather than silently
-# abort, the legacy publisher hands the conflict to an *integration executor*
-# (rebase / resolve / re-verify). That executor needs context: which task was
-# approved, the reviewed head it approved, the evidence receipt, the current
-# canonical baseline, the attempt base it diverged from, exactly which paths
-# conflict, and — the expensive part — which already-landed commits/tasks
-# touched those same paths between the attempt base and current ``main``.
-#
-# ``build_conflict_integration_payload`` assembles that context as a pure,
-# unit-testable function returning a ``JsonDict``. It is deliberately isolated
-# from ControlPlane state: the only I/O it performs is through an injected
-# ``git_runner`` shaped exactly like ``ControlPlane._git_output`` (returns a
-# dict with ``returncode``/``stdout``/``stderr``), so it can be exercised
-# against a real temporary repo without a database or a full control plane.
-#
-# It records *raw intent/evidence pointers* and leaves the semantic
-# supersession decision to the integration executor as an explicit field
-# (``supersession.decision`` defaults to ``"undecided"``); precedence is NEVER
-# inferred from commit timestamps here. Current ``main`` is always preserved as
-# the canonical baseline of the payload.
-# ---------------------------------------------------------------------------
-
-# Optional commit trailer an integration executor may read to correlate a
-# landed commit back to the MAC task that produced it. Absent by default; when
-# present it is surfaced as a raw pointer only (never used to infer precedence).
-_MAC_TASK_TRAILER_RE = re.compile(r"^\s*Mac-Task-Id:\s*(?P<task_id>\S+)\s*$", re.MULTILINE)
-
-
-def _landed_commits_touching_paths(
-    git_runner: "Callable[[List[str], int], JsonDict]",
-    base_sha: str,
-    main_sha: str,
-    conflicted_paths: Sequence[str],
-) -> List[JsonDict]:
-    """Return raw commit pointers for commits in ``base_sha..main_sha`` that
-    touched any of ``conflicted_paths``.
-
-    Uses ``git log`` restricted to the conflicted paths (path-restricted
-    ``rev-list`` semantics). Each entry carries only raw pointers — sha,
-    subject, author, author-date, and any ``Mac-Task-Id`` trailer — so callers
-    can present provenance without inferring precedence. Returns ``[]`` when
-    the range or paths cannot be resolved; the builder records the failure
-    separately rather than raising, so a conflict payload is always producible.
-    """
-    if not base_sha or not main_sha:
-        return []
-    paths = [str(path) for path in conflicted_paths if str(path).strip()]
-    if not paths:
-        return []
-    # Record separator keeps commit records unambiguous even if a subject or
-    # body contains newlines; %x1f (unit separator) delimits fields.
-    record_sep = "\x1e"
-    field_sep = "%x1f"
-    fmt = field_sep.join(["%H", "%an", "%aI", "%s", "%b"])
-    args = [
-        "log",
-        "%s..%s" % (base_sha, main_sha),
-        "--no-merges",
-        "--format=%s%s" % (record_sep, fmt),
-        "--",
-        *paths,
-    ]
-    result = git_runner(args, 60)
-    if int(result.get("returncode", 1)) != 0:
-        return []
-    stdout = str(result.get("stdout") or "")
-    commits: List[JsonDict] = []
-    for raw in stdout.split(record_sep):
-        raw = raw.strip("\n")
-        if not raw:
-            continue
-        fields = raw.split("\x1f")
-        if len(fields) < 4:
-            continue
-        sha, author, author_date, subject = fields[0], fields[1], fields[2], fields[3]
-        body = fields[4] if len(fields) > 4 else ""
-        trailer = _MAC_TASK_TRAILER_RE.search(body)
-        commits.append(
-            {
-                "sha": sha.strip(),
-                "author": author.strip(),
-                "author_date": author_date.strip(),
-                "subject": subject.strip(),
-                "task_id": trailer.group("task_id").strip() if trailer else None,
-            }
-        )
-    return commits
-
-
-def build_conflict_integration_payload(
-    *,
-    approved_task_id: str,
-    accepted_evidence_id: str,
-    reviewed_head_sha: str,
-    current_main_sha: str,
-    attempt_base_sha: str,
-    conflicted_paths: Sequence[str],
-    depends_on: Optional[Sequence[str]] = None,
-    git_runner: "Optional[Callable[[List[str], int], JsonDict]]" = None,
-    supersession_decision: str = "undecided",
-    superseded_task_id: Optional[str] = None,
-    superseded_by_task_id: Optional[str] = None,
-) -> JsonDict:
-    """Assemble the context-rich integration payload for an approved-but-
-    conflicting *legacy single-task* publication.
-
-    This is a pure builder (aside from the optional injected ``git_runner``):
-    it captures raw pointers and computed provenance and returns a ``JsonDict``.
-    It does NOT mutate the repository, the database, or the REVIEWING flow, and
-    it makes no semantic precedence decision.
-
-    The payload records:
-
-    * ``approved_task`` — the approved task id, its accepted evidence id, and
-      the reviewed head SHA the reviewer approved.
-    * ``canonical_baseline`` — the current canonical ``main`` tip, always
-      preserved as the baseline the integration must land on.
-    * ``attempt_base_sha`` — the base the attempt diverged from
-      (``runtime.repository_base_sha``).
-    * ``conflicted_paths`` — the conflicted paths from
-      ``MergeGateVerdict.conflicted_files``.
-    * ``landed_since_base`` — the set of commits (and any correlated task ids)
-      between the attempt base and current ``main`` that touched the conflicted
-      paths, computed via a path-restricted ``git log``.
-    * ``dependencies`` — explicit *terminal* prerequisites supplied by the
-      caller.  The approved task is an input authority, not a lifecycle
-      dependency: it deliberately remains REVIEWING until this integration
-      repair succeeds, so adding it here would deadlock the repair.
-    * ``supersession`` — an explicit decision field the integration executor
-      sets. Defaults to ``"undecided"``; timestamps are never used to infer
-      precedence here.
-
-    ``git_runner`` is shaped like ``ControlPlane._git_output`` — called as
-    ``git_runner(args, timeout)`` and returning a dict with
-    ``returncode``/``stdout``/``stderr``. When omitted, provenance is left
-    empty and flagged as uncomputed, keeping the builder usable in contexts
-    without repository access.
-    """
-    if not approved_task_id or not str(approved_task_id).strip():
-        raise ValidationError("conflict integration payload requires approved_task_id")
-    if not accepted_evidence_id or not str(accepted_evidence_id).strip():
-        raise ValidationError("conflict integration payload requires accepted_evidence_id")
-    if not _GIT_SHA_RE.match(str(reviewed_head_sha).strip()):
-        raise ValidationError("conflict integration payload requires a git reviewed_head_sha")
-    if not _GIT_SHA_RE.match(str(current_main_sha).strip()):
-        raise ValidationError("conflict integration payload requires a git current_main_sha")
-    if not _GIT_SHA_RE.match(str(attempt_base_sha).strip()):
-        raise ValidationError("conflict integration payload requires a git attempt_base_sha")
-
-    normalized_paths = coerce_list(
-        str(path).strip() for path in (conflicted_paths or []) if str(path).strip()
-    )
-    if not normalized_paths:
-        raise ValidationError("conflict integration payload requires at least one conflicted path")
-
-    supersession = ensure_json_object(None)
-    decision = str(supersession_decision or "undecided").strip() or "undecided"
-    if decision not in {"undecided", "supersede", "coexist", "abandon"}:
-        raise ValidationError(
-            "conflict integration payload supersession decision must be one of "
-            "undecided/supersede/coexist/abandon"
-        )
-    supersession = {
-        # Explicit, integration-executor-owned decision. Never inferred from
-        # commit timestamps in this builder.
-        "decision": decision,
-        "superseded_task_id": (str(superseded_task_id).strip() if superseded_task_id else None),
-        "superseded_by_task_id": (
-            str(superseded_by_task_id).strip() if superseded_by_task_id else None
-        ),
-        "decided": decision != "undecided",
-        "policy": "explicit_only_no_timestamp_inference",
-    }
-
-    provenance_computed = git_runner is not None
-    landed = (
-        _landed_commits_touching_paths(
-            git_runner,
-            str(attempt_base_sha).strip(),
-            str(current_main_sha).strip(),
-            normalized_paths,
-        )
-        if git_runner is not None
-        else []
-    )
-    landed_task_ids = coerce_list(commit["task_id"] for commit in landed if commit.get("task_id"))
-
-    payload: JsonDict = {
-        "schema": "mac.conflict_integration_payload.v1",
-        "kind": "legacy_single_task_publication_conflict",
-        "approved_task": {
-            "task_id": str(approved_task_id).strip(),
-            "accepted_evidence_id": str(accepted_evidence_id).strip(),
-            "reviewed_head_sha": str(reviewed_head_sha).strip(),
-        },
-        # Current main is ALWAYS the canonical baseline the integration lands on.
-        "canonical_baseline": {
-            "ref": "main",
-            "main_sha": str(current_main_sha).strip(),
-        },
-        "attempt_base_sha": str(attempt_base_sha).strip(),
-        "conflicted_paths": normalized_paths,
-        "landed_since_base": {
-            "computed": provenance_computed,
-            "base_sha": str(attempt_base_sha).strip(),
-            "main_sha": str(current_main_sha).strip(),
-            "commits": landed,
-            "task_ids": landed_task_ids,
-        },
-        "dependencies": {
-            # Only terminal prerequisites belong in the scheduler dependency
-            # set.  ``approved_task`` above records the non-terminal input
-            # authority without making the repair wait for the very task it
-            # must unblock.
-            "depends_on": coerce_list(depends_on or []),
-        },
-        "supersession": supersession,
-    }
-    return payload
 
 
 def _contract_mapping(value: Any, field: str) -> JsonDict:
@@ -3732,7 +3537,6 @@ class ControlPlane:
                 "agents",
                 "projects",
                 "pipelines",
-                "merge-queue",
                 "cycles",
                 "telemetry",
             }
@@ -4179,7 +3983,6 @@ class ControlPlane:
                 "agents",
                 "projects",
                 "pipelines",
-                "merge-queue",
                 "cycles",
                 "telemetry",
             ],
@@ -4882,7 +4685,6 @@ class ControlPlane:
                     "agents",
                     "projects",
                     "pipelines",
-                    "merge-queue",
                     "cycles",
                     "telemetry",
                 ],
@@ -11128,8 +10930,6 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
-        if target == TaskState.CANCELLED.value:
-            self._evict_merge_queue_entry_for_cancelled_task(task_id)
         return result
 
     def transition_task(
@@ -11152,30 +10952,7 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
-        if _state_value(target_state) == TaskState.CANCELLED.value:
-            self._evict_merge_queue_entry_for_cancelled_task(task_id)
         return result
-
-    def _evict_merge_queue_entry_for_cancelled_task(self, task_id: str) -> None:
-        """Clear this task's live merge-queue entry, if it has one.
-
-        A cancelled task will never call ``claim_slot`` again, so an entry it
-        already holds -- often still at ``attempts == 0`` because it was
-        cancelled before winning a slot -- would otherwise sit in the queue
-        forever with no reaper able to touch it (``stalled_entries`` requires
-        ``attempts >= 1``). Left alone, that is a permanent head-of-line block
-        for every entry behind it. Best-effort: a queue lookup failure must
-        never block the cancellation itself.
-        """
-
-        try:
-            self._native_merge_queue().evict_for_task(task_id, reason="owning task was cancelled")
-        except Exception:  # noqa: BLE001 - cancellation must still succeed.
-            logging.getLogger("mac.merge_queue").warning(
-                "failed to evict merge queue entry for cancelled task %s",
-                task_id,
-                exc_info=True,
-            )
 
     def request_task_input(
         self,
@@ -18403,8 +18180,8 @@ class ControlPlane:
     ) -> List[JsonDict]:
         """Say, on the bus, that a change LANDED and that the trunk moved.
 
-        Emitted from the merge path itself, immediately after the forge (or
-        mac's own queue) reported the merge and the resulting canonical tip was
+        Emitted from the merge path itself, immediately after the forge
+        reported the merge (or the guarded push landed) and the resulting canonical tip was
         verified against the remote — never scraped from a log and never
         re-derived later from state a second writer may already have moved.
 
@@ -18421,8 +18198,7 @@ class ControlPlane:
         ``tree_sha`` is carried on both and is the load-bearing field. Every
         merge here is a SQUASH: the commit sha is minted at merge time, so a
         consumer keyed on it cannot match anything it knew beforehand. The tree
-        survives the squash, which is exactly why
-        ``native_merge_queue.landing_is_safe`` gates on tree identity.
+        survives the squash.
 
         Spoken as the HUB (``publish_system``): the hub performed the merge, so
         attributing it to the task's agent would be a lie — and would make that
@@ -19589,6 +19365,34 @@ class ControlPlane:
             return False
         return candidate == runtime_source
 
+    @contextlib.contextmanager
+    def _repository_land_lock(self, clone_url: str, canonical_branch: str) -> Iterator[None]:
+        """Serialize land steps per (repository, canonical branch).
+
+        A PostgreSQL transaction-scoped advisory lock, held for the whole land
+        step, so every hub process and thread sees the same lock and a
+        crashed holder releases it with its connection. It is TRY-locked: a
+        second land step for the same repository does not queue behind the
+        first (a land step clones and talks to the forge), it waits a tick
+        under the landing deadline instead.
+        """
+
+        repository = _canonicalize_git_url(clone_url) or str(clone_url or "")
+        key = "mac.land:%s#%s" % (repository, canonical_branch)
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtext(?)) AS held", (key,)
+            ).fetchone()
+            if row is None or not row["held"]:
+                busy = ValidationError(
+                    "git publication is waiting for another landing on %s %s to finish"
+                    % (repository, canonical_branch)
+                )
+                busy.publication_retry_after_seconds = 60
+                busy.publication_failure_kind = "landing_serialized"
+                raise busy
+            yield
+
     @_serialize_runtime_source_publication
     def _publish_git_target_if_needed(
         self,
@@ -19710,26 +19514,40 @@ class ControlPlane:
         # docstring records as still live on "the hub publish and hub verify
         # paths". Verify was fixed (#341); this is publish.
         auth_url, auth_env = _gitops.askpass_remote_auth(clone_url)
+        # The base the worker's verifier ran on: the canonical tip its
+        # finalizer synced onto before the contract gate (#909).
+        canonical_sync = ensure_json_object(repo.get("canonical_sync"))
+        verified_base = (
+            str(canonical_sync.get("canonical_tip") or "").strip()
+            if str(canonical_sync.get("status") or "") in {"fresh", "rebased"}
+            else ""
+        )
         last_base_move: Optional[_PublicationBaseMovedError] = None
-        for attempt in range(2):
-            try:
-                return self._publish_git_target_attempt(
-                    task=task,
-                    target=target,
-                    remote_ref=remote_ref,
-                    source_branch=source_branch,
-                    head_sha=head_sha,
-                    clone_url=clone_url,
-                    auth_url=auth_url,
-                    auth_env=auth_env,
-                    canonical_branch=canonical_branch,
-                    attempt=attempt + 1,
-                    agent_pull_request=agent_pull_request,
-                )
-            except _PublicationBaseMovedError as exc:
-                last_base_move = exc
-                if attempt == 0:
-                    continue
+        with self._repository_land_lock(clone_url, canonical_branch):
+            for attempt in range(2):
+                try:
+                    return self._publish_git_target_attempt(
+                        task=task,
+                        target=target,
+                        remote_ref=remote_ref,
+                        source_branch=source_branch,
+                        head_sha=head_sha,
+                        clone_url=clone_url,
+                        auth_url=auth_url,
+                        auth_env=auth_env,
+                        canonical_branch=canonical_branch,
+                        attempt=attempt + 1,
+                        agent_pull_request=agent_pull_request,
+                        verified_base=verified_base,
+                    )
+                except _PublicationBaseMovedError as exc:
+                    # The tip moved between the land step's read and its merge
+                    # (someone outside mac pushed). Retry once at once; the
+                    # retry sees the new tip and sends the task back to
+                    # rebase if the worker's verification no longer covers it.
+                    last_base_move = exc
+                    if attempt == 0:
+                        continue
         assert last_base_move is not None
         exhausted = ValidationError(
             "%s; a second exact-base attempt also lost the publication race; "
@@ -19802,203 +19620,6 @@ class ControlPlane:
             "api_url": api_url,
         }
 
-    # ------------------------------------------------------------------
-    # mac's own merge queue (see mac.native_merge_queue).
-    # ------------------------------------------------------------------
-
-    def _native_merge_queue(self) -> Any:
-        """The durable native queue, bound to this hub's store.
-
-        Constructed lazily and cached: the queue holds no state of its own --
-        everything lives in ``merge_queue_entries`` / ``merge_queue_windows`` --
-        so a restart rebuilds this object and continues from the ledger.
-        """
-
-        from mac.native_merge_queue import NativeMergeQueue
-
-        queue = getattr(self, "_native_merge_queue_instance", None)
-        if queue is None:
-            queue = NativeMergeQueue(self.store, observe=self.record_metric)
-            self._native_merge_queue_instance = queue
-        return queue
-
-    def _merge_queue_snapshot(self, queue: Any, entry_id: str) -> Optional[JsonDict]:
-        """Depth, window, and eviction history for the queue this entry is in.
-
-        Recorded into the publication evidence beside `merge_serialization` so
-        the guarantee is not a claim: an operator reading `mac task show` can
-        see how deep the queue was, how wide the speculation window was, and
-        what was evicted and why. This repository has shipped four gates today
-        that reported healthy while enforcing nothing; a queue nobody can watch
-        is the next one.
-        """
-
-        try:
-            entry = queue.entry(entry_id)
-            if entry is None:
-                return None
-            return queue.snapshot(entry.repository, entry.branch)
-        except Exception:  # noqa: BLE001 - observability never blocks a land
-            return None
-
-    def _merge_queue_owner(self) -> str:
-        """Who holds a queue slot.  Stable per hub process, unique per hub."""
-
-        owner = getattr(self, "_merge_queue_owner_id", "")
-        if not owner:
-            owner = "hub-%s-%d" % (socket.gethostname(), os.getpid())
-            self._merge_queue_owner_id = owner
-        return owner
-
-    def _resolve_merge_serialization(self, clone_url: str, canonical_branch: str) -> JsonDict:
-        """Record the repository's merge capability; serialize through mac's queue.
-
-        The capability is a project attribute refreshed by the existing GitHub
-        ingest poller (see :mod:`mac.merge_capability`), not a per-merge probe.
-        A missing or expired answer is resolved right here and written back, so
-        a repository registered five minutes ago does not have to wait for a
-        poll before it can publish.
-
-        The mode is always mac's own queue: no repository uses a forge merge
-        queue, so that path was removed. "Unknown" is never permission to do an
-        unserialized squash.
-        """
-
-        from mac.merge_capability import (
-            MergeCapability,
-            capability_ttl_seconds,
-            repository_remote_and_branch,
-            resolve_merge_capability,
-            stored_capability,
-        )
-        from mac.native_merge_queue import MODE_NATIVE_QUEUE
-
-        wanted = _canonicalize_git_url(clone_url)
-        record = None
-        capability: Optional[MergeCapability] = None
-        try:
-            for repo in self.list_project_repositories(enabled=True):
-                coordinates = repository_remote_and_branch(repo)
-                if not coordinates["remote"]:
-                    continue
-                if _canonicalize_git_url(coordinates["remote"]) == wanted:
-                    record = repo
-                    break
-        except Exception:  # noqa: BLE001 - an unreadable registry is not fatal
-            record = None
-        if record is not None:
-            capability = stored_capability(getattr(record, "metadata", None))
-        source = "stored"
-        if capability is None or capability.is_stale(
-            branch=canonical_branch, ttl_seconds=capability_ttl_seconds()
-        ):
-            source = "resolved_now"
-            capability = resolve_merge_capability(
-                clone_url, canonical_branch, resolver="publication"
-            )
-            if record is not None:
-                try:
-                    self.record_repository_merge_capability(record.id, capability.to_dict())
-                except Exception:  # noqa: BLE001 - caching is best effort
-                    pass
-        return {
-            "mode": MODE_NATIVE_QUEUE,
-            "source": source,
-            "repository_id": getattr(record, "id", "") if record is not None else "",
-            "capability": capability.to_dict(),
-        }
-
-    def _build_speculative_base(
-        self,
-        root: Path,
-        git_step: Any,
-        base_sha: str,
-        predecessors: Sequence[JsonDict],
-    ) -> str:
-        """Project the queue entries ahead of us on top of the canonical tip.
-
-        This is the speculative half of the queue: entry N is tested against
-        ``tip + entries 1..N-1`` rather than the bare tip, so N does not have to
-        wait for N-1 to land before it can be tested.  Each predecessor is
-        merged with ``git merge-tree`` (no working tree is touched) and the
-        result committed with ``commit-tree`` to give the next step a parent.
-
-        Returns "" when the projection cannot be built -- an unfetchable
-        predecessor branch, or a conflict between two queued changes.  The
-        caller defers; it never falls back to testing against the bare tip,
-        because that result would be attributed to a queue position it was not
-        tested at.
-        """
-
-        current = str(base_sha or "").strip()
-        for predecessor in predecessors:
-            sha = str(predecessor.get("head_sha") or "").strip()
-            branch = str(predecessor.get("source_branch") or "").strip()
-            if not sha:
-                return ""
-            have = git_step(
-                "speculative_have", ["cat-file", "-e", "%s^{commit}" % sha], check=False
-            )
-            if _git_step_returncode(have) != 0:
-                if not branch:
-                    return ""
-                fetched = git_step(
-                    "speculative_fetch",
-                    [
-                        "fetch",
-                        "origin",
-                        "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch),
-                    ],
-                    timeout=180,
-                    check=False,
-                )
-                if _git_step_returncode(fetched) != 0:
-                    return ""
-                have = git_step(
-                    "speculative_have_after_fetch",
-                    ["cat-file", "-e", "%s^{commit}" % sha],
-                    check=False,
-                )
-                if _git_step_returncode(have) != 0:
-                    return ""
-            merged = git_step(
-                "speculative_merge_tree",
-                ["merge-tree", "--write-tree", "--name-only", current, sha],
-                check=False,
-            )
-            if _git_step_returncode(merged) != 0:
-                # Two queued changes conflict with each other. Speculation on
-                # top of this predecessor is worthless; defer rather than
-                # pretend the bare tip is our base.
-                return ""
-            lines = [line for line in str(merged.get("stdout") or "").splitlines() if line.strip()]
-            if not lines:
-                return ""
-            committed = git_step(
-                "speculative_commit_tree",
-                [
-                    "-c",
-                    "user.name=MAC Merge Queue",
-                    "-c",
-                    "user.email=merge-queue@mac.invalid",
-                    "commit-tree",
-                    lines[0],
-                    "-p",
-                    current,
-                    "-p",
-                    sha,
-                    "-m",
-                    "MAC merge queue speculative base",
-                ],
-                check=False,
-            )
-            if _git_step_returncode(committed) != 0:
-                return ""
-            current = str(committed.get("stdout") or "").strip()
-            if not current:
-                return ""
-        return current
-
     def _publish_via_pull_request(
         self,
         *,
@@ -20016,9 +19637,8 @@ class ControlPlane:
         root: Path,
         agent_pull_request: Optional[JsonDict] = None,
         required_checks: Tuple[str, ...] = (),
-        serialization: Optional[JsonDict] = None,
-        queue: Any = None,
-        queue_entry_id: str = "",
+        verified_base_is_tip: bool = True,
+        verified_base: str = "",
     ) -> JsonDict:
         """Land the agent's pull request; the hub records, it does not author.
 
@@ -20029,13 +19649,14 @@ class ControlPlane:
         that fallback is recorded in the publication commands rather than
         being indistinguishable from the normal path.
 
-        The hub does not merge either: it asks the forge's MERGE QUEUE to
-        land the PR when the canonical branch has one, and the queue performs
-        the merge after testing the projected post-merge tree.  Without a
-        queue the request degrades to a plain squash merge, which does *not*
-        carry that guarantee -- so the canonical tip is re-validated against
-        the tested base immediately beforehand, and the weaker serialization
-        is named in the evidence.
+        One test gate decides the merge.  With required status checks the
+        forge's checks are that gate: pending waits, failed blocks.  Without
+        them the worker's verifier run is the gate, which holds only while the
+        canonical tip is still the base it verified -- so a moved tip sends the
+        task back to rebase and retest, and the tip is re-validated right
+        before the merge is requested (optimistic concurrency: a tip that moves
+        in between raises ``_PublicationBaseMovedError`` and the attempt is
+        retried under the landing budget).
 
         The hub never pushes the canonical branch.  A squash merge means the
         reviewed commit is deliberately *not* an ancestor of the canonical tip
@@ -20101,11 +19722,8 @@ class ControlPlane:
             # pointing at a branch other than the one just pushed. A
             # GitHub PR's head branch is immutable once created, so
             # reusing a mismatched number is not a retry -- it is a
-            # permanent, silent no-op: the push lands on ``branch``, the
-            # recorded PR keeps whatever branch it always had, and every
-            # future publish attempt "succeeds" at reusing the wrong PR
-            # forever while genuinely conflicting against main. Verify the
-            # live head before trusting the cached reference.
+            # permanent, silent no-op. Verify the live head before trusting
+            # the cached reference.
             observed_pr_head = _gitops.pull_request_state(api_url, agent_pr_number)
             if (
                 observed_pr_head.get("known")
@@ -20156,6 +19774,31 @@ class ControlPlane:
             }
         )
 
+        # NEVER DOUBLE-LAND. Between attempts the PR may have been merged by a
+        # human, by the forge, or by a previous attempt of ours that died after
+        # the merge and before recording it. Read PR state before acting.
+        observed_pr = _gitops.pull_request_state(api_url, pr.number)
+        commands.append(
+            {
+                "name": "observe_pull_request",
+                "attempt": attempt,
+                "number": pr.number,
+                "known": bool(observed_pr.get("known")),
+                "merged": bool(observed_pr.get("merged")),
+                "state": str(observed_pr.get("state") or ""),
+                "sha": str(observed_pr.get("sha") or ""),
+            }
+        )
+        pre_merged: Optional[Any] = None
+        if observed_pr.get("merged"):
+            pre_merged = _gitops.PullRequestMergeResult(
+                merged=True,
+                number=pr.number,
+                sha=str(observed_pr.get("sha") or ""),
+                serialization="observed",
+                reason="already merged on the forge; observed, not re-merged",
+            )
+
         # VERIFY, DO NOT ASSUME. The party requesting the merge confirms the
         # required contexts actually passed for this head SHA, instead of
         # trusting the forge to refuse. The fleet authenticates as the
@@ -20164,15 +19807,16 @@ class ControlPlane:
         # break-glass) -- so the requester inherits it and CAN merge straight
         # past required checks. It did: the first publication under this flow
         # merged two seconds after the PR was opened, with every required
-        # context reported SKIPPED. Nothing gated it, because this path also
-        # skips its own contract re-projection precisely BECAUSE the forge
-        # reports required checks.
+        # context reported SKIPPED.
         #
         # "No required contexts" and "required contexts that have not reported
         # yet" are NOT the same thing, and are recorded separately: the first
-        # is an unprotected repository, where the local contract gate above
-        # ran instead; the second is a gate that has not run, which defers.
-        if required_checks:
+        # is a repository whose gate is the worker's verifier run; the second
+        # is a gate that has not run, which waits.
+        if pre_merged is not None:
+            verdicts: JsonDict = {}
+            case = "already_merged"
+        elif required_checks:
             verdicts = _gitops.required_check_verdicts(api_url, head_sha, tuple(required_checks))
             if verdicts.get("failed"):
                 case = "failed"
@@ -20183,13 +19827,7 @@ class ControlPlane:
             else:
                 case = "verified"
         else:
-            verdicts = {
-                "known": True,
-                "contexts": [],
-                "passed": [],
-                "pending": [],
-                "failed": [],
-            }
+            verdicts = {}
             case = "none_configured"
         commands.append(
             {
@@ -20204,6 +19842,9 @@ class ControlPlane:
             }
         )
         if case == "failed":
+            # The one test gate for this repository said no. Retrying the
+            # same head cannot change that, so the task blocks with the
+            # failing checks named.
             failure = ValidationError(
                 "git publication will not merge %s: required checks failed for "
                 "reviewed head %s: %s"
@@ -20213,7 +19854,6 @@ class ControlPlane:
                     ", ".join(str(item) for item in verdicts.get("failed") or []),
                 )
             )
-            failure.publication_retry_after_seconds = 600
             failure.publication_failure_kind = "pull_request_checks_failed"
             raise failure
         if case in {"pending", "unverifiable"}:
@@ -20235,126 +19875,15 @@ class ControlPlane:
             pending.publication_retry_after_seconds = 600
             pending.publication_failure_kind = "pull_request_checks_pending"
             raise pending
-
-        # HOW THE MERGE IS SERIALIZED -- the guarantee, written down.
-        #
-        # merge_queue.py validates against the PROJECTED post-merge state (the
-        # "Not Rocket Science Rule"): test the tree that will actually land,
-        # serialize the merges, and post-merge testing is redundant because
-        # what was tested IS what landed. A plain forge squash-merge does not
-        # preserve that -- if the canonical branch advances between the status
-        # checks finishing and the merge executing, the landed tree was never
-        # tested. Required status checks alone do not close that; a merge
-        # QUEUE does, and unlike `strict` required checks it serializes the
-        # merges without serializing the (here ~2 hour) test runs.
-        #
-        # So: use mac's own queue. Without one -- a direct caller, or a test
-        # exercising this method alone -- degrade EXPLICITLY: re-validate that
-        # the canonical tip is still the base this candidate was projected and
-        # gated against, and name the weaker serialization in the evidence.
-        # Silently squash-merging while the code still assumes the queue's
-        # guarantee is the same hole in a harder-to-see place.
-        from mac.native_merge_queue import MODE_DIRECT_SQUASH, MODE_NATIVE_QUEUE
-
-        mode = str(ensure_json_object(serialization).get("mode") or "") or MODE_DIRECT_SQUASH
-        native = bool(queue is not None and queue_entry_id and mode == MODE_NATIVE_QUEUE)
-
-        pre_merged: Optional[Any] = None
-        if native:
-            # NEVER DOUBLE-LAND. Between attempts the PR may have been merged by
-            # a human, by the forge, or by a previous attempt of ours that died
-            # after the merge and before recording it. #400 established the
-            # pattern -- read PR state before acting -- and this path needs it
-            # more, because mac is the one doing the merging.
-            # Tell the entry which PR it is landing. claim_slot ran before the
-            # PR existed, so the column is still at its 0 default -- and every
-            # step below assumes a PR to look at. An entry that never learns
-            # its number can neither land nor be evicted; one on the live hub
-            # reached 70 attempts that way while its work had already merged.
-            queue.record_pull_request(queue_entry_id, int(pr.number))
-            observed_pr = _gitops.pull_request_state(api_url, pr.number)
-            commands.append(
-                {
-                    "name": "merge_queue_observe_pull_request",
-                    "attempt": attempt,
-                    "number": pr.number,
-                    "known": bool(observed_pr.get("known")),
-                    "merged": bool(observed_pr.get("merged")),
-                    "state": str(observed_pr.get("state") or ""),
-                    "sha": str(observed_pr.get("sha") or ""),
-                }
-            )
-            if not observed_pr.get("known"):
-                unreadable = ValidationError(
-                    "mac merge queue could not read the state of %s before "
-                    "merging; deferring rather than merging blind" % (pr.url or ("#%d" % pr.number))
+        if case == "none_configured":
+            if not verified_base_is_tip:
+                raise _LandingRebaseRequiredError(
+                    canonical_tip=base_sha,
+                    verified_base=verified_base,
+                    head_sha=head_sha,
                 )
-                unreadable.publication_retry_after_seconds = 600
-                unreadable.publication_failure_kind = "merge_queue_unreadable_state"
-                raise unreadable
-            if observed_pr.get("merged"):
-                pre_merged = _gitops.PullRequestMergeResult(
-                    merged=True,
-                    number=pr.number,
-                    sha=str(observed_pr.get("sha") or ""),
-                    serialization=MODE_NATIVE_QUEUE,
-                    reason="already merged on the forge; observed, not re-merged",
-                )
-            else:
-                git_step(
-                    "merge_queue_refresh_tip",
-                    [
-                        "fetch",
-                        "origin",
-                        "+refs/heads/%s:refs/remotes/origin/%s"
-                        % (canonical_branch, canonical_branch),
-                    ],
-                    check=False,
-                )
-                tip_tree = str(
-                    git_step(
-                        "merge_queue_tip_tree",
-                        [
-                            "rev-parse",
-                            "refs/remotes/origin/%s^{tree}" % canonical_branch,
-                        ],
-                        check=False,
-                    ).get("stdout")
-                    or ""
-                ).strip()
-                allowed, why, _entry = queue.may_land(queue_entry_id, canonical_tip_tree=tip_tree)
-                commands.append(
-                    {
-                        "name": "merge_queue_land_gate",
-                        "attempt": attempt,
-                        "entry_id": queue_entry_id,
-                        "allowed": bool(allowed),
-                        "reason": why,
-                        "canonical_tip_tree": tip_tree,
-                    }
-                )
-                if not allowed:
-                    if "front of the queue" in why:
-                        waiting = ValidationError(
-                            "mac merge queue is landing an earlier change first: %s" % why
-                        )
-                        waiting.publication_retry_after_seconds = 300
-                        waiting.publication_failure_kind = "merge_queue_waiting"
-                        raise waiting
-                    observed_canonical = git_step(
-                        "revalidate_canonical_tip",
-                        [
-                            "ls-remote",
-                            "origin",
-                            "refs/heads/%s" % canonical_branch,
-                        ],
-                        check=False,
-                    )
-                    observed_tip = str(observed_canonical.get("stdout") or "").split(None, 1)
-                    observed_tip = observed_tip[0] if observed_tip else ""
-                    # The tested projection is stale. Re-project; do NOT merge.
-                    raise _PublicationBaseMovedError(base_sha, observed_tip or why)
-        else:
+            # OCC validation phase: the worker's verifier tested the tree that
+            # lands only while the canonical tip is still the one it verified.
             observed_canonical = git_step(
                 "revalidate_canonical_tip",
                 ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
@@ -20362,27 +19891,21 @@ class ControlPlane:
             observed_tip = str(observed_canonical.get("stdout") or "").split(None, 1)
             observed_tip = observed_tip[0] if observed_tip else ""
             if observed_tip and observed_tip != base_sha:
-                # OCC validation phase: the tested projection is stale, so a
-                # merge now would land a tree nobody tested. Re-project.
                 raise _PublicationBaseMovedError(base_sha, observed_tip)
+        test_gate = "required_checks" if required_checks else "worker_verifier"
         commands.append(
             {
                 "name": "merge_serialization",
                 "attempt": attempt,
-                "merge_queue": native,
-                "mode": mode,
-                "queue_entry_id": queue_entry_id if native else "",
-                "queue": self._merge_queue_snapshot(queue, queue_entry_id) if native else None,
+                "mode": "serial_land_loop",
+                "test_gate": test_gate,
                 "guarantee": (
-                    "mac's own merge queue ordered this change, tested it "
-                    "against the tree it will land on, and refused the merge "
-                    "unless the canonical tip's tree is still that exact tree: "
-                    "what was tested is what lands"
-                    if native
-                    else "no merge queue on this branch; a plain squash merge "
-                    "is not serialized against concurrent merges, so the "
-                    "canonical tip was re-validated against the tested base "
-                    "immediately before requesting it"
+                    "the forge's required checks passed for the reviewed head; "
+                    "landings for this repository are serialized by the hub"
+                    if required_checks
+                    else "the worker verified the reviewed head on top of the "
+                    "canonical tip, and the tip was re-validated immediately "
+                    "before the merge was requested"
                 ),
             }
         )
@@ -20391,11 +19914,10 @@ class ControlPlane:
                 merge = pre_merged
             else:
                 # This is the final task-authority fence before the forge
-                # mutation. The no-op update locks the task row on PostgreSQL;
-                # SQLite's write transaction provides the equivalent ordering.
-                # Consequently a completed stop wins before this request, or
-                # waits until a request already accepted by the forge returns.
-                # Revoking a lease cannot cancel that already-accepted request.
+                # mutation. The no-op update locks the task row, so a completed
+                # stop wins before this request, or waits until a request
+                # already accepted by the forge returns. Revoking a lease
+                # cannot cancel that already-accepted request.
                 with self.store.transaction() as conn:
                     authority = conn.execute(
                         "UPDATE tasks SET updated_at = updated_at "
@@ -20444,8 +19966,8 @@ class ControlPlane:
         if not merge.merged:
             # The PR exists and is correct; the forge's own gates simply have
             # not finished. Publication is NOT complete, so the task stays in
-            # REVIEWING and the existing publication-retry backoff re-attempts
-            # later. Retrying is cheap because the PR is reused, not reopened.
+            # REVIEWING and waits under the landing deadline. Retrying is cheap
+            # because the PR is reused, not reopened.
             pending = ValidationError(
                 "git publication is waiting on the pull request's own required "
                 "checks before %s can merge into %s: %s"
@@ -20454,18 +19976,6 @@ class ControlPlane:
             pending.publication_retry_after_seconds = 600
             pending.publication_failure_kind = "pull_request_checks_pending"
             raise pending
-
-        if native:
-            landed = queue.record_landed(queue_entry_id, landed_sha=str(merge.sha or ""))
-            commands.append(
-                {
-                    "name": "merge_queue_landed",
-                    "attempt": attempt,
-                    "entry_id": queue_entry_id,
-                    "observed_only": bool(pre_merged),
-                    **landed,
-                }
-            )
 
         final_sha = str(merge.sha or "").strip()
         git_step(
@@ -20528,9 +20038,8 @@ class ControlPlane:
             "base_sha": base_sha,
             "final_sha": final_sha,
             "publication_mode": "pull_request_squash",
-            "merge_serialization": (
-                MODE_NATIVE_QUEUE if native else (merge.serialization or mode or MODE_DIRECT_SQUASH)
-            ),
+            "merge_serialization": "serial_land_loop",
+            "test_gate": test_gate,
             "pull_request_opened_by": opened_by,
             "pull_request_number": pr.number,
             "pull_request_url": pr.url,
@@ -20553,10 +20062,22 @@ class ControlPlane:
         canonical_branch: str,
         attempt: int,
         agent_pull_request: Optional[JsonDict] = None,
+        verified_base: str = "",
     ) -> JsonDict:
-        """Build, test, and publish one exact-base candidate in a fresh clone."""
+        """One ``land`` step: land the reviewed head on the current tip, or say why not.
 
-        from . import gitops as _gitops
+        Runs under the repository's land lock (see
+        ``_repository_land_lock``), so the canonical tip read here can only be
+        moved by someone outside mac. In a fresh clone of the canonical branch:
+
+        1. fetch the current tip and the reviewed head;
+        2. ``git merge-tree`` (no tests) -- a conflict sends the task back to
+           its worker to rebase (``_LandingRebaseRequiredError``);
+        3. with required checks, land through the pull request once they pass;
+        4. without them, land only if the tip is still the base the worker
+           verified (it is an ancestor of the reviewed head); a moved tip sends
+           the task back to rebase and retest. The hub runs no tests itself.
+        """
 
         commands: List[JsonDict] = []
         with tempfile.TemporaryDirectory(prefix="mac-publish-") as tmp:
@@ -20648,222 +20169,12 @@ class ControlPlane:
             base_result = git_step("exact_canonical_base", ["rev-parse", "HEAD"])
             base_sha = str(base_result.get("stdout") or "").strip()
 
-            from mac.merge_queue import (
-                validate_projected_merge,
-                validate_projected_merge_contract,
-            )
-            from mac.native_merge_queue import MODE_NATIVE_QUEUE
+            from mac.merge_queue import validate_projected_merge
 
-            # WHICH MECHANISM SERIALIZES THIS LANDING.
-            #
-            # Read from the project's stored repository attribute rather than
-            # probed here (mac.merge_capability): the answer changes maybe twice
-            # a year and this is the worst possible moment to depend on a forge
-            # API call. GitHub merge queues are organization-only, so for every
-            # User-owned repository the operator has, `mac_native_queue` is not
-            # a fallback -- it is the only path.
+            from . import gitops as _gitops
+
             strategy = self._resolve_publication_strategy(clone_url)
-            serialization = self._resolve_merge_serialization(clone_url, canonical_branch)
-            commands.append(
-                {
-                    "name": "merge_serialization_capability",
-                    "attempt": attempt,
-                    "mode": serialization["mode"],
-                    "source": serialization["source"],
-                    **serialization["capability"],
-                }
-            )
-            use_native_queue = (
-                serialization["mode"] == MODE_NATIVE_QUEUE
-                and strategy["strategy"] == "pull_request"
-            )
-
-            queue = None
-            queue_entry_id = ""
-            queue_owner = ""
-            projected_base_sha = base_sha
-            if use_native_queue:
-                queue = self._native_merge_queue()
-                queue_owner = self._merge_queue_owner()
-                queue_repository = _canonicalize_git_url(clone_url) or clone_url
-                # RECOVER THE HEAD OF THE LINE BEFORE ASKING FOR A SLOT.
-                #
-                # When the queue is blocked, the attempts that still run are
-                # exactly the ones being deferred behind the block -- so they
-                # are the only callers available to clear it, and they must do
-                # it before they ask for a slot they cannot get. Between
-                # 2026-08-19 and 2026-08-22 this queue held twelve entries and
-                # landed once: the front had been tested against a tree the
-                # trunk moved off (a pull request merged outside the queue) and
-                # its own publication loop had stopped, so nothing re-tested it
-                # and everything behind it deferred every six minutes forever.
-                #
-                # HEAD is the canonical tip: the clone above is
-                # `--branch canonical_branch` and nothing has checked anything
-                # else out, so this is the same commit as `base_sha`.
-                tip_tree = str(
-                    git_step(
-                        "merge_queue_canonical_tip_tree",
-                        ["rev-parse", "%s^{tree}" % base_sha],
-                        check=False,
-                    ).get("stdout")
-                    or ""
-                ).strip()
-                # Same rationale as reconcile_front below, for a different way an
-                # entry can stop moving: it wins its slot, tests clean, and then
-                # every publication attempt fails for a reason retrying cannot
-                # fix (its branch has no commits against main because another
-                # entry already carried the same change home first). It is
-                # never evicted on its own -- claim_slot() only increments
-                # attempts, it does not judge them -- so it sits at the front
-                # forever, burning every publish attempt for entries behind it
-                # too. evict_exhausted() is the reaper for exactly this; it was
-                # defined but never called from anywhere, so it never ran.
-                evicted_stalled = queue.evict_exhausted(queue_repository, canonical_branch)
-                if evicted_stalled:
-                    commands.append(
-                        {
-                            "name": "merge_queue_stalled_reaper",
-                            "attempt": attempt,
-                            "evicted_entry_ids": evicted_stalled,
-                        }
-                    )
-                commands.append(
-                    {
-                        "name": "merge_queue_front_recovery",
-                        "attempt": attempt,
-                        **queue.reconcile_front(
-                            queue_repository,
-                            canonical_branch,
-                            canonical_tip_tree=tip_tree,
-                            driver_task_id=str(task.id),
-                        ),
-                    }
-                )
-                decision = queue.claim_slot(
-                    repository=queue_repository,
-                    branch=canonical_branch,
-                    task_id=str(task.id),
-                    head_sha=head_sha,
-                    owner=queue_owner,
-                    detail={"source_branch": source_branch},
-                )
-                commands.append(
-                    {
-                        "name": "merge_queue_slot",
-                        "attempt": attempt,
-                        **decision.to_dict(),
-                    }
-                )
-                if not decision.admitted:
-                    # The window is full, or another worker holds this slot.
-                    # Deferring is the correct answer: the entry keeps its place
-                    # in line and the existing publication backoff re-attempts.
-                    deferred = ValidationError(
-                        "mac merge queue deferred publication of %s: %s"
-                        % (task.id, decision.reason)
-                    )
-                    deferred.publication_retry_after_seconds = max(
-                        60, int(decision.defer_seconds or 300)
-                    )
-                    deferred.publication_failure_kind = "merge_queue_deferred"
-                    raise deferred
-                queue_entry_id = decision.entry.id if decision.entry else ""
-                if decision.predecessors:
-                    predecessor_entries = [
-                        {
-                            "head_sha": entry.head_sha,
-                            "source_branch": str((entry.detail or {}).get("source_branch") or ""),
-                        }
-                        for entry in queue.live_entries(queue_repository, canonical_branch)
-                        if entry.head_sha in set(decision.predecessors)
-                    ]
-                    projected_base_sha = self._build_speculative_base(
-                        root, git_step, base_sha, predecessor_entries
-                    )
-                    commands.append(
-                        {
-                            "name": "merge_queue_speculative_base",
-                            "attempt": attempt,
-                            "tip": base_sha,
-                            "speculative_base": projected_base_sha,
-                            "predecessors": list(decision.predecessors),
-                            "built": bool(projected_base_sha),
-                        }
-                    )
-                    if not projected_base_sha:
-                        # A predecessor we cannot fetch, or two queued changes
-                        # that conflict. Never test against the bare tip
-                        # instead: that result would be attributed to a queue
-                        # position it was not tested at.
-                        queue.release(queue_entry_id, owner=queue_owner)
-                        stalled = ValidationError(
-                            "mac merge queue could not project %s on top of the "
-                            "%d change(s) ahead of it; deferring rather than "
-                            "testing against a base this entry will not land on"
-                            % (task.id, len(decision.predecessors))
-                        )
-                        stalled.publication_retry_after_seconds = 300
-                        stalled.publication_failure_kind = "merge_queue_speculation_unavailable"
-                        raise stalled
-
-            gate = validate_projected_merge(str(root), projected_base_sha, head_sha)
-            commands.append({"name": "merge_gate", **gate.to_dict()})
-            if not gate.clean:
-                if queue is not None and queue_entry_id:
-                    # A conflict is this entry's fault, not the queue's: evict
-                    # it, halve the window, and discard every speculative
-                    # result that was built on top of it.
-                    eviction = queue.evict(
-                        queue_entry_id,
-                        reason="projected merge conflicts with the queue base",
-                    )
-                    commands.append(
-                        {
-                            "name": "merge_queue_eviction",
-                            "attempt": attempt,
-                            "entry_id": queue_entry_id,
-                            **eviction,
-                        }
-                    )
-                merge_gate_error = ValidationError(
-                    "git publication merge gate: task branch does not integrate onto "
-                    "the current main tip (%s); conflicts: %s — route to integration "
-                    "(rebase + resolve + re-verify), do not merge"
-                    % (
-                        gate.base_sha[:12] or "?",
-                        ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
-                    )
-                )
-                merge_gate_error.conflict_integration_context = {
-                    "schema": "mac.merge_gate_conflict_context.v1",
-                    "task_id": str(task.id),
-                    "reviewed_head_sha": str(head_sha).strip(),
-                    "current_main_sha": str(gate.base_sha or "").strip(),
-                    "conflicted_paths": [
-                        str(path).strip()
-                        for path in gate.conflicted_files
-                        if str(path).strip() and str(path).strip() != "<unknown>"
-                    ],
-                    "repo_root": str(root),
-                }
-                raise merge_gate_error
-
-            # Scope the projected gate to the change, the way the worker's
-            # pre-push verifier scopes its own.
-            #
-            # This ran the whole contract suite -- ~45 minutes -- under
-            # MAC_HUB_VERIFY_TIMEOUT, which defaults to 1200s. It could not
-            # finish, so no approved task could ever publish: it failed, retried
-            # ~1200s later, failed again, and the task sat in REVIEWING,
-            # approved and unpublished. Measured on task_de42aa6c: approved
-            # 19:36:51, publication failed 20:02:44 and again 20:23:43.
-            #
-            # The projected tree differs from the tree review already gated only
-            # by however far main moved, so the changed-file selection is the
-            # honest question to ask of it. An unresolvable diff falls back to
-            # the full command.
-            required_checks: tuple[str, ...] = ()
+            required_checks: Tuple[str, ...] = ()
             if strategy["strategy"] == "pull_request":
                 probed = _gitops.required_status_check_contexts(
                     str(strategy["api_url"]), canonical_branch
@@ -20876,171 +20187,67 @@ class ControlPlane:
                     "forge": strategy["forge"],
                     "reason": strategy["reason"],
                     "required_status_checks": list(required_checks),
+                    "test_gate": "required_checks" if required_checks else "worker_verifier",
                 }
             )
-            # WHO gates the merge. On the pull-request path the forge's own
-            # required status checks run against the merge result GitHub will
-            # actually produce, which is a strictly better question than the
-            # hub's local re-projection of it -- and the local one costs 15-45
-            # minutes under MAC_HUB_VERIFY_TIMEOUT, which is exactly why
-            # approved tasks used to sit unpublished (see the note below). So
-            # when the forge is demonstrably gating the branch, mac's reviewer
-            # verdict decides whether a PR is opened and merged at all, and the
-            # forge's checks decide whether that merge is permitted. When the
-            # forge reports no required checks, the hub keeps its own gate --
-            # a repo nobody protected must not silently lose the contract run.
-            forge_gates_merge = bool(required_checks)
 
-            projected_changed: list[str] = []
-            try:
-                projected_diff = self._git_output(
-                    root,
-                    ["diff", "--name-only", "%s...%s" % (projected_base_sha, head_sha)],
-                    timeout=60,
+            already_integrated = (
+                _git_step_returncode(
+                    git_step(
+                        "source_already_merged",
+                        ["merge-base", "--is-ancestor", head_sha, base_sha],
+                        check=False,
+                    )
                 )
-                if int(projected_diff.get("returncode") or 1) == 0:
-                    projected_changed = [
-                        line.strip()
-                        for line in str(projected_diff.get("stdout") or "").splitlines()
-                        if line.strip()
-                    ]
-            except Exception:  # noqa: BLE001 - an unreadable diff means "run everything"
-                projected_changed = []
-            full_test_command = self._contract_gate_test_command(task, projected_changed)
-            # Say which question was asked. The scoped and full commands take
-            # ~15 and ~45 minutes, and only one of them fits the timeout -- so
-            # a silent fallback to full looks exactly like a gate that hung,
-            # and the timeout message says nothing about which ran.
+                == 0
+            )
+            gate = validate_projected_merge(str(root), base_sha, head_sha)
+            commands.append({"name": "merge_gate", **gate.to_dict()})
+            if not gate.clean and not already_integrated:
+                raise _LandingRebaseRequiredError(
+                    canonical_tip=base_sha,
+                    verified_base=verified_base,
+                    head_sha=head_sha,
+                    conflicted_files=[
+                        str(path).strip()
+                        for path in gate.conflicted_files
+                        if str(path).strip() and str(path).strip() != "<unknown>"
+                    ],
+                    error=gate.error,
+                )
+            # The worker's verifier tested the reviewed head. That result
+            # covers the tree that lands only when the head already contains
+            # the current tip: the tip has not moved since the worker synced
+            # onto it (evidence repo.canonical_sync.canonical_tip).
+            verified_base_is_tip = (
+                _git_step_returncode(
+                    git_step(
+                        "verified_base_is_canonical_tip",
+                        ["merge-base", "--is-ancestor", base_sha, head_sha],
+                        check=False,
+                    )
+                )
+                == 0
+            )
             commands.append(
                 {
-                    "name": "publication_gate_scope",
-                    "changed_files": len(projected_changed),
-                    "scoped": bool(projected_changed)
-                    and "run-sanity-tests.sh" in full_test_command,
-                    "command": full_test_command[:200],
+                    "name": "land_freshness",
+                    "attempt": attempt,
+                    "canonical_tip": base_sha,
+                    "verified_base": verified_base,
+                    "verified_base_is_tip": verified_base_is_tip,
+                    "already_integrated": already_integrated,
                 }
             )
-            if forge_gates_merge:
-                commands.append(
-                    {
-                        "name": "publication_contract_gate",
-                        "skipped": True,
-                        "reason": "delegated to the pull request's required checks",
-                        "required_status_checks": list(required_checks),
-                    }
-                )
-            else:
-                publication_verifier_identity: Dict[str, Any] = {}
-                publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
-                if publication_test_runner is None:
-                    # The projected-merge gate runs in the verifier sandbox,
-                    # which also needs bootstrap.command run before
-                    # test.command (see _run_contract_gate) -- but
-                    # ContractTestRunner's signature has no bootstrap slot, so
-                    # curry it in here rather than widening that protocol.
-                    run_contract_test = self._run_contract_gate
-                    publication_bootstrap_command = _repository_contract_bootstrap_command_for_task(
-                        task
-                    )
 
-                    def publication_test_runner(
-                        repo_dir: str, branch: str, head_sha: str, command: str
-                    ) -> Tuple[int, str]:
-                        # Select isolation by canonical identity, not the temporary
-                        # checkout path; the projected commit may not exist remotely.
-                        return run_contract_test(
-                            clone_url,
-                            branch,
-                            head_sha,
-                            command,
-                            publication_bootstrap_command,
-                            local_repository=Path(repo_dir),
-                            expected_tree_sha=gate.merged_tree_sha,
-                            verifier_identity=publication_verifier_identity,
-                        )
-
-                contract_gate = validate_projected_merge_contract(
-                    str(root),
-                    projected_base_sha,
-                    head_sha,
-                    full_test_command,
-                    test_runner=publication_test_runner,
-                    merge_gate=gate,
+            if not required_checks and not verified_base_is_tip and not already_integrated:
+                # Decided before any pull request is pushed or opened, so a
+                # send-back leaves no hub-opened PR behind.
+                raise _LandingRebaseRequiredError(
+                    canonical_tip=base_sha,
+                    verified_base=verified_base,
+                    head_sha=head_sha,
                 )
-                commands.append(
-                    {
-                        "name": "publication_contract_gate",
-                        **contract_gate.to_dict(),
-                        **(
-                            {"verifier_runtime": publication_verifier_identity}
-                            if publication_verifier_identity
-                            else {}
-                        ),
-                    }
-                )
-                if not contract_gate.passed:
-                    diagnosis = contract_gate.error or contract_gate.output_tail
-                    if queue is not None and queue_entry_id:
-                        eviction = queue.evict(
-                            queue_entry_id,
-                            reason="projected contract gate failed: %s"
-                            % (diagnosis or "unknown failure")[:200],
-                        )
-                        commands.append(
-                            {
-                                "name": "merge_queue_eviction",
-                                "attempt": attempt,
-                                "entry_id": queue_entry_id,
-                                **eviction,
-                            }
-                        )
-                    raise ValidationError(
-                        "git publication contract gate failed on the projected "
-                        "current-main merge: %s" % (diagnosis or "unknown failure")
-                    )
-
-            if queue is not None and queue_entry_id:
-                # THE TREES ARE THE RECEIPT. What lands is checked against
-                # `tested_base_tree` at merge time, so recording it here is what
-                # makes "never land an untested tree" enforceable rather than
-                # asserted.
-                base_tree = str(
-                    git_step(
-                        "merge_queue_tested_base_tree",
-                        ["rev-parse", "%s^{tree}" % projected_base_sha],
-                        check=False,
-                    ).get("stdout")
-                    or ""
-                ).strip()
-                recorded = queue.record_tested(
-                    queue_entry_id,
-                    owner=queue_owner,
-                    base_sha=projected_base_sha,
-                    base_tree=base_tree,
-                    merge_tree=gate.merged_tree_sha,
-                )
-                commands.append(
-                    {
-                        "name": "merge_queue_tested",
-                        "attempt": attempt,
-                        "entry_id": queue_entry_id,
-                        "recorded": bool(recorded),
-                        "tested_base_sha": projected_base_sha,
-                        "tested_base_tree": base_tree,
-                        "tested_merge_tree": gate.merged_tree_sha,
-                    }
-                )
-                if not recorded or not base_tree:
-                    # We no longer hold the slot (a restart reclaimed it) or the
-                    # tree is unreadable. Either way this result cannot be
-                    # trusted to authorize a merge.
-                    lost = ValidationError(
-                        "mac merge queue could not record the tested trees for "
-                        "%s; the slot is no longer held. Deferring." % task.id
-                    )
-                    lost.publication_retry_after_seconds = 300
-                    lost.publication_failure_kind = "merge_queue_slot_lost"
-                    raise lost
 
             if strategy["strategy"] == "pull_request":
                 return self._publish_via_pull_request(
@@ -21049,7 +20256,7 @@ class ControlPlane:
                     remote_ref=remote_ref,
                     source_branch=source_branch,
                     head_sha=head_sha,
-                    base_sha=projected_base_sha,
+                    base_sha=base_sha,
                     canonical_branch=canonical_branch,
                     api_url=str(strategy["api_url"]),
                     commands=commands,
@@ -21058,73 +20265,46 @@ class ControlPlane:
                     root=root,
                     agent_pull_request=agent_pull_request,
                     required_checks=required_checks,
-                    serialization=serialization,
-                    queue=queue,
-                    queue_entry_id=queue_entry_id,
+                    verified_base_is_tip=verified_base_is_tip or already_integrated,
+                    verified_base=verified_base,
                 )
 
-            publication_mode = "fast_forward"
-            ff_merge = git_step("merge_source_ff", ["merge", "--ff-only", head_sha], check=False)
-            if ff_merge["returncode"] != 0:
-                already_merged = git_step(
-                    "source_already_merged",
-                    ["merge-base", "--is-ancestor", head_sha, "HEAD"],
-                    check=False,
-                )
-                if already_merged["returncode"] == 0:
-                    publication_mode = "already_integrated"
-                else:
-                    publication_mode = "merge_commit"
-                    merge = git_step(
-                        "merge_source",
-                        ["merge", "--no-ff", "--no-edit", head_sha],
-                        timeout=180,
-                        check=False,
+            if already_integrated:
+                publication_mode = "already_integrated"
+                final_sha = base_sha
+            else:
+                publication_mode = "fast_forward"
+                git_step("merge_source_ff", ["merge", "--ff-only", head_sha])
+                final_head = git_step("final_head", ["rev-parse", "HEAD"])
+                final_sha = str(final_head.get("stdout") or "").strip()
+                push_args = [
+                    "push",
+                    "--force-with-lease=refs/heads/%s:%s" % (canonical_branch, base_sha),
+                    "origin",
+                    "HEAD:refs/heads/%s" % canonical_branch,
+                ]
+                push = git_step("push_main_occ", push_args, timeout=180, check=False)
+                if push["returncode"] != 0:
+                    git_step(
+                        "refresh_canonical_after_push_race",
+                        [
+                            "fetch",
+                            "origin",
+                            "+refs/heads/%s:refs/remotes/origin/%s"
+                            % (canonical_branch, canonical_branch),
+                        ],
                     )
-                    if merge["returncode"] != 0:
-                        git_step("merge_abort", ["merge", "--abort"], check=False)
-                        raise ValidationError(
-                            "git publication merge_source failed: %s"
-                            % (merge.get("stderr") or merge.get("stdout") or head_sha)
-                        )
-            publication_tree = git_step("verify_projected_tree", ["rev-parse", "HEAD^{tree}"])
-            actual_tree_sha = str(publication_tree.get("stdout") or "").strip()
-            if actual_tree_sha != gate.merged_tree_sha:
-                raise ValidationError(
-                    "git publication merged tree differs from the fully tested "
-                    "projection: expected %s, observed %s"
-                    % (gate.merged_tree_sha, actual_tree_sha or "<unresolved>")
-                )
-            final_head = git_step("final_head", ["rev-parse", "HEAD"])
-            final_sha = str(final_head.get("stdout") or "").strip()
-            push_args = [
-                "push",
-                "--force-with-lease=refs/heads/%s:%s" % (canonical_branch, base_sha),
-                "origin",
-                "HEAD:refs/heads/%s" % canonical_branch,
-            ]
-            push = git_step("push_main_occ", push_args, timeout=180, check=False)
-            if push["returncode"] != 0:
-                git_step(
-                    "refresh_canonical_after_push_race",
-                    [
-                        "fetch",
-                        "origin",
-                        "+refs/heads/%s:refs/remotes/origin/%s"
-                        % (canonical_branch, canonical_branch),
-                    ],
-                )
-                observed_result = git_step(
-                    "observed_canonical_after_push_race",
-                    ["rev-parse", "refs/remotes/origin/%s" % canonical_branch],
-                )
-                observed_sha = str(observed_result.get("stdout") or "").strip()
-                if observed_sha != base_sha:
-                    raise _PublicationBaseMovedError(base_sha, observed_sha)
-                raise ValidationError(
-                    "git publication push_main_occ failed without canonical "
-                    "movement: %s" % (push.get("stderr") or push.get("stdout") or push_args)
-                )
+                    observed_result = git_step(
+                        "observed_canonical_after_push_race",
+                        ["rev-parse", "refs/remotes/origin/%s" % canonical_branch],
+                    )
+                    observed_sha = str(observed_result.get("stdout") or "").strip()
+                    if observed_sha != base_sha:
+                        raise _PublicationBaseMovedError(base_sha, observed_sha)
+                    raise ValidationError(
+                        "git publication push_main_occ failed without canonical "
+                        "movement: %s" % (push.get("stderr") or push.get("stdout") or push_args)
+                    )
             verify_remote = git_step(
                 "verify_remote_canonical",
                 ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
@@ -21157,428 +20337,11 @@ class ControlPlane:
                 "base_sha": base_sha,
                 "final_sha": final_sha,
                 "publication_mode": publication_mode,
+                "merge_serialization": "serial_land_loop",
+                "test_gate": "worker_verifier",
                 "attempt": attempt,
                 "commands": commands,
             }
-
-    def _build_conflict_integration_payload(
-        self,
-        *,
-        approved_task_id: str,
-        accepted_evidence_id: str,
-        reviewed_head_sha: str,
-        current_main_sha: str,
-        attempt_base_sha: str,
-        conflicted_paths: Sequence[str],
-        repo_path: Path,
-        depends_on: Optional[Sequence[str]] = None,
-    ) -> JsonDict:
-        """Thin ControlPlane wrapper over ``build_conflict_integration_payload``.
-
-        Binds ``self._git_output`` (scoped to ``repo_path``) as the pure
-        builder's ``git_runner`` so path-restricted landed-commit provenance is
-        computed against the real canonical checkout.
-
-        Returns the ``JsonDict`` payload; it does not persist anything or touch
-        the REVIEWING flow.
-        """
-
-        def git_runner(args: List[str], timeout: int = 60) -> JsonDict:
-            # Landed-commit provenance is best-effort: if the resolved repo path
-            # is unavailable (e.g. a transient clone already cleaned up, or a
-            # path that no longer exists), return a failure dict so the pure
-            # builder records empty provenance rather than raising — a conflict
-            # payload must always be producible.
-            try:
-                return self._git_output(repo_path, list(args), timeout=timeout)
-            except OSError:
-                return {"returncode": 1, "stdout": "", "stderr": "repo path unavailable"}
-
-        return build_conflict_integration_payload(
-            approved_task_id=approved_task_id,
-            accepted_evidence_id=accepted_evidence_id,
-            reviewed_head_sha=reviewed_head_sha,
-            current_main_sha=current_main_sha,
-            attempt_base_sha=attempt_base_sha,
-            conflicted_paths=conflicted_paths,
-            depends_on=depends_on,
-            git_runner=git_runner,
-        )
-
-    @staticmethod
-    def _conflict_integration_idempotency_fingerprint(
-        *,
-        approved_task_id: str,
-        accepted_evidence_id: str,
-        attempt_base_sha: str,
-        current_main_sha: str,
-        reviewed_head_sha: str,
-        conflicted_paths: Sequence[str],
-    ) -> str:
-        """Stable fingerprint over the conflict identity.
-
-        Duplicate conflict events for the SAME approved task, accepted
-        evidence, attempt base, canonical tip, reviewed head, and conflict set
-        must resolve to the SAME integration task rather than spawning
-        duplicates.  The conflict set is order-normalised so path enumeration
-        order never changes the fingerprint.
-        """
-        normalized_paths = sorted(
-            {str(path).strip() for path in (conflicted_paths or []) if str(path).strip()}
-        )
-        material = json_dumps(
-            {
-                "schema": "mac.conflict_integration_fingerprint.v1",
-                "approved_task_id": str(approved_task_id).strip(),
-                "accepted_evidence_id": str(accepted_evidence_id).strip(),
-                "attempt_base_sha": str(attempt_base_sha).strip(),
-                "current_main_sha": str(current_main_sha).strip(),
-                "reviewed_head_sha": str(reviewed_head_sha).strip(),
-                "conflicted_paths": normalized_paths,
-            }
-        )
-        return "sha256:%s" % hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-    def _find_linked_conflict_integration_task(
-        self, approved_task_id: str, fingerprint: str
-    ) -> Optional[str]:
-        """Re-read any integration task already created for this exact conflict.
-
-        Looks for a task whose metadata records the same
-        ``conflict_integration.fingerprint`` and links back to the approved
-        task.  This is the durable idempotency backstop that complements the
-        ``create_task`` idempotency key, so a duplicate conflict event that
-        loses the key race still resolves to the SAME single integration task.
-        """
-        try:
-            rows = self.store.query_all(
-                "SELECT id, state, dependencies, metadata, created_at "
-                "FROM tasks WHERE metadata LIKE ? ORDER BY created_at DESC",
-                ("%" + fingerprint + "%",),
-            )
-        except Exception:  # noqa: BLE001 - idempotency lookup is best-effort.
-            return None
-        for row in rows:
-            try:
-                metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
-            except Exception:  # noqa: BLE001
-                continue
-            integration = ensure_json_object(metadata.get("conflict_integration"))
-            if (
-                str(integration.get("fingerprint") or "") == fingerprint
-                and str(integration.get("approved_task_id") or "") == str(approved_task_id).strip()
-            ):
-                task_id = str(row["id"])
-                if str(row["state"] or "") in TERMINAL_TASK_STATES:
-                    continue
-                self._reconcile_conflict_integration_family(
-                    approved_task_id=str(approved_task_id).strip(),
-                    keep_task_id=task_id,
-                )
-                return task_id
-        return None
-
-    def _reconcile_conflict_integration_family(
-        self, *, approved_task_id: str, keep_task_id: str
-    ) -> None:
-        """Repair the live legacy-conflict family around one current task.
-
-        Older deployments made the repair depend on the still-REVIEWING task
-        it must unblock.  Repeated base movement then produced a new repair for
-        each canonical tip, leaving every older baseline parked forever.  The
-        exact-fingerprint lookup is the natural reconciliation point: retain
-        the current conflict identity, clear its impossible parent dependency,
-        and retire every older non-terminal repair for the same approved task.
-        """
-
-        try:
-            keep = self.get_task(keep_task_id)
-            if approved_task_id in keep.dependencies:
-                # Hub-internal reconciliation (see above): clearing an
-                # impossible parent dependency is not an operator edit and must
-                # not stop and restart the task.
-                self._update_task_fields(
-                    keep_task_id,
-                    dependencies=[
-                        dependency
-                        for dependency in keep.dependencies
-                        if dependency != approved_task_id
-                    ],
-                    actor="default-review-workflow",
-                )
-            rows = self.store.query_all(
-                "SELECT id, state, metadata FROM tasks WHERE metadata LIKE ?",
-                ("%" + approved_task_id + "%",),
-            )
-        except Exception:  # noqa: BLE001 - publication diagnosis must survive.
-            logging.getLogger("mac.conflict_integration").warning(
-                "conflict integration family reconciliation failed for %s",
-                approved_task_id,
-                exc_info=True,
-            )
-            return
-
-        for row in rows:
-            candidate_id = str(row["id"])
-            if candidate_id == keep_task_id or str(row["state"] or "") in TERMINAL_TASK_STATES:
-                continue
-            try:
-                metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
-            except Exception:  # noqa: BLE001
-                continue
-            integration = ensure_json_object(metadata.get("conflict_integration"))
-            if (
-                str(integration.get("role") or "") != "integration_repair"
-                or str(integration.get("approved_task_id") or "") != approved_task_id
-            ):
-                continue
-            try:
-                self.close_task(
-                    candidate_id,
-                    TaskState.CANCELLED.value,
-                    "default-review-workflow",
-                    {
-                        "reason": ("superseded by the current integration conflict baseline"),
-                        "disposition": "superseded",
-                        "replacement_task_id": keep_task_id,
-                        "cleanup_grace_seconds": 0,
-                    },
-                )
-            except Exception:  # noqa: BLE001 - keep the current repair usable.
-                logging.getLogger("mac.conflict_integration").warning(
-                    "failed to supersede stale integration repair %s",
-                    candidate_id,
-                    exc_info=True,
-                )
-
-    def _handoff_conflict_to_integration(
-        self,
-        *,
-        task: Task,
-        review: "Review",
-        evidence: "Evidence",
-        target: str,
-        conflict_context: Mapping[str, Any],
-        actor: str,
-    ) -> Optional[str]:
-        """Turn a legacy single-task publication conflict into ONE idempotent,
-        context-rich integration repair task.
-
-        Returns the integration task id (existing or newly created), or
-        ``None`` when the handoff does not apply / could not be produced (the
-        caller still records the diagnosis telemetry).
-        """
-        approved_task_id = str(task.id)
-        metadata = ensure_json_object(task.metadata)
-        # COORDINATION GUARD: plan-DAG coordination modes own their own
-        # integration path; never divert them.
-        coordination = ensure_json_object(metadata.get("coordination"))
-        coordination_mode = str(coordination.get("mode") or "").strip()
-        if coordination_mode in {
-            "cooperative_integration",
-            "plan_dag",
-        }:
-            return None
-
-        reviewed_head_sha = str(conflict_context.get("reviewed_head_sha") or "").strip()
-        current_main_sha = str(conflict_context.get("current_main_sha") or "").strip()
-        conflicted_paths = [
-            str(path).strip()
-            for path in (conflict_context.get("conflicted_paths") or [])
-            if str(path).strip()
-        ]
-        repo_root = str(conflict_context.get("repo_root") or "").strip()
-        runtime = ensure_json_object(metadata.get("runtime"))
-        attempt_base_sha = str(runtime.get("repository_base_sha") or "").strip()
-        if not attempt_base_sha:
-            # Without a valid attempt base the pure builder cannot validate; fall
-            # back to the current main tip so the payload still records where the
-            # attempt diverged (worst case: empty landed-since provenance).
-            attempt_base_sha = current_main_sha
-        if not (reviewed_head_sha and current_main_sha and conflicted_paths):
-            # Not a structured merge-gate conflict (some other publish failure);
-            # let the caller record the plain diagnosis without a handoff.
-            return None
-
-        fingerprint = self._conflict_integration_idempotency_fingerprint(
-            approved_task_id=approved_task_id,
-            accepted_evidence_id=str(evidence.id),
-            attempt_base_sha=attempt_base_sha,
-            current_main_sha=current_main_sha,
-            reviewed_head_sha=reviewed_head_sha,
-            conflicted_paths=conflicted_paths,
-        )
-
-        # Idempotency backstop: if an integration task already exists for this
-        # exact conflict identity, reuse it rather than spawning a duplicate.
-        existing = self._find_linked_conflict_integration_task(approved_task_id, fingerprint)
-        if existing is not None:
-            return existing
-
-        try:
-            payload = self._build_conflict_integration_payload(
-                approved_task_id=approved_task_id,
-                accepted_evidence_id=str(evidence.id),
-                reviewed_head_sha=reviewed_head_sha,
-                current_main_sha=current_main_sha,
-                attempt_base_sha=attempt_base_sha,
-                conflicted_paths=conflicted_paths,
-                repo_path=Path(repo_root) if repo_root else Path("."),
-                depends_on=[],
-            )
-        except (ValidationError, MACError):
-            # Payload could not be assembled (e.g. an unexpected non-git sha);
-            # do not spawn a malformed integration task — the caller still
-            # surfaces the diagnosis.
-            return None
-
-        # DISTINCT AGENT: the integration executor must not be the approved
-        # task's executor.  Model the integration task as a cooperative family
-        # member of the approved task so the durable lease-based separation
-        # (``_coordination_excluded_agent_ids``) excludes the executor, and add
-        # an explicit exclusion of the executor agent as a belt-and-suspenders.
-        excluded_agent_ids = sorted(
-            {
-                str(evidence.created_by).strip()
-                for _ in (0,)
-                if str(evidence.created_by or "").strip()
-            }
-            | {
-                str(task.owner_agent_id).strip()
-                for _ in (0,)
-                if str(task.owner_agent_id or "").strip()
-            }
-        )
-
-        integration_metadata: JsonDict = {
-            "schema": "mac.task.v1",
-            "conflict_integration": {
-                "schema": "mac.conflict_integration_link.v1",
-                "role": "integration_repair",
-                "approved_task_id": approved_task_id,
-                "accepted_evidence_id": str(evidence.id),
-                "review_id": review.id,
-                "publication_target": target,
-                "fingerprint": fingerprint,
-                "payload": payload,
-            },
-            "context_payload": payload,
-            "publication_target": target,
-            "relationships": {
-                "parent_task_id": approved_task_id,
-                "relationship": "integration_repair",
-                "blocks": [approved_task_id],
-            },
-            "coordination": {
-                "mode": "legacy_conflict_integration",
-                "integration_task_id": approved_task_id,
-                "require_distinct_agent": True,
-            },
-            "excluded_agent_ids": excluded_agent_ids,
-            "retry_excluded_agent_ids": excluded_agent_ids,
-        }
-        # Carry the approved task's project and repository/execution contract so
-        # the integration executor runs against the same repository.
-        for carry_key in ("origin", "execution_contract", "acc_metadata", "runtime"):
-            value = metadata.get(carry_key)
-            if value is not None:
-                integration_metadata[carry_key] = value
-
-        landed_task_ids = [
-            str(tid).strip()
-            for tid in ensure_json_object(payload.get("landed_since_base")).get("task_ids", [])
-            if str(tid).strip()
-        ]
-        try:
-            contention_metadata = {
-                "schema": "mac.merge_conflict_contention.v1",
-                "publication_target": target,
-                "current_main_sha": current_main_sha,
-                "reviewed_head_sha": reviewed_head_sha,
-                "conflicted_path_count": len(conflicted_paths),
-            }
-            common_contention = {
-                "task_id": approved_task_id,
-                "project": task.project,
-                "attempt": max(1, int(task.attempt_count or 0)),
-                "stage": "publication",
-                "reason": "base_moved_merge_conflict",
-                "peer_task_ids": landed_task_ids,
-                "wait_started_at": review.completed_at or review.created_at,
-                "outcome": "blocked",
-                "metadata": contention_metadata,
-            }
-            self.task_flow.record_contention(
-                resource_class="repository_ref",
-                resource_key="%s:%s:%s" % (str(task.project or ""), target, current_main_sha),
-                **common_contention,
-            )
-            self.task_flow.record_contention(
-                resource_class="repository_path_set",
-                resource_key="%s:%s"
-                % (
-                    str(task.project or ""),
-                    "\x00".join(sorted(conflicted_paths)),
-                ),
-                **common_contention,
-            )
-        except Exception:  # noqa: BLE001 - telemetry cannot block repair.
-            logging.getLogger("mac.task_flow").warning(
-                "failed to record merge contention for %s",
-                approved_task_id,
-                exc_info=True,
-            )
-
-        description = (
-            "Legacy single-task publication conflict repair.\n\n"
-            "The approved task %s (evidence %s, reviewed head %s) could not "
-            "fast-forward onto the current canonical main tip %s: the reviewed "
-            "branch conflicts on: %s.\n\n"
-            "As a DISTINCT agent (you must not be the approved task's executor): "
-            "rebase/resolve the reviewed change onto current main, rerun the FULL "
-            "projected-main contract (validate_projected_merge_contract via "
-            "scripts/run-contract-tests.sh on the projected merge), push a "
-            "replacement ref, and trigger publication retry for the approved "
-            "task. Current main is the canonical baseline; preserve it and record "
-            "any supersession decision explicitly (see "
-            "metadata.context_payload.supersession). Landed tasks touching the "
-            "conflicted paths since the attempt base: %s."
-            % (
-                approved_task_id,
-                str(evidence.id),
-                reviewed_head_sha[:12],
-                current_main_sha[:12],
-                ", ".join(conflicted_paths[:20]) or "(unknown)",
-                ", ".join(landed_task_ids) or "(none recorded)",
-            )
-        )
-
-        try:
-            integration_task = self.create_task(
-                "Integrate conflicting approved task %s onto current main" % approved_task_id,
-                description=description,
-                project=task.project,
-                priority=int(task.priority),
-                required_capabilities=list(task.required_capabilities),
-                # The approved task stays REVIEWING until this task resolves
-                # its publication conflict.  A hard dependency on it creates
-                # an unbreakable lifecycle deadlock.
-                dependencies=[],
-                metadata=integration_metadata,
-                actor=actor,
-                idempotency_key=fingerprint,
-                _idempotency_scope="conflict-integration:%s" % approved_task_id,
-            )
-        except (ValidationError, MACError):
-            # A concurrent duplicate conflict event may have won the create
-            # race; re-read the linked integration task so both events resolve
-            # to the SAME single task.
-            return self._find_linked_conflict_integration_task(approved_task_id, fingerprint)
-        self._reconcile_conflict_integration_family(
-            approved_task_id=approved_task_id,
-            keep_task_id=integration_task.id,
-        )
-        return integration_task.id
 
     def _validate_publication_evidence(self, task_id: str, evidence_id: Optional[str]) -> None:
         if evidence_id is None:
@@ -22335,6 +21098,18 @@ class ControlPlane:
                 "reason": str(exc),
                 "barrier": barrier,
             }
+        except _LandingRebaseRequiredError as exc:
+            terminal = self._terminal_review_noop(task_id)
+            if terminal is not None:
+                return terminal
+            return self._send_back_for_rebase(
+                task_id,
+                exc,
+                review_id=review.id,
+                evidence=evidence,
+                target=target,
+                actor=actor,
+            )
         except (ValidationError, MACError) as exc:
             # A concurrent consumer may have completed + published this task
             # after the pre-publish re-read (or its publish_task landed the
@@ -22400,37 +21175,6 @@ class ControlPlane:
                 ),
                 actor=actor,
             )
-            # Legacy single-task publication conflict handoff: when the failure
-            # is the merge-gate reporting that the approved branch no longer
-            # integrates onto the CURRENT canonical main tip, do not just park
-            # the task in REVIEWING with a diagnosis. Create exactly ONE
-            # idempotent, context-rich integration repair task that a DISTINCT
-            # agent picks up to rebase/resolve, rerun the FULL projected-main
-            # contract, push a replacement ref, and trigger publication retry.
-            # Work-package / plan-DAG tasks are guarded out inside the helper and
-            # keep their managed integration path unchanged. The diagnosis /
-            # observation telemetry below is preserved regardless so operators
-            # still see why publication paused.
-            conflict_context = getattr(exc, "conflict_integration_context", None)
-            integration_task_id: Optional[str] = None
-            if isinstance(conflict_context, Mapping) and landing_blocked is None:
-                try:
-                    integration_task_id = self._handoff_conflict_to_integration(
-                        task=task,
-                        review=review,
-                        evidence=evidence,
-                        target=target,
-                        conflict_context=conflict_context,
-                        actor=actor,
-                    )
-                except Exception:  # noqa: BLE001 - handoff is best-effort; the
-                    # diagnosis telemetry below still surfaces the failure.
-                    logging.getLogger("mac.conflict_integration").warning(
-                        "conflict-to-integration handoff failed for %s",
-                        task_id,
-                        exc_info=True,
-                    )
-                    integration_task_id = None
             self._record_default_review_observation(
                 task_id,
                 "workflow.default_review.publish_failed",
@@ -22440,25 +21184,9 @@ class ControlPlane:
                     "evidence_id": evidence.id,
                     "target": target,
                     "error": detail[:500],
-                    "integration_task_id": integration_task_id,
                 },
                 actor,
             )
-            if integration_task_id is not None:
-                # Distinct, glanceable telemetry that a repair task was linked so
-                # operators can follow the handoff, without losing the diagnosis.
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.conflict_integration_created",
-                    "info",
-                    {
-                        "review_id": review.id,
-                        "evidence_id": evidence.id,
-                        "target": target,
-                        "integration_task_id": integration_task_id,
-                    },
-                    actor,
-                )
             try:
                 if landing_blocked is not None:
                     self.append_task_activity(
@@ -22472,36 +21200,17 @@ class ControlPlane:
                         "it gets a fresh landing budget. Error: %s"
                         % (target, landing_blocked.get("status"), detail[:300]),
                     )
-                elif integration_task_id is not None:
-                    self.append_task_activity(
-                        task_id,
-                        "diagnosis",
-                        actor,
-                        "Problem: Auto-publish to %s failed after approval — the "
-                        "reviewed branch no longer integrates onto the current "
-                        "canonical main tip (a merge conflict against the moving "
-                        "trunk). The task is approved but stays in REVIEWING, "
-                        "unpublished.\n"
-                        "Remediation: Linked integration repair task %s was "
-                        "created for a DISTINCT agent to rebase/resolve onto "
-                        "current main, rerun the full projected-main contract, "
-                        "push a replacement ref, and trigger publication retry. "
-                        "Current main remains the canonical baseline. Error: %s"
-                        % (target, integration_task_id, detail[:300]),
-                    )
                 else:
                     self.append_task_activity(
                         task_id,
                         "diagnosis",
                         actor,
-                        "Problem: Auto-publish to %s failed after approval — the "
-                        "reviewed branch could not be merged into main (usually a "
-                        "merge conflict from a stale branch base). The task is "
-                        "approved but stays in REVIEWING, unpublished.\n"
-                        "Remediation: Re-drive the task from current main so its "
-                        "branch merges cleanly and let review->publish re-run, or an "
-                        "operator resolves the conflict and re-publishes. Error: %s"
-                        % (target, detail[:300]),
+                        "Problem: Auto-publish to %s did not land after approval. "
+                        "The task is approved and stays in REVIEWING; the land loop "
+                        "retries it under its landing budget.\n"
+                        "Remediation: None needed while the budget lasts; if the "
+                        "error below cannot clear on its own, fix it and the next "
+                        "land step picks the task up. Error: %s" % (target, detail[:300]),
                     )
             except Exception:
                 pass
@@ -22511,7 +21220,6 @@ class ControlPlane:
                 "review_id": review.id,
                 "target": target,
                 "error": detail,
-                "integration_task_id": integration_task_id,
             }
             if landing_blocked is not None:
                 failed["blocked_reason"] = landing_blocked.get("status")
@@ -22552,6 +21260,7 @@ class ControlPlane:
         evidence_id: Optional[str] = None,
         retry_after_seconds: int = 0,
         actor: str = "default-review-workflow",
+        blocked_as: str = "",
     ) -> Optional[JsonDict]:
         """Charge one landing wait or attempt against the task's single budget.
 
@@ -22563,7 +21272,11 @@ class ControlPlane:
         ``updated_at``, which every retry refreshes. ``retryable=False`` blocks
         at once. Returns ``None`` while budget remains, else the result of
         moving the task to BLOCKED. New executor evidence (rework) or a return
-        from BLOCKED starts a fresh budget.
+        from BLOCKED starts a fresh budget, except that ``rebases`` (the land
+        loop's send-backs, see ``_send_back_for_rebase``) survives new
+        evidence: the rebased run's evidence is exactly what a send-back asks
+        for, so it must not reset the cap. ``blocked_as`` names a
+        non-retryable block more precisely than ``landing_non_retryable``.
         """
         task = self.get_task(task_id)
         metadata = ensure_json_object(task.metadata)
@@ -22577,10 +21290,10 @@ class ControlPlane:
                     "state": task.state,
                 }
             return None
-        if landing.get("blocked_at") or (
-            evidence_id and landing.get("evidence_id") not in (None, "", evidence_id)
-        ):
+        if landing.get("blocked_at"):
             landing = {}
+        elif evidence_id and landing.get("evidence_id") not in (None, "", evidence_id):
+            landing = {"rebases": landing.get("rebases")} if landing.get("rebases") else {}
         now = utcnow()
         first_attempt_at = str(landing.get("first_attempt_at") or "") or now
         try:
@@ -22595,7 +21308,7 @@ class ControlPlane:
         block_reason: Optional[str] = None
         exhausted_by: Optional[str] = None
         if not retryable:
-            block_reason = "landing_non_retryable"
+            block_reason = str(blocked_as or "landing_non_retryable")
         elif counts_attempt and attempts >= max_attempts:
             block_reason, exhausted_by = "landing_budget_exhausted", "attempts"
         elif elapsed >= deadline_seconds:
@@ -22609,6 +21322,8 @@ class ControlPlane:
         }
         if landing.get("last_error"):
             record["last_error"] = landing["last_error"]
+        if landing.get("rebases"):
+            record["rebases"] = _nonnegative_int(landing.get("rebases"))
         if counts_attempt or not retryable:
             record["last_reason"] = reason
             record["last_attempt_at"] = now
@@ -22665,6 +21380,166 @@ class ControlPlane:
             # Already terminal or otherwise moved: nothing more to do.
             pass
         return {"task_id": task_id, "status": block_reason, **detail}
+
+    def _send_back_for_rebase(
+        self,
+        task_id: str,
+        exc: "_LandingRebaseRequiredError",
+        *,
+        review_id: str,
+        evidence: Evidence,
+        target: str,
+        actor: str,
+    ) -> JsonDict:
+        """Send an approved task back to its worker to rebase and retest.
+
+        The land step found that the worker's verifier result no longer covers
+        what would land: the canonical tip moved past the base it verified, or
+        the head conflicts with the tip. The hub runs no tests, so the SAME
+        task goes back to OPEN with a ``rebase_onto_tip`` directive in its
+        metadata. The next attempt's finalizer syncs onto the current tip
+        before its verifier runs (``sync_worktree_with_canonical``), so the
+        new evidence is verified against the tip it will land on.
+
+        Capped at ``LANDING_MAX_REBASES`` send-backs per landing budget
+        (``metadata.landing.rebases``); past the cap the task blocks.
+        """
+
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        landing = ensure_json_object(metadata.get("landing"))
+        if landing.get("blocked_at"):
+            landing = {}
+        rebases = _nonnegative_int(landing.get("rebases"))
+        reason = "conflict" if exc.conflict else "canonical_moved"
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.rebase_required",
+            "warning",
+            {
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "target": target,
+                "reason": reason,
+                "canonical_tip": exc.canonical_tip,
+                "verified_base": exc.verified_base,
+                "conflicted_files": exc.conflicted_files[:20],
+                "rebases": rebases,
+                "max_rebases": LANDING_MAX_REBASES,
+            },
+            actor,
+        )
+        if rebases >= LANDING_MAX_REBASES:
+            blocked = self._consume_landing_budget(
+                task_id,
+                "rebase_required",
+                retryable=False,
+                error=str(exc),
+                evidence_id=evidence.id,
+                actor=actor,
+                blocked_as="landing_rebase_cap_exhausted",
+            )
+            return {
+                "task_id": task_id,
+                "status": "publish_failed",
+                "review_id": review_id,
+                "target": target,
+                "error": str(exc),
+                "blocked_reason": (blocked or {}).get("status", "landing_rebase_cap_exhausted"),
+                "state": self.get_task(task_id).state,
+            }
+        now = utcnow()
+        landing.update(
+            {
+                "schema": LANDING_BUDGET_SCHEMA,
+                "rebases": rebases + 1,
+                "last_reason": "rebase_required",
+                "last_attempt_at": now,
+                "last_error": str(exc)[:500],
+            }
+        )
+        landing.setdefault("first_attempt_at", now)
+        landing.pop("not_before", None)
+        metadata["landing"] = landing
+        repo = ensure_json_object(
+            ensure_json_object(ensure_json_object(evidence.metadata).get("verification")).get(
+                "repo"
+            )
+        )
+        metadata["rebase_onto_tip"] = {
+            "schema": "mac.rebase_onto_tip.v1",
+            "reason": reason,
+            "canonical_tip": exc.canonical_tip,
+            "verified_base": exc.verified_base,
+            "reviewed_head_sha": exc.head_sha,
+            "previous_remote_ref": str(repo.get("remote_ref") or ""),
+            "conflicted_files": exc.conflicted_files[:50],
+            "rebase": rebases + 1,
+            "max_rebases": LANDING_MAX_REBASES,
+            "evidence_id": evidence.id,
+            "requested_at": now,
+            "instruction": (
+                "Your previous attempt was approved but no longer lands as verified: "
+                + (
+                    "it conflicts with the canonical tip. "
+                    if exc.conflict
+                    else "the canonical tip moved after your verifier ran. "
+                )
+                + "Re-apply the change from previous_remote_ref (reviewed_head_sha) onto "
+                "the current canonical branch, resolve any conflicts, and finish; the "
+                "finalizer rebases onto the tip and re-runs the verifier. Do not "
+                "redo the task from scratch."
+            ),
+        }
+        self._persist_task_metadata_narrow(
+            task_id, metadata, actor=actor, detail={"landing": "rebase_required"}
+        )
+        if task.attempt_count >= task.max_attempts:
+            # A send-back is not a failed attempt; without room for one more
+            # claim the dispatcher would exhaust the task instead of rebasing.
+            self.update_task(task_id, max_attempts=task.attempt_count + 1, actor=actor)
+        self._transition_task_internal(
+            task_id,
+            TaskState.OPEN.value,
+            actor,
+            {
+                "reason": "rebase_onto_tip",
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "rebase_reason": reason,
+                "canonical_tip": exc.canonical_tip,
+                "verified_base": exc.verified_base,
+                "rebase": rebases + 1,
+                "max_rebases": LANDING_MAX_REBASES,
+            },
+        )
+        try:
+            self.append_task_activity(
+                task_id,
+                "diagnosis",
+                actor,
+                "Problem: The approved change no longer lands as verified (%s).\n"
+                "Remediation: Sent back to the worker to rebase onto %s and re-run "
+                "its verifier (send-back %d of %d)."
+                % (
+                    "conflict with the canonical tip" if exc.conflict else "canonical tip moved",
+                    exc.canonical_tip[:12] or "the canonical tip",
+                    rebases + 1,
+                    LANDING_MAX_REBASES,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - narrative is best-effort
+            pass
+        return {
+            "task_id": task_id,
+            "status": "rebase_required",
+            "review_id": review_id,
+            "target": target,
+            "reason": reason,
+            "canonical_tip": exc.canonical_tip,
+            "rebases": rebases + 1,
+            "state": TaskState.OPEN.value,
+        }
 
     def _record_review_outcome_lesson(self, task_id: str, *, outcome: str, detail: str) -> None:
         """Distill a review-stage outcome into a ``deployment_learning`` memory
@@ -22909,11 +21784,6 @@ class ControlPlane:
 
     def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
         return self.project_repositories.list(enabled)
-
-    def record_repository_merge_capability(
-        self, repo_id_or_name: str, capability: JsonDict
-    ) -> ProjectRepository:
-        return self.project_repositories.record_merge_capability(repo_id_or_name, capability)
 
     def _repository_contract_for_repo(self, repo: ProjectRepository) -> JsonDict:
         return self.project_repositories.contract_for(repo)
@@ -26649,83 +25519,6 @@ class ControlPlane:
                 or item.get("execution_environment") == "hub_verify_pending"
             )
             for item in tests
-        )
-
-    def _contract_gate_test_command(self, task: Task, files_changed: Sequence[str]) -> str:
-        """Choose the explicit sanity contract when changed paths are trustworthy.
-
-        Repositories without the sanity contract still run their full
-        configured command. Unsafe or absent paths also fail closed to the
-        full command rather than becoming shell input.
-        """
-
-        configured = _repository_contract_test_command_for_task(task)
-        full_command = configured or "scripts/run-contract-tests.sh"
-        if configured and configured not in {
-            "scripts/run-contract-tests.sh",
-            "./scripts/run-contract-tests.sh",
-        }:
-            return configured
-        if not files_changed:
-            return full_command
-        safe_files: list[str] = []
-        for raw in files_changed:
-            value = str(raw or "").strip().replace("\\", "/")
-            parts = value.split("/")
-            if (
-                not value
-                or value.startswith("/")
-                or any(part in {"", ".", ".."} for part in parts)
-                or any(ord(char) < 32 for char in value)
-            ):
-                return full_command
-            safe_files.append(value)
-        changed_args = " ".join(
-            "--changed-file %s" % shlex.quote(path) for path in sorted(set(safe_files))
-        )
-        return (
-            "if [ -x scripts/run-sanity-tests.sh ]; then "
-            "scripts/run-sanity-tests.sh %s; else %s; fi" % (changed_args, full_command)
-        )
-
-    def _run_contract_gate(
-        self,
-        remote_url: str,
-        branch: str,
-        head_sha: str,
-        test_command: str,
-        bootstrap_command: str = "",
-        *,
-        verifier_identity: Optional[Dict[str, Any]] = None,
-        local_repository: Optional[Path] = None,
-        expected_tree_sha: str = "",
-    ) -> Tuple[int, str]:
-        """Run a contract gate in the configured verifier isolation.
-
-        Tests inject ``_contract_test_runner`` so they need no git/OpenShell.
-        """
-        runner = getattr(self, "_contract_test_runner", None)
-        if runner is not None:
-            return runner(
-                str(local_repository) if local_repository is not None else remote_url,
-                branch,
-                head_sha,
-                test_command,
-            )
-        source_options: Dict[str, Any] = {}
-        if local_repository is not None:
-            source_options = {
-                "local_repository": local_repository,
-                "expected_tree_sha": expected_tree_sha,
-            }
-        return run_repository_contract_test_in_openshell(
-            remote_url,
-            branch,
-            head_sha,
-            test_command,
-            bootstrap_command,
-            verifier_identity=verifier_identity,
-            **source_options,
         )
 
     def _find_review_verdict_evidence(

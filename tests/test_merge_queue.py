@@ -11,10 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from mac.merge_queue import (
-    validate_projected_merge,
-    validate_projected_merge_contract,
-)
+from mac.merge_queue import validate_projected_merge
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -95,102 +92,3 @@ def test_verdict_serializes():
     d = v.to_dict()
     assert d["schema"] == "mac.merge_gate.v1"
     assert d["clean"] is False and d["conflicted_files"] == ["a.py"]
-
-
-def test_full_contract_runs_on_disposable_current_main_projection(repo: Path):
-    _branch_commit(repo, "topic", "topic.txt", "topic\n")
-    (repo / "main.txt").write_text("main\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "main advances")
-    observed = {}
-
-    def runner(remote: str, branch: str, head_sha: str, command: str):
-        checkout = Path(remote)
-        observed.update(
-            {
-                "branch": branch,
-                "head_sha": head_sha,
-                "command": command,
-                "checkout_head": _git(checkout, "rev-parse", "HEAD"),
-                "topic": (checkout / "topic.txt").read_text(),
-                "main": (checkout / "main.txt").read_text(),
-            }
-        )
-        return 0, "full suite passed"
-
-    verdict = validate_projected_merge_contract(
-        str(repo),
-        "main",
-        "topic",
-        "make full-contract",
-        test_runner=runner,
-    )
-
-    assert verdict.passed is True
-    assert verdict.test_command == "make full-contract"
-    assert verdict.test_returncode == 0
-    assert verdict.output_tail == "full suite passed"
-    assert observed == {
-        "branch": "mac-projected-publication",
-        "head_sha": verdict.projected_sha,
-        "command": "make full-contract",
-        "checkout_head": verdict.projected_sha,
-        "topic": "topic\n",
-        "main": "main\n",
-    }
-    # The caller's CURRENT main worktree is never mutated by projection.
-    assert not (repo / "topic.txt").exists()
-    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
-
-
-def test_full_contract_failure_is_fail_closed(repo: Path):
-    _branch_commit(repo, "topic", "topic.txt", "topic\n")
-
-    verdict = validate_projected_merge_contract(
-        str(repo),
-        "main",
-        "topic",
-        "scripts/run-contract-tests.sh",
-        test_runner=lambda *_args: (17, "suite failed"),
-    )
-
-    assert verdict.passed is False
-    assert verdict.test_returncode == 17
-    assert verdict.output_tail == "suite failed"
-    assert verdict.error == "full repository contract test failed"
-
-
-def test_full_contract_never_runs_for_conflict_or_empty_command(repo: Path):
-    _branch_commit(repo, "topic", "f.txt", "topic\nline2\nline3\n")
-    (repo / "f.txt").write_text("main\nline2\nline3\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "main conflict")
-    calls = []
-
-    def runner(*args):
-        calls.append(args)
-        return 0, ""
-
-    conflict = validate_projected_merge_contract(
-        str(repo), "main", "topic", "full-test", test_runner=runner
-    )
-    empty = validate_projected_merge_contract(str(repo), "main", "main", "", test_runner=runner)
-
-    assert conflict.passed is False
-    assert empty.passed is False
-    assert empty.error == "repository contract test command is empty"
-    assert calls == []
-
-
-def test_full_contract_runner_exception_is_fail_closed(repo: Path):
-    _branch_commit(repo, "topic", "topic.txt", "topic\n")
-
-    def runner(*_args):
-        raise RuntimeError("sandbox unavailable")
-
-    verdict = validate_projected_merge_contract(
-        str(repo), "main", "topic", "full-test", test_runner=runner
-    )
-
-    assert verdict.passed is False
-    assert "sandbox unavailable" in verdict.error

@@ -905,220 +905,6 @@ def _expire_landing_backoff(cp, task_id):
     cp._persist_task_metadata_narrow(task_id, metadata, actor="test")
 
 
-def _merge_gate_conflict_raiser(
-    cp,
-    task_id,
-    evidence,
-    *,
-    conflicted_paths,
-    current_main_sha="b" * 40,
-):
-    """Return a publish_task replacement that raises a merge-gate conflict
-    carrying the structured conflict-integration context, exactly as the git
-    publisher attaches it."""
-    from mac.models import ValidationError
-
-    def _boom(*_a, **_k):
-        exc = ValidationError(
-            "git publication merge gate: task branch does not integrate onto "
-            "the current main tip (%s); conflicts: %s — route to integration"
-            % (current_main_sha[:12], ", ".join(conflicted_paths))
-        )
-        exc.conflict_integration_context = {
-            "schema": "mac.merge_gate_conflict_context.v1",
-            "task_id": task_id,
-            "reviewed_head_sha": "abcdef1234567890abcdef1234567890abcdef12",
-            "current_main_sha": current_main_sha,
-            "conflicted_paths": list(conflicted_paths),
-            "repo_root": "/nonexistent-repo",
-        }
-        raise exc
-
-    return _boom
-
-
-def test_conflict_creates_single_integration_task(cp, monkeypatch):
-    """A legacy single-task publication merge-gate conflict creates exactly ONE
-    context-rich integration repair task (not just a diagnosis), preserving the
-    approved task in REVIEWING and the diagnosis/observation telemetry."""
-    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
-
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
-    )
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "publish_failed"
-    integration_task_id = result["integration_task_id"]
-    assert integration_task_id is not None
-
-    # Exactly one integration repair task exists for this conflict.
-    integration = cp.get_task(integration_task_id)
-    link = (integration.metadata or {}).get("conflict_integration", {})
-    assert link.get("role") == "integration_repair"
-    assert link.get("approved_task_id") == task.id
-    # Full context payload carried on the integration task.
-    payload = (integration.metadata or {}).get("context_payload", {})
-    assert payload.get("schema") == "mac.conflict_integration_payload.v1"
-    assert payload["approved_task"]["task_id"] == task.id
-    assert (
-        payload["approved_task"]["reviewed_head_sha"] == "abcdef1234567890abcdef1234567890abcdef12"
-    )
-    assert payload["canonical_baseline"]["main_sha"] == "b" * 40
-    assert payload["conflicted_paths"] == ["src/example.py"]
-    # The approved task is a non-terminal input authority, not a scheduler
-    # dependency: it remains REVIEWING until this repair succeeds.
-    assert task.id not in payload["dependencies"]["depends_on"]
-    assert task.id not in integration.dependencies
-    assert cp.explain_task_dispatch(integration.id)["task_ready"] is True
-    # Distinct-agent enforcement: the approved task's executor is excluded.
-    excluded = set((integration.metadata or {}).get("excluded_agent_ids", []))
-    assert worker.id in excluded
-    assert (integration.metadata or {}).get("coordination", {}).get(
-        "require_distinct_agent"
-    ) is True
-
-    # Approved task stays REVIEWING and keeps its diagnosis telemetry.
-    parked = cp.get_task(task.id)
-    assert parked.state == TaskState.REVIEWING.value
-    activity = (parked.metadata or {}).get("activity", [])
-    assert any(
-        "Remediation" in (e.get("summary") or "")
-        and integration_task_id in (e.get("summary") or "")
-        for e in activity
-    )
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.publish_failed" in names
-    assert "workflow.default_review.conflict_integration_created" in names
-
-
-def test_conflict_handoff_is_idempotent(cp, monkeypatch):
-    """Duplicate conflict events for the same (task, evidence, attempt base,
-    canonical tip, conflict set) resolve to the SAME single integration task."""
-    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
-
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
-    )
-    first = cp.advance_default_review_workflow(task.id)
-    _expire_landing_backoff(cp, task.id)
-    second = cp.advance_default_review_workflow(task.id)
-
-    assert first["integration_task_id"] is not None
-    assert second["integration_task_id"] == first["integration_task_id"]
-
-    # No duplicate integration tasks were created.
-    integration_tasks = [
-        t
-        for t in cp.list_tasks(limit=100)
-        if (t.metadata or {}).get("conflict_integration", {}).get("approved_task_id") == task.id
-    ]
-    assert len(integration_tasks) == 1
-
-
-def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
-    cp,
-    monkeypatch,
-):
-    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
-
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
-    )
-    first = cp.advance_default_review_workflow(task.id)
-    current_id = first["integration_task_id"]
-    assert current_id is not None
-
-    # Reproduce the pre-fix ledger shape: the current repair hard-depends on
-    # its still-REVIEWING parent and an older baseline remains non-terminal.
-    cp.update_task(current_id, dependencies=[task.id], actor="legacy-fixture")
-    current = cp.get_task(current_id)
-    obsolete_metadata = dict(current.metadata)
-    obsolete_link = dict(obsolete_metadata["conflict_integration"])
-    obsolete_link["fingerprint"] = "sha256:" + ("0" * 64)
-    obsolete_metadata["conflict_integration"] = obsolete_link
-    obsolete = cp.create_task(
-        "obsolete integration baseline",
-        project=task.project,
-        priority=task.priority,
-        dependencies=[task.id],
-        metadata=obsolete_metadata,
-        actor="legacy-fixture",
-    )
-
-    _expire_landing_backoff(cp, task.id)
-    second = cp.advance_default_review_workflow(task.id)
-
-    assert second["integration_task_id"] == current_id
-    repaired = cp.get_task(current_id)
-    assert task.id not in repaired.dependencies
-    assert cp.explain_task_dispatch(current_id)["task_ready"] is True
-    retired = cp.get_task(obsolete.id)
-    assert retired.state == TaskState.CANCELLED.value
-    lifecycle = retired.metadata["repository_ref_lifecycle"]
-    assert lifecycle["disposition"] == "superseded"
-    assert lifecycle["replacement_task_id"] == current_id
-
-
-def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
-    cp,
-    monkeypatch,
-):
-    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
-
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _merge_gate_conflict_raiser(
-            cp,
-            task.id,
-            evidence,
-            conflicted_paths=["src/example.py"],
-            current_main_sha="b" * 40,
-        ),
-    )
-    first = cp.advance_default_review_workflow(task.id)
-    old_id = first["integration_task_id"]
-    assert old_id is not None
-
-    # Reproduce the pre-fix ledger shape, then move main so the conflict gets a
-    # new fingerprint and must take the creation path rather than exact-match
-    # reuse.
-    cp.update_task(old_id, dependencies=[task.id], actor="legacy-fixture")
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _merge_gate_conflict_raiser(
-            cp,
-            task.id,
-            evidence,
-            conflicted_paths=["src/example.py"],
-            current_main_sha="c" * 40,
-        ),
-    )
-
-    _expire_landing_backoff(cp, task.id)
-    second = cp.advance_default_review_workflow(task.id)
-    current_id = second["integration_task_id"]
-
-    assert current_id is not None
-    assert current_id != old_id
-    current = cp.get_task(current_id)
-    assert task.id not in current.dependencies
-    assert cp.explain_task_dispatch(current_id)["task_ready"] is True
-    retired = cp.get_task(old_id)
-    assert retired.state == TaskState.CANCELLED.value
-    lifecycle = retired.metadata["repository_ref_lifecycle"]
-    assert lifecycle["disposition"] == "superseded"
-    assert lifecycle["replacement_task_id"] == current_id
-
-
 def test_record_log_suppresses_verbose_poll_names_by_default(cp):
     """mem-04: noisy poll-log names (worker.no_task, etc.) are dropped
     by default. The 1.83M-of-2.09M-row bloat on rocky was these six
@@ -5436,7 +5222,13 @@ def test_git_main_publication_requires_repository_path(cp):
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
 
-def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
+def test_git_publication_sends_a_moved_tip_back_to_rebase(cp, tmp_path):
+    """No required checks: the worker's verifier is the gate, and it covers the
+    landed tree only while the tip is the base it verified. A moved tip is not
+    merged on the hub (no merge commit, no hub contract run); the land step
+    says the worker must rebase, and main is left alone."""
+    from mac.services import _LandingRebaseRequiredError
+
     from tests.conftest import submit_review_verdict
 
     def git(repo, *args):
@@ -5481,22 +5273,6 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
         metadata={"repository_url": "https://github.com/acme/widgets.git"},
         dispatch_paused=False,
     )
-    publication_gate_calls = []
-
-    def publication_gate_runner(remote_url, branch, projected_sha, command):
-        checkout = Path(remote_url)
-        publication_gate_calls.append(
-            {
-                "branch": branch,
-                "projected_sha": projected_sha,
-                "command": command,
-                "has_feature": (checkout / "feature.txt").is_file(),
-                "has_mainline": (checkout / "mainline.txt").is_file(),
-            }
-        )
-        return 0, "full configured suite passed"
-
-    cp._publication_merge_test_runner = publication_gate_runner
     task = cp.create_task(
         "publish parallel branch",
         project=project.name,
@@ -5546,57 +5322,20 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
     cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
 
-    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+    with pytest.raises(_LandingRebaseRequiredError) as raised:
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert publication.status == "published"
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    # Publication uses a fresh exact-base checkout; the hub's long-lived
-    # checkout is an identity/auth hint and is never mutated.
+    assert raised.value.canonical_tip == main_head
+    assert raised.value.conflict is False
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    # Nothing was pushed: main is still the independently moved tip, and the
+    # hub's long-lived checkout was never mutated.
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
     assert git(source, "rev-parse", "HEAD") == main_head
-    final_head = git(source, "ls-remote", "origin", "refs/heads/main").split()[0]
-    git(source, "fetch", "origin", "main")
-    assert final_head != task_head
-    assert len(git(source, "rev-list", "--parents", "-n", "1", final_head).split()) == 3
-    git(source, "merge-base", "--is-ancestor", task_head, final_head)
-    git(source, "merge-base", "--is-ancestor", main_head, final_head)
-    assert len(publication_gate_calls) == 1
-    assert publication_gate_calls[0]["branch"] == "mac-projected-publication"
-    assert publication_gate_calls[0]["projected_sha"]
-    assert publication_gate_calls[0]["command"] == "make full-publication-suite"
-    assert publication_gate_calls[0]["has_feature"] is True
-    assert publication_gate_calls[0]["has_mainline"] is True
-    published = [
-        event
-        for event in cp.list_observability(limit=50)
-        if event.name == "task.git_published" and event.subject_id == task.id
-    ]
-    assert published
-    assert published[0].detail["publication_mode"] == "merge_commit"
-    assert published[0].detail["head_sha"] == task_head
-    assert published[0].detail["final_sha"] == final_head
-    publication_commands = published[0].detail["commands"]
-    contract_gate = next(
-        item for item in publication_commands if item["name"] == "publication_contract_gate"
-    )
-    assert contract_gate["passed"] is True
-    assert contract_gate["test_command"] == "make full-publication-suite"
-    assert any(item["name"] == "verify_projected_tree" for item in publication_commands)
-    proofs = [
-        item.metadata["verification"]["canonical_integration"]
+    assert not [
+        item
         for item in cp.list_evidence(task.id)
         if item.metadata.get("verification", {}).get("canonical_integration")
-    ]
-    assert proofs == [
-        {
-            "schema": "mac.canonical_integration.v1",
-            "status": "pass",
-            "canonical_ref": "refs/heads/main",
-            "canonical_tip_sha": final_head,
-            "reviewed_head_sha": task_head,
-            "contains_reviewed_head": True,
-            "remote_verified": True,
-            "publication_mode": "merge_commit",
-        }
     ]
 
 
@@ -5608,7 +5347,6 @@ def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
     from tests.conftest import submit_review_verdict
 
     source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="k8s")
-    cp._publication_merge_test_runner = lambda *_args: (0, "full suite passed")
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -5710,7 +5448,6 @@ def _publishable_task_and_evidence(
 
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
-    cp._publication_merge_test_runner = lambda *_args: (0, "full suite passed")
     contract = {
         "schema": "mac.repository_contract.v1",
         "default_branch": default_branch,
@@ -5764,30 +5501,6 @@ def _publishable_task_and_evidence(
     return task, evidence, reviewer
 
 
-def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
-    source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="contract-fail")
-    main_before = git(source, "rev-parse", "main")
-    task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
-    calls = []
-
-    def fail_gate(remote_url, branch, projected_sha, command):
-        calls.append((remote_url, branch, projected_sha, command))
-        return 23, "integration suite failed"
-
-    del cp._publication_merge_test_runner
-    cp._contract_test_runner = fail_gate
-    # The gate is scoped now, so it is no longer "full"; what this test is
-    # about is that a FAILING gate does not push main.
-    with pytest.raises(ValidationError, match="contract gate failed on the projected"):
-        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    assert len(calls) == 1
-    assert calls[0][1] == "mac-projected-publication"
-    assert calls[0][3] == "true"
-    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (main_before)
-    assert git(source, "rev-parse", "main") == main_before
-
-
 def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
     source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="diverged-checkout")
     task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
@@ -5800,28 +5513,15 @@ def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
     git(source, "commit", "-m", "local-only main")
     local_head = git(source, "rev-parse", "HEAD")
 
-    peer = tmp_path / "diverged-peer"
-    subprocess.run(
-        ["git", "clone", "--branch", "main", str(remote), str(peer)],
-        check=True,
-        capture_output=True,
-    )
-    git(peer, "config", "user.email", "mac-test@example.com")
-    git(peer, "config", "user.name", "MAC Test")
-    (peer / "remote-only.txt").write_text("remote\n", encoding="utf-8")
-    git(peer, "add", "remote-only.txt")
-    git(peer, "commit", "-m", "remote-only main")
-    remote_head = git(peer, "rev-parse", "HEAD")
-    git(peer, "push", "origin", "main")
-
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     assert git(source, "rev-parse", "HEAD") == local_head
     final_head = git(source, "ls-remote", str(remote), "refs/heads/main").split()[0]
+    # The remote tip was the base the worker verified, so the reviewed head
+    # fast-forwards; the checkout's local-only commit never reaches main.
+    assert final_head == task_head
     git(source, "fetch", "origin", "main")
-    git(source, "merge-base", "--is-ancestor", task_head, final_head)
-    git(source, "merge-base", "--is-ancestor", remote_head, final_head)
     assert (
         subprocess.run(
             ["git", "merge-base", "--is-ancestor", local_head, final_head],
@@ -5833,7 +5533,12 @@ def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
     )
 
 
-def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monkeypatch):
+def test_git_publication_occ_race_retries_then_sends_back_to_rebase(cp, tmp_path, monkeypatch):
+    """The tip moves between the land step's read and its guarded push. The
+    lease refuses the push (nothing untested lands), the step retries once,
+    and the retry sees a tip the worker never verified: rebase and retest."""
+    from mac.services import _LandingRebaseRequiredError
+
     source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="moving-main")
     task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
     peer = tmp_path / "moving-peer"
@@ -5866,14 +5571,13 @@ def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monk
         return original_git_output(repo_path, args, timeout=timeout)
 
     monkeypatch.setattr(cp, "_git_output", move_main_before_first_push)
-    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+    with pytest.raises(_LandingRebaseRequiredError) as raised:
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert publication.status == "published"
-    assert pushes == 2
+    assert pushes == 1
+    assert raised.value.canonical_tip == concurrent_head
     final_head = git(source, "ls-remote", str(remote), "refs/heads/main").split()[0]
-    git(source, "fetch", "origin", "main")
-    git(source, "merge-base", "--is-ancestor", task_head, final_head)
-    git(source, "merge-base", "--is-ancestor", concurrent_head, final_head)
+    assert final_head == concurrent_head
 
 
 def test_git_publication_uses_authoritative_non_main_branch(cp, tmp_path):
@@ -12223,7 +11927,9 @@ def test_verifier_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypat
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
-    rc, out = cp._run_contract_gate("git@github.com:org/repo.git", "task/branch", "a" * 40, "")
+    rc, out = services_mod.run_repository_contract_test_in_openshell(
+        "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
+    )
     assert rc == 0
     create = next(a for a in captured if "create" in a)
     separator = create.index("--")
@@ -12272,7 +11978,9 @@ def test_verifier_sandbox_provisions_its_own_postgres(cp, monkeypatch):
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
-    rc, _out = cp._run_contract_gate("git@github.com:org/repo.git", "task/branch", "a" * 40, "")
+    rc, _out = services_mod.run_repository_contract_test_in_openshell(
+        "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
+    )
     assert rc == 0
     create = next(a for a in captured if "create" in a)
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]

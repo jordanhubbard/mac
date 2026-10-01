@@ -230,12 +230,6 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
 
-    # The hub must never run its own contract gate on this path -- the PR's
-    # required checks are the gate. If it did, this runner would fire.
-    cp._publication_merge_test_runner = lambda *a, **k: pytest.fail(
-        "hub contract gate ran even though the forge gates the merge"
-    )
-
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
@@ -280,8 +274,9 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     strategy = next(item for item in commands if item["name"] == "publication_strategy")
     assert strategy["strategy"] == "pull_request"
     assert strategy["required_status_checks"] == ["sanity"]
-    gate = next(item for item in commands if item["name"] == "publication_contract_gate")
-    assert gate["skipped"] is True
+    assert strategy["test_gate"] == "required_checks"
+    # The hub runs no contract gate of its own: the PR's checks are the gate.
+    assert not any(item["name"] == "publication_contract_gate" for item in commands)
 
     # The completion proof is honest about squashing and still admits the task.
     proofs = [
@@ -368,7 +363,6 @@ def test_direct_push_opt_out_still_pushes_the_canonical_branch(cp, tmp_path, mon
     install_forge(monkeypatch, forge)
     monkeypatch.setenv("MAC_PUBLICATION_STRATEGY", "direct_push")
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    cp._publication_merge_test_runner = lambda *a, **k: (0, "suite passed")
 
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
@@ -392,7 +386,6 @@ def test_repository_without_a_forge_falls_back_to_direct_push(cp, tmp_path):
     # no API to open a pull request against. Publication must still land.
     remote, source, main_head, task_head = build_repo(tmp_path)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    cp._publication_merge_test_runner = lambda *a, **k: (0, "suite passed")
 
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
@@ -726,90 +719,6 @@ def test_agent_pull_request_reports_forge_errors_without_the_token(tmp_path, mon
 
 
 # ---------------------------------------------------------------------------
-# Merge safety: mac's own queue serializes the merges.
-# ---------------------------------------------------------------------------
-
-
-def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp_path, monkeypatch):
-    """No FORGE queue means mac's own queue serializes, and it still refuses.
-
-    The checks ran against a merge candidate built from one canonical tip. If
-    the branch advances before the merge executes, the landed tree was never
-    tested. This repository has no forge merge queue (GitHub's is
-    organization-only), so `mac_native_queue` owns the landing -- and its land
-    gate compares the canonical tip's TREE with the tree the entry was tested on
-    top of, which is strictly stronger than the SHA comparison it replaced.
-    The stale projection is rejected and re-projected instead of merged blind.
-    """
-    remote, source, main_head, task_head = build_repo(tmp_path)
-    forge = FakeForge(remote, tmp_path / "forge")
-    install_forge(monkeypatch, forge)
-    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    queue = cp._native_merge_queue()
-    reaper_calls: list[tuple[str, str]] = []
-
-    def reap_stalled(repository, branch):
-        reaper_calls.append((repository, branch))
-        return ["mergeq_stalled"]
-
-    monkeypatch.setattr(queue, "evict_exhausted", reap_stalled)
-    monkeypatch.setattr(cp, "_native_merge_queue", lambda: queue)
-
-    # Someone else lands on main between the gate and the merge -- exactly once,
-    # so the second attempt projects onto the tip that is really there.
-    moved: list[str] = []
-
-    def advance_main_once(url, branch):
-        if not moved:
-            other = tmp_path / "other"
-            subprocess.run(
-                ["git", "clone", "--branch", "main", str(remote), str(other)],
-                check=True,
-                capture_output=True,
-            )
-            git(other, "config", "user.email", "other@example.com")
-            git(other, "config", "user.name", "Other Agent")
-            (other / "other.txt").write_text("other\n", encoding="utf-8")
-            git(other, "add", "other.txt")
-            git(other, "commit", "-m", "someone else landed first")
-            git(other, "push", "origin", "HEAD:refs/heads/main")
-            moved.append(git(other, "rev-parse", "HEAD"))
-        return ("sanity",)
-
-    monkeypatch.setattr(gitops, "required_status_check_contexts", advance_main_once)
-
-    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    assert publication.status == "published"
-    detail = published_detail(cp, task.id)
-    assert reaper_calls
-    assert next(
-        item for item in detail["commands"] if item["name"] == "merge_queue_stalled_reaper"
-    )["evicted_entry_ids"] == ["mergeq_stalled"]
-    # The first attempt refused to merge a projection that was already stale.
-    assert detail["attempt"] == 2
-    assert [item["sha"] for item in forge.merges] == [task_head]
-    # ``commands`` is per-attempt, so this is the second attempt's own land
-    # gate -- the first attempt's raised before it could merge.
-    land_gates = [item for item in detail["commands"] if item["name"] == "merge_queue_land_gate"]
-    assert len(land_gates) == 1
-    assert land_gates[0]["allowed"] is True
-    serialization = next(
-        item for item in detail["commands"] if item["name"] == "merge_serialization"
-    )
-    assert serialization["merge_queue"] is True
-    assert serialization["mode"] == "mac_native_queue"
-    assert "what was tested is what lands" in serialization["guarantee"]
-    assert detail["merge_serialization"] == "mac_native_queue"
-    # What landed is a squash of the reviewed head onto the tip that really was
-    # main when the merge was requested.
-    final = git(source, "ls-remote", "origin", "refs/heads/main").split()[0]
-    git(source, "fetch", "origin", "main")
-    parents = git(source, "rev-list", "--parents", "-n", "1", final).split()
-    assert parents[1:] == [moved[0]]
-
-
-# ---------------------------------------------------------------------------
 # The credential: the agent's environment first, the hub's secret store second.
 # ---------------------------------------------------------------------------
 
@@ -1010,9 +919,6 @@ def test_no_required_contexts_is_recorded_distinctly_from_pending(cp, tmp_path, 
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge, checks=())
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    ran: list[str] = []
-    cp._publication_merge_test_runner = lambda *a, **k: ran.append("gate") or (0, "suite passed")
-
     cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     detail = published_detail(cp, task.id)
@@ -1021,10 +927,9 @@ def test_no_required_contexts_is_recorded_distinctly_from_pending(cp, tmp_path, 
     )
     assert verification["case"] == "none_configured"
     assert verification["contexts"] == []
-    # The local contract gate is what protected this one, and it really ran.
-    gate = next(item for item in detail["commands"] if item["name"] == "publication_contract_gate")
-    assert gate.get("skipped") is not True
-    assert ran == ["gate"]
+    # The worker's verifier run is this repository's gate; the hub runs none.
+    assert detail["test_gate"] == "worker_verifier"
+    assert not any(item["name"] == "publication_contract_gate" for item in detail["commands"])
 
 
 def test_required_check_verdicts_classifies_each_context(monkeypatch):

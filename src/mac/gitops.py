@@ -48,7 +48,7 @@ class PullRequestMergeResult:
     checks ran against a merge candidate built from *some* canonical tip;
     nothing stops the canonical branch from advancing between the checks
     finishing and the merge executing, so the caller must serialize the
-    landing itself (mac's native queue) or re-validate the canonical tip
+    landing itself (the hub's serial land loop) or re-validate the canonical tip
     immediately before asking for this merge.
     """
 
@@ -1001,9 +1001,8 @@ def _mac_task_id(title: str, body: str) -> str:
     marker (see ``agent_pull_request`` / the hub's own publish body) naming
     the task that actually owns this PR, so that marker is checked first.
     Falling back to the first task-id-shaped token anywhere in title+body
-    misidentifies a conflict-integration task's PR: its title deliberately
-    names the ORIGINAL task it is repairing (see
-    ``_handoff_conflict_to_integration``) before its own id, e.g. "Integrate
+    misidentifies a PR whose title names ANOTHER task before its own id (the
+    retired conflict-integration repair tasks did exactly that), e.g. "Integrate
     conflicting approved task task_A onto current main (task_B)" -- a bare
     first-match search returns task_A, so the reuse lookup below finds and
     silently "reuses" task_A's already-open, unrelated PR. That PR's head
@@ -1407,9 +1406,8 @@ def required_check_verdicts(
 
     So the party requesting the merge verifies first, instead of assuming a
     refusal will arrive if the checks have not passed. This holds whether or
-    not the identity has a bypass, and it composes with a merge queue rather
-    than duplicating it: the queue serializes and tests the candidate, this
-    makes sure nobody asks for a merge that was never validated.
+    not the identity has a bypass: the hub's serial land loop orders the
+    landings, this makes sure nobody asks for a merge that was never validated.
 
     Returns ``passed``/``pending``/``failed`` lists plus ``known``.  ``known``
     is False when the forge could not be asked, which callers must treat as
@@ -1548,7 +1546,7 @@ def request_pull_request_merge(
     THE GUARANTEE, written down rather than assumed: a plain squash merge.
     Required checks alone do NOT guarantee the landed tree was tested, because
     the canonical branch can advance between the checks finishing and the merge
-    executing.  The caller serializes the landing (mac's native queue) or
+    executing.  The caller serializes the landing (the hub's land loop) or
     re-validates the canonical tip immediately before calling this, and the
     returned ``serialization`` says ``direct_squash`` so the mechanism the
     forge itself used is visible in the evidence.

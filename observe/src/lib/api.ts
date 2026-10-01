@@ -132,39 +132,6 @@ export interface TranscriptCoverage {
   commands_audited: number;
 }
 
-export interface MergeQueueRow {
-  repository: string;
-  branch: string;
-  depth: number;
-  by_state: Record<string, number>;
-  /** null when the queue has never sized its window -- NOT the floor. */
-  window_size: number | null;
-  landed_count: number;
-  failure_count: number;
-  speculation_discarded: number;
-  last_event: string;
-  updated_at: string | null;
-}
-
-export interface MergeQueueEviction {
-  repository: string;
-  branch: string;
-  task_id: string;
-  pull_request_number: number;
-  eviction_reason: string;
-  updated_at: string | null;
-}
-
-export interface MergeQueueSection {
-  queues: MergeQueueRow[];
-  queue_count: number;
-  total_depth: number;
-  total_landed: number;
-  total_failed: number;
-  recent_evictions: MergeQueueEviction[];
-  live_states: string[];
-}
-
 export interface Snapshot {
   schema: string;
   server_time: string;
@@ -179,7 +146,6 @@ export interface Snapshot {
   transitions?: TransitionRow[];
   agents?: AgentsSection;
   pipelines?: PipelinesSection;
-  merge_queue?: MergeQueueSection;
   agentbus?: AgentBusSection;
   telemetry?: TelemetrySection;
   transcripts?: TranscriptCoverage;

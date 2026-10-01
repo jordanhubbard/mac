@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
-import types
 
 import pytest
 
@@ -36,8 +35,7 @@ def _invoke(monkeypatch, *, output="passed", returncode=0):
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
     monkeypatch.delenv("MAC_OPENSHELL_GC", raising=False)
-    result = services.ControlPlane._run_contract_gate(
-        types.SimpleNamespace(),
+    result = services.run_repository_contract_test_in_openshell(
         "https://example.invalid/repo.git",
         "branch",
         HEAD,
