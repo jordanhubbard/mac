@@ -1188,14 +1188,6 @@ def build_mac_env(
         # it needs GH_TOKEN/GITHUB_TOKEN in the hub environment to reach the API.
         values.setdefault("MAC_GITHUB_INGEST_ENABLED", "1")
         values.setdefault("MAC_REVIEW_SEMANTIC_REVIEWER", "0")
-        # mac-model-select: dynamic powerhouse-model selection is OPT-IN, not
-        # default-on. It is not yet production-ready: the selection namespace
-        # (bare models.dev ids) does not match the router's routable namespace,
-        # so a selection cannot yet safely control routing, and the per-worker
-        # strength ladder is not distributed from the hub. Until those are closed
-        # (tracked follow-up) selection stays advisory (observable via
-        # /model-selection/status) and the eval-swap gate is operator-driven.
-        # Operators opt in with MAC_MODEL_SELECT_ENABLED / MAC_MODEL_SWAP_EVAL_ENABLED.
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values

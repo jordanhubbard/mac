@@ -153,7 +153,6 @@ from mac.executor_hub_io import (  # noqa: E402,F401 - compatibility re-exports
 )
 from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
     DEPLOYMENT_LEARNING_PREFIX,
-    _LESSON_CURATION_PROMPT,
     _LESSON_PROMPT_BUDGET,
     _LESSON_STOPWORDS,
     _PLAN_LEARNING_SCHEMA,
@@ -168,12 +167,10 @@ from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
     build_learning_record,
     build_plan_learning_record,
     build_telemetry_record,
-    curate_lessons_from_outcome,
     emit_telemetry,
     recall_deployment_lessons,
     recall_plan_lessons,
     recall_prior_attempt_lessons,
-    record_curated_lessons,
     record_deployment_learning,
     record_plan_outcome,
 )
@@ -6662,10 +6659,9 @@ def _run_executor(
         with _FinalizerPhaseContext(
             task_workspace,
             task_id,
-            "lesson_curation",
+            "deployment_learning",
         ):
             record_deployment_learning(task, outcome)
-            record_curated_lessons(task, outcome)
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

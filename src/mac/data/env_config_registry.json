@@ -540,9 +540,7 @@
       "src/mac/client_profiles.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
-      "src/mac/eval_runner.py",
       "src/mac/executor_hub_io.py",
-      "src/mac/executor_memory.py",
       "src/mac/executor_sandbox.py",
       "src/mac/fleet_creds.py",
       "src/mac/fleet_env.py",
@@ -4970,7 +4968,6 @@
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
-      "src/mac/executor_memory.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/ide_launcher.py",
@@ -5362,9 +5359,7 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
-      "src/mac/executor_memory.py",
       "src/mac/hermes_startup.py",
-      "src/mac/model_selection.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -5912,7 +5907,6 @@
       "src/mac/hermes_runtime.py",
       "src/mac/hub_upgrade_supervisor.py",
       "src/mac/mac_paths.py",
-      "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
       "src/mac/pg_backup_scheduler.py"
     ],
@@ -7020,28 +7014,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: lesson curation enabled.",
-    "family": "core",
-    "name": "MAC_LESSON_CURATION_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/executor_memory.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: lesson curation model.",
-    "family": "core",
-    "name": "MAC_LESSON_CURATION_MODEL",
-    "retired": false,
-    "sources": [
-      "src/mac/executor_memory.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: linux manager command timeout seconds.",
     "family": "core",
     "name": "MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS",
@@ -7394,61 +7366,6 @@
     "retired": false,
     "sources": [
       "src/mac/models_catalog.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: model selection file.",
-    "family": "core",
-    "name": "MAC_MODEL_SELECTION_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/model_selection.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: model select enabled.",
-    "family": "core",
-    "name": "MAC_MODEL_SELECT_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/model_selection.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: model select interval seconds.",
-    "family": "core",
-    "name": "MAC_MODEL_SELECT_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/model_selection.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: model swap eval enabled.",
-    "family": "core",
-    "name": "MAC_MODEL_SWAP_EVAL_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/eval_runner.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: model swap eval golden set.",
-    "family": "core",
-    "name": "MAC_MODEL_SWAP_EVAL_GOLDEN_SET",
-    "retired": false,
-    "sources": [
-      "src/mac/eval_runner.py"
     ],
     "type": "str"
   },
@@ -11352,7 +11269,6 @@
       "scripts/setup-fleet.py",
       "src/mac/deploy_env.py",
       "src/mac/fleet_setup.py",
-      "src/mac/model_selection.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -11427,18 +11343,6 @@
       "src/mac/deploy_env.py",
       "src/mac/media_routing.py",
       "src/mac/router_app.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Router setting: router internal url.",
-    "family": "router",
-    "name": "MAC_ROUTER_INTERNAL_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/eval_runner.py",
-      "src/mac/executor_memory.py"
     ],
     "type": "str"
   },
@@ -11532,35 +11436,12 @@
   },
   {
     "default": null,
-    "description": "Router setting: router token.",
-    "family": "router",
-    "name": "MAC_ROUTER_TOKEN",
-    "retired": false,
-    "sources": [
-      "src/mac/eval_runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Router setting: router tokens.",
     "family": "router",
     "name": "MAC_ROUTER_TOKENS",
     "retired": false,
     "sources": [
       "src/mac/router_service.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Router setting: router url.",
-    "family": "router",
-    "name": "MAC_ROUTER_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/eval_runner.py",
-      "src/mac/executor_memory.py"
     ],
     "type": "str"
   },
@@ -12547,7 +12428,6 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/executor_memory.py",
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"

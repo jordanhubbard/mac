@@ -2295,8 +2295,6 @@ edges:
             "actor": "operator",
         },
         ("POST", "/github-ingest/run"): {},
-        ("POST", "/model-selection/refresh"): {},
-        ("POST", "/model-selection/promote"): {},
         ("POST", "/observability/metrics"): {
             "name": "route.metric",
             "value": 1.0,

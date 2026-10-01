@@ -76,7 +76,6 @@ from mac.models import (
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
-from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
 from mac.hgx_autoscaler import HgxAutoscaler, HgxAutoscalerConfig
 from mac.http_routes.system import SystemRouteServices, build_system_router
@@ -4361,11 +4360,6 @@ def create_app(
     # for any project that has not set metadata["github_issue_ingest"], so
     # enabling it fleet-wide is safe.
     github_ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
-    # mac-model-select: periodically pick the fleet's powerhouse models from a
-    # web search of what's currently leading, moderated by what the gateway can
-    # actually route — instead of a hard-coded, forever-pinned default. No-op
-    # unless MAC_MODEL_SELECT_ENABLED is set.
-    model_selection_service = ModelSelectionService(cp, ModelSelectionConfig.from_env())
     # Durable provisioning requests wake a background HGX reconciler. Provider
     # calls never run on dispatch or HTTP threads; sustained-demand and
     # step/cooldown policy prevent transient backlog from creating a worker
@@ -4416,11 +4410,6 @@ def create_app(
                 repository_ref_reconciler.stop,
             ),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
-            (
-                "model_selection_service",
-                model_selection_service.start,
-                model_selection_service.stop,
-            ),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
             # Last, and started from the lifespan so it runs on the SAME loop
@@ -4478,7 +4467,6 @@ def create_app(
     app.state.local_console_service = local_console_service
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
-    app.state.model_selection_service = model_selection_service
     app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
@@ -4744,7 +4732,6 @@ def create_app(
             SystemRouteServices(
                 repository_ref_reconciler=repository_ref_reconciler,
                 github_ingestor=github_ingestor,
-                model_selection_service=model_selection_service,
             ),
             get_principal=_get_principal,
         )

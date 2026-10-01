@@ -437,7 +437,6 @@ def test_run_executor_calls_scope_estimate_on_attempt_1(monkeypatch, tmp_path):
         lambda *a, **kw: {"outcome": "success", "evidence_type": "operator_result", "signals": []},
     )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
 
     task = _task(attempt_count=1)
     te._run_executor(
