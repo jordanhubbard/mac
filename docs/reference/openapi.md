@@ -39,7 +39,6 @@ request and response definitions.
 | `GET` | `/agents/{agent_id}/agentbus/inbox/pending` | Agentbus Inbox Pending |
 | `GET` | `/agents/{agent_id}/agentbus/roll-call` | Agentbus Roll Call |
 | `GET` | `/agents/{agent_id}/agentbus/traffic` | Read Agentbus Traffic |
-| `POST` | `/agents/{agent_id}/attestation-key/recover` | Recover Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/rotate` | Rotate Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/verify` | Verify Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/claim-next` | Claim Next For Agent |

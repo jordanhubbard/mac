@@ -634,13 +634,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
 | `MAC_WORKER_COMMAND_PROBES` | str | consumer-defined | worker | Worker setting: worker command probes. |
-| `MAC_WORKER_CREDENTIAL_AGENT_ID` | str | consumer-defined | worker | Worker setting: worker credential agent id. |
-| `MAC_WORKER_CREDENTIAL_FINGERPRINT` | str | consumer-defined | worker | Worker setting: worker credential fingerprint. |
-| `MAC_WORKER_CREDENTIAL_ID` | str | consumer-defined | worker | Worker setting: worker credential id. |
-| `MAC_WORKER_CREDENTIAL_POLICY_FILE` | str | consumer-defined | worker | Worker setting: worker credential policy file. |
-| `MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST` | str | consumer-defined | worker | Worker setting: worker credential runtime digest. |
-| `MAC_WORKER_CREDENTIAL_SOURCE_COMMIT` | str | consumer-defined | worker | Worker setting: worker credential source commit. |
-| `MAC_WORKER_CREDENTIAL_VERSION` | str | consumer-defined | worker | Worker setting: worker credential version. |
 | `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
 | `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Worker setting: worker deploy barrier file. |
 | `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Worker setting: worker deploy barrier max age seconds. |
@@ -648,7 +641,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |
 | `MAC_WORKER_HOSTNAME` | str | consumer-defined | worker | Worker setting: worker hostname. |
-| `MAC_WORKER_IDENTITY_MODE` | str | consumer-defined | worker | Worker setting: worker identity mode. |
 | `MAC_WORKER_PERSONA_ID` | str | consumer-defined | worker | Worker setting: worker persona id. |
 | `MAC_WORKER_PROCESS_REVISION` | str | consumer-defined | worker | Worker setting: worker process revision. |
 | `MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker repository bootstrap timeout. |

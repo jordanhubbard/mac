@@ -744,18 +744,11 @@ def _resources_with_command_inventory(
     resources: Optional[JsonDict],
     coding_verification: Optional[JsonDict] = None,
     source_repo: Optional[Path] = None,
-    agent_id: Optional[str] = None,
 ) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
     if source_repo is not None:
         merged["source_state"] = _worker_source_state(source_repo)
-    if agent_id:
-        from mac.worker_credentials import credential_resource_from_env
-
-        proof = credential_resource_from_env(agent_id)
-        if proof:
-            merged["worker_credential"] = proof
     # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
     # hub — and `mac admin fleet creds status` on any workstation — can see which
     # agents have lost or never had claude/codex/cursor credentials and need a
@@ -1151,7 +1144,6 @@ def register_worker(
     resources = _resources_with_command_inventory(
         resources,
         source_repo=_default_self_update_repo(),
-        agent_id=resolved_agent_id,
     )
     machine = client.post(
         "/machines",
@@ -6051,7 +6043,6 @@ class MacWorker(
             resources,
             route_report,
             source_repo=self.self_update_repo,
-            agent_id=self.agent_id,
         )
 
     def _maybe_start_coding_route_probe(self) -> None:

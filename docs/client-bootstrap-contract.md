@@ -271,9 +271,8 @@ token.
 
 ## Legacy Migration
 
-`mac admin fleet sync-token` copies the historical shared `MAC_API_TOKEN`. That token
-has administrator authority and is a recovery mechanism, not new-client
-enrollment.
+The historical shared `MAC_API_TOKEN` has administrator authority and is a
+recovery mechanism, not new-client enrollment.
 
 The bounded migration command can import an existing fleet route and token into
 the separated profile layout, but it refuses unless the administrator

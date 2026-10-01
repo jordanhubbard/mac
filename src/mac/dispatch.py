@@ -1136,14 +1136,6 @@ class RemoteDispatch:
     def get_agent(self, agent_id: str) -> _Dictish:
         return _Dictish(self._get("/agents/%s" % quote(agent_id, safe="")))
 
-    def recover_agent_attestation_key(self, agent_id: str, probe: Mapping[str, Any]) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/agents/%s/attestation-key/recover" % quote(agent_id, safe=""),
-                {"probe": dict(probe)},
-            )
-        )
-
     def approve_agent_report_repository_executor(
         self,
         agent_id: str,

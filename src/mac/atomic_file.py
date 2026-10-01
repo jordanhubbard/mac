@@ -20,9 +20,8 @@ Two distinct hazards are closed here, and both were live in this repository:
    silent data loss rather than a visible failure. So the data descriptor is
    fsynced before the rename and the parent directory is fsynced after it.
 
-Modelled on the two writers that already got this right:
-``read_only_report_verifier.atomic_write_result`` and
-``deployment_attestation._atomic_private_json``.
+Modelled on ``read_only_report_verifier.atomic_write_result``, which already
+got this right.
 """
 
 from __future__ import annotations

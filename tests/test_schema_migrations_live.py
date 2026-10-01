@@ -462,6 +462,7 @@ def test_upgrade_drops_leftover_work_package_task_triggers(pg_dsn: str) -> None:
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert not _function_exists(store, "trg_work_package_task_claim_authority")
         assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
@@ -584,6 +585,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert status["requires_backup"] is True
 
@@ -595,6 +597,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert not [table for table in _REMOVED_FEATURE_TABLES if _relation_exists(store, table)]
         # Rows outside the dropped tables survive, and 0002's re-proved
@@ -602,7 +605,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert store.query_one("SELECT COUNT(*) AS n FROM agents")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 1
         verified = store.verify_schema()
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
         assert "0002_dream_candidate_store" in verified["proof"]["postconditions"]
 
 
@@ -655,6 +658,7 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert status["requires_backup"] is True
 
@@ -665,6 +669,7 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         # The task the queue entry pointed at is untouched: it is still
@@ -672,7 +677,7 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "reviewing"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None:
@@ -681,7 +686,7 @@ def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 _ROLLOUT_AND_DEPLOY_TABLES = (
@@ -753,6 +758,7 @@ def test_upgrade_from_0005_drops_rollout_and_deploy_tables_with_rows(pg_dsn: str
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert status["requires_backup"] is True
 
@@ -775,13 +781,14 @@ def test_upgrade_from_0005_drops_rollout_and_deploy_tables_with_rows(pg_dsn: str
         assert result["applied"] == [
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         # 0008 drops environments once nothing references it.
         assert not _relation_exists(store, "environments")
         assert store.query_one("SELECT COUNT(*) AS n FROM artifacts")["n"] == 1
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
@@ -792,7 +799,7 @@ def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
         assert _relation_exists(store, "artifacts")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 def _populate_agent_provisioning_requests(conn) -> None:
@@ -832,6 +839,7 @@ def test_upgrade_from_0006_drops_agent_provisioning_requests_with_rows(pg_dsn: s
         assert status["pending"] == [
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert status["requires_backup"] is True
 
@@ -840,13 +848,14 @@ def test_upgrade_from_0006_drops_agent_provisioning_requests_with_rows(pg_dsn: s
         assert result["applied"] == [
             "0007_drop_agent_provisioning_requests",
             "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
         ]
         assert not _relation_exists(store, "agent_provisioning_requests")
         # The task a request pointed at is untouched and still dispatchable.
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "open"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str) -> None:
@@ -855,7 +864,7 @@ def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str
         assert not _relation_exists(store, "agent_provisioning_requests")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 # Children before parents: the order 0008 drops them in.
@@ -1007,10 +1016,15 @@ def test_upgrade_from_0007_drops_self_upgrade_and_release_epoch_tables_with_rows
             assert _function_exists(store, function), function
 
         status = store.migration_status()
-        assert status["pending"] == ["0008_drop_self_upgrade_and_release_epoch_tables"]
+        assert status["pending"] == [
+            "0008_drop_self_upgrade_and_release_epoch_tables",
+            "0009_slim_worker_credentials",
+        ]
         assert status["requires_backup"] is True
 
-        result = store.apply_migrations(applied_by="pytest:drop-self-upgrade")
+        result = store.apply_migrations(
+            applied_by="pytest:drop-self-upgrade", migrations=MIGRATIONS[:8]
+        )
 
         assert result["applied"] == ["0008_drop_self_upgrade_and_release_epoch_tables"]
         assert not [t for t in _SELF_UPGRADE_AND_RELEASE_EPOCH_TABLES if _relation_exists(store, t)]
@@ -1020,9 +1034,14 @@ def test_upgrade_from_0007_drops_self_upgrade_and_release_epoch_tables_with_rows
         assert store.query_one("SELECT COUNT(*) AS n FROM fleets")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM machines")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM worker_credentials")["n"] == 1
+
+        result = store.apply_migrations(applied_by="pytest:through-head")
+
+        assert result["applied"] == ["0009_slim_worker_credentials"]
+        assert store.query_one("SELECT COUNT(*) AS n FROM worker_credentials")["n"] == 1
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
 
 
 def test_fresh_bootstrap_leaves_no_self_upgrade_or_release_epoch_table(pg_dsn: str) -> None:
@@ -1032,4 +1051,156 @@ def test_fresh_bootstrap_leaves_no_self_upgrade_or_release_epoch_table(pg_dsn: s
         assert not [f for f in _SELF_UPGRADE_TRIGGER_FUNCTIONS if _function_exists(store, f)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
+
+
+_SLIMMED_WORKER_CREDENTIAL_TABLES = ("worker_credential_events", "worker_credential_policy_state")
+_SLIMMED_WORKER_CREDENTIAL_COLUMNS = (
+    "fleet",
+    "environment",
+    "expected_source_commit",
+    "expected_runtime_digest",
+    "required_capabilities",
+    "package_capable",
+    "destination",
+)
+
+
+def _worker_credential_columns(store) -> set:
+    return {
+        row["column_name"]
+        for row in store.query_all(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'worker_credentials'"
+        )
+    }
+
+
+def _populate_live_worker_credentials(conn, tokens) -> None:
+    """The live hub's shape at 0008: one active, pinned token per worker, plus
+    a superseded predecessor, its events and the compatibility policy row."""
+
+    from mac.worker_credentials import _fingerprint, _token_hash
+
+    now = "2026-10-01T00:00:00+00:00"
+    expires = "2027-10-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO machines (id, hostname, labels, resources, trusted, created_at, "
+        "updated_at, last_seen_at) VALUES ('m1', 'host', '{}', '{}', 1, %s, %s, %s)",
+        (now, now, now),
+    )
+    for index, token in enumerate(tokens):
+        agent = "agent_%d" % index
+        conn.execute(
+            "INSERT INTO agents (id, machine_id, name, capabilities, resources, status, "
+            "health_status, created_at, updated_at, last_seen_at) "
+            "VALUES (%s, 'm1', %s, '[]', '{}', 'idle', 'healthy', %s, %s, %s)",
+            (agent, agent, now, now, now),
+        )
+        old_id, new_id = "worker-%d-v0001" % index, "worker-%d-v0002" % index
+        for principal, version, state, token_value in (
+            (old_id, 1, "superseded", "old-" + token),
+            (new_id, 2, "active", token),
+        ):
+            conn.execute(
+                "INSERT INTO worker_credentials (id, agent_id, fleet, credential_version, "
+                "token_hash, token_fingerprint, scopes, environment, expected_source_commit, "
+                "expected_runtime_digest, required_capabilities, package_capable, state, "
+                "destination, issued_at, expires_at, activated_at, created_by, updated_at) "
+                "VALUES (%s, %s, 'mac', %s, %s, %s, %s, 'vm', %s, %s, '[\"python\"]', TRUE, "
+                "%s, 'vm_env', %s, %s, %s, 'fleet-deploy', %s)",
+                (
+                    principal,
+                    agent,
+                    version,
+                    _token_hash(token_value),
+                    _fingerprint(token_value),
+                    '["agent", "dispatch", "read", "write", "review:advance"]',
+                    "a" * 40,
+                    "d" * 64,
+                    state,
+                    now,
+                    expires,
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO worker_credential_events (id, principal_id, agent_id, "
+                "event_type, actor, detail, created_at) "
+                "VALUES (%s, %s, %s, 'worker_credential.activated', 'test', '{}', %s)",
+                ("ev-" + principal, principal, agent, now),
+            )
+        conn.execute(
+            "UPDATE worker_credentials SET superseded_by = %s, revoked_at = %s WHERE id = %s",
+            (new_id, now, old_id),
+        )
+    conn.execute(
+        "INSERT INTO worker_credential_policy_state (singleton_key, mode, ready_agent_ids, "
+        "revision, updated_by, updated_at) VALUES ('fleet', 'compatibility', '[]', 1, "
+        "'test', %s)",
+        (now,),
+    )
+
+
+def test_upgrade_from_0008_keeps_every_active_worker_token_authenticating(
+    pg_dsn: str,
+) -> None:
+    """The live hub holds 7 active worker tokens; after 0009 each still resolves."""
+
+    from mac.worker_credentials import WorkerCredentialPrincipalProvider, _token_hash
+
+    tokens = ["mac_worker_live_%d" % index for index in range(7)]
+    with _fresh_store(pg_dsn) as store:
+        store.apply_migrations(applied_by="pytest:through-0008", migrations=MIGRATIONS[:8])
+        with store._pool.connection() as conn:
+            _populate_live_worker_credentials(conn, tokens)
+        assert set(_SLIMMED_WORKER_CREDENTIAL_COLUMNS) <= _worker_credential_columns(store)
+
+        status = store.migration_status()
+        assert status["pending"] == ["0009_slim_worker_credentials"]
+        assert status["requires_backup"] is True
+
+        result = store.apply_migrations(applied_by="pytest:slim-worker-credentials")
+
+        assert result["applied"] == ["0009_slim_worker_credentials"]
+        assert not [t for t in _SLIMMED_WORKER_CREDENTIAL_TABLES if _relation_exists(store, t)]
+        assert not set(_SLIMMED_WORKER_CREDENTIAL_COLUMNS) & _worker_credential_columns(store)
+        assert store.query_one("SELECT COUNT(*) AS n FROM worker_credentials")["n"] == 14
+        resolved = WorkerCredentialPrincipalProvider(store).tokens()
+        assert set(resolved) == {_token_hash(token) for token in tokens}
+        for index, token in enumerate(tokens):
+            principal = resolved[_token_hash(token)]
+            assert principal["agent_id"] == "agent_%d" % index
+            assert principal["worker_credential_state"] == "active"
+            assert principal["worker_credential_version"] == 2
+            assert "write" in principal["scopes"]
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
+        assert "0009_slim_worker_credentials" in verified["proof"]["postconditions"]
+
+
+def test_fresh_bootstrap_has_slim_worker_credentials(pg_dsn: str) -> None:
+    from mac.services import ControlPlane
+    from mac.worker_credentials import (
+        WorkerCredentialLifecycle,
+        WorkerCredentialPrincipalProvider,
+        _token_hash,
+    )
+
+    with _fresh_store(pg_dsn) as store:
+        store.initialize()
+        assert not [t for t in _SLIMMED_WORKER_CREDENTIAL_TABLES if _relation_exists(store, t)]
+        assert not set(_SLIMMED_WORKER_CREDENTIAL_COLUMNS) & _worker_credential_columns(store)
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0009_slim_worker_credentials"
+
+        cp = ControlPlane(store, secret_key="fresh-bootstrap-test-key-with-32-bytes")
+        machine = cp.register_machine("fresh-host")
+        agent = cp.register_agent(machine.id, "fresh-worker", agent_id="agent_fresh")
+        lifecycle = WorkerCredentialLifecycle(store)
+        issued = lifecycle.issue(agent.id)
+        lifecycle.activate(agent.id, issued.record["id"])
+        assert _token_hash(issued.token) in WorkerCredentialPrincipalProvider(store).tokens()

@@ -90,7 +90,7 @@ def test_authorize_request_names_expiry_and_the_right_remedy():
     # The operator must not be sent to repair token drift, which is the
     # documented cause of a 403 and the wrong layer entirely here.
     assert "mac admin client renew" in message
-    assert "sync-token` will not fix it" in message
+    assert "not token drift" in message
 
 
 def test_unknown_token_is_still_unknown():

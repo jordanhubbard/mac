@@ -197,24 +197,95 @@ mac admin worker-token list   [<agent_id>]
 
 ## Provision a new host
 
+`fleet-update` only moves an already-provisioned host to a new commit. The
+deleted deploy scripts did the rest, so do these by hand. `$HERMES_HOME` is
+the host's Hermes home (`~/.mac/openclaw` on hosts the old installer set up).
+
 1. Install Tailscale and join the tailnet. Confirm that `ssh <host>` works from
    the hub without a password.
-2. `git clone <origin> ~/.mac/src/mac`.
-3. Run `python3 -m venv ~/.mac/venv && ~/.mac/venv/bin/pip install -e ~/.mac/src/mac`
-   (or use `uv venv` and `uv pip install -e`).
-4. Create `~/.mac/mac.env` (mode 0600) from `deploy/systemd/mac.env.example`.
-   That example is written for a hub, so for a worker set `MAC_HUB_URL`,
-   `MAC_AGENT_ID`, `MAC_WORKER_MODE=loop` and the Hermes and OpenShell keys
-   your hosts use.
-5. On the hub, add the host to `~/.mac/fleet-hosts`. A token can only be
+2. Install git 2.38 or newer (`merge-tree --write-tree`; Ubuntu 22.04 ships
+   2.34), `gh` with HTTPS credentials
+   (`GH_TOKEN=... gh auth setup-git --hostname github.com`), and the review key
+   at `~/.ssh/mac_github_review_id` (mode 0600, plus a `Host github.com`
+   `IdentityFile`/`IdentitiesOnly yes` entry in `~/.ssh/config`). The hub needs
+   a working GitHub SSH identity; workers only use it for reviews.
+3. Grant passwordless sudo for what `fleet-update` runs: on a Linux worker,
+   `<user> ALL=(root) NOPASSWD: /usr/bin/systemctl restart mac-agent`; on the
+   macOS hub, `<user> ALL=(root) NOPASSWD: /bin/launchctl`. Check with
+   `sudo -n true`.
+4. `git clone <origin> ~/.mac/src/mac`, then do the locked install and put
+   `mac` on `PATH`:
+
+   ```console
+   PYTHONPATH=~/.mac/src/mac/src python3 -m mac.native_runtime \
+     --source ~/.mac/src/mac --venv ~/.mac/venv \
+     --snapshot ~/.mac/logs/native-runtime-packages.json \
+     --footprint ~/.mac/agent-footprint.json --uv "$(command -v uv)" \
+     --record ~/.mac/logs/native-runtime-locked.json
+   ln -sf ~/.mac/venv/bin/mac ~/.local/bin/mac
+   ```
+
+   The operator side of `fleet-update` calls plain `mac` (`FLEET_UPDATE_MAC_CLI`).
+5. Create `~/.mac/mac.env` (mode 0600). `deploy/systemd/mac.env.example` is
+   written for a hub and lacks most worker keys, so set these by hand on a
+   worker: `MAC_CONTROL_PLANE_ROLE=client`, `MAC_HUB_URL` and `MAC_URL`,
+   `MAC_FLEET_NAME`, `MAC_AGENT_ID`, `MAC_WORKER_TOKEN` (written by step 7),
+   `MAC_WORKER_MODE=loop`, `MAC_WORKER_AGENT_NAME`, `MAC_WORKER_HOSTNAME`,
+   `MAC_WORKER_CAPABILITIES`, `HERMES_HOME`, `HERMES_REDACT_SECRETS=true`,
+   `MAC_MEMORY_TOPOLOGY_FILE`, `GH_TOKEN`, plus the OpenShell keys your hosts
+   use. The `mac-agent` wrapper refuses to start without `MAC_HUB_URL` and
+   `MAC_WORKER_TOKEN`.
+6. Provider keys live only in the hub vault, never in worker env. On the hub,
+   store each as `<provider>-upstream`:
+   `printf %s "$KEY" | mac admin secret set openai-upstream --from-stdin --scopes '{"capabilities":["router-upstream"]}' --created-by <you>`.
+   On a worker, remove `{NVIDIA,OPENAI,ANTHROPIC,PERPLEXITY}_API_KEY` and
+   `_BASE_URL`, `NVIDIA_API_BASE`, `NVIDIA_IMAGE_BASE_URL`,
+   `PERPLEXITY_API_BASE`, `FAL_KEY`, `VLLM_API_KEY`, `HAIMAKER_API_KEY`,
+   `LLM_KEY`, `LLM_URL`, `QDRANT_API_KEY` and `FIRECRAWL_API_KEY` from
+   `mac.env` and `$HERMES_HOME/.env`.
+7. On the hub, add the host to `~/.mac/fleet-hosts`. A token can only be
    issued to a registered agent, so register it first:
    `mac admin machine register <hostname> --machine-id <machine_id>` and
    `mac agent register <machine_id> <name> --agent-id <agent_id>`. Then run
    `mac admin worker-token issue <agent_id> --install <host>`.
-6. Install the systemd units from `deploy/systemd`. `mac-agent.service` is
+8. Hub only: run `deploy/install-postgres-service.sh`,
+   `deploy/install-qdrant-service.sh`, `deploy/install-firecrawl-gateway.sh`
+   and `deploy/install-webdav-server.sh` (each with `MAC_HOME`, `WORKSPACE`
+   and `FLEET_NAME` set). The Postgres installer writes `MAC_DATABASE_URL` into
+   `~/.mac/mac.env`; confirm it is there. The others write `QDRANT_URL`, the
+   `FIRECRAWL_*` and `MAC_WEB_SEARCH_*` keys and `MAC_PUBLISH_*`.
+9. Install the systemd units from `deploy/systemd`. `mac-agent.service` is
    rendered from `deploy/systemd/mac-agent.service.in`; the sed command is at
    the top of that file. Then run `sudo systemctl daemon-reload && sudo systemctl enable mac-agent`.
-7. Run `deploy/openshell/bootstrap-openshell.sh` on the host, then
-   `deploy/hermes/install-hermes-gateway.sh prepare`.
-8. From the hub: `scripts/fleet-update <host> <sha>`. This installs
-   `deploy/bin` into `~/.mac/bin` and starts the worker.
+10. Prepare Hermes:
+    - write `$HERMES_HOME/mac-memory-topology.json` (schema
+      `mac.hermes.memory_topology.v1`, naming the hub's Qdrant and Firecrawl
+      URLs) and, in `$HERMES_HOME/.env`, `MAC_MEMORY_TOPOLOGY_FILE`,
+      `QDRANT_URL`, `FIRECRAWL_API_URL`, `MAC_WEB_SEARCH_PROVIDER=firecrawl`,
+      `HERMES_WEB_SEARCH_BACKEND=firecrawl` and
+      `HERMES_WEB_EXTRACT_BACKEND=firecrawl`;
+    - force secret redaction: `redact_secrets: true` in
+      `$HERMES_HOME/config.yaml` and `HERMES_REDACT_SECRETS=true` in
+      `$HERMES_HOME/.env`;
+    - write the runtime context, without which `prepare` refuses to run:
+
+      ```console
+      ~/.mac/venv/bin/python -m mac.hermes_runtime \
+        "$HERMES_HOME/mac-runtime-context.json" "$HERMES_HOME/mac-runtime-context.md" "$HERMES_HOME/.env" \
+        --agent-name <name> --fleet-name <fleet> --mac-url "$MAC_HUB_URL" \
+        --hermes-home "$HERMES_HOME" --mac-home ~/.mac --workspace ~/.mac/src/mac \
+        --tenant-id "$MAC_FLEET_TENANT_ID" --persona-id "$MAC_HERMES_PERSONA_ID" \
+        --hermes-instance-id "$MAC_HERMES_INSTANCE_ID" --agent-id <agent_id>
+      ```
+
+    - run `deploy/openshell/bootstrap-openshell.sh`, then
+      `deploy/hermes/install-hermes-gateway.sh prepare`.
+11. Copy each `deploy/skills/fleet/<skill>/` that has a `SKILL.md` into
+    `$HERMES_HOME/workspace/skills/`. On a GPU host (`nvidia-smi -L` works),
+    also `tar xzf deploy/skills/omniverse-skills.tar.gz -C $HERMES_HOME/workspace/skills`
+    and add the `local-gen` media units `<fleet>-gen-server` (port 8189),
+    `<fleet>-gen-audio-server` (8190) and `<fleet>-gen-video-server` (8191).
+    Each runs `deploy/local-gen/{openai_image_server,audio_server,video_server}.py`
+    with `~/.mac/mac.env` sourced.
+12. From the hub: `scripts/fleet-update <host> <sha>`. This installs
+    `deploy/bin` into `~/.mac/bin` and starts the worker.

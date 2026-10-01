@@ -151,7 +151,6 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
             (
                 "Administration",
                 (
-                    "attestation-recover",
                     "report-executor-approve",
                     "report-executor-revoke",
                     "migrate",

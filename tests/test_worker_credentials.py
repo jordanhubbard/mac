@@ -1,878 +1,178 @@
+"""Per-agent worker bearer tokens: lifecycle, principal resolution and HTTP auth."""
+
 from __future__ import annotations
 
 import json
-import subprocess
-import threading
-from pathlib import Path
-from types import SimpleNamespace
+from datetime import timedelta
 
 import pytest
-
-from mac.test_support import control_plane_on, dsn_for, ephemeral_dsn, store_on
 from fastapi.testclient import TestClient
 
 from mac.api import TokenPrincipal, create_app
-from mac.deploy_env import read_env_file
+from mac.models import AuthorizationError
 from mac.services import ControlPlane
-from mac.test_support import ephemeral_store
+from mac.test_support import ephemeral_dsn, store_on
 from mac.worker_credentials import (
-    AUTHENTICATED_PROOF_SCHEMA,
-    DESTINATION_VERIFICATION_SCHEMA,
-    FLEET_SOURCE_RUNTIME_SCHEMA,
-    INSTALL_MANIFEST_SCHEMA,
-    MODE_COMPATIBILITY,
-    MODE_ENFORCED,
-    PACKAGE_CAPABILITY,
+    WORKER_SCOPES,
     WorkerCredentialError,
     WorkerCredentialLifecycle,
-    WorkerCredentialPolicyProvider,
     WorkerCredentialPrincipalProvider,
-    authenticated_credential_resource,
-    build_readiness_inventory,
-    credential_resource_from_env,
+    _token_hash,
+    _utcnow,
     evaluate_worker_actor,
-    ensure_fleet_source_runtime,
-    install_vm_manifest,
-    installation_manifest,
-    main,
-    package_worker_readiness,
-    read_policy_state,
-    write_policy_state,
 )
 
 
-def _plane(dsn: str) -> ControlPlane:
+def _plane() -> ControlPlane:
     cp = ControlPlane(
-        store_on(dsn, initialize=True),
+        store_on(ephemeral_dsn(), initialize=True),
         secret_key="worker-credential-test-key-with-32-bytes",
     )
-    machine = cp.register_machine(
-        "worker-host",
-        machine_id="machine_worker",
-        labels={},
-        resources={},
-        trusted=True,
-    )
-    cp.register_agent(
-        machine.id,
-        "alpha",
-        [PACKAGE_CAPABILITY, "python"],
-        resources={},
-        agent_id="agent_alpha",
-    )
+    machine = cp.register_machine("worker-host", machine_id="machine_worker", labels={})
+    for name in ("alpha", "beta"):
+        cp.register_agent(machine.id, name, ["python"], resources={}, agent_id="agent_" + name)
     return cp
 
 
-def _package_issue(
-    lifecycle: WorkerCredentialLifecycle,
-    agent_id: str = "agent_alpha",
-    *,
-    environment: str = "vm",
-):
-    return lifecycle.issue(
-        agent_id,
-        fleet="test",
-        environment=environment,
-        expected_source_commit="a" * 40,
-        expected_runtime_digest="sha256:runtime-a",
-        required_capabilities=[PACKAGE_CAPABILITY, "python"],
-        package_capable=True,
-    )
+def _active(lifecycle: WorkerCredentialLifecycle, agent_id: str = "agent_alpha", **kwargs):
+    issued = lifecycle.issue(agent_id, **kwargs)
+    lifecycle.activate(agent_id, issued.record["id"])
+    return issued
 
 
-def _ready_resources(issue, env_values):
-    agent_id = issue.record["agent_id"]
-    return {
-        "source_state": {
-            "schema": "mac.worker_source_state.v1",
-            "commit_sha": "a" * 40,
-            "dirty": False,
-        },
-        "worker_credential": credential_resource_from_env(agent_id, env_values),
-        "worker_credential_authenticated": authenticated_credential_resource(
-            agent_id=agent_id,
-            principal_id=issue.record["id"],
-            token_fingerprint=issue.record["token_fingerprint"],
-            credential_version=issue.worker_version,
-        ),
-    }
-
-
-def _observe(cp: ControlPlane, issue, env_values) -> None:
-    cp.store.execute(
-        "UPDATE agents SET capabilities = ?, resources = ?, running_digest = ?, "
-        "status = ?, health_status = ? WHERE id = ?",
-        (
-            json.dumps([PACKAGE_CAPABILITY, "python"]),
-            json.dumps(_ready_resources(issue, env_values)),
-            "sha256:runtime-a",
-            "idle",
-            "healthy",
-            issue.record["agent_id"],
-        ),
-    )
-
-
-def _activate_vm(cp: ControlPlane, issue, path: Path):
-    manifest = installation_manifest(issue)
-    receipt = install_vm_manifest(
-        manifest,
-        path,
-        expected_agent_id=issue.record["agent_id"],
-    )
-    _observe(cp, issue, read_env_file(path))
-    WorkerCredentialLifecycle(cp.store).activate(
-        issue.record["agent_id"],
-        issue.record["id"],
-        receipt=receipt,
-    )
-    return manifest, receipt
-
-
-def _agents(cp: ControlPlane):
-    return [agent.to_dict() for agent in cp.list_agents()]
-
-
-def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -> None:
-    cp = _plane(ephemeral_dsn())
+def test_issue_stores_only_the_hash_and_the_pending_token_already_authenticates() -> None:
+    cp = _plane()
     lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
+    issued = lifecycle.issue("agent_alpha", actor="tester")
 
-    row = cp.store.query_one("SELECT * FROM worker_credentials WHERE id = ?", (issue.record["id"],))
-    events = cp.store.query_all("SELECT detail FROM worker_credential_events")
-    assert row["token_hash"].startswith("sha256:")
-    assert issue.token not in json.dumps(dict(row))
-    assert all(issue.token not in str(event["detail"]) for event in events)
+    row = cp.store.query_one(
+        "SELECT * FROM worker_credentials WHERE id = ?", (issued.record["id"],)
+    )
+    assert row["token_hash"] == _token_hash(issued.token)
+    assert issued.token not in json.dumps(dict(row), default=str)
+    assert row["state"] == "pending_install" and row["created_by"] == "tester"
+    assert all("token_hash" not in item for item in lifecycle.list())
 
     projected = WorkerCredentialPrincipalProvider(cp.store).tokens()
     assert projected[row["token_hash"]] == {
-        "scopes": ["agent", "dispatch", "read", "write", "review:advance"],
-        "client_id": issue.record["id"],
+        "scopes": list(WORKER_SCOPES),
+        "client_id": issued.record["id"],
         "agent_id": "agent_alpha",
         "principal_kind": "worker",
-        "credential_fingerprint": issue.record["token_fingerprint"],
+        "credential_fingerprint": issued.record["token_fingerprint"],
         "worker_credential_version": 1,
         "worker_credential_state": "pending_install",
     }
     with pytest.raises(WorkerCredentialError, match="at least 60 seconds"):
-        lifecycle.issue("agent_alpha", environment="vm", expires_in=59)
+        lifecycle.issue("agent_alpha", expires_in=59)
+    with pytest.raises(WorkerCredentialError, match="registered agent"):
+        lifecycle.issue("agent_missing")
 
 
-def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path) -> None:
-    cp = _plane(ephemeral_dsn())
+def test_activation_supersedes_every_other_live_version() -> None:
+    cp = _plane()
     lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
-    receipt = install_vm_manifest(
-        installation_manifest(issue),
-        tmp_path / "mac.env",
-        expected_agent_id="agent_alpha",
+    first = _active(lifecycle)
+    pending = lifecycle.issue("agent_alpha")
+    third = lifecycle.issue("agent_alpha")
+    other_agent = _active(lifecycle, "agent_beta")
+
+    lifecycle.activate("agent_alpha", third.record["id"])
+
+    states = {item["id"]: item for item in lifecycle.list(agent_id="agent_alpha")}
+    assert states[third.record["id"]]["state"] == "active"
+    for old in (first, pending):
+        assert states[old.record["id"]]["state"] == "superseded"
+        assert states[old.record["id"]]["superseded_by"] == third.record["id"]
+    projected = WorkerCredentialPrincipalProvider(cp.store).tokens()
+    assert set(projected) == {_token_hash(third.token), _token_hash(other_agent.token)}
+    with pytest.raises(WorkerCredentialError, match="no longer an unexpired pending"):
+        lifecycle.activate("agent_alpha", first.record["id"])
+
+
+def test_revoking_a_failed_install_keeps_the_previous_token() -> None:
+    cp = _plane()
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    current = _active(lifecycle)
+    failed = lifecycle.issue("agent_alpha")
+
+    revoked = lifecycle.revoke("agent_alpha", failed.record["id"])
+
+    assert revoked["state"] == "revoked"
+    projected = WorkerCredentialPrincipalProvider(cp.store).tokens()
+    assert set(projected) == {_token_hash(current.token)}
+    with pytest.raises(WorkerCredentialError, match="no longer an unexpired pending"):
+        lifecycle.revoke("agent_alpha", current.record["id"])
+    with pytest.raises(WorkerCredentialError, match="does not exist"):
+        lifecycle.revoke("agent_beta", current.record["id"])
+
+
+def test_expired_and_deleted_agent_tokens_do_not_resolve() -> None:
+    cp = _plane()
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    alpha = _active(lifecycle, expires_in=120)
+    beta = _active(lifecycle, "agent_beta")
+    provider = WorkerCredentialPrincipalProvider(cp.store)
+
+    assert _token_hash(alpha.token) not in provider.tokens(now=_utcnow() + timedelta(seconds=300))
+    cp.delete_agent("agent_beta", actor="operator")
+    assert _token_hash(beta.token) not in provider.tokens()
+    assert lifecycle.list(agent_id="agent_beta")[0]["state"] == "revoked"
+
+
+def test_actor_binding_accepts_only_the_bound_agent_or_an_unbound_principal() -> None:
+    assert evaluate_worker_actor(principal_agent_id="a", claimed_agent_id="a").allowed
+    assert evaluate_worker_actor(principal_agent_id=None, claimed_agent_id="a").allowed
+    mismatch = evaluate_worker_actor(principal_agent_id="a", claimed_agent_id="b")
+    assert not mismatch.allowed and mismatch.reason == "agent_principal_mismatch"
+
+    TokenPrincipal(scopes=frozenset({"write"}), agent_id="a").assert_actor("a")
+    with pytest.raises(AuthorizationError, match="bound to agent a"):
+        TokenPrincipal(scopes=frozenset({"write"}), agent_id="a").assert_actor("b")
+
+
+def test_http_auth_accepts_live_worker_tokens_and_rejects_the_rest() -> None:
+    cp = _plane()
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    superseded = _active(lifecycle)
+    current = _active(lifecycle)
+    failed = lifecycle.issue("agent_alpha")
+    lifecycle.revoke("agent_alpha", failed.record["id"])
+    beta = _active(lifecycle, "agent_beta", expires_in=60)
+    cp.store.execute(
+        "UPDATE worker_credentials SET expires_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", beta.record["id"]),
     )
-    app = create_app(
-        control_plane=cp,
-        auth_tokens={"shared-admin": {"scopes": ["admin"]}},
-    )
-    cp.delete_agent("agent_alpha", actor="operator")
+    task = cp.create_task("worker token claim")
+    app = create_app(control_plane=cp, auth_tokens={"static-admin": {"scopes": ["admin"]}})
+
+    def heartbeat(token: str, agent_id: str = "agent_alpha"):
+        return client.post(
+            "/agents/%s/heartbeat" % agent_id,
+            headers={"Authorization": "Bearer " + token} if token else {},
+            json={"status": "idle"},
+        )
 
     with TestClient(app) as client:
-        rejected = client.post(
-            "/agents",
-            headers={"Authorization": "Bearer " + issue.token},
-            json={
-                "machine_id": "machine_worker",
-                "name": "alpha",
-                "capabilities": [PACKAGE_CAPABILITY, "python"],
-                "agent_id": "agent_alpha",
-            },
-        )
-        with pytest.raises(WorkerCredentialError, match="registered agent"):
-            _package_issue(lifecycle)
-        cp.register_agent(
-            "machine_worker",
-            "alpha",
-            [PACKAGE_CAPABILITY, "python"],
-            resources={},
-            agent_id="agent_alpha",
-            allow_resurrection=True,
-        )
-        replayed_after_resurrection = client.post(
-            "/agents",
-            headers={"Authorization": "Bearer " + issue.token},
-            json={
-                "machine_id": "machine_worker",
-                "name": "alpha",
-                "capabilities": [PACKAGE_CAPABILITY, "python"],
-                "agent_id": "agent_alpha",
-            },
-        )
-    assert rejected.status_code == 403
-    assert rejected.json()["detail"] == "unknown bearer token"
-    assert replayed_after_resurrection.status_code == 403
-    assert replayed_after_resurrection.json()["detail"] == "unknown bearer token"
-    assert cp.get_agent("agent_alpha").deleted_at is None
-    assert lifecycle.list(agent_id="agent_alpha")[0]["state"] == "revoked"
-    events = cp.store.query_all(
-        "SELECT event_type, detail FROM worker_credential_events "
-        "WHERE principal_id = ? ORDER BY created_at",
-        (issue.record["id"],),
-    )
-    assert [event["event_type"] for event in events] == [
-        "worker_credential.issued",
-        "worker_credential.revoked",
-    ]
-    assert all(issue.token not in str(event["detail"]) for event in events)
-
-    fresh = _package_issue(lifecycle)
-    assert fresh.worker_version == issue.worker_version + 1
-    with pytest.raises(WorkerCredentialError, match="revoked or expired"):
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)
-
-
-def test_activation_requires_destination_readback_and_live_authenticated_heartbeat(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
-    manifest = installation_manifest(issue)
-    receipt = install_vm_manifest(manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha")
-    assert receipt["destination_verification"]["schema"] == DESTINATION_VERIFICATION_SCHEMA
-
-    with pytest.raises(WorkerCredentialError, match="authenticated heartbeat"):
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)
-
-    forged = json.loads(json.dumps(receipt))
-    forged["destination_verification"]["verified"] = False
-    _observe(cp, issue, read_env_file(tmp_path / "mac.env"))
-    with pytest.raises(WorkerCredentialError, match="destination readback"):
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=forged)
-
-    lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)
-    assert lifecycle.list(agent_id="agent_alpha")[0]["state"] == "active"
-
-
-def test_activation_binds_receipt_to_exact_issued_environment(tmp_path: Path) -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
-    receipt = install_vm_manifest(
-        installation_manifest(issue),
-        tmp_path / "mac.env",
-        expected_agent_id="agent_alpha",
-    )
-    _observe(cp, issue, read_env_file(tmp_path / "mac.env"))
-
-    mismatched = json.loads(json.dumps(receipt))
-    mismatched["destination"] = "k8s_secret:mac/worker"
-    mismatched["destination_verification"]["destination"] = mismatched["destination"]
-    with pytest.raises(WorkerCredentialError, match="credential environment"):
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=mismatched)
-
-    inconsistent = json.loads(json.dumps(receipt))
-    inconsistent["destination"] = "vm_env:other"
-    with pytest.raises(WorkerCredentialError, match="destination verification"):
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=inconsistent)
-
-    wrong_version = json.loads(json.dumps(receipt))
-    wrong_version["worker_credential_version"] = 99
-    wrong_version["destination_verification"]["worker_credential_version"] = 99
-    with pytest.raises(WorkerCredentialError, match="version.*issuance"):
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=wrong_version)
-
-
-def test_rotation_overlaps_until_verified_activation_then_revokes_old(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    first = _package_issue(lifecycle)
-    _activate_vm(cp, first, tmp_path / "first.env")
-
-    second = _package_issue(lifecycle)
-    during = WorkerCredentialPrincipalProvider(cp.store).tokens()
-    assert first.record["token_hash"] in during
-    assert second.record["token_hash"] in during
-
-    _activate_vm(cp, second, tmp_path / "second.env")
-    after = WorkerCredentialPrincipalProvider(cp.store).tokens()
-    assert first.record["token_hash"] not in after
-    assert second.record["token_hash"] in after
-    states = {row["credential_version"]: row["state"] for row in lifecycle.list()}
-    assert states == {1: "superseded", 2: "active"}
-
-
-def test_vm_install_is_private_does_not_chmod_existing_parent_and_handles_bad_version(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    issue = _package_issue(WorkerCredentialLifecycle(cp.store))
-    manifest = installation_manifest(issue)
-    assert manifest["schema"] == INSTALL_MANIFEST_SCHEMA
-
-    parent = tmp_path / "existing"
-    parent.mkdir(mode=0o755)
-    parent.chmod(0o755)
-    env_path = parent / "mac.env"
-    receipt = install_vm_manifest(manifest, env_path, expected_agent_id="agent_alpha")
-    values = read_env_file(env_path)
-    assert values["MAC_WORKER_TOKEN"] == issue.token
-    assert values["MAC_WORKER_RUNNING_DIGEST"] == "sha256:runtime-a"
-    assert issue.token not in json.dumps(receipt)
-    assert env_path.stat().st_mode & 0o777 == 0o600
-    assert parent.stat().st_mode & 0o777 == 0o755
-
-    bad = dict(values)
-    bad["MAC_WORKER_CREDENTIAL_VERSION"] = "not-an-integer"
-    proof = credential_resource_from_env("agent_alpha", bad)
-    assert proof["mode"] == "invalid_credential_version"
-
-
-def test_vm_install_removes_shared_hub_bearer_aliases_without_touching_upstream_key(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    issue = _package_issue(WorkerCredentialLifecycle(cp.store))
-    env_path = tmp_path / "mac.env"
-    shared = "shared-hub-bootstrap-token"
-    env_path.write_text(
-        "\n".join(
-            (
-                "MAC_WORKER_TOKEN=%s" % shared,
-                "OPENAI_API_KEY=%s" % shared,
-                "MAC_HERMES_GATEWAY_API_KEY=%s" % shared,
-                "ACC_HERMES_GATEWAY_API_KEY=%s" % shared,
-                "NVIDIA_API_KEY=real-upstream-provider-key",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    install_vm_manifest(installation_manifest(issue), env_path, expected_agent_id="agent_alpha")
-    values = read_env_file(env_path)
-    assert values["MAC_WORKER_TOKEN"] == issue.token
-    assert values["OPENAI_API_KEY"] == issue.token
-    assert values["MAC_HERMES_GATEWAY_API_KEY"] == issue.token
-    assert values["ACC_HERMES_GATEWAY_API_KEY"] == issue.token
-    assert values["NVIDIA_API_KEY"] == "real-upstream-provider-key"
-    assert shared not in env_path.read_text(encoding="utf-8")
-
-
-def test_vm_install_rolls_every_fleet_scoped_worker_token_alias_forward(
-    tmp_path: Path,
-) -> None:
-    """MAC_WORKER_TOKEN__<FLEET> is a second name for the same credential.
-
-    mac.fleet_env resolution deliberately prefers the scoped form over the
-    flat MAC_WORKER_TOKEN (to stop a stale flat token from shadowing a
-    correct scoped one). If install only rotates the flat key, every
-    deployed worker keeps authenticating with a scoped token that is stale
-    by one or more rotations forever -- reproduced live as a worker that
-    heartbeats successfully but never proves worker_credential_authenticated,
-    permanently starving the deploy release-proof gate. A stale scoped value
-    equal to neither the previous nor the new token (i.e. stale by more than
-    one rotation) must still be rolled forward.
-    """
-    cp = _plane(ephemeral_dsn())
-    issue = _package_issue(WorkerCredentialLifecycle(cp.store))
-    env_path = tmp_path / "mac.env"
-    env_path.write_text(
-        "\n".join(
-            (
-                "MAC_WORKER_TOKEN=stale-flat-token-from-last-rotation",
-                "MAC_WORKER_TOKEN__MAC=even-staler-scoped-token-from-two-rotations-ago",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    install_vm_manifest(installation_manifest(issue), env_path, expected_agent_id="agent_alpha")
-    values = read_env_file(env_path)
-    assert values["MAC_WORKER_TOKEN"] == issue.token
-    assert values["MAC_WORKER_TOKEN__MAC"] == issue.token
-
-
-def test_only_vm_credentials_can_be_issued() -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    with pytest.raises(WorkerCredentialError, match="must be vm"):
-        _package_issue(lifecycle, environment="k8s")
-    assert lifecycle.list(agent_id="agent_alpha") == []
-
-
-def test_inventory_and_package_membership_require_live_authenticated_exact_state(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
-    _activate_vm(cp, issue, tmp_path / "mac.env")
-    inventory = build_readiness_inventory(_agents(cp), lifecycle.records())
-    assert inventory["all_ready"] is True
-    assert inventory["workers"][0]["credential_bound"] is True
-    # Readiness is worker eligibility, not the task's publication lane: a
-    # worker entry never carries a lane or certifier claim at all.
-    assert "publication_lane" not in inventory["workers"][0]
-    assert "managed_lane_eligible" not in inventory["workers"][0]
-    assert "external_certifier_capable" not in inventory["workers"][0]
-
-    # Activation alone is insufficient: reviewed membership is a durable,
-    # replica-shared control-plane decision.
-    assert package_worker_readiness(cp.store, "agent_alpha")["ready"] is False
-    write_policy_state(MODE_COMPATIBILITY, inventory=inventory, store=cp.store)
-    assert package_worker_readiness(cp.store, "agent_alpha")["ready"] is True
-
-    resources = cp.get_agent("agent_alpha").resources
-    resources.pop("worker_credential_authenticated")
-    cp.store.execute(
-        "UPDATE agents SET resources = ? WHERE id = ?",
-        (json.dumps(resources), "agent_alpha"),
-    )
-    assert package_worker_readiness(cp.store, "agent_alpha")["ready"] is False
-    degraded = build_readiness_inventory(_agents(cp), lifecycle.records())
-    assert "authenticated_credential_not_observed" in degraded["workers"][0]["blockers"]
-    assert degraded["workers"][0]["credential_bound"] is False
-
-
-def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
-    tmp_path: Path,
-) -> None:
-    db = ephemeral_dsn()
-    cp = _plane(db)
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
-    _activate_vm(cp, issue, tmp_path / "mac.env")
-    inventory = build_readiness_inventory(_agents(cp), lifecycle.records())
-
-    not_ready = json.loads(json.dumps(inventory))
-    not_ready["all_ready"] = False
-    not_ready["readiness_percent"] = 0.0
-    with pytest.raises(WorkerCredentialError, match="stale|not 100% ready"):
-        write_policy_state(MODE_ENFORCED, inventory=not_ready, store=cp.store)
-
-    peer_store = store_on(db)
-    first = WorkerCredentialPolicyProvider(cp.store)
-    second = WorkerCredentialPolicyProvider(peer_store)
-    assert first.mode == second.mode == MODE_COMPATIBILITY
-    policy = write_policy_state(MODE_ENFORCED, inventory=inventory, store=cp.store)
-    assert first.mode == second.mode == MODE_ENFORCED
-    assert read_policy_state(store=peer_store)["revision"] == policy["revision"]
-    assert issue.token not in json.dumps(policy)
-
-
-def test_actor_policy_requires_a_bound_agent_principal() -> None:
-    legacy_unbound = evaluate_worker_actor(
-        mode=MODE_COMPATIBILITY,
-        principal_agent_id=None,
-        claimed_agent_id="agent_legacy",
-    )
-    enforced_unbound = evaluate_worker_actor(
-        mode=MODE_ENFORCED,
-        principal_agent_id=None,
-        claimed_agent_id="agent_legacy",
-    )
-    mismatched = evaluate_worker_actor(
-        mode=MODE_COMPATIBILITY,
-        principal_agent_id="agent_alpha",
-        claimed_agent_id="agent_beta",
-    )
-    bound = evaluate_worker_actor(
-        mode=MODE_ENFORCED,
-        principal_agent_id="agent_alpha",
-        claimed_agent_id="agent_alpha",
-    )
-    invalid_mode = evaluate_worker_actor(
-        mode="not-a-mode",
-        principal_agent_id="agent_alpha",
-        claimed_agent_id="agent_alpha",
-    )
-    assert legacy_unbound.allowed and legacy_unbound.legacy
-    assert not enforced_unbound.allowed
-    assert not mismatched.allowed
-    assert bound.allowed and not bound.legacy
-    assert not invalid_mode.allowed
-
-    principal = TokenPrincipal(
-        scopes=frozenset({"agent"}),
-        agent_id="agent_alpha",
-        worker_identity_mode=MODE_ENFORCED,
-    )
-    principal.assert_actor("agent_alpha")
-    with pytest.raises(Exception):
-        principal.assert_actor("agent_beta")
-
-
-def test_cli_activation_consumes_one_time_manifest_only_after_success(
-    tmp_path: Path, capsys
-) -> None:
-    db = ephemeral_dsn()
-    cp = _plane(db)
-    manifest_path = tmp_path / "manifest.json"
-    receipt_path = tmp_path / "receipt.json"
-    env_path = tmp_path / "mac.env"
-    assert (
-        main(
-            [
-                "--db",
-                dsn_for(db),
-                "issue",
-                "--agent-id",
-                "agent_alpha",
-                "--environment",
-                "vm",
-                "--expected-source-commit",
-                "a" * 40,
-                "--expected-runtime-digest",
-                "sha256:runtime-a",
-                "--capability",
-                PACKAGE_CAPABILITY,
-                "--capability",
-                "python",
-                "--package-capable",
-                "--manifest-out",
-                str(manifest_path),
-            ]
-        )
-        == 0
-    )
-    manifest = json.loads(manifest_path.read_text())
-    assert (
-        main(
-            [
-                "install-vm",
-                "--manifest",
-                str(manifest_path),
-                "--agent-id",
-                "agent_alpha",
-                "--env-file",
-                str(env_path),
-                "--receipt-out",
-                str(receipt_path),
-            ]
-        )
-        == 0
-    )
-    issue = SimpleNamespace(
-        record={
-            "id": manifest["principal_id"],
-            "agent_id": "agent_alpha",
-            "token_fingerprint": manifest["token_fingerprint"],
-        },
-        worker_version=manifest["worker_credential_version"],
-    )
-    activation_args = [
-        "--db",
-        dsn_for(db),
-        "activate",
-        "--agent-id",
-        "agent_alpha",
-        "--principal-id",
-        manifest["principal_id"],
-        "--receipt",
-        str(receipt_path),
-        "--manifest",
-        str(manifest_path),
-    ]
-    # A failed activation retains the hub-side retry authority. Only the
-    # successful, heartbeat-proved activation below consumes it.
-    assert main(activation_args) == 1
-    assert manifest_path.exists()
-    _observe(cp, issue, read_env_file(env_path))
-    assert main(activation_args) == 0
-    assert not manifest_path.exists()
-    assert (
-        main(
-            [
-                "--db",
-                dsn_for(db),
-                "set-mode",
-                MODE_COMPATIBILITY,
-                "--review-live",
-            ]
-        )
-        == 0
-    )
-    assert read_policy_state(store=cp.store)["ready_agent_ids"] == ["agent_alpha"]
-    output = capsys.readouterr().out
-    assert manifest["credential"]["token"] not in output
-
-
-def test_authenticated_proof_schema_is_secret_free() -> None:
-    proof = authenticated_credential_resource(
-        agent_id="agent_alpha",
-        principal_id="worker-abc-v0001",
-        token_fingerprint="0123456789ab",
-        credential_version=1,
-    )
-    assert proof["schema"] == AUTHENTICATED_PROOF_SCHEMA
-    assert "mac_worker_" not in json.dumps(proof)
-    assert set(proof) == {
-        "schema",
-        "agent_id",
-        "principal_id",
-        "worker_credential_version",
-        "token_fingerprint",
-        "authenticated_at",
-    }
-    assert credential_resource_from_env("agent_alpha", {}) == {}
-
-
-def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    source_commit = "b" * 40
-
-    first = ensure_fleet_source_runtime(cp.store, source_commit)
-    second = ensure_fleet_source_runtime(cp.store, source_commit)
-    normal_runtime = cp.create_runtime(
-        "fleet-source-digest-parity",
-        {
-            "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
-            "source_commit": source_commit,
-            "kind": "mac-fleet-source",
-            "provisioner_contract": "mac-fleet-deploy-v1",
-        },
-        "test",
-    )
-
-    assert first["schema"] == FLEET_SOURCE_RUNTIME_SCHEMA
-    assert first["status"] == "ready"
-    assert first["created"] is True
-    assert second == {**first, "created": False}
-    assert len(first["runtime_digest"]) == 64
-    assert first["runtime_digest"] == normal_runtime.digest
-    assert (
-        cp.store.query_one(
-            "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
-            (first["runtime_name"],),
-        )["count"]
-        == 1
-    )
-    row = cp.store.query_one(
-        "SELECT manifest, digest FROM runtime_environments WHERE id = ?",
-        (first["runtime_id"],),
-    )
-    assert json.loads(row["manifest"]) == {
-        "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
-        "source_commit": source_commit,
-        "kind": "mac-fleet-source",
-        "provisioner_contract": "mac-fleet-deploy-v1",
-    }
-    assert row["digest"] == first["runtime_digest"]
-
-    cp.store.execute(
-        "UPDATE runtime_environments SET digest = ? WHERE id = ?",
-        ("0" * 64, first["runtime_id"]),
-    )
-    with pytest.raises(WorkerCredentialError, match="different identity"):
-        ensure_fleet_source_runtime(cp.store, source_commit)
-    cp.store.execute(
-        "UPDATE runtime_environments SET digest = ? WHERE id = ?",
-        (first["runtime_digest"], first["runtime_id"]),
-    )
-    cp.store.execute(
-        "UPDATE runtime_environments SET manifest = ? WHERE id = ?",
-        (json.dumps({"schema": "conflict"}), first["runtime_id"]),
-    )
-    with pytest.raises(WorkerCredentialError, match="different identity"):
-        ensure_fleet_source_runtime(cp.store, source_commit)
-
-
-def test_fleet_source_runtime_concurrent_replays_create_one_row(
-    tmp_path: Path,
-) -> None:
-    db = ephemeral_dsn()
-    cp = _plane(db)
-    source_commit = "d" * 40
-    barrier = threading.Barrier(8)
-    results = []
-    errors = []
-    result_lock = threading.Lock()
-
-    def register() -> None:
-        store = store_on(db)
-        try:
-            barrier.wait(timeout=10)
-            result = ensure_fleet_source_runtime(store, source_commit)
-            with result_lock:
-                results.append(result)
-        except Exception as exc:  # pragma: no cover - asserted below
-            with result_lock:
-                errors.append(exc)
-        finally:
-            store.close()
-
-    threads = [threading.Thread(target=register) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=20)
-        assert not thread.is_alive()
-
-    assert not errors
-    assert len(results) == 8
-    assert [result["created"] for result in results].count(True) == 1
-    assert len({result["runtime_id"] for result in results}) == 1
-    assert len({result["runtime_digest"] for result in results}) == 1
-    assert (
-        cp.store.query_one(
-            "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
-            (results[0]["runtime_name"],),
-        )["count"]
-        == 1
-    )
-
-
-@pytest.mark.parametrize("source_commit", ["", "A" * 40, "a" * 39, "g" * 40])
-def test_fleet_source_runtime_rejects_noncanonical_commit(
-    tmp_path: Path,
-    source_commit: str,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    with pytest.raises(WorkerCredentialError, match="lowercase 40-character"):
-        ensure_fleet_source_runtime(cp.store, source_commit)
-
-
-def test_ensure_runtime_cli_emits_only_registered_runtime_receipt(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    db = ephemeral_dsn()
-    _plane(db).store.close()
-    source_commit = "c" * 40
-
-    assert (
-        main(
-            [
-                "--db",
-                dsn_for(db),
-                "ensure-runtime",
-                "--source-commit",
-                source_commit,
-                "--created-by",
-                "test-deploy",
-            ]
-        )
-        == 0
-    )
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["schema"] == FLEET_SOURCE_RUNTIME_SCHEMA
-    assert payload["status"] == "ready"
-    assert payload["source_commit"] == source_commit
-    assert set(payload) == {
-        "schema",
-        "status",
-        "source_commit",
-        "runtime_id",
-        "runtime_name",
-        "runtime_digest",
-        "created",
-    }
-
-
-def test_credential_cli_attaches_without_replaying_schema(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    import mac.worker_credentials as credentials
-
-    sentinel_store = object()
-    calls: list[bool] = []
-
-    def existing_authority(*, initialize_schema: bool = True):
-        calls.append(initialize_schema)
-        return sentinel_store
-
-    def register_runtime(store, source_commit, *, created_by):
-        assert store is sentinel_store
-        return {
-            "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
-            "status": "ready",
-            "source_commit": source_commit,
-            "runtime_id": "runtime_test",
-            "runtime_name": "fleet-source-%s" % source_commit[:12],
-            "runtime_digest": "d" * 64,
-            "created": False,
-        }
-
-    monkeypatch.setattr(credentials, "make_store_from_env", existing_authority)
-    monkeypatch.setattr(credentials, "ensure_fleet_source_runtime", register_runtime)
-
-    assert (
-        credentials.main(
-            [
-                "ensure-runtime",
-                "--source-commit",
-                "c" * 40,
-                "--created-by",
-                "test-deploy",
-            ]
-        )
-        == 0
-    )
-
-    assert calls == [False]
-    assert json.loads(capsys.readouterr().out)["status"] == "ready"
-
-
-def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_actor(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    runtime = ensure_fleet_source_runtime(cp.store, "a" * 40)
-    issue = lifecycle.issue(
-        "agent_alpha",
-        fleet="test",
-        environment="vm",
-        expected_source_commit="a" * 40,
-        expected_runtime_digest=runtime["runtime_digest"],
-        required_capabilities=[PACKAGE_CAPABILITY, "python"],
-        package_capable=True,
-    )
-    manifest = installation_manifest(issue)
-    receipt = install_vm_manifest(manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha")
-    values = read_env_file(tmp_path / "mac.env")
-    app = create_app(
-        control_plane=cp,
-        auth_tokens={"shared-admin": {"scopes": ["admin"]}},
-    )
-    with TestClient(app) as client:
-        heartbeat = client.post(
-            "/agents/agent_alpha/heartbeat",
-            headers={"Authorization": "Bearer " + issue.token},
-            json={
-                "status": "idle",
-                "running_digest": runtime["runtime_digest"],
-                "resources": {
-                    "source_state": {
-                        "commit_sha": "a" * 40,
-                        "dirty": False,
-                    },
-                    "worker_credential": credential_resource_from_env("agent_alpha", values),
-                },
-            },
-        )
-        assert heartbeat.status_code == 200
-        assert heartbeat.json()["running_digest"] == runtime["runtime_digest"]
-        authenticated = heartbeat.json()["resources"]["worker_credential_authenticated"]
-        assert authenticated["principal_id"] == issue.record["id"]
-
-        lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)
-        inventory = build_readiness_inventory(_agents(cp), lifecycle.records())
-        write_policy_state(MODE_ENFORCED, inventory=inventory, store=cp.store)
-        task = cp.create_task("enforced actor boundary")
-        shared = client.post(
+        missing = heartbeat("")
+        assert missing.status_code == 403
+        assert missing.json()["detail"] == "missing bearer token"
+        for rejected in (superseded, failed, beta):
+            response = heartbeat(rejected.token, rejected.record["agent_id"])
+            assert response.status_code == 403
+            assert response.json()["detail"] == "unknown bearer token"
+        assert heartbeat("mac_worker_forged").status_code == 403
+        peer = heartbeat(current.token, "agent_beta")
+        assert peer.status_code == 403
+        assert "bound to agent agent_alpha" in peer.json()["detail"]
+
+        assert heartbeat(current.token).status_code == 200
+        claimed = client.post(
             "/tasks/%s/claim" % task.id,
-            headers={"Authorization": "Bearer shared-admin"},
+            headers={"Authorization": "Bearer " + current.token},
             params={"agent_id": "agent_alpha"},
         )
-        bound = client.post(
-            "/tasks/%s/claim" % task.id,
-            headers={"Authorization": "Bearer " + issue.token},
-            params={"agent_id": "agent_alpha"},
-        )
-    assert shared.status_code == 403
-    assert bound.status_code == 200
+        assert claimed.status_code == 200
+        assert claimed.json()["task"]["owner_agent_id"] == "agent_alpha"
+        # A static MAC_API_TOKENS entry still authenticates alongside them.
+        assert heartbeat("static-admin", "agent_beta").status_code == 200

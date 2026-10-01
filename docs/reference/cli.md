@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-49 administrative commands live under `mac admin` (`mac admin help` lists them).
+48 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -215,7 +215,6 @@ Communication:
   tell  send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction
 
 Administration:
-  attestation-recover      admin-only conditional recovery for a missing/stale worker signing key
   report-executor-approve  approve the exact current startup-attested OpenShell report executor
   report-executor-revoke   revoke report-repository dispatch eligibility for an agent
 

@@ -189,8 +189,7 @@ stored separately under `~/.mac/credentials/clients/` with mode `0600` and is
 redacted from normal profile output. Unknown manifest fields, credential-bearing
 URLs, and strict SSH profiles without pinned host identity are rejected.
 
-`mac admin fleet sync-token` remains an administrator-token recovery command for an
-existing operator workstation. It is not a client issuance mechanism. The
+The shared administrator `MAC_API_TOKEN` is not a client issuance mechanism. The
 bounded `client profile migrate-legacy` command requires
 `--allow-legacy-admin-token`, makes a secure first-import backup, and labels the
 resulting authority accurately as `admin` until it is replaced with scoped

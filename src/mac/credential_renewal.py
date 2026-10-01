@@ -205,12 +205,13 @@ def _renew_over_ssh(
     The manifest contains the new token. It is returned in-process and must not
     be logged or written to disk by the caller.
     """
-    from mac.fleet_creds import hub_ssh, load_fleets_config, ssh_command
+    from mac.fleet_ssh import FleetSshError, load_fleet_config, resolve_fleet_ssh, ssh_argv
 
-    config = load_fleets_config(fleets_config)
-    hub = hub_ssh(config, fleet)
-    remote = "mac admin client renew %s" % client_id
-    argv = ssh_command(hub, remote)
+    try:
+        hub = resolve_fleet_ssh(load_fleet_config(fleets_config), fleet)
+        argv = ssh_argv(hub, "mac admin client renew %s" % client_id)
+    except FleetSshError as exc:
+        raise CredentialRenewalError(str(exc)) from exc
     result = runner(argv)
     if getattr(result, "returncode", 1) != 0:
         raise CredentialRenewalError(

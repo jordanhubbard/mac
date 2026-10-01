@@ -465,8 +465,6 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     attest_verify = agent("attest-verify-route-agent", ["python"])
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
-    attest_recover = agent("attest-recover-route-agent", ["python"])
-    ctx["attest_recover_agent_id"] = attest_recover["id"]
     report_attestation = read_only_report_repository_executor_attestation(
         runtime_image_ref=("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64),
         policy_sha256="sha256:" + "2" * 64,
@@ -1252,9 +1250,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {
             "agent_id": "attest_verify_agent_id"
         },
-        ("POST", "/agents/{agent_id}/attestation-key/recover"): {
-            "agent_id": "attest_recover_agent_id"
-        },
         ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
             "agent_id": "report_executor_agent_id"
         },
@@ -1791,22 +1786,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                     "nonce": "route-nonce",
                 },
             ),
-        },
-        ("POST", "/agents/{agent_id}/attestation-key/recover"): {
-            "probe": {
-                "schema": "mac.agent_attestation_key_probe.v1",
-                "state": "present",
-                "agent_id": ctx["attest_recover_agent_id"],
-                "deployment_id": "route-coverage-deployment",
-                "challenge": {
-                    "schema": "mac.agent_attestation_challenge.v1",
-                    "purpose": "fleet-deploy-attestation-key-proof",
-                    "agent_id": ctx["attest_recover_agent_id"],
-                    "deployment_id": "route-coverage-deployment",
-                    "nonce": "route-coverage-nonce-that-is-at-least-32-bytes",
-                },
-                "signature": "v1:deliberately-stale-route-coverage-signature",
-            }
         },
         ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
             "expected_attestation": ctx["report_executor_attestation"],
