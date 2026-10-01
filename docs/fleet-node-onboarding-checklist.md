@@ -463,4 +463,4 @@ Related operator references:
 - [Coding-CLI credentials and model selection](coding-cli-credentials.md)
 - [Fleet operational learning](fleet-operational-learning.md)
 - [Break-glass host recovery](break-glass-host-recovery.md)
-- [Crash diagnosis and autonomous repair](crash-diagnosis-and-repair.md)
+- [Crash diagnosis](crash-diagnosis-and-repair.md)

@@ -1,10 +1,12 @@
-"""Durable supervisor-observed crash evidence and repair dispatch.
+"""Durable supervisor-observed crash evidence.
 
 The crashing worker is deliberately not responsible for this protocol. A
 small parent observer posts (or locally spools) one occurrence after the child
 exits. The hub computes the fingerprint so a compromised or outdated worker
-cannot choose the deduplication key, retains every occurrence, and creates one
-repair task per active revision+stack incident.
+cannot choose the deduplication key, retains every occurrence, groups matching
+occurrences into one incident per revision+stack, and tells the operator when
+an incident opens. It does not file repair tasks: crash repair is an operator
+decision, not something the hub schedules for itself.
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from typing import Any, Dict, List, Optional
 from mac.models import (
     JsonDict,
     NotFoundError,
-    TaskState,
     ValidationError,
     ensure_json_object,
     json_dumps,
@@ -26,24 +27,13 @@ from mac.models import (
     parse_time,
     utcnow,
 )
-from mac.generator_yield import GeneratorSuppressed
 
 CRASH_REPORT_SCHEMA = "mac.agent_crash_report.v1"
 CRASH_OCCURRENCE_SCHEMA = "mac.agent_crash_occurrence.v1"
 MAX_TRACE_CHARS = 64 * 1024
 MAX_TEXT_CHARS = 64 * 1024
 MAX_METADATA_BYTES = 64 * 1024
-MAX_REPAIR_ATTEMPTS = 3
 SUPPORTED_SUPERVISORS = {"systemd", "launchd", "supervisord", "kubernetes", "manual"}
-_ACTIVE_TASK_STATES = {
-    TaskState.OPEN.value,
-    TaskState.WAITING.value,
-    TaskState.BLOCKED.value,
-    TaskState.CLAIMED.value,
-    TaskState.RUNNING.value,
-    TaskState.NEEDS_REVIEW.value,
-    TaskState.REVIEWING.value,
-}
 
 _ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]+")
 _TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ][0-9:.+-]+(?:Z)?\b")
@@ -179,6 +169,10 @@ class CrashService:
                 "SELECT * FROM agent_crash_reports WHERE fingerprint = ?", (fingerprint,)
             )
             report_id = str(report["id"]) if report is not None else new_id("crash")
+            # A new fingerprint, or one recurring after an operator resolved
+            # it, is a new incident and is worth telling someone about. A
+            # repeat of an incident that is already open is not.
+            incident_opened = report is None or str(report["status"]) == "resolved"
             affected = json_loads(report["affected_agent_ids"], []) if report is not None else []
             affected_ids = sorted({str(value) for value in affected if value} | {agent_id})
             with self.store.transaction() as conn:
@@ -252,7 +246,6 @@ class CrashService:
                     ),
                 )
 
-            task = self._ensure_repair_task(report_id, affected_ids)
             self.cp.observability.record_log(
                 "agent.crash.observed",
                 layer="supervisor",
@@ -263,10 +256,24 @@ class CrashService:
                     "fingerprint": fingerprint,
                     "revision": revision,
                     "process_name": process_name,
-                    "repair_task_id": task.id if task is not None else None,
                     "affected_agent_ids": affected_ids,
                 },
             )
+            if incident_opened:
+                try:
+                    self.cp.record_notification(
+                        "agent.crash.observed",
+                        "Agent crash: %s at %s" % (process_name[:50], revision[:12]),
+                        "Agent %s exited unexpectedly (%s). Crash report %s, fingerprint %s. "
+                        "Inspect it with GET /crash-reports/%s and resolve it once repaired."
+                        % (agent_id, reason[:200], report_id, fingerprint, report_id),
+                        subject_type="crash_report",
+                        subject_id=report_id,
+                        channels=None,
+                        metadata={"severity": "error", "crash_report_id": report_id},
+                    )
+                except Exception:  # noqa: BLE001 - the occurrence is already durable.
+                    pass
             return self._response(report_id, event_id, duplicate=False)
 
     def list_reports(
@@ -325,199 +332,6 @@ class CrashService:
             detail={"reason": str(reason or "resolved")[:2000]},
         )
         return self.get_report(report_id)
-
-    def tick(self, *, limit: int = 100) -> JsonDict:
-        """Reconcile repair-task outcomes without relying on the crashed node."""
-        rows = self.store.query_all(
-            """
-            SELECT * FROM agent_crash_reports
-            WHERE repair_task_id IS NOT NULL AND status IN ('repairing', 'open')
-            ORDER BY updated_at LIMIT ?
-            """,
-            (max(1, min(int(limit), 1000)),),
-        )
-        result: JsonDict = {
-            "schema": "mac.agent_crash_repair_tick.v1",
-            "examined": len(rows),
-            "resolved": 0,
-            "requeued": 0,
-            "escalated": 0,
-            "errors": [],
-        }
-        for row in rows:
-            report_id = str(row["id"])
-            try:
-                task = self.cp.get_task(str(row["repair_task_id"]))
-                if task.state == TaskState.COMPLETED.value:
-                    self.store.execute(
-                        "UPDATE agent_crash_reports SET status = 'resolved', updated_at = ? WHERE id = ?",
-                        (utcnow(), report_id),
-                    )
-                    result["resolved"] += 1
-                elif task.state in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
-                    attempts = int(row["repair_attempt_count"] or 0)
-                    if attempts >= MAX_REPAIR_ATTEMPTS:
-                        self.store.execute(
-                            "UPDATE agent_crash_reports SET status = 'needs_human', updated_at = ? WHERE id = ?",
-                            (utcnow(), report_id),
-                        )
-                        self.cp.record_notification(
-                            "agent.crash.repair_exhausted",
-                            "Crash repair exhausted: %s" % report_id,
-                            "All %d autonomous repair attempts failed for fingerprint %s."
-                            % (attempts, row["fingerprint"]),
-                            channels=None,
-                            metadata={"severity": "error", "crash_report_id": report_id},
-                        )
-                        result["escalated"] += 1
-                    else:
-                        self.store.execute(
-                            "UPDATE agent_crash_reports SET status = 'open', updated_at = ? WHERE id = ?",
-                            (utcnow(), report_id),
-                        )
-                        affected = json_loads(row["affected_agent_ids"], [])
-                        self._ensure_repair_task(report_id, list(affected or []))
-                        result["requeued"] += 1
-            except Exception as exc:  # noqa: BLE001 - isolate incident reconciliation.
-                result["errors"].append({"report_id": report_id, "error": str(exc)[:500]})
-        return result
-
-    def _ensure_repair_task(self, report_id: str, affected_ids: List[str]) -> Any:
-        report = self.store.query_one(
-            "SELECT * FROM agent_crash_reports WHERE id = ?", (report_id,)
-        )
-        if report is None:
-            return None
-        if report["status"] == "needs_human":
-            return None
-        prior_task = None
-        if report["repair_task_id"]:
-            try:
-                prior_task = self.cp.get_task(str(report["repair_task_id"]))
-            except NotFoundError:
-                prior_task = None
-        if prior_task is not None and prior_task.state in _ACTIVE_TASK_STATES:
-            self.store.execute(
-                "UPDATE agent_crash_reports SET status = 'repairing', updated_at = ? WHERE id = ?",
-                (utcnow(), report_id),
-            )
-            metadata = ensure_json_object(prior_task.metadata)
-            excluded = sorted(
-                set(str(value) for value in metadata.get("excluded_agent_ids", []) if value)
-                | set(affected_ids)
-            )
-            if excluded != metadata.get("excluded_agent_ids"):
-                metadata["excluded_agent_ids"] = excluded
-                metadata["crash_affected_agent_ids"] = excluded
-                prior_task = self.cp.update_task(
-                    prior_task.id, metadata=metadata, actor="crash-observer"
-                )
-            if prior_task.owner_agent_id in set(affected_ids) and prior_task.lease_id:
-                # The peer originally assigned to repair the crash has now
-                # exhibited the same fingerprint. Release its active lease so
-                # an unaffected peer can take over instead of letting the
-                # crashed process retain ownership until lease expiry.
-                try:
-                    prior_task = self.cp.release_lease(
-                        prior_task.lease_id, str(prior_task.owner_agent_id)
-                    )
-                except Exception:  # noqa: BLE001 - lease may have raced renewal/expiry.
-                    prior_task = self.cp.get_task(prior_task.id)
-                try:
-                    self.cp.dispatch_once()
-                except Exception:  # noqa: BLE001 - durable open task remains ready.
-                    pass
-            return prior_task
-
-        occurrence = self.store.query_one(
-            "SELECT * FROM agent_crash_occurrences WHERE report_id = ? ORDER BY observed_at DESC LIMIT 1",
-            (report_id,),
-        )
-        if occurrence is None:
-            return None
-        trace_excerpt = str(report["stack_signature"] or "")[-8000:]
-        prior_clause = ""
-        if prior_task is not None:
-            prior_clause = (
-                "\n\nThis crash recurred after repair task %s reached %s. Read that task's "
-                "evidence and do not repeat an ineffective repair."
-                % (prior_task.id, prior_task.state)
-            )
-        description = (
-            "A supervisor outside the MAC worker observed an unexpected process exit.\n\n"
-            "Crash report: %s\nFingerprint: %s\nRevision: %s\nProcess: %s\n"
-            "Affected agents: %s\nExit code: %s\nSignal: %s\nCore reference: %s\n\n"
-            "Normalized stack signature:\n%s%s\n\n"
-            "Repair the root cause, add a regression test that reproduces the failure, and "
-            "verify the corrected build on an unaffected agent before closing this task."
-            % (
-                report_id,
-                report["fingerprint"],
-                report["revision"],
-                report["process_name"],
-                ", ".join(affected_ids),
-                occurrence["exit_code"],
-                occurrence["signal"],
-                occurrence["core_reference"] or "none",
-                trace_excerpt,
-                prior_clause,
-            )
-        )
-        try:
-            task = self.cp.create_task(
-                "P0: repair MAC crash %s at %s"
-                % (str(report["process_name"])[:50], str(report["revision"])[:12]),
-                description=description,
-                project="mac",
-                priority=0,
-                required_capabilities=["python", "ops"],
-                metadata={
-                    "origin": {"type": "crash_observer", "schema": CRASH_REPORT_SCHEMA},
-                    "crash_report_id": report_id,
-                    "crash_fingerprint": report["fingerprint"],
-                    "crash_revision": report["revision"],
-                    "crash_affected_agent_ids": affected_ids,
-                    "excluded_agent_ids": affected_ids,
-                    "self_heal": True,
-                    "evidence_type": "crash_repair",
-                    "prior_repair_task_id": prior_task.id if prior_task is not None else None,
-                },
-                actor="crash-observer",
-            )
-        except GeneratorSuppressed as exc:
-            # Autonomous crash repair has been measured and is not producing
-            # completed work. Stop manufacturing repair tasks, but do NOT drop
-            # the crash: the report escalates to a human, which is the outcome
-            # a suppressed repair channel should produce.
-            self.store.execute(
-                "UPDATE agent_crash_reports SET status = 'needs_human', updated_at = ? WHERE id = ?",
-                (utcnow(), report_id),
-            )
-            self.cp.record_notification(
-                "agent.crash.repair_suppressed",
-                "Crash repair suppressed: %s" % report_id,
-                "Autonomous repair for fingerprint %s was not filed: %s"
-                % (report["fingerprint"], exc),
-                channels=None,
-                metadata={"severity": "warning", "crash_report_id": report_id},
-            )
-            return None
-        self.store.execute(
-            """
-            UPDATE agent_crash_reports
-            SET status = 'repairing', repair_task_id = ?,
-                repair_attempt_count = repair_attempt_count + 1, updated_at = ?
-            WHERE id = ?
-            """,
-            (task.id, utcnow(), report_id),
-        )
-        # Best-effort immediate dispatch. If every unaffected peer is busy, the
-        # ordinary dispatcher will claim the task as soon as one becomes idle.
-        try:
-            self.cp.dispatch_once()
-        except Exception:  # noqa: BLE001 - durable open task is the fallback.
-            pass
-        return task
 
     def _response(self, report_id: str, event_id: str, *, duplicate: bool) -> JsonDict:
         result = self.get_report(report_id)

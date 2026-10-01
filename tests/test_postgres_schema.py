@@ -33,12 +33,17 @@ def _schema_text() -> str:
 
 
 def _create_table_names(text: str) -> set:
-    """Every ``CREATE TABLE IF NOT EXISTS <name> (`` in a schema source.
+    """Every ``CREATE TABLE IF NOT EXISTS <name> (`` a schema source leaves standing.
 
     Requiring the opening paren excludes prose like "CREATE TABLE IF NOT EXISTS
-    skips already-present tables" that appears in comments.
+    skips already-present tables" that appears in comments. schema.sql is the
+    concatenation of immutable migrations, so a table a later migration drops
+    with ``DROP TABLE IF EXISTS <name>;`` is still created earlier in the text
+    and is excluded here.
     """
-    return set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
+    created = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
+    dropped = set(re.findall(r"^DROP TABLE IF EXISTS\s+(\w+);", text, re.MULTILINE))
+    return created - dropped
 
 
 _SQL_NON_COLUMN_LEADERS = {
@@ -141,8 +146,6 @@ EXPECTED_TABLES = [
     "deployments",
     "dispatch_mismatch_state",
     "dispatch_rounds",
-    "dream_candidate_entries",
-    "dream_runs",
     "environment_events",
     "environments",
     "eval_runs",
@@ -188,8 +191,6 @@ EXPECTED_TABLES = [
     "merge_queue_windows",
     "messages",
     "mood_overlays",
-    "nap_runs",
-    "nap_schedules",
     "notifier_channels",
     "observability_events",
     "openclaw_conversation_executions",
@@ -216,13 +217,6 @@ EXPECTED_TABLES = [
     "runtime_environments",
     "runtime_runs",
     "schema_migration_receipts",
-    "scientific_assignments",
-    "scientific_decisions",
-    "scientific_experiments",
-    "scientific_observations",
-    "scientific_optimizer_events",
-    "scientific_optimizer_locks",
-    "scientific_policies",
     "secret_access_audit",
     "secrets",
     "service_claims",
@@ -500,6 +494,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0001_postgresql_authority_baseline",
         "0002_dream_candidate_store",
         "0003_drop_leftover_work_package_triggers",
+        "0004_drop_removed_feature_tables",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -510,6 +505,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0003_drop_leftover_work_package_triggers": (
             "bde53a11681f213e107703925e690b2694dc7a95d242b0df943f442be53f0a1d"
+        ),
+        "0004_drop_removed_feature_tables": (
+            "c225e99d45d394c89efb02d71b3e186eb9b6460aa553715187397868ce431b98"
         ),
     }
     for migration in MIGRATIONS:

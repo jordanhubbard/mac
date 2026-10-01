@@ -152,7 +152,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`client-bootstrap-contract.md`](../client-bootstrap-contract.md) | Client Bootstrap Contracts |
 | supplemental reference | [`coding-cli-credentials.md`](../coding-cli-credentials.md) | Coding-CLI Credentials and Model Selection |
 | supplemental reference | [`coding-route-ladder.md`](../coding-route-ladder.md) | The coding-route ladder |
-| supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis and autonomous repair |
+| supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis |
 | supplemental reference | [`dashboard-connection.md`](../dashboard-connection.md) | Dashboard Connection Contract |
 | supplemental reference | [`dedicated-vm-verifier.md`](../dedicated-vm-verifier.md) | Dedicated VM repository verification |
 | supplemental reference | [`deploy-prerequisite-vs-phase1-audit.md`](../deploy-prerequisite-vs-phase1-audit.md) | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |

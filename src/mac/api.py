@@ -5468,12 +5468,6 @@ def create_app(
     ) -> Dict[str, int]:
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
-    # Registered alongside the other static /tasks/* reads so it is not
-    # captured by the /tasks/{task_id} path parameter.
-    @app.get("/tasks/generator-yield")
-    def task_generator_yield() -> Dict[str, Any]:
-        return cp.generator_yield_report()
-
     # Admin-only: applying this re-supervises live tasks in bulk. Registered
     # with the other static /tasks/* routes so /tasks/{task_id} cannot capture
     # it.
