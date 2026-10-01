@@ -29,10 +29,9 @@ def __getattr__(name: str):
     """Lazily re-export the heavy control-plane classes (PEP 562).
 
     Keeps ``import mac`` import-light so dependency-free submodules — notably
-    ``mac.deploy_env``, which ``deploy/deploy-mac-fleet.sh`` runs via
-    ``python -m mac.deploy_env`` on the bootstrap python *before* the deploy venv
-    exists — don't transitively pull in ``mac.services`` and its third-party deps
-    (yaml, cryptography, …). ``from mac import ControlPlane`` still works; it just
+    ``mac.deploy_env``, which install scripts import before the venv's
+    third-party deps are guaranteed — don't transitively pull in
+    ``mac.services`` and its third-party deps (yaml, cryptography, …). ``from mac import ControlPlane`` still works; it just
     imports ``mac.services`` on first access instead of at package import.
     """
     if name == "ControlPlane":

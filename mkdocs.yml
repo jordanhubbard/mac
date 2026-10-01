@@ -44,6 +44,8 @@ plugins:
       redirect_maps:
         hub-ha-audit.md: hub-availability.md
         hub-active-passive-design.md: hub-availability.md
+        fleet-node-onboarding-checklist.md: operations/fleet-update.md
+        deploy-prerequisite-vs-phase1-audit.md: operations/fleet-update.md
         assessment-2026-08-02.md: archive/field-notes/assessment-2026-08-02.md
         contract-verify-environment-failure-finding.md: archive/field-notes/contract-verify-environment-failure-finding.md
         crash-incident-finding.md: archive/field-notes/crash-incident-finding.md
@@ -174,7 +176,6 @@ nav:
   - Runbooks:
       - Production deployment: production-deployment.md
       - Fleet update: operations/fleet-update.md
-      - Fleet node onboarding: fleet-node-onboarding-checklist.md
       - Hub availability: hub-availability.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:

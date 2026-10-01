@@ -1,37 +1,69 @@
-"""deploy/bin holds, as real files, the wrappers fleet-node-install.sh still
-generates from quoted heredocs.  scripts/fleet-update installs from deploy/bin,
-so until the installer is deleted the two copies must not drift.
+"""deploy/bin is the source of truth for the host wrappers.
+
+scripts/fleet-update installs mac-agent-service, mac-agent-startup-self-test,
+mac-task-executor and mac-task-executor.py from here into ~/.mac/bin on each
+worker; mac-service is the hub's control-plane wrapper. Nothing generates them
+any more, so these checks only prove the files are present and parse.
 """
 
 from __future__ import annotations
 
-import re
+import os
+import py_compile
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "deploy" / "fleet-node-install.sh"
-
-# file -> pattern capturing that file's heredoc body in the installer
-WRAPPERS = {
-    "mac-service": r"cat > \"\$wrapper\" <<'EOF'\n(#!/usr/bin/env bash\nset -euo pipefail\n# macOS gives.*?)\nEOF\n",
-    "mac-agent-service": (
-        r"cat > \"\$wrapper\" <<'EOF'\n(#!/usr/bin/env bash\nset -euo pipefail\n"
-        r"ulimit -n \"\$\{MAC_SERVICE_NOFILE_LIMIT:-4096\}\" 2>/dev/null \|\| true\nulimit -c.*?)\nEOF\n"
-    ),
-    "mac-agent-startup-self-test": r"cat > \"\$selftest\" <<'EOF'\n(.*?)\nEOF\n",
-    "mac-task-executor": r"cat > \"\$executor\" <<'EOF'\n(.*?)\nEOF\n",
-    "mac-task-executor.py": r"cat > \"\$executor_py\" <<'PY'\n(.*?)\nPY\n",
-}
+BIN = ROOT / "deploy" / "bin"
+SHELL_WRAPPERS = (
+    "mac-agent-service",
+    "mac-agent-startup-self-test",
+    "mac-service",
+    "mac-task-executor",
+)
+PYTHON_WRAPPERS = ("mac-task-executor.py",)
 
 
-@pytest.mark.parametrize("name", sorted(WRAPPERS))
-def test_deploy_bin_wrapper_matches_installer_heredoc(name: str) -> None:
-    bodies = re.findall(WRAPPERS[name], INSTALLER.read_text(encoding="utf-8"), re.S)
-    assert len(bodies) == 1, "expected exactly one %s heredoc in the installer" % name
-    assert (ROOT / "deploy" / "bin" / name).read_text(encoding="utf-8") == bodies[0] + "\n"
+def test_deploy_bin_holds_exactly_the_known_wrappers() -> None:
+    assert sorted(p.name for p in BIN.iterdir()) == sorted(SHELL_WRAPPERS + PYTHON_WRAPPERS)
 
 
-def test_deploy_bin_holds_exactly_the_extracted_wrappers() -> None:
-    assert sorted(p.name for p in (ROOT / "deploy" / "bin").iterdir()) == sorted(WRAPPERS)
+def test_fleet_update_installs_every_worker_wrapper_from_deploy_bin() -> None:
+    script = (ROOT / "scripts" / "fleet-update").read_text(encoding="utf-8")
+    assert (
+        "for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; "
+        'do put 0700 "deploy/bin/$f" "$bin/$f"; done'
+    ) in script
+    assert 'put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py"' in script
+
+
+@pytest.mark.parametrize("name", SHELL_WRAPPERS)
+def test_shell_wrapper_is_executable_and_parses(name: str) -> None:
+    path = BIN / name
+    assert path.is_file()
+    assert os.access(path, os.X_OK), "%s must be executable" % name
+    assert path.read_text(encoding="utf-8").split("\n", 1)[0] in (
+        "#!/usr/bin/env bash",
+        "#!/bin/bash",
+    )
+    result = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("name", SHELL_WRAPPERS)
+def test_shell_wrapper_passes_shellcheck(name: str) -> None:
+    shellcheck = shutil.which("shellcheck")
+    if shellcheck is None:
+        pytest.skip("shellcheck is not installed")
+    result = subprocess.run(
+        [shellcheck, "-S", "warning", str(BIN / name)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("name", PYTHON_WRAPPERS)
+def test_python_wrapper_compiles(name: str, tmp_path: Path) -> None:
+    py_compile.compile(str(BIN / name), cfile=str(tmp_path / "out.pyc"), doraise=True)

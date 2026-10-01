@@ -6,7 +6,6 @@
 #       -e "s|@PYTHON3@|/usr/bin/python3|g" deploy/systemd/mac-agent.service.in \
 #     | sudo tee /etc/systemd/system/mac-agent.service >/dev/null
 #
-# Same unit fleet-node-install.sh generates (install_linux_agent_service).
 # @PYTHON3@ runs the crash observer and deliberately lives OUTSIDE the MAC
 # venv, so a broken MAC import graph cannot also take out the observer.
 [Unit]

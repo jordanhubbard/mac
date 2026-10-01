@@ -12,6 +12,8 @@ aiohttp -- none of which ``src/mac`` imports). Two callers kept asking for it:
     Dockerfile:29                            uv sync ... --extra hermes-gateway
     deploy/fleet-node-machine-onboard.py:767 {source}[hermes-gateway,relay,postgres]
 
+(that onboarding script has since been deleted with the rest of the old deploy)
+
 The container build broke immediately and stayed broken on main:
 
     error: Extra `hermes-gateway` is not defined in the project's
@@ -53,9 +55,7 @@ _BRACKET_EXTRAS = re.compile(r"[\w}\"'/.\]]\[([A-Za-z0-9._,-]+)\]")
 #: would silently stop covering a file that got renamed.
 _INSTALL_SITES = (
     "Dockerfile",
-    "deploy/fleet-node-machine-onboard.py",
-    "deploy/deploy-mac-fleet.sh",
-    "deploy/fleet-node-install.sh",
+    "scripts/fleet-update",
 )
 
 

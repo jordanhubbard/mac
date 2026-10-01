@@ -224,17 +224,6 @@ def test_missing_source_entry_point_contract_test_fails_closed(repo, policy, imp
     }
 
 
-def test_fleet_installer_contract_includes_every_direct_test_owner():
-    direct_owners = {
-        path.relative_to(ROOT).as_posix()
-        for path in (ROOT / "tests").rglob("test_*.py")
-        if "fleet-node-install.sh" in path.read_text(encoding="utf-8")
-    }
-    direct_owners.discard("tests/test_resolve_impacted_tests.py")
-
-    assert direct_owners <= set(R.PATH_TEST_CONTRACTS["deploy/fleet-node-install.sh"])
-
-
 def test_ci_workflow_contract_owns_portfolio_and_red_main_guards():
     owners = R.PATH_TEST_CONTRACTS[".github/workflows/ci.yml"]
     assert "tests/test_deployment_image_artifact.py" in owners

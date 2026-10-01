@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "release.sh"
 
 
-def test_release_workflow_requires_gates_then_pr_tag_artifact_and_optional_rollout():
+def test_release_workflow_requires_gates_then_pr_tag_and_artifact():
     text = SCRIPT.read_text(encoding="utf-8")
     required = [
         "make lint",
@@ -22,15 +22,12 @@ def test_release_workflow_requires_gates_then_pr_tag_artifact_and_optional_rollo
         'git tag -a "$tag"',
         'git push origin "$tag"',
         "gh run watch",
-        'make deploy HUB="$fleet"',
     ]
     missing = [item for item in required if item not in text]
     assert not missing, missing
-    assert (
-        text.index('gh pr merge "$pr_url"')
-        < text.index('git tag -a "$tag"')
-        < text.index('make deploy HUB="$fleet"')
-    )
+    assert text.index('gh pr merge "$pr_url"') < text.index('git tag -a "$tag"')
+    # Rollout is scripts/fleet-update's job, not the release's.
+    assert "make deploy" not in text
 
 
 def test_makefile_exposes_release_target():

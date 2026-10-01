@@ -158,45 +158,6 @@ def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -
         lifecycle.issue("agent_alpha", environment="vm", expires_in=59)
 
 
-def test_recovery_discards_only_exact_unreserved_pending_issuance(
-    tmp_path: Path,
-) -> None:
-    cp = _plane(ephemeral_dsn())
-    lifecycle = WorkerCredentialLifecycle(cp.store)
-    active = _package_issue(lifecycle)
-    _activate_vm(cp, active, tmp_path / "active.env")
-    orphan = lifecycle.issue(
-        "agent_alpha",
-        fleet="test",
-        environment="vm",
-        actor="fleet-release:epoch-a",
-    )
-    unrelated = lifecycle.issue(
-        "agent_alpha",
-        fleet="test",
-        environment="vm",
-        actor="fleet-release:epoch-b",
-    )
-
-    discarded = lifecycle.discard_unreserved_pending(
-        "agent_alpha", created_by="fleet-release:epoch-a"
-    )
-
-    assert [item["id"] for item in discarded] == [orphan.record["id"]]
-    states = {item["id"]: item["state"] for item in lifecycle.list(agent_id="agent_alpha")}
-    assert states[active.record["id"]] == "active"
-    assert states[orphan.record["id"]] == "revoked"
-    assert states[unrelated.record["id"]] == "pending_install"
-    assert (
-        lifecycle.discard_unreserved_pending("agent_alpha", created_by="fleet-release:epoch-a")
-        == []
-    )
-    assert (
-        lifecycle.discard_unreserved_pending("agent_new_worker", created_by="fleet-release:epoch-a")
-        == []
-    )
-
-
 def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path) -> None:
     cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
@@ -654,89 +615,6 @@ def test_authenticated_proof_schema_is_secret_free() -> None:
         "authenticated_at",
     }
     assert credential_resource_from_env("agent_alpha", {}) == {}
-
-
-def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
-    root = Path(__file__).resolve().parents[1]
-    script_path = root / "deploy" / "deploy-mac-fleet.sh"
-    script = script_path.read_text(encoding="utf-8")
-    syntax = subprocess.run(
-        ["bash", "-n", str(script_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert syntax.returncode == 0, syntax.stderr
-    rollout = script.split("provision_bound_worker_credential() (", 1)[1].split(
-        "enforce_bound_worker_credentials() {", 1
-    )[0]
-    assert "mac.worker_credentials ensure-runtime" in rollout
-    assert "mac.worker_credentials issue" in rollout
-    assert "mac.worker_credentials install-vm" in rollout
-    assert "mac.worker_credentials activate" in rollout
-    assert "set-mode compatibility --review-live" in rollout
-    assert "chmod 0600" in rollout
-    assert "trap cleanup_worker_relay EXIT" in rollout
-    assert "--manifest-out" in rollout
-    assert "MAC_WORKER_TOKEN" not in rollout
-    assert "mac-source:" not in rollout
-    assert rollout.index("mac.worker_credentials ensure-runtime") < rollout.index(
-        "mac.worker_credentials issue"
-    )
-
-    main_body = script.split("main() {", 1)[1]
-    typed = script.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
-    hub_open = script.split("build_and_open_hub_epoch() {", 1)[1].split(
-        "\n}\n\nprove_and_commit_hub_epoch", 1
-    )[0]
-    apply_worker = script.split("typed_phase2_apply_worker() {", 1)[1].split(
-        "\n}\n\ntyped_finalize_worker", 1
-    )[0]
-    assert "provision_bound_worker_credential" not in main_body
-    assert "enforce_bound_worker_credentials" not in main_body
-    assert "validate_current_worker_credential" in hub_open
-    assert "issue_pending_worker_credential" not in hub_open
-    assert '"principal_mode":"current"' in hub_open
-    apply_phase = 'typed_phase2_apply_worker "$spec"'
-    assert "install_pending_worker_credential" not in apply_worker
-    assert typed.index("build_and_open_hub_epoch") < typed.index(apply_phase)
-    assert typed.index(apply_phase) < typed.index("prove_and_commit_hub_epoch")
-    assert "set-mode enforced --review-live" in script
-    assert 'add_remote_secret_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' in script
-    assert 'add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' not in script
-
-
-def test_fleet_deploy_rolling_cohort_loop_does_not_read_stdin() -> None:
-    # The rolling phase-2 loop's body performs a whole node's worth of remote
-    # work (quiesce, arm, apply). If that body's `while read` loop is fed
-    # from the specs file via `done < "$selected_specs_file"`, anything
-    # inside the loop that inherits and reads local stdin (an `ssh` call
-    # without its own redirection, for example) silently drains the
-    # remaining spec lines -- the loop then exits after the first node with
-    # no error. Iterating an array populated before the loop starts keeps
-    # the loop body's stdin decoupled from its iteration source.
-    root = Path(__file__).resolve().parents[1]
-    script_path = root / "deploy" / "deploy-mac-fleet.sh"
-    script = script_path.read_text(encoding="utf-8")
-    syntax = subprocess.run(
-        ["bash", "-n", str(script_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert syntax.returncode == 0, syntax.stderr
-
-    rolling = script.split(
-        '==> fleet: rolling the exact cohort under hub epoch ownership', 1
-    )[1].split('prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"', 1)[0]
-
-    assert 'done < "$selected_specs_file"' not in rolling
-    assert 'while IFS= read -r spec; do' not in rolling
-    assert 'mapfile -t rolling_cohort_specs < "$selected_specs_file"' in rolling
-    assert 'for spec in "${rolling_cohort_specs[@]}"; do' in rolling
-    assert rolling.index('mapfile -t rolling_cohort_specs') < rolling.index(
-        'for spec in "${rolling_cohort_specs[@]}"; do'
-    )
 
 
 def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(

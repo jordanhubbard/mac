@@ -218,7 +218,6 @@ Administration:
   attestation-recover      admin-only conditional recovery for a missing/stale worker signing key
   report-executor-approve  approve the exact current startup-attested OpenShell report executor
   report-executor-revoke   revoke report-repository dispatch eligibility for an agent
-  migrate                  move an agent (soul + memory) to a new host; dry-run unless --execute
 
 Run `mac agent help <subcommand>` for the arguments one takes.
 ```

@@ -142,6 +142,31 @@ def load_fleets_config(path: Optional[str] = None) -> dict:
     return data
 
 
+def resolve_fleet_key(registry: dict, name_or_key: str) -> Optional[str]:
+    """Resolve *name_or_key* to a fleets.yaml registry KEY.
+
+    Fleets are keyed in fleets.yaml by their hub-agent name, while
+    ``fleet_name`` is a separate human label. Operators naturally pass either;
+    accept both. Returns the registry key, or None if neither a key nor any
+    fleet's ``fleet_name`` matches.
+    """
+    if not name_or_key:
+        return None
+    fleets = registry.get("fleets") or {}
+    if name_or_key in fleets:
+        return name_or_key
+    for key, cfg in fleets.items():
+        if isinstance(cfg, dict) and cfg.get("fleet_name") == name_or_key:
+            return key
+    return None
+
+
+def fleet_hub_url(registry: dict, fleet_key: str) -> str:
+    """Return the resolved fleet's ``hub_url`` (empty string if absent)."""
+    cfg = (registry.get("fleets") or {}).get(fleet_key) or {}
+    return str(cfg.get("hub_url") or "").strip()
+
+
 HubSsh = FleetSshSpec
 
 

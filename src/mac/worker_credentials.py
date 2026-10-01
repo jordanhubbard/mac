@@ -800,77 +800,6 @@ class WorkerCredentialLifecycle:
                 self._event(conn, record, "worker_credential.revoked", actor=actor)
         return [_safe_record(record) for record in revoked]
 
-    def discard_unreserved_pending(
-        self,
-        agent_id: str,
-        *,
-        created_by: str,
-        actor: str = "fleet-recovery",
-    ) -> List[Dict[str, Any]]:
-        """Revoke only orphaned pending credentials from one exact issuance owner.
-
-        deploy-mac-fleet.sh uses it to clean up successor credentials it issued
-        but never installed. It never touches an active credential.
-        """
-
-        exact_agent = _validate_agent_id(agent_id)
-        exact_creator = str(created_by or "").strip()
-        if not exact_creator or len(exact_creator.encode("utf-8")) > 512:
-            raise WorkerCredentialError("pending credential creator is invalid")
-        discarded: List[Dict[str, Any]] = []
-        with self.store.transaction() as conn:
-            locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-                (exact_agent,),
-            )
-            if locked.rowcount != 1:
-                # A typed fleet cohort may include a brand-new worker. If the
-                # epoch aborts before registration or credential issuance,
-                # there is nothing to discard. Treat that recovery operation
-                # as the same idempotent no-op as a repeated successful discard.
-                return []
-            rows = conn.execute(
-                "SELECT * FROM worker_credentials WHERE agent_id = ? "
-                "AND created_by = ? AND state = 'pending_install'",
-                (exact_agent, exact_creator),
-            ).fetchall()
-            if len(rows) > 1:
-                raise WorkerCredentialError(
-                    "issuance owner has multiple pending credentials for one agent"
-                )
-            now = _timestamp()
-            for row in rows:
-                principal_id = str(row["id"])
-                updated = conn.execute(
-                    "UPDATE worker_credentials SET state = ?, revoked_at = ?, "
-                    "updated_at = ? WHERE id = ? AND agent_id = ? "
-                    "AND created_by = ? AND state = 'pending_install'",
-                    (
-                        "revoked",
-                        now,
-                        now,
-                        principal_id,
-                        exact_agent,
-                        exact_creator,
-                    ),
-                )
-                if updated.rowcount != 1:
-                    raise WorkerCredentialError(
-                        "orphaned pending credential changed during discard"
-                    )
-                record = _record_from_row(row)
-                record["state"] = "revoked"
-                record["revoked_at"] = now
-                discarded.append(record)
-                self._event(
-                    conn,
-                    record,
-                    "worker_credential.discarded",
-                    actor=actor,
-                    detail={"created_by": exact_creator, "reason": "epoch_not_opened"},
-                )
-        return [_safe_record(record) for record in discarded]
-
     def list(self, *, agent_id: str = "") -> List[Dict[str, Any]]:
         params: Tuple[Any, ...] = ()
         sql = "SELECT * FROM worker_credentials"
@@ -1715,10 +1644,6 @@ def _build_parser() -> argparse.ArgumentParser:
     revoke = sub.add_parser("revoke")
     revoke.add_argument("--agent-id", required=True)
 
-    discard_pending = sub.add_parser("discard-unreserved-pending")
-    discard_pending.add_argument("--agent-id", required=True)
-    discard_pending.add_argument("--created-by", required=True)
-
     inventory = sub.add_parser("inventory")
     inventory.add_argument("--agents", required=True, help="hub /agents JSON file or -")
     inventory.add_argument(
@@ -1850,19 +1775,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "status": "revoked",
                     "agent_id": args.agent_id,
                     "credential_count": len(revoked),
-                }
-            )
-            return 0
-        if args.command == "discard-unreserved-pending":
-            discarded = authority().discard_unreserved_pending(
-                args.agent_id,
-                created_by=args.created_by,
-            )
-            _safe_print(
-                {
-                    "status": "discarded",
-                    "agent_id": args.agent_id,
-                    "credential_count": len(discarded),
                 }
             )
             return 0

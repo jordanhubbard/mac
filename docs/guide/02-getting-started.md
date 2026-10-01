@@ -15,11 +15,10 @@ so rather than assuming it will not happen.
   secrets table. Without it the CLI and API both refuse to start — deliberately,
   because a control plane that boots without its secret key would be storing
   credentials it cannot protect.
-- **SSH key access** to every host you plan to use, working *before* you begin.
-  The setup wizard configures mac; it does not fix SSH.
+- **SSH key access** from the hub to every host you plan to use, working
+  *before* you begin.
 - **At least one LLM provider key** (nvidia / openai / anthropic / perplexity).
-  The wizard will not finish without one, because a fleet with no provider
-  cannot execute a task.
+  A fleet with no provider cannot execute a task.
 
 ## Install the CLI
 
@@ -35,36 +34,13 @@ mac --version
 
 ## Create a fleet
 
-Run the wizard on the machine that will be the hub:
+Provision the hub, then each worker, by hand with the "Provision a new host"
+checklist in [Updating the fleet with fleet-update](../operations/fleet-update.md).
+Every host runs MAC from a git checkout at `~/.mac/src/mac`. Move hosts to a new
+commit with `scripts/fleet-update`, run on the hub.
 
-```console
-bash setup.sh
-```
-
-It asks two questions before anything else — whether you are on the machine
-being configured, and whether this is a **hub** or a **worker**. Choose `hub`.
-
-It then collects the fleet name, supervisor (`auto` selects launchd on macOS,
-systemd on Linux), network provider (Tailscale by default), and your provider
-key; writes `~/.mac/fleets.yaml` and `~/.mac/.env`; and deploys.
-
-To write config without deploying:
-
-```console
-bash setup.sh --configure-only
-```
-
-Neither file belongs in version control. Fleet topology and provider keys are
-yours, not the product's.
-
-## Add workers
-
-Run the wizard again on (or pointed at) each additional host and choose
-`worker`. It looks up the fleet by hub name and asks only what is new: the
-worker's name, SSH target, OS, supervisor, and mode.
-
-Workers do **not** need a checkout of this repository — deploy ships the source
-to each host.
+`~/.mac/fleets.yaml`, `~/.mac/fleet-hosts` and the env files don't belong in
+version control. Fleet topology and provider keys are yours, not the product's.
 
 ## Check it came up
 
@@ -158,7 +134,7 @@ mac task answer <id> --answer "..." --disposition resume
 mac agent list
 mac agent hold/resume <id>
 mac project list
-mac admin fleet doctor
+mac admin diagnostics
 ```
 
 `mac task list` prints short ids (git-style, 8 hex) and accepts them anywhere a

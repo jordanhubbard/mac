@@ -507,29 +507,6 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
         },
     )
     ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
-    ctx["dispatch_hold_batch_agent_id"] = agent("dispatch-hold-batch-route-agent", ["python"])["id"]
-    cp.set_agent_dispatch_hold(
-        ctx["dispatch_hold_batch_agent_id"], "route-coverage batch deployment"
-    )
-    cp.heartbeat_agent(
-        ctx["dispatch_hold_batch_agent_id"],
-        status="idle",
-        health_status="healthy",
-        resources={"deployment_generation": "route-coverage-generation"},
-    )
-    ctx["dispatch_hold_transition_agent_id"] = agent(
-        "dispatch-hold-transition-route-agent", ["python"]
-    )["id"]
-    cp.set_agent_dispatch_hold(
-        ctx["dispatch_hold_transition_agent_id"],
-        "route-coverage transition deployment",
-    )
-    cp.heartbeat_agent(
-        ctx["dispatch_hold_transition_agent_id"],
-        status="idle",
-        health_status="healthy",
-        resources={"deployment_generation": "route-coverage-transition-generation"},
-    )
     ctx["transition_agent_id"] = agent("transition-route-agent", ["python"])["id"]
     ctx["evidence_agent_id"] = agent("evidence-route-agent", ["python"])["id"]
 
@@ -1244,7 +1221,6 @@ network_policies:
     ctx["directive_activation_id"] = activation["id"]
     ctx["directive_ack_digest"] = ack_version["digest"]
 
-    ctx["absent_dispatch_hold_epoch_id"] = "route-coverage-absent-epoch"
     return ctx
 
 
@@ -1292,11 +1268,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/agentbus/streams/{stream_id}/directive-verification"): {"stream_id": "stream_id"},
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
-        ("POST", "/agents/dispatch-hold/release-batch"): {},
-        ("GET", "/agents/dispatch-hold/epochs/{epoch_id}"): {
-            "epoch_id": "absent_dispatch_hold_epoch_id"
-        },
-        ("POST", "/agents/dispatch-hold/transition-batch"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
@@ -1416,8 +1387,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         # schema-valid requests to explicit missing product identities and
         # treats the fail-closed domain guard as successful route coverage.
         expected = (200, 400, 404, 409)
-    if path_template.startswith("/agents/dispatch-hold/epochs/"):
-        expected = (200, 400, 404)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False
@@ -1453,8 +1422,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/v1/agents/{agent_id}/agentbus-cursor":
             kwargs["params"] = {"topic": "peer.message.v1"}
-        elif path_template == "/agents/dispatch-hold/epochs/{epoch_id}":
-            kwargs["params"] = {"identity_sha256": "a" * 64}
         elif path_template == "/tasks/search":
             kwargs["params"] = {"q": "route coverage"}
         elif path_template == "/humans/resolve":
@@ -1851,33 +1818,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "route-coverage",
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
-        ("POST", "/agents/dispatch-hold/release-batch"): {
-            "epoch_id": "route-coverage-release-epoch",
-            "holds": [
-                {
-                    "agent_id": ctx["dispatch_hold_batch_agent_id"],
-                    "reason": "route-coverage batch deployment",
-                    "generation": "route-coverage-generation",
-                    "baseline_seen": "2000-01-01T00:00:00+00:00",
-                    "principal_id": None,
-                    "require_authenticated": False,
-                }
-            ],
-        },
-        ("POST", "/agents/dispatch-hold/transition-batch"): {
-            "epoch_id": "route-coverage-transition-epoch",
-            "successor_reason": "route-coverage synchronized successor",
-            "holds": [
-                {
-                    "agent_id": ctx["dispatch_hold_transition_agent_id"],
-                    "reason": "route-coverage transition deployment",
-                    "generation": "route-coverage-transition-generation",
-                    "baseline_seen": "2000-01-01T00:00:00+00:00",
-                    "principal_id": None,
-                    "require_authenticated": False,
-                }
-            ],
-        },
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"reason": "route-coverage quarantine"},
         ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
             "reason": "route-coverage deployment",

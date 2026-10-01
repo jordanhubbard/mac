@@ -8,7 +8,7 @@ the first failure.
 It replaces hub self-upgrade, release epochs and source convergence, which
 have been deleted: in the 90 days before it was written, release epochs aborted
 62% of the time and hub self-upgrade never succeeded. The older deploy script
-(`deploy/deploy-mac-fleet.sh`) is still in the tree until it is deleted too.
+(`deploy/deploy-mac-fleet.sh`) and its node installer have been deleted too.
 
 ## Usage
 
@@ -70,16 +70,16 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
    and require `restore_verified == true`. `MAC_DATABASE_URL` is read from
    `~/.mac/mac.env` and passed through the environment, never on a command line.
 3. Run `git checkout --detach <sha>`.
-4. Run `uv pip install -e` (or the venv's `pip`), but only if `pyproject.toml`,
-   `uv.lock` or `setup.py` changed.
+4. Run `uv pip install -e` (or the venv's `pip`), but only if `pyproject.toml`
+   or `uv.lock` changed.
 5. Run `~/.mac/venv/bin/python -c 'import mac.services'`.
 6. Run `mac-schema-migrate --status`, then
    `mac-schema-migrate --applied-by fleet-update:<user>@<host>:<sha12>`.
 7. Write `~/.mac/current/source-commit` and `~/.mac/current/generation-id`
    (`legacy-<sha12>`). `deploy/bin/mac-service` ignores them. They are written
-   for a hub still running the `mac-service` that `deploy/fleet-node-install.sh`
-   generated, which runs `~/.mac/current/source` only when its `HEAD` equals
-   `source-commit`.
+   for a hub still running the `mac-service` that the deleted
+   `deploy/fleet-node-install.sh` generated, which runs `~/.mac/current/source`
+   only when its `HEAD` equals `source-commit`.
 8. Run `sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist`.
 9. Poll `/health`, then require `/startup-attestation`'s `source_commit` to equal
    the target. `mac-service` sets it from the `HEAD` of `~/.mac/src/mac`.
@@ -89,7 +89,7 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
 The hub step doesn't reinstall `~/.mac/bin/mac-service`. Its content is in
 `deploy/bin/mac-service`: it runs `~/.mac/venv/bin/python -m mac.hub_serve`
 from `~/.mac/src/mac` and nothing else. The wrapper that
-`deploy/fleet-node-install.sh` used to generate also ran
+the deleted `deploy/fleet-node-install.sh` used to generate also ran
 `~/.mac/current/venv/bin/mac-hub-upgrade-supervisor recover-all` when that
 script existed. Hub self-upgrade is deleted, so replace that wrapper with
 `deploy/bin/mac-service` by hand.

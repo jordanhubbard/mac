@@ -417,7 +417,7 @@ def test_verify_fails_closed_when_gateway_impl_env_is_missing_or_wrong(tmp_path)
     # Regression: mac-agent's own startup self-test derives its
     # OpenClaw-required branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env.
     # A Hermes cutover run through this installer (rather than the full
-    # fleet-node-install.sh deploy path) never touched that variable, so it
+    # fleet-node-install.sh deploy path, since deleted) never touched that variable, so it
     # kept claiming "openclaw" after the gateway was gone -- mac-agent then
     # crash-loops forever demanding an OpenClaw advertisement that no longer
     # exists, and the agent is offline/unhealthy for as long as it never

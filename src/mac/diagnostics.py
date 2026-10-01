@@ -776,7 +776,7 @@ def _lifecycle_stage_dwell(
     ]
 
 
-#: The exact hold-reason prefix deploy/deploy-mac-fleet.sh stamps
+#: The exact hold-reason prefix the deleted deploy-mac-fleet.sh stamped
 #: (hold_reason="mac admin fleet roll-forward repair retained after
 #: ${deploy_ts}") on an agent it could not cleanly finish deploying. Every
 #: other dispatch_hold reason in the fleet is an intentional, indefinite

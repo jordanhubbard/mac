@@ -155,11 +155,9 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis |
 | supplemental reference | [`dashboard-connection.md`](../dashboard-connection.md) | Dashboard Connection Contract |
 | supplemental reference | [`dedicated-vm-verifier.md`](../dedicated-vm-verifier.md) | Dedicated VM repository verification |
-| supplemental reference | [`deploy-prerequisite-vs-phase1-audit.md`](../deploy-prerequisite-vs-phase1-audit.md) | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | [`dispatch-priority-bias-audit.md`](../dispatch-priority-bias-audit.md) | Dispatch priority bias ordering audit |
 | supplemental reference | [`env-config-reference.md`](../env-config-reference.md) | MAC environment configuration reference |
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
-| runbook | [`fleet-node-onboarding-checklist.md`](../fleet-node-onboarding-checklist.md) | Fleet node onboarding checklist |
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
 | supplemental reference | [`fleet-registry-schema.md`](../fleet-registry-schema.md) | Fleet registry schema |
 | supplemental reference | [`getting-started.md`](../getting-started.md) | MAC Quickstart |

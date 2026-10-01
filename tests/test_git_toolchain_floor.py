@@ -22,16 +22,6 @@ def test_git_minimum_and_provisioning_assets_are_guarded() -> None:
         assert "git" in text
         assert "v >= (2,38)" in text
 
-    installer = (ROOT / "deploy/fleet-node-install.sh").read_text(encoding="utf-8")
-    assert "verify_git_version" in installer
-    assert "Git >= 2.38" in installer
-
-
-def test_machine_onboarding_receipt_declares_git_floor() -> None:
-    deploy = (ROOT / "deploy/deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    assert '"kind": "tool-version"' in deploy
-    assert '"minimum_version": "2.38"' in deploy
-
 
 def test_repository_contract_normalizes_minimum_versions() -> None:
     raw = yaml.safe_load((ROOT / ".mac/project.yaml").read_text(encoding="utf-8"))

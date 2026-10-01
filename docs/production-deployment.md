@@ -32,7 +32,7 @@ database variable is reintroduced.
 | Variable | Required | Purpose |
 |---|---|---|
 | `MAC_SECRET_KEY` | yes | 32+ char secret; HKDF input for the Fernet key that encrypts secret values. Refuses to start without it. |
-| `MAC_CONTROL_PLANE_ROLE` | yes for fleet deploys | `hub` for the single database-owning authority; `client` for database-free spokes. |
+| `MAC_CONTROL_PLANE_ROLE` | yes for fleet hosts | `hub` for the single database-owning authority; `client` for database-free spokes. |
 | `MAC_DATABASE_URL` | conditional | PostgreSQL DSN (`postgresql://...` or `postgres://...`). Preferred authority setting; overrides `MAC_DB`. Startup verifies the migration ledger; deploy applies migrations explicitly. |
 | `MAC_PG_POOL_SIZE` | no | `psycopg_pool` max connections per `mac-api` replica. Default `10`. |
 | `MAC_DB` | conditional | Legacy name for an explicit PostgreSQL DSN. SQLite paths are rejected; no private client ledger is created. |
@@ -43,39 +43,39 @@ database variable is reintroduced.
 | `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM` | no | Set `0` to disable startup patching of an explicit `MAC_HERMES_AGENT_DIR`. Default enabled only when the checkout path is explicit. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | no | Set `0` to disable startup patching of Hermes gateway model/runtime overrides. Default enabled for explicit checkout paths. |
 | `MAC_HERMES_GATEWAY_MODEL` | no | Per-agent model used by Hermes gateway conversations and mirrored to `HERMES_INFERENCE_MODEL` for oneshot worker execution. |
-| `MAC_HERMES_GATEWAY_PROVIDER` | no | Runtime provider for the per-agent model. Fleet deploy normally uses `custom` so Hermes sends OpenAI-compatible requests through MAC's router. |
-| `MAC_HERMES_GATEWAY_BASE_URL` | no | OpenAI-compatible base URL for Hermes. Fleet deploy writes the hub's local in-mac `/v1` endpoint on the hub and the hub or wing-router `/v1` endpoint on spokes. |
+| `MAC_HERMES_GATEWAY_PROVIDER` | no | Runtime provider for the per-agent model. Fleet hosts normally use `custom` so Hermes sends OpenAI-compatible requests through MAC's router. |
+| `MAC_HERMES_GATEWAY_BASE_URL` | no | OpenAI-compatible base URL for Hermes. Fleet hosts use the hub's local in-mac `/v1` endpoint on the hub and the hub or wing-router `/v1` endpoint on spokes. |
 | `MAC_HERMES_STARTUP_CHECK` | no | Set `0` to disable Hermes state and Slack startup checks. Enabled by default. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | no | Set `1` to fail `mac` startup when Hermes soul/memory/state references or Slack activation are not ready. |
 | `MAC_HERMES_SLACK_HOME_CHANNEL_NAME` | no | Slack home-channel name, without `#`, used to write `~/.hermes/slack_home_channels.json` from `slack_accounts.json`. Empty skips discovery. |
 | `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS` | no | Set `0` to preserve existing Slack home-channel files without discovery. Default enabled. |
-| `MAC_URL` / `MAC_HUB_URL` | no | MAC API endpoint used by Hermes-side `mac-hermes` operations. Fleet deploy points this at the hub. |
-| `MAC_CLIENT_PRINCIPALS_FILE` | no | Hub-local hashed registry for scoped client enrollment. Fleet deploy sets `$MAC_HOME/client-principals.json`; permissions must be `0600`. The API hot-reloads issuance and revocation. |
-| `MAC_HERMES_INSTANCE_ID` | no | Hermes instance id for this runtime. Fleet deploy uses a deterministic `hermes_<agent>` id and registers it in MAC. |
+| `MAC_URL` / `MAC_HUB_URL` | no | MAC API endpoint used by Hermes-side `mac-hermes` operations. Fleet hosts point this at the hub. |
+| `MAC_CLIENT_PRINCIPALS_FILE` | no | Hub-local hashed registry for scoped client enrollment. Fleet hosts set `$MAC_HOME/client-principals.json`; permissions must be `0600`. The API hot-reloads issuance and revocation. |
+| `MAC_HERMES_INSTANCE_ID` | no | Hermes instance id for this runtime. Fleet hosts use a deterministic `hermes_<agent>` id and registers it in MAC. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | no | Worker agent binding to the Hermes instance id. This keeps MAC agent rows linked to their Hermes soul/runtime. |
-| `MAC_AGENT_ID` | no | Deterministic MAC agent id for this runtime. Fleet deploy uses `agent_<agent>`. |
+| `MAC_AGENT_ID` | no | Deterministic MAC agent id for this runtime. Fleet hosts use `agent_<agent>`. |
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | no | Hermes-visible task/project runtime contract JSON. Default `~/.hermes/mac-runtime-context.json`. |
 | `MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN` | no | Human/agent-readable runtime contract summary. Default `~/.hermes/mac-runtime-context.md`. |
-| `MAC_HERMES_RUNTIME_CONTEXT_REQUIRED` | no | Set `1` to make startup readiness fail if the MAC task/project runtime contract is missing, invalid, or not injected into the Hermes prompt builder. Fleet deploy enables this. |
-| `MAC_HERMES_WORKSPACE` | no | Source workspace Hermes should treat as equivalent to an operator/Codex shell in the MAC repo. Fleet deploy sets this to `$MAC_HOME/src/mac`. |
-| `MAC_PROJECT_CONTRACT_FILE` | no | Repository contract file for the Hermes direct-session capability bridge. Fleet deploy sets this to `$MAC_HERMES_WORKSPACE/.mac/project.yaml`. |
+| `MAC_HERMES_RUNTIME_CONTEXT_REQUIRED` | no | Set `1` to make startup readiness fail if the MAC task/project runtime contract is missing, invalid, or not injected into the Hermes prompt builder. Fleet hosts enable this. |
+| `MAC_HERMES_WORKSPACE` | no | Source workspace Hermes should treat as equivalent to an operator/Codex shell in the MAC repo. Fleet hosts set this to `$MAC_HOME/src/mac`. |
+| `MAC_PROJECT_CONTRACT_FILE` | no | Repository contract file for the Hermes direct-session capability bridge. Fleet hosts set this to `$MAC_HERMES_WORKSPACE/.mac/project.yaml`. |
 | `MAC_WORKER_EXECUTOR` | no | Executor command used by loop-mode workers. The default `~/.mac/bin/mac-hermes-task-executor` is part of the Hermes direct-session capability proof. |
 | `GH_TOKEN` / `GITHUB_TOKEN` | no | GitHub HTTPS credential used by task, review, publication, and pushed-ref verification commands. The credential may appear only in the individual Git command and must not persist in `origin`, evidence, logs, or memory. |
 | `GITEA_TOKEN` | no | Gitea HTTPS credential for the same Git operations. `MAC_TASK_GIT_TOKEN` is the host-mode fallback when no host-specific token is set. |
 | `MAC_DEPLOY_GH_TOKEN` | no | Fleet-deploy input copied into the managed runtime as `GH_TOKEN`. Keep it in the host-local `~/.mac/.env`, never in `fleets.yaml` or a committed spec. |
 | `MAC_DEPLOY_GATEWAY_PROBE_FATAL` | no | Set `1` to make a failed OpenClaw gateway/channel probe fail the node, and therefore the cohort. Default `0`: the failure is recorded, the failed successor is retained for diagnosis, and the deploy continues, because task execution is OpenShell plus the coding CLI plus `mac-agent` and none of them consult chat. Set it only for a deploy whose purpose is to prove the chat surface. |
-| `MAC_REPOSITORY_REF_RECONCILER_MODE` | no | Managed task-branch reconciler mode: `off`, `audit`, or `prune`. Runtime default `off`; fleet deployment defaults the hub to `prune` and spokes to `off`. |
+| `MAC_REPOSITORY_REF_RECONCILER_MODE` | no | Managed task-branch reconciler mode: `off`, `audit`, or `prune`. Runtime default `off`; fleet hubs normally use `prune` and spokes `off`. |
 | `MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | no | Delay between automatic passes, bounded from `60` through `604800`. Hub default `86400` (daily). |
 | `MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | no | Delay before the first automatic pass, bounded from `0` through `86400`. Hub default `300`. |
 | `MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | no | Fallback cleanup grace for legacy lifecycle records, bounded from `0` through `365`. Default `7`. |
 | `MAC_REPOSITORY_REF_RECONCILER_REMOTE` / `MAC_REPOSITORY_REF_RECONCILER_BASE_REF` | no | Git remote name (default `origin`) and optional explicit `<remote>/<branch>` ancestry target. Without a base override, the remote HEAD is auto-detected. |
 | `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` | no | How long a newest authentication/authorization failure excludes a reviewer for the matching project, repository host, and operation. Default `1800`. |
 | `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning stays current and supersedes an older failure. Default `86400`. |
-| `MAC_SUPERVISOR_KIND` | no | Runtime supervisor selected by fleet deploy: `systemd`, `launchd`, or `supervisord`. |
+| `MAC_SUPERVISOR_KIND` | no | Runtime supervisor on this host: `systemd`, `launchd`, or `supervisord`. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | no | Hermes-visible memory topology JSON. Default `~/.hermes/mac-memory-topology.json`. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | no | Agent that owns hub-managed shared services. Defaults to the configured fleet hub. |
 | `QDRANT_URL` / `QDRANT_ADDRESS` / `QDRANT_FLEET_URL` | no | Shared Qdrant level-2 memory endpoint. When set, Hermes startup readiness validates `/collections`. |
-| `MAC_REQUIRE_QDRANT_MEMORY` | no | Set `1` to require shared Qdrant memory readiness. Fleet deploy enables this by default. |
+| `MAC_REQUIRE_QDRANT_MEMORY` | no | Set `1` to require shared Qdrant memory readiness. Fleet hosts enable this. |
 | `MAC_QDRANT_MEMORY_ALLOW_DEGRADED` | no | Temporary operator override that allows startup when required Qdrant is missing or unreachable. |
 | `QDRANT_PIDS_LIMIT` | no | Container PID/thread cap for the hub-managed Qdrant (supervisord wrapper + systemd unit). Default `4096`. Raise on very-high-core nodes; see Troubleshooting. |
 
@@ -137,103 +137,17 @@ images with no mesh provider may still bind `0.0.0.0` inside the container
 network namespace. Put a TLS-terminating reverse proxy in front only when
 the hub must be reached off-mesh.
 
-## Fleet Setup Wizard
+## Provisioning and updating fleet hosts
 
-First-time deployments should use the setup wizard instead of hand-editing
-deployment YAML:
+Fleet hosts are provisioned by hand and updated with `scripts/fleet-update`.
+Both are described in [Updating the fleet with `fleet-update`](operations/fleet-update.md):
 
-```console
-make setup
-```
+- **New host:** follow its "Provision a new host" checklist.
+- **Update:** run `scripts/fleet-update <hub|HOST|all> <sha>` on the hub.
 
-The wizard asks for the hub, agents, SSH targets, OS families, supervisors,
-Slack home channel, per-agent Hermes model selectors, worker mode, canary
-policy, Qdrant shared-memory endpoint, fleet network provider, and optional
-hub token. It writes:
-
-- `~/.mac/fleets.yaml`: home-scoped multi-fleet topology, keyed by hub node.
-- `~/.mac/.env`: caller-machine deploy settings and local secrets, mode 0600.
-
-To deploy after the wizard:
-
-```console
-make deploy HUB=<hub-node>
-```
-
-## Declarative Setup For Agents
-
-LLM-driven setup should prefer a spec file over the interactive wizard. The
-setup spec is validated before files are written, and the doctor output lists
-missing env vars and next commands in machine-readable JSON.
-
-Rather than hand-writing a spec, start from a generic, per-CSP sample. The repo
-ships de-personalized samples under `deploy/fleet/samples/` (GKE is the worked
-example); a real, named fleet spec lives **outside git** in
-`~/.mac/specs/<fleet>.fleet.yaml`, created at install time by copying and
-customizing a sample. Never check a named fleet into the repo.
-
-```console
-scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
-scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
-$EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
-make setup ARGS="--spec ~/.mac/specs/my-gke.fleet.yaml --force"
-```
-
-See `deploy/fleet/samples/README.md` for the per-CSP convention and the knobs
-that differ per cloud (bastion/ProxyJump, network provider, in-cluster vs
-public DNS, supervisor).
-
-Example `fleet-setup.yaml`:
-
-```yaml
-schema: mac.fleet_setup.v1
-fleet:
-  name: horde
-  hub: horde-hub
-  hub_url: http://horde-hub:8789
-agents:
-  - name: horde-hub
-    target: ubuntu@10.0.0.10:2201
-    os: linux
-    model: nvidia/llama-3.3-nemotron-super-49b-v1
-    worker:
-      mode: loop
-  - name: horde-worker
-    target: ubuntu@10.0.0.11
-    os: linux
-router:
-  backend: inproc
-  providers:
-    - id: nvidia
-      key_env: NVIDIA_API_KEY
-network:
-  provider: tailscale
-```
-
-Recommended LLM flow:
-
-```console
-export NVIDIA_API_KEY=...
-
-mac admin fleet validate --spec fleet-setup.yaml
-mac admin fleet doctor --spec fleet-setup.yaml
-make setup ARGS="--spec fleet-setup.yaml --force"
-```
-
-`make setup ARGS="--spec ..."` writes `~/.mac/fleets.yaml` and `~/.mac/.env`,
-then deploys the generated plan. To configure only:
-
-```console
-make setup ARGS="--configure-only --spec fleet-setup.yaml --force"
-```
-
-If a provider key such as `NVIDIA_API_KEY` is absent from both the environment
-and the spec, validation fails before deployment so the fleet cannot silently
-come up without chat routing.
-
-The checked-in `deploy/fleet/config.yaml` is a generic sample only. It is
-marked `sample: true`, and `deploy/deploy-mac-fleet.sh` refuses to deploy from
-it unless `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1` is set explicitly for tests.
+The old setup wizard (`setup.sh` / `make setup`), the declarative
+`mac.fleet_setup.v1` specs and `make deploy` / `deploy/deploy-mac-fleet.sh`
+have been deleted.
 
 ## Reaching the Hub Node
 
@@ -267,9 +181,6 @@ Hub is directly routable — no tunnel needed:
 ```console
 # Confirm health
 curl http://<hub-host>:8789/health
-
-# Deploy
-make deploy HUB=<hub-node>
 ```
 
 ### SSH port forward and scoped enrollment
@@ -404,10 +315,10 @@ defaults:
 ```console
 # Hub is reachable at its Tailscale IP, e.g. 100.x.x.x:8789
 curl http://100.x.x.x:8789/health
-make deploy HUB=<hub-node>
 ```
 
-`MAC_DEPLOY_TAILSCALE_AUTH_KEY` must be set in `~/.mac/.env` before deploy.
+Join each host to the tailnet by hand (`deploy/install-tailscale.sh`) before
+provisioning it.
 
 ### Headscale (self-hosted control plane, `provider: headscale`)
 
@@ -432,89 +343,23 @@ defaults:
 ```console
 # Hub reachable at its headscale-assigned IP or MagicDNS name
 curl http://hub.headscale.example.com:8789/health
-make deploy HUB=<hub-node>
 ```
 
-`MAC_DEPLOY_HEADSCALE_PREAUTHKEY` must be set in `~/.mac/.env`. With
-`headscale.manage: true` the deploy script installs and configures the
-headscale server on the hub node itself.
+`deploy/install-headscale.sh` installs and configures a headscale server on the
+hub node when you manage it yourself.
 
-## One-Time ACC Replacement Deploy
+## Host layout and rollback
 
-For a configured fleet, use the Make deploy target:
+Every host runs the hub or worker from a git checkout at `~/.mac/src/mac` with
+a venv at `~/.mac/venv`; `scripts/fleet-update` moves that checkout to a new
+commit. Provisioning, the per-host update steps and rollback are in
+[Updating the fleet with `fleet-update`](operations/fleet-update.md).
 
-```console
-make deploy HUB=<hub-node>
-```
-
-Fleet deploy reads `~/.mac/fleets.yaml` by default. Override
-`MAC_DEPLOY_FLEETS_CONFIG` when a different registry path is required. The hub
-node name selects the fleet. Host-local secret env files still own tokens and
-provider credentials.
-
-Fleet mesh networking is configured under `defaults.network` or per-agent
-`network` overrides in `~/.mac/fleets.yaml`. `provider: tailscale` is the
-default and uses `MAC_DEPLOY_TAILSCALE_AUTH_KEY` from `~/.mac/.env` when
-automatic join is desired. `provider: headscale` is an explicit advanced mode:
-the fleet registry must declare `headscale.login_server`,
-`headscale.health_url`, `headscale.preauth_key_source`,
-`headscale.preauth_key_env`, and the DNS assumption. Managed-hub Headscale is
-available with `headscale.manage: true`, but it should be treated as a shared
-service with backup, monitoring, and recovery expectations rather than an
-implicit default.
-
-Fleet deploy is supervisor-driven, not Linux-systemd-only. Set
-`MAC_DEPLOY_SUPERVISOR=auto` unless a host needs an explicit override. Auto
-selects `launchd` on macOS, `systemd` on systemd Linux, and `supervisord` when
-that is the available process supervisor. The selected value is written to
-`MAC_SUPERVISOR_KIND` and recorded in deploy manifests.
-
-Fleet deploy mirrors each configured per-agent model into `ACC_HERMES_GATEWAY_MODEL`,
-`HERMES_INFERENCE_MODEL`, and `ACC_LLM_MODEL` so upstream Hermes gateway turns
-and `mac-hermes-task-executor` oneshot work use the same per-agent identity.
-Upstream provider credentials remain centralized on the hub, resolved by the
-in-mac router from MAC's encrypted vault or inherited host-local environment;
-spokes receive only their hub-facing MAC token.
-Git-host credentials are a separate execution concern. Fleet deploy resolves
-`MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then the operator's existing
-`gh` keychain login, and writes the result to each managed runtime as
-`GH_TOKEN`. Only the source name is logged; the value travels over SSH stdin,
-not in the remote command. Pure `gateway_impl: none` workers require successful
-GitHub validation by default before drain or source replacement. The variable
-is also included in OpenShell's private mode-`0600` environment bundle so
-confined tasks can clone and publish without copied host SSH keys. Do not put
-the value in `~/.mac/fleets.yaml`, a fleet spec, task metadata, or source
-control. A vault record by itself does not populate a worker environment;
-deploy must inject the corresponding environment key.
-
-Deployment installs a reviewed MAC source bundle and locked service environment
-on each selected host. The configured gateway implementation determines the
-separate conversational runtime. Hermes retains its existing upstream service
-and active profile; MAC does not replace it with an assumed OpenClaw home.
-Systemd, launchd and supervisord adapters manage native services. Deprecated
-ACC and CCC databases are not part of the current deployment authority.
-
-When the local Git remote is available, fleet deploy installs `~/.mac/src/mac`
-as a branch-tracking Git worktree and sets `MAC_SELF_UPDATE_REPO` to that path.
-That lets the AgentBus repo-update control message pull future changes and
-restart the listening `mac-agent` process without another manual deploy pass.
-
-The fleet topology is hub-and-spoke, matching ACC. The configured hub exposes
-the shared control plane URL from `hub_url`; spokes keep a host-local control
-plane for local state and Hermes startup checks, but their `mac-agent` service
-registers and heartbeats against the configured hub. By default the hub binds
-`0.0.0.0` and spokes bind `127.0.0.1`.
-Runtime lazy dependency installs are disabled after the preinstall step, and
-`HERMES_REDACT_SECRETS=false` in inherited Hermes env files is corrected to
-`true` because disabled redaction is treated as state drift.
-
-The hub also owns the shared-services layer. Fleet deploy installs Qdrant on
-the shared-services manager agent by default and configures every agent with
-the same `QDRANT_URL` / `QDRANT_FLEET_URL`. Each agent receives a
-Hermes-visible `~/.hermes/mac-memory-topology.json` plus `.env` pointers that
-describe local Hermes soul/conversation state, mac operational provenance, and
-hub-managed shared level-2 memory. `/startup/hermes` reports
-`qdrant_level2` readiness using redacted endpoints only.
+Upstream provider credentials stay centralized on the hub, resolved by the
+in-mac router from MAC's encrypted vault or the host-local environment; workers
+receive only their hub-facing MAC token. Put `GH_TOKEN` in a worker's
+`~/.mac/mac.env` (mode `0600`) so confined tasks can clone and publish; never
+put it in `~/.mac/fleets.yaml`, task metadata, or source control.
 
 On a macOS hub, Docker containers for system services are expected. Qdrant,
 Firecrawl, test PostgreSQL, and telemetry collectors are long-lived network
@@ -525,48 +370,14 @@ LinuxKit kernel cannot enforce Landlock against the macOS host. Use `docker ps`
 to confirm that observed containers are known system services; no container
 may be treated as a sandbox or as evidence of execution confinement.
 
-Deployment logs and migration reports are written under `~/.mac/logs/` on each
-host:
-
-- `deploy-*.log`
-- `deploy-manifest-*-pre.json`, `deploy-manifest-*-post.json`, and
-  `deploy-manifest-latest.json`
-- `rollback-*.sh` and `rollback-latest.sh`
-- `acc-migration-dry-run.json`
-- `acc-migration-import.json`
-- `acc-migration-status.json`
-- `startup-hermes.json`
-- `hermes-messaging-deps.json`
-- `hermes-home-channel-sync.json`
-- `hermes-redaction-normalization.json`
-- `hermes-log-summary.json`
-- `mac-service-journal.txt` on Linux, or `mac-service.log` on macOS
-- `hermes-gateway-journal.txt` on Linux, or `hermes-gateway.log` on macOS
-- `mac-agent-journal.txt` on Linux, or `mac-agent.log` on macOS
-- `hub-agents.json`
-
-The activation shim for `slack_accounts.json` is intentionally applied by
-`mac` startup, not by the deploy script, so this path exercises the startup
-patch capability.
-
-To roll back the most recent deployment on a host:
-
-```console
-~/.mac/logs/rollback-latest.sh
-```
-
-The rollback script restores the prior mac source tree, mac venv, Hermes
-checkout, and service definitions or launchd plists that existed before the
-deploy pass, then restarts the mac-managed services.
-
 ## Worker Agents
 
 The control-plane service does not execute tasks by itself. Each execution host
 must run a worker process that registers or refreshes its machine/agent row,
-heartbeats, then claims eligible open work with a real executor. Fleet deploy
-installs that process as a service in `heartbeat` mode by default so hosts are
-visible in the configured hub registry without claiming imported ACC work
-prematurely:
+heartbeats, then claims eligible open work with a real executor. On fleet
+hosts it runs as the `mac-agent` service (`deploy/systemd/mac-agent.service.in`).
+In `heartbeat` mode a host is visible in the hub registry without claiming
+work:
 
 ```console
 mac-agent --url http://hub.example.internal:8789 --register \
@@ -899,10 +710,10 @@ that executable as a required session capability, so a deployed agent is not
 considered ready for Codex-like task work unless the executor path is present
 and executable.
 
-Fleet deploy deliberately avoids printing the mac-agent process command line.
-On Linux it reports `mac-agent.service` with `systemctl show` summary fields
-instead of `systemctl status`, because the service wrapper currently passes the
-worker token to `mac-agent` as process argv. Deployment logs should therefore
+Avoid printing the mac-agent process command line.
+On Linux, report `mac-agent.service` with `systemctl show` summary fields
+instead of `systemctl status`, because the service wrapper may pass the
+worker token to `mac-agent` as process argv. Logs should therefore
 show service state, PID, and restart count, but not the bearer token. Operators
 should continue to treat host-level process inspection as privileged access.
 

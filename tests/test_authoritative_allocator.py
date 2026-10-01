@@ -424,7 +424,7 @@ def _advisory_startup(agent_id="worker", blocking=()):
 def test_advisory_startup_degradation_is_dispatch_ready():
     """A degraded self-test with no blocking problems must still dispatch.
 
-    deploy-mac-fleet.sh already releases this agent (release_health_ready);
+    The deploy script (since deleted) released this agent (release_health_ready);
     when the allocator disagreed, one failed OpenClaw probe benched the whole
     fleet while the ledger still reported free capacity.
     """

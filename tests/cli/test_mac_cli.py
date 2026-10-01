@@ -213,7 +213,7 @@ fleets:
     assert [row["agent_name"] for row in result["agents"]] == ["present"]
 
 
-def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
+def test_agentbus_repo_update_targets_one_agent_and_is_readable(tmp_path):
     rc, machine = _run(tmp_path, "admin", "machine", "register", "refresh-host")
     assert rc == 0
     rc, sender = _run(tmp_path, "agent", "register", machine["id"], "hub")
@@ -221,38 +221,13 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
     rc, worker = _run(tmp_path, "agent", "register", machine["id"], "worker")
     assert rc == 0
 
-    rc, published = _run(
-        tmp_path,
-        "admin",
-        "fleet",
-        "refresh-source",
-        "--sender-agent-id",
-        sender["id"],
-        "--remote",
-        "origin",
-        "--branch",
-        "main",
-        "--request-id",
-        "refresh-local",
-    )
-
-    assert rc == 0
-    assert published["schema"] == "mac.agentbus.repo_update_publish.v1"
-    assert published["count"] == 2
-    assert len(published["streams"]) == 2
-    assert {stream["recipient_agent_id"] for stream in published["streams"]} == {
-        sender["id"],
-        worker["id"],
-    }
-
     rc, targeted = _run(
         tmp_path,
         "admin",
-        "fleet",
-        "refresh-source",
-        "--sender-agent-id",
+        "agentbus",
+        "repo-update",
         sender["id"],
-        "--agent-id",
+        "--recipient-agent-id",
         worker["id"],
         "--request-id",
         "refresh-targeted",

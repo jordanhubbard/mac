@@ -244,8 +244,8 @@ Use `make install-cli` or `make install-gui` when only one surface is needed.
 Installation requires Python 3.14.7 (pinned in `.python-version`), `uv`, Git,
 GitHub CLI (`gh`), and npm. `uv python install` provisions the reviewed Python
 version. See [the Python baseline](docs/python-baseline.md) for environment
-updates. Fleet configuration/deployment is intentionally
-separate under `make setup` and `make deploy`.
+updates. Fleet provisioning and updates are separate: see
+[Updating the fleet with fleet-update](docs/operations/fleet-update.md).
 
 For local control-plane/API development after installation:
 
@@ -399,47 +399,26 @@ a named hub plus the workers that join it. A fleet is a first-class object —
 `~/.mac/fleets.yaml` holds as many as you like, each with its own hub URL and
 token, selected with `--fleet <name>` or `$MAC_FLEET`.
 
-**Before you start**, have SSH key access working to every host you intend to
-use, from the machine you are running the wizard on. The wizard configures; it
-does not fix SSH. You also need at least one upstream LLM provider API key
-(nvidia / openai / anthropic / perplexity) — the wizard will not finish without
-one, because a fleet with no provider cannot execute a task.
+### 1. Provision the hub and workers
 
-### 1. Create the fleet and its hub
+Each host runs MAC from a git checkout at `~/.mac/src/mac`. Provision the hub
+and each worker by hand with the "Provision a new host" checklist in
+[Updating the fleet with fleet-update](docs/operations/fleet-update.md). You
+need SSH key access from the hub to every worker and at least one upstream LLM
+provider API key (nvidia / openai / anthropic / perplexity).
 
-Run the wizard on the machine that will be the hub, or point it at one:
+`~/.mac/fleets.yaml`, `~/.mac/fleet-hosts` and the env files are not in this
+repository, and should never be committed: fleet topology and provider keys
+are yours, not the product's.
 
-```bash
-bash setup.sh
-```
+### 2. Update it
 
-It asks two questions before anything else — whether you are on the machine
-being configured, and whether this is a **hub** or a **worker**. Choose `hub`.
-It then collects the fleet name, supervisor (`auto` picks launchd on macOS,
-systemd on Linux), network provider (Tailscale by default), and your provider
-key, writes `~/.mac/fleets.yaml` and `~/.mac/.env`, and deploys.
-
-To write the config without deploying yet:
+From the hub, move the hub and every worker to a commit, one host at a time:
 
 ```bash
-bash setup.sh --configure-only
+scripts/fleet-update --dry-run all <sha>
+scripts/fleet-update all <sha>
 ```
-
-Neither file is in this repository, and neither should ever be committed:
-fleet topology and provider keys are yours, not the product's.
-
-### 2. Add workers
-
-Run the wizard again for each additional host and choose `worker`. It looks up
-the existing fleet by hub name and asks only what is new — the worker's name,
-SSH target, OS, supervisor, and mode:
-
-```bash
-bash setup.sh
-```
-
-Workers do not need a checkout of this repository. Deploy ships the source to
-each host and installs it.
 
 ### 3. Watch it work
 
@@ -470,7 +449,7 @@ tables.
 ### If something does not come up
 
 ```bash
-mac --fleet <name> admin fleet doctor      # what the hub thinks is wrong
+mac --fleet <name> admin diagnostics      # what the hub thinks is wrong
 mac --fleet <name> task why-unclaimed <id> # why a specific task is not moving
 mac --fleet <name> task preflight ...      # before filing: could this ever be claimed?
 ```
@@ -862,10 +841,9 @@ mac-hermes --url http://127.0.0.1:8789 reply task_...
 mac-hermes --url http://127.0.0.1:8789 writeback hermes_... task_...
 ```
 
-Fleet deployment reads generic defaults from `deploy/fleet/config.yaml` and
-real topology from the home-scoped registry `~/.mac/fleets.yaml`. Run
-`make setup` to create `~/.mac/fleets.yaml` and `~/.mac/.env`. Each fleet is
-keyed by its hub node name; deploy with `make deploy HUB=<hub-node>`.
+Clients read fleet topology from the home-scoped registry `~/.mac/fleets.yaml`;
+each fleet is keyed by its hub node name. Hosts are provisioned and updated as
+described in [Updating the fleet with fleet-update](docs/operations/fleet-update.md).
 Fleet mesh networking is selected in that registry with `network.provider`;
 `tailscale` is the default, while `headscale` is advanced opt-in and requires an
 explicit login server, enrollment-key source, DNS assumption, and health check.
@@ -876,7 +854,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Hermes Boundary](docs/hermes-boundary.md)
 - [Hermes Integration](docs/hermes-integration.md)
 - [Production Deployment](docs/production-deployment.md)
-- [Fleet Node Onboarding Checklist](docs/fleet-node-onboarding-checklist.md)
+- [Updating the fleet with fleet-update](docs/operations/fleet-update.md)
 - [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
 - [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md)

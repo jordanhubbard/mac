@@ -131,13 +131,9 @@ be directly dialable and plan to reach the hub over a non-mesh route.
 
 ## 2. Bootstrap the mac stack on Hazel
 
-Standard provisioning workflow — `skills/setup-mac-fleet/SKILL.md`:
-
-```bash
-bash setup.sh --fleets-config ~/.mac/fleets.yaml --env-file ~/.mac/.env
-```
-
-Answer: **hub**, fleet name `watership-down`, at least one LLM provider.
+Provision Hazel, then each worker, by hand with the "Provision a new host"
+checklist in `docs/operations/fleet-update.md`, using fleet name
+`watership-down`. Later updates go through `scripts/fleet-update`, run on Hazel.
 
 **Use the slug `watership-down`, not `Watership Down`.** Both resolve to the
 same credential variable — the fleet name is normalised by
@@ -145,53 +141,13 @@ same credential variable — the fleet name is normalised by
 either spelling yields `MAC_API_TOKEN__WATERSHIP_DOWN` — but the slug avoids
 quoting `--fleet "Watership Down"` at every later call.
 
-### The first hub of a fleet is a distinct install
-
-`setup.sh` writes the fleet registry and credentials; the install itself runs
-through `deploy/deploy-mac-fleet.sh`. For the **first** hub of a brand-new
-fleet — a host with no `~/.mac/src/mac`, no `~/.mac/venv`, no deployed revision
-— use the explicit from-scratch path:
-
-```bash
-deploy/deploy-mac-fleet.sh --hub <hub-node> --first-hub-bootstrap
-```
-
-(`--first-hub-bootstrap` is a standalone flag — it does not take the hub
-name again as its own argument, despite how that reads.)
-
-Neither of the other two paths can do this job, by construction:
-
-- The **normal typed path** proves every selected node's hub route is reachable
-  before it mutates anything. For a hub installing itself there is nothing
-  listening on `<hub-url>:8789` yet, so the probe of its own endpoint cannot
-  pass. Use the normal path for every node after the first, and for every later
-  hub upgrade.
-- **`--legacy-hub-bootstrap`** is an *upgrade* path for a hub that is already
-  deployed but predates the typed epoch API. It holds the node against a live
-  hub and requires a restorable prior generation, so a host that has never been
-  deployed can never satisfy it.
-
-`--first-hub-bootstrap` accepts only a node that identifies as
-`install_kind=from_scratch`, and it does not claim rollback capability that node
-does not have: if the install fails it removes the files this invocation
-uploaded, releases the deployment lock, and reports that the node is left
-uninstalled. Deploy it again once the cause is fixed. A node that still carries
-a generation, a revision, or either artifact is refused by name — take it
-through the normal typed path instead, or tear it down first if you really do
-want a fresh install.
-
-Then run `setup.sh` again per worker, answering **worker**, pointing at Hazel,
-and deploy each worker with the normal typed path.
-
 ### `~/.mac/mac.env` must be `0600`
 
 The node lifecycle helpers read `~/.mac/mac.env` only through their
 private-file guard: a regular file, owned by the invoking user, single link,
-and **no group or other permission bits at all** (`deploy/fleet-node-phase1-quiesce.sh`,
-`optional_private`). A group- or world-readable bit inherited from a permissive
-`umask` on a fresh host is rejected rather than read — that file carries the
-fleet's tokens — and the failure reads `node identity input is not owner-private
-and bounded`, which does not obviously name the file. Fix it with:
+and **no group or other permission bits at all**. A group- or world-readable
+bit inherited from a permissive `umask` on a fresh host is rejected rather than
+read — that file carries the fleet's tokens. Fix it with:
 
 ```bash
 chmod 0600 ~/.mac/mac.env
@@ -341,19 +297,13 @@ hgx list
 
 1. **`tenant_id` (step 4)** — required by both persona commands, not
    established anywhere in this demo. Decide it before going live.
-2. **Worker bootstrap (step 2)** — the wizard is interactive; a fully scripted
-   run needs its answers pre-seeded.
+2. **Worker bootstrap (step 2)** — provisioning is a manual checklist; a fully
+   scripted run does not exist.
 3. **#537 (step 6)** — must be in Hazel's build, or the pipeline stage strands.
 4. **Tailscale enrollment credential (steps 2–3)** — an unstated prerequisite of
-   the whole demo. The default `--network-provider tailscale` is the only
-   provider the deploy can *repair*: it enrolls a node by reading a fleet-scoped
-   auth key, `MAC_DEPLOY_TAILSCALE_AUTH_KEY__WATERSHIP_DOWN`, from
-   `~/.mac/.env`. Without one, `deploy/deploy-mac-fleet.sh
-   --prepare-network-prerequisites` fails with "tailscale credential source
-   MAC_DEPLOY_TAILSCALE_AUTH_KEY is unavailable", and step 3's `tailscale ip -4`
-   has no mesh IP to print — the hub URL has to come from somewhere else (an SSH
-   port-forward of `127.0.0.1:8789`, or the pod's in-cluster DNS name).
-   Deploying `--network-provider none` no longer deadlocks on the hub's own
-   unreachable endpoint, but it also gives the operator no mesh address, so
-   decide which of the two you are demoing *before* provisioning: get an auth key
-   from the tailnet admin, or plan the non-mesh hand-over for step 3.
+   the whole demo. Each node must join the tailnet before it is provisioned
+   (`deploy/install-tailscale.sh`); without an auth key from the tailnet admin,
+   step 3's `tailscale ip -4` has no mesh IP to print and the hub URL has to come
+   from somewhere else (an SSH port-forward of `127.0.0.1:8789`, or the pod's
+   in-cluster DNS name). Decide which of the two you are demoing *before*
+   provisioning.

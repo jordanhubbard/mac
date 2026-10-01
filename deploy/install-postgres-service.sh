@@ -366,9 +366,8 @@ maybe_sudo install -m 0600 "$tmp_env" "$ENV_DEST"
 rm -f "$tmp_env"
 
 # Persisted twice: MAC_CONTROL_PLANE_DB_PASSWORD is this script's own source
-# of truth for "reuse the existing password" on the next run (mac.env is
-# rewritten wholesale by `mac.deploy_env write-mac-env`, which does not know
-# about this password and would otherwise drop it); MAC_DATABASE_URL is what
+# of truth for "reuse the existing password" on the next run;
+# MAC_DATABASE_URL is what
 # the mac CLI/store actually read to reach the database.
 set_env_key "${MAC_HOME}/mac.env" MAC_CONTROL_PLANE_DB_PASSWORD "$POSTGRES_PASSWORD"
 set_env_key "${MAC_HOME}/mac.env" MAC_DATABASE_URL "$dsn"

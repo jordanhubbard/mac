@@ -3,8 +3,8 @@
 #
 # Secrets stay in an owner-only host file which OpenShell uploads into the
 # sandbox.  Values never appear in the OpenShell command argv, committed config,
-# logs, or evidence.  Service installation is handled by deploy-mac-fleet.sh so
-# systemd, launchd, and supervisord share the same transactional cutover.
+# logs, or evidence.  The service unit itself is installed by hand (see
+# docs/operations/fleet-update.md).
 set -euo pipefail
 
 OPENCLAW_VERSION="2026.6.11"

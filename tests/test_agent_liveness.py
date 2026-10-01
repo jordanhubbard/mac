@@ -10,7 +10,7 @@ Observed live on 2026-08-20 against the running hub:
 
 The fungible workers' HOSTS had been deleted hours earlier, yet the ledger said
 they had been seen minutes ago -- and they were still registered, which is not
-cosmetic: `deploy/deploy-mac-fleet.sh` enumerates every registered agent, so
+cosmetic: the (since deleted) `deploy/deploy-mac-fleet.sh` enumerated every registered agent, so
 four dead rows made the whole fleet undeployable. Three separate attempts
 failed on `could not establish bounded direct SSH route` before the hub was
 touched at all.

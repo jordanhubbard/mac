@@ -114,7 +114,7 @@ def test_neither_module_reimplements_the_rule():
 def test_no_shell_or_deploy_script_reimplements_the_rule():
     """The copy the module-based guard could not see.
 
-    deploy/deploy-mac-fleet.sh embedded a fourth implementation, in Python
+    The (since deleted) deploy/deploy-mac-fleet.sh embedded a fourth implementation, in Python
     inside a heredoc. `inspect.getsource` reaches importable modules, so a copy
     living in a shell script is invisible to the guard above -- and that copy
     had the identical `status == "degraded"` defect, meaning the deploy path
@@ -129,7 +129,7 @@ def test_no_shell_or_deploy_script_reimplements_the_rule():
     offenders = []
     for path in list(root.glob("deploy/**/*.sh")) + list(root.glob("scripts/**/*.sh")):
         text = path.read_text(encoding="utf-8", errors="replace")
-        # READERS only. deploy/fleet-node-install.sh WRITES the report and
+        # READERS only. deploy/bin/mac-agent-startup-self-test WRITES the report and
         # legitimately names the schema as a dict key -- flagging the producer
         # would make this guard unpassable and teach people to weaken it.
         if 'startup.get("status") ==' in text or 'startup.get("status") in' in text:
@@ -138,14 +138,6 @@ def test_no_shell_or_deploy_script_reimplements_the_rule():
             offenders.append("%s compares the self-test schema inline" % path.name)
     assert not offenders, (
         "call mac.agent_health.advisory_health_dispatch_ready instead: %s" % "; ".join(offenders)
-    )
-
-
-def test_the_deploy_script_delegates_rather_than_reimplementing():
-    deploy = Path(__file__).resolve().parents[1] / "deploy" / "deploy-mac-fleet.sh"
-    text = deploy.read_text(encoding="utf-8", errors="replace")
-    assert "advisory_health_dispatch_ready" in text, (
-        "release_health_ready must delegate to the shared predicate"
     )
 
 

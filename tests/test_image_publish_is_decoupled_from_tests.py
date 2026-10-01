@@ -13,10 +13,10 @@ could not be delivered.
 
 Building is cheap and reversible. Deploying is not. So the build waits only on
 what decides whether the image may be published, and the correctness gates
-guard the deploy instead, through a `tested-` tag on the same digest.
+certify the image instead, through a `tested-` tag on the same digest.
 
-Decoupling WITHOUT moving the gate would be worse than the problem: an
-untested image would ship silently. Both halves are asserted here.
+(The deploy script that refused an untagged image has since been deleted;
+scripts/fleet-update deploys from a git checkout, not an image.)
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ yaml = pytest.importorskip("yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
-DEPLOY = REPO_ROOT / "deploy/deploy-mac-fleet.sh"
 
 CORRECTNESS_GATES = {"dead-code", "mainline", "compatibility", "postgres-contract"}
 
@@ -77,21 +76,3 @@ def test_the_publish_job_exposes_what_the_marker_consumes(jobs):
     outputs = jobs["openshell-runtime-image"].get("outputs") or {}
 
     assert "digest" in outputs and "frozen_inputs_sha256" in outputs
-
-
-def test_the_deploy_refuses_an_image_that_was_never_marked_tested():
-    """The other half. Without this, decoupling just lets an untested image
-    ship silently, which is worse than the outage it fixes."""
-    script = DEPLOY.read_text(encoding="utf-8")
-
-    assert "tested-" in script
-    assert "has not passed the correctness gates" in script
-
-
-def test_the_override_exists_and_announces_itself():
-    """An operator must be able to roll during an Actions outage -- and the
-    record must say they did."""
-    script = DEPLOY.read_text(encoding="utf-8")
-
-    assert "MAC_DEPLOY_ALLOW_UNTESTED_IMAGE" in script
-    assert "WARNING: deploying an image WITHOUT a verified tested tag" in script

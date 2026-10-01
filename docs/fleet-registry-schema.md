@@ -33,8 +33,8 @@ fleets:
 
 ## Single-fleet flat form
 
-For one fleet, the wrapper may be omitted. This is the same read-compatible
-form accepted by `scripts/setup-fleet.py`:
+For one fleet, the wrapper may be omitted. This is the read-compatible
+form:
 
 ```yaml
 sample: false
