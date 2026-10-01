@@ -2867,10 +2867,6 @@ class ControlPlane:
         # This is what makes multi-replica mac-api stateless — every
         # replica hits the shared CNPG cluster without any code change.
         self.store: Store = store or make_store_from_env()
-        # The API composition root attaches the hub-owned CI controller after
-        # both services exist. Embedded/test control planes intentionally leave
-        # this unset unless they are exercising post-publication CI follow-up.
-        self._cicd_monitor: Any = None
         # Lease authority is deliberately distinct from general event
         # timestamps. PostgreSQL-backed hubs read it from the shared database;
         # SQLite is a single-hub authority and samples this service clock only
@@ -11979,18 +11975,6 @@ class ControlPlane:
             drain_outbox=drain_outbox,
         )
 
-    def judgement_status(self) -> JsonDict:
-        process = getattr(self, "_judgement_process", None)
-        if process is None:
-            raise ValidationError("judgement process is not attached to this control plane")
-        return process.status()
-
-    def judgement_run(self) -> JsonDict:
-        process = getattr(self, "_judgement_process", None)
-        if process is None:
-            raise ValidationError("judgement process is not attached to this control plane")
-        return process.run_once(trigger="operator")
-
     # ------------------------------------------------------------------
     # ADR 0020: a running task is not edited in place.
     # ------------------------------------------------------------------
@@ -16311,70 +16295,6 @@ class ControlPlane:
         if row is None:
             raise NotFoundError("agent not found: %s" % agent_id)
         return self._agent_from_row(row)
-
-    # -- curiosity quarantine (hub-mediated) -------------------------------
-    #
-    # The ledger lives inside the mac-openclaw-<agent> sandbox and a dispatched
-    # task runs in a different mac-task-* sandbox that cannot reach it, so
-    # adjudication was impossible from the one place it needed to happen
-    # (task_3a4503f0). One implementation here serves both transports: the
-    # local CLI on the host, and the hub API for every sandboxed caller.
-
-    def _curiosity(self) -> Any:
-        service = getattr(self, "_curiosity_service", None)
-        if service is None:
-            from mac.curiosity_service import CuriosityService
-
-            service = CuriosityService()
-            self._curiosity_service = service
-        return service
-
-    def _curiosity_call(self, operation: Any) -> Dict[str, Any]:
-        """Translate curiosity failures into the domain errors callers expect.
-
-        The service layer speaks ValueError / RuntimeError because it is also
-        usable outside the control plane, but every public ControlPlane method
-        must raise a domain error (tests/test_control_plane_public_contract.py).
-        """
-        from mac.curiosity_service import (
-            CuriosityCommandError,
-            CuriosityUnavailable,
-        )
-
-        try:
-            return operation()
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
-        except CuriosityUnavailable as exc:
-            # A host with no OpenClaw gateway has no ledger. That is a fact
-            # about the host, not a transient fault to retry.
-            raise NotFoundError(str(exc)) from exc
-        except CuriosityCommandError as exc:
-            raise ValidationError(str(exc)) from exc
-
-    def list_curiosity_candidates(self, status: Optional[str] = None) -> Dict[str, Any]:
-        """Quarantined/approved/rejected curiosity candidates for this host."""
-        return self._curiosity_call(lambda: self._curiosity().list_candidates(status))
-
-    def decide_curiosity_candidate(
-        self,
-        candidate_id: str,
-        decision: str,
-        *,
-        actor: str,
-        reason: str,
-        approval_id: str,
-    ) -> Dict[str, Any]:
-        """Approve or reject one candidate, recording the external judgment."""
-        return self._curiosity_call(
-            lambda: self._curiosity().decide(
-                decision,
-                candidate_id,
-                actor=actor,
-                reason=reason,
-                approval_id=approval_id,
-            )
-        )
 
     def list_agents(self, *, include_deleted: bool = False) -> List[Agent]:
         sql = "SELECT * FROM agents"
@@ -21288,7 +21208,6 @@ class ControlPlane:
                 subject_id=publication.task_id,
                 detail={**git_publication, "publication_id": publication.id},
             )
-            self._schedule_cicd_check_after_publication(publication, git_publication)
         # publish_task transitions the underlying task to COMPLETED inside
         # its own transaction (bypassing transition_task), so we run the
         # workflow runtime hook here so workflow runs advance on publish.
@@ -21307,58 +21226,6 @@ class ControlPlane:
                     "workflow runtime failed to advance after publish_task"
                 )
         return publication
-
-    def _schedule_cicd_check_after_publication(
-        self,
-        publication: Publication,
-        git_publication: JsonDict,
-    ) -> None:
-        """Append the durable exact-SHA handoff for post-publication CI.
-
-        Publication remains complete once the reviewed change is remotely
-        integrated. CI is a linked lifecycle continuation: the background
-        monitor chooses the repository-specific delay, re-polls pending runs,
-        and coalesces terminal failures into low-priority maintenance.
-        """
-
-        final_sha = str(git_publication.get("final_sha") or "").strip()
-        if not _GIT_SHA_RE.match(final_sha):
-            return
-        monitor = getattr(self, "_cicd_monitor", None)
-        if monitor is None:
-            return
-        task = self.get_task(publication.task_id)
-        metadata = ensure_json_object(task.metadata)
-        origin = ensure_json_object(metadata.get("origin"))
-        repository_url = str(
-            origin.get("repository_url") or git_publication.get("repository_url") or ""
-        ).strip()
-        try:
-            monitor.schedule_publication_followup(
-                task_id=publication.task_id,
-                publication_id=publication.id,
-                project=str(task.project or ""),
-                canonical_sha=final_sha,
-                repository_url=repository_url,
-                published_at=publication.created_at,
-                actor=publication.created_by,
-            )
-        except Exception:  # noqa: BLE001 - publication is already durable.
-            try:
-                self.record_log(
-                    "cicd.followup.schedule_failed",
-                    layer="control_plane",
-                    source=publication.created_by,
-                    level="error",
-                    subject_type="task",
-                    subject_id=publication.task_id,
-                    detail={
-                        "publication_id": publication.id,
-                        "canonical_sha": final_sha,
-                    },
-                )
-            except Exception:
-                pass
 
     def _record_canonical_integration_proof(
         self,

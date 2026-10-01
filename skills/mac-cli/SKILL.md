@@ -167,8 +167,6 @@ called "help".
     mac project pause/activate <name>
     mac admin human register <username>
     mac admin dispatch submit <file>    literate-ai execution requests
-    mac admin judgement status          process-quality daemon last report
-    mac admin judgement run             run one judgement cycle now
     mac admin events news --follow      significant task and agent activity
     mac admin login --local-console     hub-local enrollment without SSH
     mac admin plugin install --scope global

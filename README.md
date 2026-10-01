@@ -703,9 +703,7 @@ For repository-backed work, the production path is:
    release blockers. Independent build and test checks may still veto an
    approval. Review nudges are capped by durable delivered attempts, so a
    verifier that cannot produce a verdict is retracted instead of being
-   nudged indefinitely. The hub's hourly judgement process
-   (`mac admin judgement`) watches gate quality and task-state pile-ups and
-   can stop tasks, hold agents, or stop and redeploy the fleet.
+   nudged indefinitely.
 8. Publication completes the mac task. Failed tasks are reopened with a bounded
    retry policy; exhausted retries remain failed and visible.
 

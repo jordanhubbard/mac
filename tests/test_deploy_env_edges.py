@@ -297,7 +297,8 @@ def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path)
     assert hub["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "prune"
     assert hub["MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS"] == "86400"
     assert hub["MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS"] == "300"
-    assert hub["MAC_CICD_MONITOR_ENABLED"] == "1"
+    # The CI/CD monitor was removed; the hub no longer writes its flag.
+    assert "MAC_CICD_MONITOR_ENABLED" not in hub
     # Agent task-branches are ephemeral: prune on merge (grace 0), not after a week.
     assert hub["MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS"] == "0"
 
@@ -307,7 +308,7 @@ def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path)
         environ={},
     )
     assert spoke["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "off"
-    assert spoke["MAC_CICD_MONITOR_ENABLED"] == "0"
+    assert "MAC_CICD_MONITOR_ENABLED" not in spoke
     assert spoke["MAC_CONTROL_PLANE_ROLE"] == "client"
     assert "MAC_DB" not in spoke
     assert "MAC_DATABASE_URL" not in spoke

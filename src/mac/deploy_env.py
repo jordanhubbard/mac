@@ -1152,10 +1152,6 @@ def build_mac_env(
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS", "0")
     else:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
-        values["MAC_CICD_MONITOR_ENABLED"] = "0"
-        # Spokes never own controller integration/certification/landing. Clear
-        # stale values rather than preserving an old hub configuration after a
-        # role change or host swap.
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
     values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
@@ -1199,18 +1195,6 @@ def build_mac_env(
         # metadata["github_issue_ingest"], so enabling it by default is safe;
         # it needs GH_TOKEN/GITHUB_TOKEN in the hub environment to reach the API.
         values.setdefault("MAC_GITHUB_INGEST_ENABLED", "1")
-        # Reconcile CI for every registered GitHub repository and follow up
-        # exact SHAs after MAC publication.  Repositories without CI are
-        # detected and skipped, so this is safe to enable hub-wide.
-        values.setdefault("MAC_CICD_MONITOR_ENABLED", "1")
-        # mac-backlog-groom: run the autonomous backlog groomer on the hub. It is
-        # a no-op for every project that has not opted in via
-        # metadata["backlog_grooming"], so enabling it by default is safe.
-        values.setdefault("MAC_BACKLOG_GROOM_ENABLED", "1")
-        # mac-judgement: hourly process-quality authority. Enabled on the
-        # hub so a recurrence of the 2026-08-23 review-rejection loops is
-        # stopped by the hub rather than waited out by a human.
-        values.setdefault("MAC_JUDGEMENT_ENABLED", "1")
         values.setdefault("MAC_REVIEW_SEMANTIC_REVIEWER", "0")
         # mac-model-select: dynamic powerhouse-model selection is OPT-IN, not
         # default-on. It is not yet production-ready: the selection namespace

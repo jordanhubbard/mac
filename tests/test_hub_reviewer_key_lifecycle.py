@@ -2,7 +2,6 @@ import json
 
 import pytest
 
-from mac.judgement import JudgementConfig, JudgementProcess
 from mac.models import HealthStatus, ValidationError
 from mac.services import (
     DEFAULT_HUB_REVIEWER_AGENT_ID,
@@ -142,30 +141,3 @@ def test_virtual_reviewer_key_recovery_is_bounded_and_explicitly_unhealthy(cp, m
         (reviewer.id, "agent.virtual_reviewer_attestation_key.recovery_exhausted"),
     )
     assert exhausted["count"] == 1
-
-
-def test_judgement_reports_registered_reviewer_key_failure(cp):
-    reviewer = _register_virtual_reviewer(cp)
-    cp.store.execute(
-        "UPDATE agents SET attestation_key_ciphertext = ? WHERE id = ?",
-        ("not-fernet-ciphertext", reviewer.id),
-    )
-
-    report = JudgementProcess(cp, JudgementConfig(enabled=True)).run_once()
-
-    finding = next(
-        item
-        for item in report["findings"]
-        if item["kind"] == "hub_reviewer_attestation_key_unhealthy"
-    )
-    assert finding["agent_id"] == reviewer.id
-    assert finding["detail"]["state"] == "undecryptable"
-    assert finding["detail"]["ready"] is False
-    assert report["actions"] == [
-        {
-            "action": "skipped",
-            "reason": "no_recommended_action",
-            "finding_kind": "hub_reviewer_attestation_key_unhealthy",
-            "task_id": "",
-        }
-    ]

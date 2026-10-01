@@ -1,6 +1,6 @@
 """Tests for the in-hub autonomous nap driver (mac.nap_ticker).
 
-The ticker mirrors BacklogGroomer: a daemon thread wakes on an interval,
+The ticker is a daemon thread that wakes on an interval,
 asks the ledger which agents' nap windows have opened, and drives each
 through one full ``run_nap_cycle``. These tests exercise config parsing,
 the inactive/no-op path, and ``run_once`` against a real in-memory

@@ -4,12 +4,12 @@ A generator is any code path that files tasks without a human asking for
 them. Measured across 7,781 ledger tasks on 2026-08-02, several of them
 produced almost nothing that ever completed:
 
-    self_heal                      54 tasks    0.0%
+    self_heal                      54 tasks    0.0%   (generator deleted)
     dream_low_confidence_repair 1,396 tasks    0.3%   (generator deleted)
     crash_observer                 50 tasks    2.0%
     task_system_reset             137 tasks    2.9%
-    curiosity_adjudication         11 tasks    0.0%
-    backlog_grooming                5 tasks    0.0%
+    curiosity_adjudication         11 tasks    0.0%   (generator deleted)
+    backlog_grooming                5 tasks    0.0%   (generator deleted)
 
 against 20.0% for operator-filed work. The precedent for deleting one is
 already set: mac.dreaming records in its own source that the scanner it

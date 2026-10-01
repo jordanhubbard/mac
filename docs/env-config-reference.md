@@ -57,12 +57,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ATTESTATION_KEY` | str | consumer-defined | core | Core setting: attestation key. |
 | `MAC_ATTESTATION_KEY_ENV` | str | consumer-defined | core | Core setting: attestation key env. |
 | `MAC_AUTO_REGISTER_FLEET` | bool | consumer-defined | core | Core setting: auto register fleet. |
-| `MAC_BACKLOG_GROOM_BACKLOG_SIZE` | int | consumer-defined | backlog-grooming | Backlog Grooming setting: backlog groom backlog size. |
-| `MAC_BACKLOG_GROOM_ENABLED` | bool | consumer-defined | backlog-grooming | Backlog Grooming setting: backlog groom enabled. |
-| `MAC_BACKLOG_GROOM_INITIAL_DELAY_SECONDS` | int | consumer-defined | backlog-grooming | Backlog Grooming setting: backlog groom initial delay seconds. |
-| `MAC_BACKLOG_GROOM_INTERVAL_SECONDS` | int | consumer-defined | backlog-grooming | Backlog Grooming setting: backlog groom interval seconds. |
-| `MAC_BACKLOG_GROOM_MIN_READY` | str | consumer-defined | backlog-grooming | Backlog Grooming setting: backlog groom min ready. |
-| `MAC_BACKLOG_GROOM_REGROOM_INTERVAL_SECONDS` | int | consumer-defined | backlog-grooming | Backlog Grooming setting: backlog groom regroom interval seconds. |
 | `MAC_BASH_CONTRACT_OK` | bool | consumer-defined | core | Core setting: bash contract ok. |
 | `MAC_BEADS_BRIDGE_HUB_AGENT` | str | consumer-defined | core | Retired beads bridge selector; ignored by current hub-agent resolution. |
 | `MAC_BIN` | str | consumer-defined | core | Core setting: bin. |
@@ -78,15 +72,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier status command timeout seconds. |
 | `MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier tunnel health timeout seconds. |
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
-| `MAC_CICD_MONITOR_ABSENT_RECHECK_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor absent recheck seconds. |
-| `MAC_CICD_MONITOR_API_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor api timeout seconds. |
-| `MAC_CICD_MONITOR_ENABLED` | bool | consumer-defined | core | Core setting: cicd monitor enabled. |
-| `MAC_CICD_MONITOR_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor initial delay seconds. |
-| `MAC_CICD_MONITOR_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor interval seconds. |
-| `MAC_CICD_MONITOR_MAX_CHECKS_PER_RUN` | str | consumer-defined | core | Core setting: cicd monitor max checks per run. |
-| `MAC_CICD_MONITOR_MAX_OBSERVATIONS` | str | consumer-defined | core | Core setting: cicd monitor max observations. |
-| `MAC_CICD_MONITOR_PENDING_RETRY_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor pending retry seconds. |
-| `MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS` | str | consumer-defined | core | Core setting: cicd monitor post publication delay hours. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
 | `MAC_CLIENT_CREDENTIAL_TTL_SECONDS` | int | consumer-defined | core | Core setting: client credential ttl seconds. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
@@ -133,13 +118,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CRASH_CORE_RETAIN_COUNT` | int | consumer-defined | core | Core setting: crash core retain count. |
 | `MAC_CRASH_SPOOL_DIR` | str | consumer-defined | core | Core setting: crash spool dir. |
 | `MAC_CREDENTIAL_RENEW_AT_FRACTION` | str | consumer-defined | core | Core setting: credential renew at fraction. |
-| `MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: curiosity review cooldown seconds. |
-| `MAC_CURIOSITY_REVIEW_ENABLED` | bool | consumer-defined | core | Core setting: curiosity review enabled. |
-| `MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: curiosity review initial delay seconds. |
-| `MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: curiosity review interval seconds. |
-| `MAC_CURIOSITY_REVIEW_PROJECT` | str | consumer-defined | core | Core setting: curiosity review project. |
-| `MAC_CURIOSITY_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: curiosity timeout seconds. |
-| `MAC_CURIOSITY_WRAPPER` | str | consumer-defined | core | Core setting: curiosity wrapper. |
 | `MAC_CURSOR_ENDPOINT` | str | consumer-defined | core | Core setting: cursor endpoint. |
 | `MAC_CURSOR_MODEL` | str | consumer-defined | core | Core setting: cursor model. |
 | `MAC_DATABASE_URL` | str | consumer-defined | core | Core setting: database url. |
@@ -585,18 +563,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_DIR` | str | consumer-defined | core | Core setting: journal dir. |
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
-| `MAC_JUDGEMENT_ENABLED` | bool | consumer-defined | judgement | Judgement setting: judgement enabled. |
-| `MAC_JUDGEMENT_EXCESSIVE_REVIEWING_COUNT` | int | consumer-defined | judgement | Judgement setting: judgement excessive reviewing count. |
-| `MAC_JUDGEMENT_EXCESSIVE_REVIEWING_FRACTION` | str | consumer-defined | judgement | Judgement setting: judgement excessive reviewing fraction. |
-| `MAC_JUDGEMENT_INITIAL_DELAY_SECONDS` | int | consumer-defined | judgement | Judgement setting: judgement initial delay seconds. |
-| `MAC_JUDGEMENT_INTERVAL_SECONDS` | int | consumer-defined | judgement | Judgement setting: judgement interval seconds. |
-| `MAC_JUDGEMENT_MAX_ACTIONS_PER_CYCLE` | str | consumer-defined | judgement | Judgement setting: judgement max actions per cycle. |
-| `MAC_JUDGEMENT_MAX_REDEPLOYS_PER_DAY` | str | consumer-defined | judgement | Judgement setting: judgement max redeploys per day. |
-| `MAC_JUDGEMENT_REDEPLOY_CMD` | str | consumer-defined | judgement | Judgement setting: judgement redeploy cmd. |
-| `MAC_JUDGEMENT_REJECTION_LOOP_THRESHOLD` | int | consumer-defined | judgement | Judgement setting: judgement rejection loop threshold. |
-| `MAC_JUDGEMENT_REPO_ROOT` | str | consumer-defined | judgement | Judgement setting: judgement repo root. |
-| `MAC_JUDGEMENT_REVIEWING_STUCK_SECONDS` | int | consumer-defined | judgement | Judgement setting: judgement reviewing stuck seconds. |
-| `MAC_JUDGEMENT_TOO_MANY_GATES` | str | consumer-defined | judgement | Judgement setting: judgement too many gates. |
 | `MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd artifact timeout seconds. |
 | `MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd command timeout seconds. |
 | `MAC_LAUNCHD_LABEL` | str | consumer-defined | core | Core setting: launchd label. |
@@ -1085,18 +1051,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SECRET_KEY` | str | consumer-defined | core | Core setting: secret key. |
 | `MAC_SECRET_VAULT_TOKEN` | str | consumer-defined | core | Core setting: secret vault token. |
 | `MAC_SECRET_VAULT_URL` | str | consumer-defined | core | Core setting: secret vault url. |
-| `MAC_SELF_HEAL_AGENT_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal agent silence seconds. |
-| `MAC_SELF_HEAL_ENABLED` | bool | consumer-defined | core | Core setting: self heal enabled. |
-| `MAC_SELF_HEAL_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: self heal initial delay seconds. |
-| `MAC_SELF_HEAL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: self heal interval seconds. |
-| `MAC_SELF_HEAL_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: self heal max attempts. |
-| `MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE` | str | consumer-defined | core | Core setting: self heal max tasks per cycle. |
-| `MAC_SELF_HEAL_NAP_STALL_SECONDS` | int | consumer-defined | core | Core setting: self heal nap stall seconds. |
-| `MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal pin divergence seconds. |
-| `MAC_SELF_HEAL_READ_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal read silence seconds. |
-| `MAC_SELF_HEAL_STALE_DEPLOY_HOLD_SECONDS` | int | consumer-defined | core | Core setting: self heal stale deploy hold seconds. |
-| `MAC_SELF_HEAL_STARVATION_SECONDS` | int | consumer-defined | core | Core setting: self heal starvation seconds. |
-| `MAC_SELF_HEAL_STUCK_DRAINING_SECONDS` | int | consumer-defined | core | Core setting: self heal stuck draining seconds. |
 | `MAC_SELF_UPDATE_GIT_TIMEOUT` | int | consumer-defined | core | Core setting: self update git timeout. |
 | `MAC_SELF_UPDATE_REPO` | str | consumer-defined | core | Core setting: self update repo. |
 | `MAC_SELF_UPDATE_SERVICE_TIMEOUT` | int | consumer-defined | core | Core setting: self update service timeout. |
