@@ -1,7 +1,7 @@
 """Behavioral CLI tests for multiple high-traffic command families.
 
-Covers: dispatch, secret (delete/rotate/access/audits), rollout, eval, events,
-artifact, env, bridge (import/list/repo), user, persona, hermes (register/context),
+Covers: dispatch, secret (delete/rotate/access/audits), eval, events,
+artifact, bridge (import/list/repo), user, persona, hermes (register/context),
 binding, message, agentbus, review, task (reopen/force-complete/start/release/
 evidence), project (pause/activate/show), agent (delete/heartbeat),
 action-events, notifier, integrations, runtime
@@ -164,83 +164,6 @@ def test_secret_audits(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# rollout
-# ---------------------------------------------------------------------------
-
-
-def test_rollout_create_and_list(tmp_path):
-    rc, rollout = _run(
-        tmp_path,
-        "admin",
-        "rollout",
-        "create",
-        "v1.2.3",
-        "canary",
-        "--created-by",
-        "ops",
-        "--channel",
-        "fleet",
-    )
-    assert rc == 0
-    assert rollout["version"] == "v1.2.3"
-    assert rollout["id"].startswith("rollout_")
-
-    rc, rollouts = _run(tmp_path, "admin", "rollout", "list")
-    assert rc == 0
-    assert any(r["id"] == rollout["id"] for r in rollouts)
-
-
-def test_rollout_advance_pause(tmp_path):
-    """A freshly created canary rollout accepts 'pause' (no install-ready check)."""
-    rc, rollout = _run(
-        tmp_path, "admin", "rollout", "create", "v2.0.0", "canary", "--created-by", "ops"
-    )
-    assert rc == 0
-    rc, advanced = _run(
-        tmp_path, "admin", "rollout", "advance", rollout["id"], "pause", "--actor", "ops"
-    )
-    assert rc == 0
-    assert advanced["status"] == "paused"
-
-
-def test_rollout_advance_resume_after_pause(tmp_path):
-    """A paused canary rollout accepts 'resume'."""
-    rc, rollout = _run(
-        tmp_path, "admin", "rollout", "create", "v3.0.0", "canary", "--created-by", "ops"
-    )
-    assert rc == 0
-    # Pause first
-    _run(tmp_path, "admin", "rollout", "advance", rollout["id"], "pause", "--actor", "ops")
-    rc, advanced = _run(
-        tmp_path, "admin", "rollout", "advance", rollout["id"], "resume", "--actor", "ops"
-    )
-    assert rc == 0
-    assert advanced["status"] == "canarying"
-
-
-def test_rollout_rescue(tmp_path):
-    """rescue_rollout works from the 'planned' state without needing start_canary."""
-    rc, rollout = _run(
-        tmp_path, "admin", "rollout", "create", "v4.0.0", "canary", "--created-by", "ops"
-    )
-    assert rc == 0
-    rc, result = _run(
-        tmp_path,
-        "admin",
-        "rollout",
-        "rescue",
-        rollout["id"],
-        "--actor",
-        "ops",
-        "--reason",
-        "regression detected",
-    )
-    assert rc == 0
-    assert "rollout" in result
-    assert "task" in result
-
-
-# ---------------------------------------------------------------------------
 # eval
 # ---------------------------------------------------------------------------
 
@@ -369,41 +292,6 @@ def test_artifact_register_list_show_delete(tmp_path):
 
     rc, deleted = _run(tmp_path, "admin", "artifact", "delete", art["id"], "--actor", "ops")
     assert rc == 0
-
-
-# ---------------------------------------------------------------------------
-# env (runtime environment)
-# ---------------------------------------------------------------------------
-
-
-def test_env_register_list_show(tmp_path):
-    rc, env = _run(tmp_path, "admin", "env", "register", "staging", "--created-by", "ops")
-    assert rc == 0
-    assert env["id"].startswith("env_")
-
-    rc, envs = _run(tmp_path, "admin", "env", "list")
-    assert rc == 0
-    assert any(e["id"] == env["id"] for e in envs)
-
-    rc, shown = _run(tmp_path, "admin", "env", "show", env["id"])
-    assert rc == 0
-    assert shown["id"] == env["id"]
-
-
-def test_env_current_none(tmp_path):
-    rc, env = _run(tmp_path, "admin", "env", "register", "staging2", "--created-by", "ops")
-    assert rc == 0
-    rc, current = _run(tmp_path, "admin", "env", "current", env["id"])
-    assert rc == 0
-    assert current is None
-
-
-def test_env_deployments_empty(tmp_path):
-    rc, env = _run(tmp_path, "admin", "env", "register", "staging3", "--created-by", "ops")
-    assert rc == 0
-    rc, deps = _run(tmp_path, "admin", "env", "history", env["id"])
-    assert rc == 0
-    assert isinstance(deps, list)
 
 
 # ---------------------------------------------------------------------------

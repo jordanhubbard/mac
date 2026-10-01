@@ -3616,15 +3616,6 @@ def cmd_sandbox_bom(args: argparse.Namespace) -> None:
     _print(derived)
 
 
-def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
-    """File one drained-worker barrier task per agent for a reviewed image."""
-    cp = _plane(args)
-    bom = {}
-    if args.manifest:
-        bom = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    _print(cp.roll_out_sandbox_image(args.image, bom=bom, actor=args.actor, project=args.project))
-
-
 def cmd_task_stop(args: argparse.Namespace) -> None:
     """Abort in-flight work and hold the task under an operator hold.
 
@@ -6117,47 +6108,6 @@ def cmd_migrate_import(args: argparse.Namespace) -> None:
     _print(report.to_dict())
 
 
-def cmd_env_register(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).register_environment(
-            args.name,
-            tenant_id=args.tenant_id,
-            channel=args.channel,
-            promotes_from=args.promotes_from,
-            metadata=_json_arg(args.metadata, {}),
-            created_by=args.created_by,
-        )
-    )
-
-
-def cmd_env_list(args: argparse.Namespace) -> None:
-    _print([e.to_dict() for e in _plane(args).list_environments(args.tenant_id, args.channel)])
-
-
-def cmd_env_show(args: argparse.Namespace) -> None:
-    _print(_plane(args).get_environment(args.environment))
-
-
-def cmd_env_deploy(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).deploy_artifact(
-            args.environment,
-            args.artifact,
-            args.actor,
-            metadata=_json_arg(args.metadata, {}),
-        )
-    )
-
-
-def cmd_env_current(args: argparse.Namespace) -> None:
-    current = _plane(args).current_deployment(args.environment)
-    _print(current.to_dict() if current is not None else None)
-
-
-def cmd_env_deployments(args: argparse.Namespace) -> None:
-    _print([d.to_dict() for d in _plane(args).list_deployments(args.environment)])
-
-
 def cmd_bridge_import(args: argparse.Namespace) -> None:
     _print(
         _plane(args).import_project_item(
@@ -6300,24 +6250,6 @@ def cmd_memory_decay(args: argparse.Namespace) -> None:
             ttl_days=args.ttl_days,
             dry_run=not args.apply,
             limit=args.limit,
-        )
-    )
-
-
-def cmd_rollout_create(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).create_rollout(
-            args.version,
-            args.strategy,
-            args.target_percent,
-            args.created_by,
-            tenant_id=args.tenant_id,
-            channel=args.channel,
-            runtime_environment_id=args.runtime,
-            artifact_uri=args.artifact_uri,
-            artifact_hash=args.artifact_hash,
-            health_policy=_json_arg(args.health_policy, {}),
-            required_eval_set_id=args.required_eval_set_id,
         )
     )
 
@@ -6748,51 +6680,6 @@ def cmd_communication_deliveries(args: argparse.Namespace) -> None:
                 limit=args.limit,
             )
         ]
-    )
-
-
-def cmd_rollout_list(args: argparse.Namespace) -> None:
-    _print(
-        [rollout.to_dict() for rollout in _plane(args).list_rollouts(args.tenant_id, args.channel)]
-    )
-
-
-def cmd_rollout_advance(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).advance_rollout(
-            args.rollout_id, args.action, args.actor, _json_arg(args.detail, {})
-        )
-    )
-
-
-def cmd_rollout_rescue(args: argparse.Namespace) -> None:
-    rollout, task = _plane(args).rescue_rollout(
-        args.rollout_id,
-        args.actor,
-        args.reason,
-        _json_arg(args.detail, {}),
-    )
-    _print({"rollout": rollout.to_dict(), "task": task.to_dict()})
-
-
-def cmd_rollout_verify_artifact(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).verify_rollout_artifact(
-            args.rollout_id,
-            args.artifact_uri,
-            args.artifact_hash,
-            args.actor,
-        )
-    )
-
-
-def cmd_rollout_health(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).evaluate_rollout_health(
-            args.rollout_id,
-            _json_arg(args.checks, {}),
-            args.actor,
-        )
     )
 
 
@@ -7563,7 +7450,7 @@ def build_parser() -> argparse.ArgumentParser:
         "that worker drains, nothing else runs while it does, and the "
         "worker accepts no new async work from the moment it is queued. "
         "Requires --target-agent. For work that mutates the worker "
-        "itself, such as a sandbox image rollout.",
+        "itself, such as installing a new sandbox image.",
     )
     create.add_argument(
         "--target-agent",
@@ -8532,9 +8419,9 @@ def build_parser() -> argparse.ArgumentParser:
     # matched.
     sandbox = sub.add_parser(
         "sandbox-image",
-        help="derive and roll out the OpenShell sandbox IMAGE (not sandboxes)",
+        help="derive the OpenShell sandbox IMAGE bill of materials (not sandboxes)",
         description=(
-            "derive and roll out the OpenShell sandbox image. Individual "
+            "derive the OpenShell sandbox image bill of materials. Individual "
             "sandboxes are openshell's own `sandbox` verbs; policy delivery is "
             "`mac admin openshell`."
         ),
@@ -8559,22 +8446,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="also report what the derived BOM requires that this image never mentions",
     )
     _set(cmd_sandbox_bom, sandbox_bom_cmd)
-    sandbox_rollout_cmd = sandbox.add_parser(
-        "rollout",
-        help="roll a reviewed sandbox image onto each worker, after it drains",
-    )
-    sandbox_rollout_cmd.add_argument(
-        "--image",
-        required=True,
-        help="the immutable GHCR digest to install (not a tag)",
-    )
-    sandbox_rollout_cmd.add_argument(
-        "--manifest",
-        help="the reviewed BOM manifest to record on each rollout task",
-    )
-    sandbox_rollout_cmd.add_argument("--project", default=None)
-    sandbox_rollout_cmd.add_argument("--actor", default="human")
-    _set(cmd_sandbox_rollout, sandbox_rollout_cmd)
     project_list = project.add_parser("list", help="list projects with live work or a registration")
     project_list.add_argument(
         "--all",
@@ -10350,41 +10221,6 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_delete.add_argument("--actor", default="operator")
     _set(cmd_artifact_delete, artifact_delete)
 
-    env_root = sub.add_parser(
-        "env",
-        help="environments and deployments (artifact -> environment edges)",
-    ).add_subparsers(dest="env_command", required=True)
-    env_register = env_root.add_parser("register")
-    env_register.add_argument("name")
-    env_register.add_argument("--tenant-id")
-    env_register.add_argument("--channel", default="fleet")
-    env_register.add_argument("--promotes-from", help="upstream environment id")
-    env_register.add_argument("--metadata")
-    env_register.add_argument("--created-by", default="human")
-    _set(cmd_env_register, env_register)
-    env_list = env_root.add_parser("list")
-    env_list.add_argument("--tenant-id")
-    env_list.add_argument("--channel")
-    _set(cmd_env_list, env_list)
-    env_show = env_root.add_parser("show")
-    env_show.add_argument("environment", help="environment id or name")
-    _set(cmd_env_show, env_show)
-    env_deploy = env_root.add_parser(
-        "deploy",
-        help="record a new active deployment in an environment, retiring the prior one",
-    )
-    env_deploy.add_argument("environment", help="environment id or name")
-    env_deploy.add_argument("artifact", help="artifact id or digest")
-    env_deploy.add_argument("--actor", required=True)
-    env_deploy.add_argument("--metadata")
-    _set(cmd_env_deploy, env_deploy)
-    env_current = env_root.add_parser("current")
-    env_current.add_argument("environment")
-    _set(cmd_env_current, env_current)
-    env_deployments = env_root.add_parser("history")
-    env_deployments.add_argument("environment")
-    _set(cmd_env_deployments, env_deployments)
-
     bridge = sub.add_parser("bridge", help="external project bridge commands").add_subparsers(
         dest="bridge_command", required=True
     )
@@ -10538,56 +10374,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_memory_summarize_actions, memory_summarize_actions)
 
-    rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(
-        dest="rollout_command", required=True
-    )
-    rollout_create = rollout.add_parser("create")
-    rollout_create.add_argument("version")
-    rollout_create.add_argument("strategy")
-    rollout_create.add_argument("--target-percent", type=int, default=10)
-    rollout_create.add_argument("--created-by", required=True)
-    rollout_create.add_argument("--tenant-id")
-    rollout_create.add_argument("--channel", default="fleet")
-    rollout_create.add_argument("--runtime")
-    rollout_create.add_argument("--artifact-uri")
-    rollout_create.add_argument("--artifact-hash")
-    rollout_create.add_argument("--health-policy")
-    rollout_create.add_argument("--required-eval-set-id")
-    _set(cmd_rollout_create, rollout_create)
-    rollout_list = rollout.add_parser("list")
-    rollout_list.add_argument("--tenant-id")
-    rollout_list.add_argument("--channel")
-    _set(cmd_rollout_list, rollout_list)
-    rollout_advance = rollout.add_parser("advance")
-    rollout_advance.add_argument("rollout_id")
-    rollout_advance.add_argument("action")
-    rollout_advance.add_argument("--actor", required=True)
-    rollout_advance.add_argument("--detail")
-    _set(cmd_rollout_advance, rollout_advance)
-    rollout_artifact = rollout.add_parser("verify-artifact")
-    rollout_artifact.add_argument("rollout_id")
-    rollout_artifact.add_argument("--artifact-uri", required=True)
-    rollout_artifact.add_argument("--artifact-hash", required=True)
-    rollout_artifact.add_argument("--actor", required=True)
-    _set(cmd_rollout_verify_artifact, rollout_artifact)
-    rollout_health = rollout.add_parser("health")
-    rollout_health.add_argument("rollout_id")
-    rollout_health.add_argument("--checks", required=True)
-    rollout_health.add_argument("--actor", required=True)
-    _set(cmd_rollout_health, rollout_health)
-    rollout_rescue = rollout.add_parser("rescue")
-    rollout_rescue.add_argument("rollout_id")
-    rollout_rescue.add_argument("--actor", required=True)
-    rollout_rescue.add_argument("--reason", required=True)
-    rollout_rescue.add_argument("--detail")
-    _set(cmd_rollout_rescue, rollout_rescue)
-
     events = sub.add_parser("events", help="unified audit stream").add_subparsers(
         dest="events_command", required=True
     )
     events_list = events.add_parser(
         "list",
-        help="list events across task/rollout/eval_set/secret audit surfaces",
+        help="list events across task/eval_set/secret audit surfaces",
     )
     events_list.add_argument(
         "--subject-type",
@@ -10596,7 +10388,6 @@ def build_parser() -> argparse.ArgumentParser:
             "agent",
             "project",
             "fleet",
-            "rollout",
             "eval_set",
             "secret",
             "environment",
@@ -10609,7 +10400,7 @@ def build_parser() -> argparse.ArgumentParser:
     events_list.add_argument("--event-type", help="exact event_type match")
     events_list.add_argument(
         "--prefix",
-        help="event_type prefix (e.g. 'rollout.' for all rollout events)",
+        help="event_type prefix (e.g. 'task.' for all task events)",
     )
     events_list.add_argument("--since", help="ISO timestamp lower bound (inclusive)")
     events_list.add_argument("--until", help="ISO timestamp upper bound (inclusive)")

@@ -35,7 +35,6 @@ from mac.models import (
     NotFoundError,
     PublicationStatus,
     ReviewStatus,
-    RolloutStatus,
     TaskState,
     TransitionError,
     ValidationError,
@@ -327,24 +326,6 @@ def verified_deployment_metadata(cp=None, agent_id=None):
     if cp is not None and agent_id is not None:
         manifest = _sign(cp, agent_id, manifest)
     return {"returncode": 0, "verification": manifest}
-
-
-def create_verified_rollout(
-    cp, version="1.0", strategy="canary", tenant_id=None, channel="fleet", health_policy=None
-):
-    runtime = create_runtime(cp, "runtime-%s" % version)
-    return cp.create_rollout(
-        version,
-        strategy,
-        10,
-        "human",
-        tenant_id=tenant_id,
-        channel=channel,
-        runtime_environment_id=runtime.id,
-        artifact_uri="artifact://mac/%s" % version,
-        artifact_hash="sha256:abc123",
-        health_policy=health_policy or {},
-    )
 
 
 def test_hermes_identity_context_and_interaction_task_boundaries(cp):
@@ -3735,7 +3716,7 @@ def test_dispatch_runtime_digest_requirement_filters_agents(cp):
     assert cp._agent_available_for(agent_b, task) is True
 
 
-def test_project_bridge_memory_and_rollout_rescue(cp):
+def test_project_bridge_imports_item_and_memory(cp):
     item = cp.import_project_item(
         "github",
         "42",
@@ -3747,15 +3728,6 @@ def test_project_bridge_memory_and_rollout_rescue(cp):
     assert duplicate.id == item.id
     assert cp.get_task(item.task_id).metadata["external_id"] == "42"
     assert cp.search_memory(task_id=item.task_id)[0].record_type == "imported"
-
-    rollout = create_verified_rollout(cp, "0.2.0")
-    canary = cp.advance_rollout(rollout.id, "start_canary", "human")
-    assert canary.status == RolloutStatus.CANARYING.value
-
-    rescued, rescue_task = cp.rescue_rollout(rollout.id, "human", "canary failed health checks")
-    assert rescued.status == RolloutStatus.RESCUING.value
-    assert rescue_task.priority == 100
-    assert rescue_task.metadata["rescue"] is True
 
 
 def _write_beads(repo_path, issues):
@@ -6754,22 +6726,6 @@ def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
     assert result["valid"] is False and result["reason"] == "signature_invalid"
 
 
-def test_rollout_complete_rescue_returns_to_paused(cp):
-    """mac-24f4: RESCUING used to be a one-way trap. ``complete_rescue``
-    returns the rollout to PAUSED so the operator can re-gate the
-    canary or roll back."""
-    rollout = create_verified_rollout(cp, "24.0")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    # Drive into RESCUING via a failing health gate.
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "bad"}, "monitor")
-    refreshed = cp.get_rollout(rollout.id)
-    assert refreshed.status == RolloutStatus.RESCUING.value
-    # Operator finishes the rescue; rollout returns to PAUSED so it
-    # can be resumed or rolled back from a clean state.
-    out = cp.advance_rollout(rollout.id, "complete_rescue", "human")
-    assert out.status == RolloutStatus.PAUSED.value
-
-
 def test_signature_includes_signed_by_in_mac(cp):
     """mac-wu3f: with signed_by now in the canonical form, a signature
     minted by agent A under their key cannot be replayed in a manifest
@@ -6904,122 +6860,6 @@ def test_expire_leases_applies_default_grace_against_ntp_step(cp):
     # An operator who *wants* immediate expiry can pass explicit `now`.
     forced = cp.expire_leases(now=utcnow())
     assert [t.id for t in forced] == [task.id]
-
-
-def test_eval_gate_uses_composite_target_to_prevent_replay_across_artifacts(cp):
-    """mac-7mwd: two rollouts that share a version string but ship
-    different artifact_hash values must not share an eval-gate
-    history. Composite ``version@hash`` target_id keeps them apart.
-    """
-    eval_set = cp.create_eval_set("eg-smoke", scoring="higher_is_better")
-    cp.update_eval_set_baseline(eval_set.id, 0.5)
-
-    # Rollout A: version 7.0, artifact-hash aaaa
-    runtime_a = create_runtime(cp, "runtime-7a")
-    rollout_a = cp.create_rollout(
-        "7.0",
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime_a.id,
-        artifact_uri="artifact://mac/7.0a",
-        artifact_hash="sha256:aaaaaaaa",
-        required_eval_set_id=eval_set.id,
-    )
-    # Record a passing run targeted at composite form for A.
-    cp.record_eval_run(eval_set.id, "rollout_version", "7.0@sha256:aaaaaaaa", 0.9)
-    cp.advance_rollout(rollout_a.id, "start_canary", "human")
-
-    # Rollout B: same version string, DIFFERENT artifact-hash bbbb.
-    runtime_b = create_runtime(cp, "runtime-7b")
-    rollout_b = cp.create_rollout(
-        "7.0",
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime_b.id,
-        artifact_uri="artifact://mac/7.0b",
-        artifact_hash="sha256:bbbbbbbb",
-        required_eval_set_id=eval_set.id,
-    )
-    # B has NO matching composite eval_run; the bare-version run for A
-    # is the only one in the table. Start_canary on B must refuse:
-    # without a composite-matching run, the lookup picks the bare
-    # version run, which IS the replay we're preventing. The fix is
-    # the explicit composite preference: a bare-version run can only
-    # match the rollout when the composite is missing, but each rollout
-    # has a distinct composite — so callers must record per-composite.
-    # Until B has its own run recorded, promote is gated by A's run
-    # (replay) — but that legacy fallback is preserved for backward
-    # compat. The right behavior, observable here, is that recording
-    # a composite-form *failing* run for B causes the lookup to prefer
-    # B's run over A's bare run.
-    cp.record_eval_run(eval_set.id, "rollout_version", "7.0@sha256:bbbbbbbb", 0.1)
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(rollout_b.id, "start_canary", "human")
-
-
-def test_verify_artifact_while_paused_invalidates_health(cp):
-    """mac-vh9h: swapping artifact_uri/hash on a PAUSED rollout must
-    not let the prior health gate persist; resume + promote must
-    re-evaluate against the new artifact.
-    """
-    rollout = create_verified_rollout(cp, "9.5")
-    # Seed a passing run + advance to canary + pass health.
-    eval_set = cp.create_eval_set("e95", scoring="higher_is_better")
-    cp.update_eval_set_baseline(eval_set.id, 0.5)
-    # Don't tie it to this rollout — we just need the health gate.
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "human")
-    cp.advance_rollout(rollout.id, "pause", "human")
-
-    # Swap artifact. The previous health pass is now stale.
-    cp.verify_rollout_artifact(rollout.id, "artifact://mac/9.5b", "sha256:zzz1234", "human")
-    # _latest_health_passed should now be False because we recorded a
-    # ``status=invalidated`` health event.
-    assert cp.rollouts._latest_health_passed(rollout.id) is False
-    # Resuming and trying to promote without a fresh health pass must fail.
-    cp.advance_rollout(rollout.id, "resume", "human")
-    with pytest.raises((ValidationError, TransitionError)):
-        cp.advance_rollout(rollout.id, "promote", "human")
-
-
-def test_rollout_health_policy_requires_explicit_required_checks_at_create(cp):
-    """mac-jmjc: an empty required_checks list trivially passes the
-    health gate. Reject it at rollout creation and default missing
-    policy to a baseline ``required_checks=['runtime']`` so the gate
-    cannot be silently bypassed.
-    """
-    runtime = create_runtime(cp, "runtime-x")
-    # Explicit empty required_checks is rejected.
-    with pytest.raises(ValidationError, match="required_checks"):
-        cp.create_rollout(
-            "9.0",
-            "canary",
-            10,
-            "human",
-            runtime_environment_id=runtime.id,
-            artifact_uri="artifact://mac/9.0",
-            artifact_hash="sha256:abc123",
-            health_policy={"required_checks": []},
-        )
-    # No health_policy gets the default baseline (not silently empty).
-    rollout = cp.create_rollout(
-        "9.1",
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime.id,
-        artifact_uri="artifact://mac/9.1",
-        artifact_hash="sha256:abc123",
-    )
-    assert rollout.health_policy["required_checks"] == ["runtime"]
-    # evaluate_rollout_health with empty caller-supplied checks now FAILS
-    # the gate (instead of trivially passing on []).
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    result = cp.evaluate_rollout_health(rollout.id, {}, "human")
-    status = result.get("status") if isinstance(result, dict) else result.status
-    assert status != "healthy"
 
 
 def _recovery_two_node_workflow(cp, slug):
@@ -9399,109 +9239,6 @@ def test_rotate_secret_writes_audit_row(cp):
     assert rotations[0].accessor_agent_id == "human-operator"
 
 
-def test_rollout_pause_then_resume_round_trips(cp):
-    rollout = create_verified_rollout(cp, "1.0")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    paused = cp.advance_rollout(rollout.id, "pause", "human")
-    assert paused.status == RolloutStatus.PAUSED.value
-    resumed = cp.advance_rollout(rollout.id, "resume", "human")
-    assert resumed.status == RolloutStatus.CANARYING.value
-
-
-def test_rollout_promote_from_paused_is_allowed_pause_from_promoted_is_not(cp):
-    rollout = create_verified_rollout(cp, "1.1")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    cp.advance_rollout(rollout.id, "pause", "human")
-    promoted = cp.advance_rollout(rollout.id, "promote", "human")
-    assert promoted.status == RolloutStatus.PROMOTED.value
-    assert promoted.target_percent == 100
-    with pytest.raises(TransitionError):
-        cp.advance_rollout(rollout.id, "pause", "human")
-
-
-def test_rollout_install_requires_runtime_and_verified_artifact(cp):
-    rollout = cp.create_rollout("2.0", "canary", 10, "human")
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(rollout.id, "start_canary", "human")
-
-    runtime = create_runtime(cp, "runtime-2.0")
-    rollout = cp.create_rollout(
-        "2.1",
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime.id,
-    )
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(rollout.id, "start_canary", "human")
-    with pytest.raises(ValidationError):
-        cp.verify_rollout_artifact(rollout.id, "artifact://mac/2.1", "md5:not-ok", "human")
-
-    verified = cp.verify_rollout_artifact(
-        rollout.id,
-        "artifact://mac/2.1",
-        "sha256:abc123",
-        "human",
-    )
-    assert verified.artifact_hash == "sha256:abc123"
-    assert (
-        cp.advance_rollout(rollout.id, "start_canary", "human").status
-        == RolloutStatus.CANARYING.value
-    )
-
-
-def test_rollout_health_gate_blocks_promotion_and_failed_health_rescues(cp):
-    rollout = create_verified_rollout(
-        cp,
-        "2.2",
-        health_policy={"required_checks": ["runtime", "canary"]},
-    )
-    with pytest.raises(TransitionError):
-        cp.advance_rollout(rollout.id, "promote", "human")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(rollout.id, "promote", "human")
-
-    result = cp.evaluate_rollout_health(
-        rollout.id,
-        {"runtime": "healthy", "canary": {"status": "failed"}},
-        "monitor",
-    )
-
-    assert result["healthy"] is False
-    assert result["failed_checks"] == ["canary"]
-    assert result["rollout"]["status"] == RolloutStatus.RESCUING.value
-    assert result["rollout"]["target_percent"] == 0
-    assert result["rescue_task"]["metadata"]["failed_checks"] == ["canary"]
-
-    healthy = create_verified_rollout(
-        cp,
-        "2.3",
-        health_policy={"required_checks": ["runtime", "canary"]},
-    )
-    cp.advance_rollout(healthy.id, "start_canary", "human")
-    cp.evaluate_rollout_health(healthy.id, {"runtime": True, "canary": "ok"}, "monitor")
-    assert cp.advance_rollout(healthy.id, "promote", "human").status == RolloutStatus.PROMOTED.value
-
-
-def test_rollout_channels_scope_tenant_and_fleet(cp):
-    tenant = cp.register_tenant("rollout-tenant")
-    fleet = create_verified_rollout(cp, "3.0", strategy="full", channel="fleet")
-    tenant_rollout = create_verified_rollout(
-        cp,
-        "3.1",
-        strategy="full",
-        tenant_id=tenant.id,
-        channel="tenant-stable",
-    )
-
-    assert [rollout.id for rollout in cp.list_rollouts(channel="fleet")] == [fleet.id]
-    assert [rollout.id for rollout in cp.list_rollouts(tenant_id=tenant.id)] == [tenant_rollout.id]
-    assert tenant_rollout.tenant_id == tenant.id
-    assert tenant_rollout.channel == "tenant-stable"
-
-
 def test_runtime_manifest_rejects_nested_latest_and_substring_secret_fields(cp):
     with pytest.raises(ValidationError):
         cp.create_runtime(
@@ -9572,48 +9309,6 @@ def test_eval_run_without_baseline_passes_and_can_seed_baseline(cp):
     assert follow_up.passed is False
 
 
-def test_rollout_promote_requires_passing_eval_run(cp):
-    eval_set = cp.create_eval_set(
-        "smoke-eval",
-        scoring="higher_is_better",
-        baseline_score=0.90,
-        regression_threshold=0.01,
-    )
-    rollout = create_verified_rollout(cp, "2.0")
-    # attach the eval_set requirement after-the-fact via a fresh rollout
-    runtime = create_runtime(cp, "runtime-2.1")
-    gated = cp.create_rollout(
-        "2.1",
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime.id,
-        artifact_uri="artifact://mac/2.1",
-        artifact_hash="sha256:abc123",
-        required_eval_set_id=eval_set.id,
-    )
-    # mac-wfct: start_canary now also consults the eval gate, so seed
-    # a passing run first.
-    cp.record_eval_run(eval_set.id, "rollout_version", "2.1", 0.92)
-    cp.advance_rollout(gated.id, "start_canary", "human")
-    # mac-jmjc: must supply checks that satisfy the policy's required_checks.
-    cp.evaluate_rollout_health(gated.id, {"runtime": "healthy"}, "human")
-
-    # A failing run posted after canary now blocks promote.
-    cp.record_eval_run(eval_set.id, "rollout_version", "2.1", 0.70)
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(gated.id, "promote", "human")
-
-    # A subsequent passing run unlocks promote.
-    cp.record_eval_run(eval_set.id, "rollout_version", "2.1", 0.92)
-    promoted = cp.advance_rollout(gated.id, "promote", "human")
-    assert promoted.status == RolloutStatus.PROMOTED.value
-    assert promoted.target_percent == 100
-
-    # Sanity: an ungated rollout doesn't need an eval.
-    assert rollout.required_eval_set_id is None
-
-
 def test_eval_run_rejects_unknown_target_kind(cp):
     eval_set = cp.create_eval_set("any", scoring="higher_is_better")
     with pytest.raises(ValidationError):
@@ -9629,41 +9324,6 @@ def test_evidence_kind_eval_is_accepted(cp):
         task.id, "eval", "artifact://scorecard.json", "eval scorecard", worker.id
     )
     assert evidence.kind == "eval"
-
-
-def _gated_rollout(cp, version, eval_set_id):
-    runtime = create_runtime(cp, "runtime-%s" % version)
-    rollout = cp.create_rollout(
-        version,
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime.id,
-        artifact_uri="artifact://mac/%s" % version,
-        artifact_hash="sha256:abc123",
-        required_eval_set_id=eval_set_id,
-    )
-    # mac-wfct: start_canary now also requires a passing eval run; seed one.
-    cp.record_eval_run(eval_set_id, "rollout_version", version, 0.95)
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    # mac-jmjc: default health gate now requires non-empty checks.
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "human")
-    return rollout
-
-
-def test_eval_gate_blocks_when_failing_run_supersedes_passing(cp):
-    eval_set = cp.create_eval_set(
-        "smoke",
-        scoring="higher_is_better",
-        baseline_score=0.90,
-        regression_threshold=0.01,
-    )
-    rollout = _gated_rollout(cp, "3.0", eval_set.id)
-    # An older passing run is no longer "latest" once a failing run lands.
-    cp.record_eval_run(eval_set.id, "rollout_version", "3.0", 0.95)
-    cp.record_eval_run(eval_set.id, "rollout_version", "3.0", 0.50)
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(rollout.id, "promote", "human")
 
 
 def test_eval_run_rejects_non_eval_evidence(cp):
@@ -9683,42 +9343,6 @@ def test_eval_run_rejects_non_eval_evidence(cp):
             0.9,
             evidence_id=test_evidence.id,
         )
-
-
-def test_eval_gate_errors_clearly_when_required_eval_set_is_deleted(cp):
-    eval_set = cp.create_eval_set(
-        "smoke",
-        scoring="higher_is_better",
-        baseline_score=0.90,
-    )
-    rollout = _gated_rollout(cp, "4.0", eval_set.id)
-    cp.record_eval_run(eval_set.id, "rollout_version", "4.0", 0.95)
-    # Delete the eval_set directly to simulate retirement.
-    cp.store.execute("DELETE FROM eval_sets WHERE id = ?", (eval_set.id,))
-    with pytest.raises(ValidationError) as exc:
-        cp.advance_rollout(rollout.id, "promote", "human")
-    assert "no longer exists" in str(exc.value)
-
-
-def test_eval_gate_records_eval_run_id_in_rollout_event(cp):
-    eval_set = cp.create_eval_set(
-        "smoke",
-        scoring="higher_is_better",
-        baseline_score=0.90,
-        regression_threshold=0.01,
-    )
-    rollout = _gated_rollout(cp, "5.0", eval_set.id)
-    run = cp.record_eval_run(eval_set.id, "rollout_version", "5.0", 0.95)
-    cp.advance_rollout(rollout.id, "promote", "human")
-    rows = cp.store.query_all(
-        "SELECT event_type, detail FROM rollout_events WHERE rollout_id = ? ORDER BY created_at, id",
-        (rollout.id,),
-    )
-    promote = [row for row in rows if row["event_type"] == "rollout.promote"]
-    assert len(promote) == 1
-    detail = json.loads(promote[0]["detail"])
-    assert detail["eval_run_id"] == run.id
-    assert detail["eval_score"] == pytest.approx(0.95)
 
 
 def test_eval_set_baseline_change_writes_event(cp):
@@ -9753,41 +9377,6 @@ def test_eval_run_event_records_run_id_and_passed(cp):
     assert len(run_events) == 1
     assert run_events[0]["detail"]["run_id"] == run.id
     assert run_events[0]["detail"]["passed"] is True
-
-
-def test_evaluate_rollout_health_failing_twice_does_not_duplicate_rescue(cp):
-    rollout = create_verified_rollout(
-        cp,
-        "7.0",
-        health_policy={"required_checks": ["runtime", "canary"]},
-    )
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    first = cp.evaluate_rollout_health(
-        rollout.id,
-        {"runtime": "healthy", "canary": {"status": "failed"}},
-        "monitor",
-    )
-    second = cp.evaluate_rollout_health(
-        rollout.id,
-        {"runtime": "healthy", "canary": {"status": "failed"}},
-        "monitor",
-    )
-    rescue_tasks = [
-        task
-        for task in cp.list_tasks()
-        if task.metadata.get("rollout_id") == rollout.id and task.metadata.get("rescue")
-    ]
-    assert len(rescue_tasks) == 1
-    # The second call should return the same in-flight rescue task and record an
-    # additional health-failure event without spawning a duplicate task.
-    assert second["healthy"] is False
-    assert second["rescue_task"]["id"] == first["rescue_task"]["id"]
-    events = cp.store.query_all(
-        "SELECT event_type FROM rollout_events WHERE rollout_id = ? ORDER BY created_at, id",
-        (rollout.id,),
-    )
-    types = [row["event_type"] for row in events]
-    assert types.count("rollout.health_failure_during_rescue") == 1
 
 
 def test_tenant_only_secret_scope_grants_access_to_matching_machine(cp):
@@ -9836,9 +9425,6 @@ def test_events_view_unifies_all_audit_surfaces(cp, monkeypatch):
     fleet = cp.create_fleet("audit-fleet", agent_ids=[worker.id], actor="ops")
     cp.update_fleet(fleet.id, status="inactive", agent_ids=[worker.id, reviewer.id], actor="ops")
     cp.delete_fleet(fleet.id, actor="ops")
-    # rollout event
-    rollout = create_verified_rollout(cp, "8.0")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
     # eval_set event
     cp.create_eval_set("audit-eval", scoring="higher_is_better")
     # secret event
@@ -9880,7 +9466,6 @@ def test_events_view_unifies_all_audit_surfaces(cp, monkeypatch):
         "agent",
         "project",
         "fleet",
-        "rollout",
         "eval_set",
         "secret",
         "action_event",
@@ -9988,15 +9573,14 @@ def test_observed_fleet_agents_do_not_mutate_configured_membership(cp):
 
 
 def test_events_filter_by_subject_returns_only_matching_stream(cp):
-    rollout = create_verified_rollout(cp, "8.1")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
+    project = cp.create_project("audit-subject-project", actor="alice")
     eval_set = cp.create_eval_set("audit-eval-2", scoring="higher_is_better")
     cp.update_eval_set_baseline(eval_set.id, 0.5)
 
-    rollout_events = cp.list_events(subject_type="rollout", subject_id=rollout.id)
-    assert rollout_events
-    assert {event["subject_type"] for event in rollout_events} == {"rollout"}
-    assert {event["subject_id"] for event in rollout_events} == {rollout.id}
+    project_events = cp.list_events(subject_type="project", subject_id=project.id)
+    assert project_events
+    assert {event["subject_type"] for event in project_events} == {"project"}
+    assert {event["subject_id"] for event in project_events} == {project.id}
 
     eval_events = cp.list_events(subject_type="eval_set", subject_id=eval_set.id)
     types = {event["event_type"] for event in eval_events}
@@ -10005,31 +9589,29 @@ def test_events_filter_by_subject_returns_only_matching_stream(cp):
 
 
 def test_events_filter_by_event_type_prefix(cp):
-    rollout = create_verified_rollout(cp, "8.2")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.advance_rollout(rollout.id, "pause", "human")
+    eval_set = cp.create_eval_set("audit-eval-prefix", scoring="higher_is_better")
+    cp.update_eval_set_baseline(eval_set.id, 0.5)
+    cp.create_project("audit-prefix-project", actor="alice")
 
-    rollout_prefix = cp.list_events(event_type_prefix="rollout.")
-    assert rollout_prefix
-    assert all(event["event_type"].startswith("rollout.") for event in rollout_prefix)
+    eval_prefix = cp.list_events(event_type_prefix="eval_set.")
+    assert eval_prefix
+    assert all(event["event_type"].startswith("eval_set.") for event in eval_prefix)
 
 
 def test_events_filter_event_type_prefix_escapes_like_wildcards(cp):
-    rollout = create_verified_rollout(cp, "8.2.1")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.create_eval_set("audit-eval-wildcard", scoring="higher_is_better")
 
     # bare `%` must not be treated as wildcard — should match nothing
     assert cp.list_events(event_type_prefix="%") == []
     # bare `_` likewise
     assert cp.list_events(event_type_prefix="_") == []
     # a real prefix still works
-    assert cp.list_events(event_type_prefix="rollout.")
+    assert cp.list_events(event_type_prefix="eval_set.")
 
 
 def test_events_filter_by_actor_and_time_window(cp):
-    rollout = create_verified_rollout(cp, "8.3")
-    cp.advance_rollout(rollout.id, "start_canary", "alice")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "bob")
+    cp.create_project("audit-actor-alice", actor="alice")
+    cp.create_project("audit-actor-bob", actor="bob")
 
     alice_events = cp.list_events(actor="alice")
     assert alice_events
@@ -10249,81 +9831,6 @@ def test_artifact_list_filters_by_kind(cp):
     images = cp.list_artifacts(kind="image")
     assert {a.digest for a in images} == {"sha256:1", "sha256:2"}
     assert {a.kind for a in images} == {"image"}
-
-
-def test_environment_register_and_deploy_artifact_atomically_retires_prior(cp):
-    artifact_v1 = cp.register_artifact("image", "sha256:v1", "art://v1", "human")
-    artifact_v2 = cp.register_artifact("image", "sha256:v2", "art://v2", "human")
-    staging = cp.register_environment("staging", channel="release")
-    prod = cp.register_environment("prod", channel="release", promotes_from=staging.id)
-
-    # No deployment yet.
-    assert cp.current_deployment(staging.id) is None
-
-    # First deploy: becomes active, no prior to retire.
-    d1 = cp.deploy_artifact(staging.id, artifact_v1.id, "release-bot")
-    assert d1.status == "active"
-    assert d1.retired_at is None
-    assert cp.current_deployment(staging.id).id == d1.id
-
-    # Second deploy: retires the first, new one becomes active.
-    d2 = cp.deploy_artifact(staging.id, artifact_v2.id, "release-bot")
-    assert d2.status == "active"
-    assert cp.current_deployment(staging.id).id == d2.id
-    retired = cp.get_deployment(d1.id)
-    assert retired.status == "retired"
-    assert retired.retired_at is not None
-
-    # Deploy to prod environment is independent.
-    d3 = cp.deploy_artifact(prod.id, artifact_v2.id, "release-bot")
-    assert cp.current_deployment(prod.id).id == d3.id
-    assert cp.current_deployment(staging.id).id == d2.id
-
-
-def test_environment_register_validates_inputs(cp):
-    with pytest.raises(ValidationError):
-        cp.register_environment("")  # empty name
-    with pytest.raises(NotFoundError):
-        cp.register_environment("a", promotes_from="env_does_not_exist")
-
-
-def test_deploy_artifact_requires_known_artifact_and_environment(cp):
-    env = cp.register_environment("staging-fail")
-    with pytest.raises(NotFoundError):
-        cp.deploy_artifact(env.id, "art_does_not_exist", "release-bot")
-    art = cp.register_artifact("image", "sha256:lone", "uri", "human")
-    with pytest.raises(NotFoundError):
-        cp.deploy_artifact("env_does_not_exist", art.id, "release-bot")
-
-
-def test_environment_events_appear_in_unified_stream(cp):
-    artifact = cp.register_artifact("image", "sha256:env-test", "uri", "human")
-    env = cp.register_environment("audit-env", channel="release")
-    cp.deploy_artifact(env.id, artifact.id, "release-bot")
-    cp.deploy_artifact(env.id, artifact.id, "release-bot")  # retire-and-replace
-
-    env_events = cp.list_events(subject_type="environment", subject_id=env.id)
-    types = [event["event_type"] for event in env_events]
-    # newest-first ordering
-    assert "environment.created" in types
-    assert types.count("environment.deployed") == 2
-    assert types.count("environment.retired") == 1
-
-
-def test_list_environments_filters_by_tenant_and_channel(cp):
-    tenant = cp.register_tenant("env-tenant")
-    cp.register_environment("dev", tenant_id=tenant.id, channel="release")
-    cp.register_environment("prod", tenant_id=tenant.id, channel="release")
-    cp.register_environment("global-fleet", channel="fleet")
-
-    tenant_envs = cp.list_environments(tenant_id=tenant.id)
-    assert {env.name for env in tenant_envs} == {"dev", "prod"}
-
-    release_envs = cp.list_environments(channel="release")
-    assert {env.name for env in release_envs} == {"dev", "prod"}
-
-    fleet_envs = cp.list_environments(channel="fleet")
-    assert {env.name for env in fleet_envs} == {"global-fleet"}
 
 
 def test_fleet_build_distribution_buckets_by_digest(cp):
@@ -11699,213 +11206,6 @@ def test_repository_completion_requires_durable_canonical_integration(cp, monkey
             TaskState.COMPLETED.value,
             "reviewer",
         )
-
-
-# ---------------------------------------------------------------------------
-# mac-kg8y: Rollout promotion / rollback must atomically deploy to environment
-# ---------------------------------------------------------------------------
-
-
-def _create_linked_rollout(cp, version="10.0", artifact_hash="sha256:aabbccdd"):
-    """Create a rollout with a linked deploy environment and a pre-registered artifact."""
-    runtime = create_runtime(cp, "runtime-linked-%s" % version)
-    env = cp.register_environment("env-rollout-%s" % version, channel="fleet")
-    artifact = cp.register_artifact(
-        "image",
-        artifact_hash,
-        "artifact://mac/%s" % version,
-        "human",
-    )
-    rollout = cp.create_rollout(
-        version,
-        "canary",
-        10,
-        "human",
-        runtime_environment_id=runtime.id,
-        artifact_uri=artifact.uri,
-        artifact_hash=artifact_hash,
-        deploy_environment_id=env.id,
-    )
-    return rollout, env, artifact
-
-
-def test_rollout_promotion_deploys_artifact_to_linked_environment(cp):
-    """mac-kg8y: promote must deploy the rollout artifact to deploy_environment_id."""
-    rollout, env, artifact = _create_linked_rollout(cp, "11.0", "sha256:promo001")
-
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    promoted = cp.advance_rollout(rollout.id, "promote", "human")
-
-    assert promoted.status == RolloutStatus.PROMOTED.value
-    # The environment must now have an active deployment for our artifact.
-    active = cp.current_deployment(env.id)
-    assert active is not None, "environment has no active deployment after promote"
-    assert active.artifact_id == artifact.id
-    assert active.status == "active"
-
-
-def test_rollout_promotion_records_deployed_event(cp):
-    """mac-kg8y: a rollout.deployed event is recorded after a successful promote."""
-    rollout, env, artifact = _create_linked_rollout(cp, "11.1", "sha256:promo002")
-
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    cp.advance_rollout(rollout.id, "promote", "human")
-
-    events = cp.list_rollout_events(rollout.id)
-    event_types = [e["event_type"] for e in events]
-    assert "rollout.deployed" in event_types, (
-        "expected rollout.deployed event, got: %s" % event_types
-    )
-    deployed_evt = next(e for e in events if e["event_type"] == "rollout.deployed")
-    assert deployed_evt["detail"]["artifact_id"] == artifact.id
-    assert deployed_evt["detail"]["deploy_environment_id"] == env.id
-
-
-def test_rollout_without_deploy_environment_still_promotes(cp):
-    """Rollouts with no deploy_environment_id must still promote successfully (no-op deploy)."""
-    rollout = create_verified_rollout(cp, "12.0")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    promoted = cp.advance_rollout(rollout.id, "promote", "human")
-    assert promoted.status == RolloutStatus.PROMOTED.value
-    assert promoted.deploy_environment_id is None
-
-
-def test_rollout_rollback_redeploys_prior_artifact(cp):
-    """mac-kg8y: rollback must redeploy the prior known-good artifact."""
-    rollout, env, artifact_v1 = _create_linked_rollout(cp, "13.0", "sha256:rollback01")
-
-    # Pre-deploy artifact_v1 as the prior known-good deployment.
-    cp.deploy_artifact(env.id, artifact_v1.id, "prior-release")
-
-    # Create v2 artifact, promote it.
-    artifact_v2 = cp.register_artifact(
-        "image", "sha256:rollback02", "artifact://mac/13.0-v2", "human"
-    )
-    cp.verify_rollout_artifact(rollout.id, artifact_v2.uri, artifact_v2.digest, "human")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    cp.advance_rollout(rollout.id, "promote", "human")
-
-    # Now rollback — should redeploy the prior artifact (v1).
-    rolledback = cp.advance_rollout(rollout.id, "rollback", "human")
-    assert rolledback.status == RolloutStatus.ROLLED_BACK.value
-
-    active = cp.current_deployment(env.id)
-    assert active is not None
-    assert active.artifact_id == artifact_v1.id, "expected prior artifact %s, got %s" % (
-        artifact_v1.id,
-        active.artifact_id,
-    )
-
-
-def test_rollout_rollback_records_rolled_back_deployed_event(cp):
-    """mac-kg8y: a rollout.rolled_back_deployed event is recorded on successful rollback."""
-    rollout, env, artifact_v1 = _create_linked_rollout(cp, "13.1", "sha256:rollbackevt1")
-    cp.deploy_artifact(env.id, artifact_v1.id, "prior-release")
-
-    artifact_v2 = cp.register_artifact(
-        "image", "sha256:rollbackevt2", "artifact://mac/13.1-v2", "human"
-    )
-    cp.verify_rollout_artifact(rollout.id, artifact_v2.uri, artifact_v2.digest, "human")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    cp.advance_rollout(rollout.id, "promote", "human")
-    cp.advance_rollout(rollout.id, "rollback", "human")
-
-    events = cp.list_rollout_events(rollout.id)
-    event_types = [e["event_type"] for e in events]
-    assert "rollout.rolled_back_deployed" in event_types, (
-        "expected rollout.rolled_back_deployed event, got: %s" % event_types
-    )
-
-
-def test_rollout_rollback_without_deploy_environment_is_noop(cp):
-    """Rollouts with no deploy_environment_id must still transition to ROLLED_BACK (no deploy)."""
-    rollout = create_verified_rollout(cp, "14.0")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    rolledback = cp.advance_rollout(rollout.id, "rollback", "human")
-    assert rolledback.status == RolloutStatus.ROLLED_BACK.value
-
-
-def test_rollout_rollback_with_no_prior_deployment_records_skipped_event(cp):
-    """When no prior deployment exists, rollback records rollout.rollback_skipped."""
-    rollout, env, artifact_v1 = _create_linked_rollout(cp, "14.1", "sha256:nopriordeploy")
-    # Do NOT pre-deploy anything; only the rollout promotion creates the first deployment.
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    cp.advance_rollout(rollout.id, "promote", "human")
-    # Now rollback — no prior deployment to revert to.
-    rolledback = cp.advance_rollout(rollout.id, "rollback", "human")
-    assert rolledback.status == RolloutStatus.ROLLED_BACK.value
-
-    events = cp.list_rollout_events(rollout.id)
-    event_types = [e["event_type"] for e in events]
-    assert "rollout.rollback_skipped" in event_types, (
-        "expected rollout.rollback_skipped event, got: %s" % event_types
-    )
-
-
-def test_rollout_rescue_from_promoted_redeploys_prior_artifact(cp):
-    """mac-kg8y: rescuing a PROMOTED rollout must immediately revert the environment."""
-    rollout, env, artifact_v1 = _create_linked_rollout(cp, "15.0", "sha256:rescue01")
-    cp.deploy_artifact(env.id, artifact_v1.id, "prior-release")
-
-    artifact_v2 = cp.register_artifact(
-        "image", "sha256:rescue02", "artifact://mac/15.0-v2", "human"
-    )
-    cp.verify_rollout_artifact(rollout.id, artifact_v2.uri, artifact_v2.digest, "human")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
-    cp.advance_rollout(rollout.id, "promote", "human")
-
-    # At this point env serves artifact_v2. Rescue should revert to artifact_v1.
-    rescued, rescue_task = cp.rescue_rollout(
-        rollout.id, "ops-bot", "service degraded after promote"
-    )
-    assert rescued.status == RolloutStatus.RESCUING.value
-
-    active = cp.current_deployment(env.id)
-    assert active is not None
-    assert active.artifact_id == artifact_v1.id, (
-        "expected prior artifact %s after rescue, got %s" % (artifact_v1.id, active.artifact_id)
-    )
-
-
-def test_rollout_rescue_from_canarying_does_not_deploy(cp):
-    """Rescuing from CANARYING (not PROMOTED) should not attempt environment redeployment."""
-    rollout, env, artifact = _create_linked_rollout(cp, "15.1", "sha256:rescue03")
-    cp.advance_rollout(rollout.id, "start_canary", "human")
-    # Rescue from CANARYING — env was never promoted, so no redeployment expected.
-    rescued, _ = cp.rescue_rollout(rollout.id, "ops-bot", "canary health failed")
-    assert rescued.status == RolloutStatus.RESCUING.value
-    # Environment should have no active deployment (rollout never promoted).
-    assert cp.current_deployment(env.id) is None
-
-
-def test_rollout_create_with_deploy_environment_id_validates_environment_exists(cp):
-    """Creating a rollout with a non-existent deploy_environment_id must fail."""
-    runtime = create_runtime(cp, "runtime-validate-env")
-    with pytest.raises(NotFoundError):
-        cp.create_rollout(
-            "20.0",
-            "canary",
-            10,
-            "human",
-            runtime_environment_id=runtime.id,
-            artifact_uri="artifact://mac/20.0",
-            artifact_hash="sha256:validenv01",
-            deploy_environment_id="env_does_not_exist",
-        )
-
-
-def test_rollout_deploy_environment_id_round_trips(cp):
-    """deploy_environment_id is persisted and returned on get_rollout."""
-    rollout, env, _ = _create_linked_rollout(cp, "21.0", "sha256:roundtrip01")
-    fetched = cp.get_rollout(rollout.id)
-    assert fetched.deploy_environment_id == env.id
 
 
 def test_verifier_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypatch):

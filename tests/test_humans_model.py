@@ -436,7 +436,8 @@ def _apply_versioned_humans_repair(store) -> None:
         start,
     )
     repair = Migration(
-        "0006_test_humans_repair",
+        # The next free ordinal after the binary's chain.
+        "%04d_test_humans_repair" % (len(MIGRATIONS) + 1),
         MIGRATIONS[0].sql[start:end],
         """
         SELECT to_regclass(current_schema() || '.humans') IS NOT NULL

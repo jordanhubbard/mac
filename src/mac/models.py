@@ -920,12 +920,6 @@ class RuntimeDeltaStatus(StrEnum):
     PROMOTED = "promoted"
 
 
-class DeploymentStatus(StrEnum):
-    ACTIVE = "active"
-    RETIRED = "retired"
-    FAILED = "failed"
-
-
 class MoodMode(StrEnum):
     """Agent-self-reported emotional state.
 
@@ -1059,66 +1053,6 @@ class SecretAuditResult(StrEnum):
     GRANTED = "granted"
     DENIED = "denied"
     ROTATED = "rotated"
-
-
-class RolloutStrategy(StrEnum):
-    CANARY = "canary"
-    FULL = "full"
-    RESCUE = "rescue"
-
-
-class RolloutStatus(StrEnum):
-    PLANNED = "planned"
-    CANARYING = "canarying"
-    PROMOTED = "promoted"
-    PAUSED = "paused"
-    RESCUING = "rescuing"
-    ROLLED_BACK = "rolled_back"
-    FAILED = "failed"
-
-
-ROLLOUT_ACTIONS = {
-    "start_canary": {
-        "from": {RolloutStatus.PLANNED.value},
-        "to": RolloutStatus.CANARYING.value,
-    },
-    "promote": {
-        "from": {
-            RolloutStatus.PLANNED.value,
-            RolloutStatus.CANARYING.value,
-            RolloutStatus.PAUSED.value,
-        },
-        "to": RolloutStatus.PROMOTED.value,
-        "target_percent": 100,
-    },
-    "pause": {
-        "from": {RolloutStatus.PLANNED.value, RolloutStatus.CANARYING.value},
-        "to": RolloutStatus.PAUSED.value,
-    },
-    "resume": {
-        "from": {RolloutStatus.PAUSED.value},
-        "to": RolloutStatus.CANARYING.value,
-    },
-    "rollback": {
-        "from": {
-            RolloutStatus.CANARYING.value,
-            RolloutStatus.PAUSED.value,
-            RolloutStatus.PROMOTED.value,
-            RolloutStatus.RESCUING.value,
-        },
-        "to": RolloutStatus.ROLLED_BACK.value,
-        "target_percent": 0,
-    },
-    # mac-24f4: a successful rescue had no exit — RESCUING was a
-    # one-way trap that only allowed rollback. ``complete_rescue``
-    # returns the rollout to PAUSED so an operator can re-evaluate
-    # health, decide whether to resume the canary or roll back, and
-    # the rescue task closure can hook into a clean transition.
-    "complete_rescue": {
-        "from": {RolloutStatus.RESCUING.value},
-        "to": RolloutStatus.PAUSED.value,
-    },
-}
 
 
 class PersonaInstanceStatus(StrEnum):
@@ -2347,39 +2281,6 @@ class MoodOverlay:
 
 
 @dataclass
-class Environment:
-    id: str
-    name: str
-    tenant_id: Optional[str]
-    channel: str
-    promotes_from: Optional[str]
-    metadata: JsonDict
-    created_by: str
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this Environment."""
-        return asdict(self)
-
-
-@dataclass
-class Deployment:
-    id: str
-    environment_id: str
-    artifact_id: str
-    status: str
-    deployed_by: str
-    deployed_at: str
-    retired_at: Optional[str]
-    metadata: JsonDict
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this Deployment."""
-        return asdict(self)
-
-
-@dataclass
 class Artifact:
     id: str
     kind: str
@@ -2561,30 +2462,6 @@ class MemoryRecord:
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this MemoryRecord."""
-        return asdict(self)
-
-
-@dataclass
-class Rollout:
-    id: str
-    version: str
-    strategy: str
-    status: str
-    target_percent: int
-    tenant_id: Optional[str]
-    channel: str
-    runtime_environment_id: Optional[str]
-    artifact_uri: Optional[str]
-    artifact_hash: Optional[str]
-    health_policy: JsonDict
-    required_eval_set_id: Optional[str]
-    deploy_environment_id: Optional[str]
-    created_by: str
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this Rollout."""
         return asdict(self)
 
 

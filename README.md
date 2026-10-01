@@ -7,8 +7,8 @@ sit underneath a human-facing agent runtime such as OpenClaw under OpenShell, Ne
 
 The human-facing runtime owns conversation, personality, adaptive memory,
 skills, and messaging gateways. `mac` owns durable operational truth: tasks,
-leases, routing, reviews, evidence, secrets, runtime manifests, rollout state,
-and audit trails. The fleet registry selects the human-channel runtime; the committed fleet
+leases, routing, reviews, evidence, secrets, runtime manifests, and audit
+trails. The fleet registry selects the human-channel runtime; the committed fleet
 default is Hermes (`gateway_impl: hermes`). OpenClaw is another deployment
 option. Internal agents may share a stable public identity.
 
@@ -112,7 +112,7 @@ This project provides durable contracts for coordinating a fleet:
 - Tenant-scoped secret handles with audit records and redacted API/CLI output.
 - Reproducible runtime manifests with stable digests and secret-value checks.
 - Tenant, user, Persona, Hermes instance, and platform binding records for multi-user expansion.
-- Project bridge, operational memory/provenance records, and gated rollout/rescue workflows.
+- Project bridge and operational memory/provenance records.
 - Repository runtime contract enforcement for registered project checkouts so
   agents can bootstrap and test work on macOS, Linux, WSL2, or narrower
   declared host families without relying on accidental local state.
@@ -122,7 +122,7 @@ This project provides durable contracts for coordinating a fleet:
 - Role catalog, role assignment, provisioning requests, and data-driven DAG
   workflows that turn multi-step plans into durable tasks with per-node role
   requirements and run history.
-- Evaluation contract: named `eval_sets` (scoring direction, baseline, regression threshold) and `eval_runs` against rollout versions, runtime environments, or agent builds; rollouts can require a passing `eval_run` before `promote`.
+- Evaluation contract: named `eval_sets` (scoring direction, baseline, regression threshold) and `eval_runs` against runtime environments or agent builds.
 - FastAPI REST API and `mac` CLI.
 - Hermes-side `mac-hermes` adapter for registration, sanitized task creation, status replies, and memory write-back payloads.
 
@@ -137,7 +137,7 @@ With the default Hermes gateway, Hermes owns interaction:
 
 `mac` deliberately does not implement agent souls or personal memory. Its
 `memory_records` are for operational provenance: imports, task evidence,
-decisions, rollout events, and durable facts needed to audit work. User memory
+decisions, and durable facts needed to audit work. User memory
 and personality memory stay in Hermes.
 
 Shared long-term recall is hub-managed infrastructure. The hub runs Qdrant for
@@ -544,12 +544,10 @@ Key route groups:
 - `/secrets`, `/secrets/{id}/access`, `/secrets/{id}/reveal`, `/secret-audits`
 - `/runtimes`, `/runtime-runs`
 - `/artifacts`, `/artifacts/{id_or_digest}` — canonical record for deliverables (kind, digest, uri, sbom_uri, signers); re-registering the same digest augments signers/metadata
-- `/environments`, `/environments/{id}/deploy|current|deployments` — environment registry + artifact→environment deployment edges; deploy atomically retires the prior active deployment
 - `/fleet/build-distribution` — aggregate live agents by `running_digest`; agents declare their build via `heartbeat`
 - `/bridge/items`, `/memory`
-- `/rollouts`, `/rollouts/{id}/artifact`, `/rollouts/{id}/health`, `/rollouts/{id}/rescue`
 - `/eval-sets`, `/eval-sets/{id}/baseline`, `/eval-sets/{id}/events`, `/eval-runs`
-- `/events` — unified audit stream across task/agent/project/fleet/rollout/eval_set/secret/environment/conversation_thread/vector_ref surfaces; filter by `subject_type`, `subject_id`, `actor`, `event_type`, `event_type_prefix`, `since`, `until`, `limit`
+- `/events` — unified audit stream across task/agent/project/fleet/eval_set/secret/conversation_thread/vector_ref surfaces; filter by `subject_type`, `subject_id`, `actor`, `event_type`, `event_type_prefix`, `since`, `until`, `limit`
 - `/observability`, `/observability/metrics`, `/observability/logs`, `/observability/summary`, `/observability/stream` — low-level metric/log ingestion, query, summary, and NDJSON subscription across API, control-plane, worker, Hermes, deploy, and external-agent layers
 - `/notifications`, `/notifications/{id}/delivered`
 - `/integrations/findings`, `/integrations/observations`
@@ -797,43 +795,26 @@ echo -n "$GH_TOKEN" | mac --db "$MAC_DB" secret set github-token \
 mac --db "$MAC_DB" secret set release-key --from-file ./release.key \
     --scopes '{"capabilities":["deploy"]}' --created-by human
 
-# Rollouts require a pinned runtime and verified sha256 artifact before install.
+# Runtime manifests must pin images and dependencies.
 mac --db "$MAC_DB" runtime create mac-runtime \
     --manifest '{"image":"python:3.12@sha256:abc123","dependencies":["fastapi==0.111.0"]}' \
     --created-by human
-mac --db "$MAC_DB" rollout create 1.2.0 canary --runtime runtime_... \
-    --artifact-uri artifact://mac/1.2.0 --artifact-hash sha256:abc123 \
-    --health-policy '{"required_checks":["runtime","canary"]}' \
-    --created-by human
-mac --db "$MAC_DB" rollout advance rollout_... start_canary --actor human
-mac --db "$MAC_DB" rollout health rollout_... \
-    --checks '{"runtime":"healthy","canary":"ok"}' --actor monitor
 
-# Evaluation: define a scored eval set, record runs against rollout versions,
-# and gate promotion on a passing run.
+# Evaluation: define a scored eval set and record runs against a runtime.
 mac --db "$MAC_DB" eval set create task-success-rate \
     --scoring higher_is_better --baseline-score 0.90 --regression-threshold 0.02
-mac --db "$MAC_DB" eval run record evalset_... rollout_version 1.2.0 0.93
-mac --db "$MAC_DB" rollout create 1.3.0 canary --runtime runtime_... \
-    --artifact-uri artifact://mac/1.3.0 --artifact-hash sha256:def456 \
-    --required-eval-set-id evalset_... --created-by human
-mac --db "$MAC_DB" rollout advance rollout_... start_canary --actor human
-# promote refused until a passing eval run exists for version 1.3.0
-mac --db "$MAC_DB" rollout advance rollout_... promote --actor human
+mac --db "$MAC_DB" eval run record evalset_... runtime_environment runtime_... 0.93
 
-# Unified audit stream: one query across task/agent/project/fleet/rollout/eval_set/secret/environment events.
+# Unified audit stream: one query across task/agent/project/fleet/eval_set/secret events.
 mac --db "$MAC_DB" events list --limit 50
-mac --db "$MAC_DB" events list --subject-type rollout --subject-id rollout_...
-mac --db "$MAC_DB" events list --prefix rollout. --since 2026-05-17T00:00:00+00:00
-mac --db "$MAC_DB" events list --actor monitor --event-type rollout.health_failure_during_rescue
+mac --db "$MAC_DB" events list --subject-type eval_set --subject-id evalset_...
+mac --db "$MAC_DB" events list --prefix task. --since 2026-05-17T00:00:00+00:00
+mac --db "$MAC_DB" events list --actor monitor --event-type eval_set.baseline_changed
 mac --db "$MAC_DB" observability list --layer control_plane --subject-type fleet
 
-# Artifact registry + environment deployments + fleet build inventory.
+# Artifact registry + fleet build inventory.
 mac --db "$MAC_DB" artifact register image sha256:abc... artifact://mac/v1.2.0 \
     --created-by ci --sbom-uri sbom://mac/v1.2.0.spdx --signers ci,release-manager
-mac --db "$MAC_DB" env register staging --channel release --created-by human
-mac --db "$MAC_DB" env deploy staging sha256:abc... --actor release-bot
-mac --db "$MAC_DB" env current staging
 mac --db "$MAC_DB" agent heartbeat agent_... --running-digest <runtime-digest>
 mac --db "$MAC_DB" fleet build-distribution
 

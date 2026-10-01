@@ -12,8 +12,7 @@ non-destructive prerequisite layer:
 - Dry-run prune reports that identify exact rows/bytes and exclusion reasons
   before any mutation.
 - Legal-hold/pin support and hard exclusions for active tasks, unresolved
-  reviews, current deployments/rollouts, and records referenced by retained
-  evidence.
+  reviews, and records referenced by retained evidence.
 - Bounded batched deletion with optional archive/export hooks and audit events
   recording policy, actor, counts, and ranges.
 

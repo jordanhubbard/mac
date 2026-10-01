@@ -2045,7 +2045,7 @@ def test_fastapi_can_require_scoped_bearer_tokens():
     assert client.get("/machines", headers={"Authorization": "Bearer reader"}).status_code == 200
 
 
-def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
+def test_deploy_scope_is_required_for_runtimes_and_runtime_deltas():
     cp = ControlPlane.in_memory()
     client = TestClient(
         create_app(
@@ -2119,25 +2119,6 @@ def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
             json={"actor": "ops"},
         ).json()["status"]
         == "validated"
-    )
-
-    # /environments also requires deploy.
-    tenant = cp.register_tenant("team-a")
-    assert (
-        client.post(
-            "/environments",
-            headers={"Authorization": "Bearer writer"},
-            json={"name": "prod", "tenant_id": tenant.id},
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            "/environments",
-            headers={"Authorization": "Bearer deployer"},
-            json={"name": "prod", "tenant_id": tenant.id},
-        ).status_code
-        == 200
     )
 
 

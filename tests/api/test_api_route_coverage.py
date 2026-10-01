@@ -1131,13 +1131,6 @@ network_policies:
         )
     )
 
-    environment = _ok(
-        client.post(
-            "/environments",
-            json={"name": "route-env", "tenant_id": tenant["id"], "channel": "fleet"},
-        )
-    )
-    ctx["env_id"] = environment["id"]
     runtime = _ok(
         client.post(
             "/runtimes",
@@ -1216,30 +1209,6 @@ network_policies:
             },
         )
     )
-
-    def rollout(version: str) -> Dict[str, Any]:
-        return _ok(
-            client.post(
-                "/rollouts",
-                json={
-                    "version": version,
-                    "strategy": "full",
-                    "target_percent": 0,
-                    "created_by": "operator",
-                    "tenant_id": tenant["id"],
-                    "runtime_environment_id": runtime["id"],
-                    "artifact_uri": "https://example.test/artifacts/%s.tar" % version,
-                    "artifact_hash": "sha256:" + "2" * 64,
-                    "health_policy": {"required_checks": ["runtime"]},
-                },
-            )
-        )
-
-    ctx["rollout_id"] = rollout("route-rollout")["id"]
-    ctx["advance_rollout_id"] = rollout("route-rollout-advance")["id"]
-    ctx["artifact_rollout_id"] = rollout("route-rollout-artifact")["id"]
-    ctx["health_rollout_id"] = rollout("route-rollout-health")["id"]
-    ctx["rescue_rollout_id"] = rollout("route-rollout-rescue")["id"]
 
     directive_document = {
         "schema": "mac.directive.v1",
@@ -1412,10 +1381,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/runtime-deltas/{delta_id}/reject"): {"delta_id": "reject_delta_id"},
         ("POST", "/runtime-deltas/{delta_id}/promote"): {"delta_id": "promote_delta_id"},
         ("POST", "/runtime-runs/{run_id}/complete"): {"run_id": "runtime_run_id"},
-        ("POST", "/rollouts/{rollout_id}/advance"): {"rollout_id": "advance_rollout_id"},
-        ("POST", "/rollouts/{rollout_id}/artifact"): {"rollout_id": "artifact_rollout_id"},
-        ("POST", "/rollouts/{rollout_id}/health"): {"rollout_id": "health_rollout_id"},
-        ("POST", "/rollouts/{rollout_id}/rescue"): {"rollout_id": "rescue_rollout_id"},
         ("DELETE", "/notifier/channels/{channel_id_or_name}"): {
             "channel_id_or_name": "delete_channel_id"
         },
@@ -1454,7 +1419,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "channel_id_or_name": ctx["channel_id"],
         "delta_id": ctx["delta_id"],
         "draft_id": ctx["draft_id"],
-        "env_id": ctx["env_id"],
         "evidence_id": ctx["runtime_evidence_id"],
         "package_id": "wp_route_missing",
         "batch_id": "wpbatch_route_missing",
@@ -1483,7 +1447,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "report_id": ctx["crash_report_id"],
         "role_id": ctx["role_id"],
         "role_id_or_slug": ctx["role_slug"],
-        "rollout_id": ctx["rollout_id"],
         "run_id": ctx["workflow_run_id"],
         "secret_id": ctx["secret_id"],
         "session_id": ctx["terminal_session_id"],
@@ -1641,14 +1604,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "response": "I changed evaluate_pair and added a case",
             "coding_agent": "claude",
             "returncode": 0,
-        },
-        # A syntactically valid reviewed digest. The endpoint refuses anything
-        # that is not one, so a placeholder here would exercise only the
-        # rejection path and leave the route effectively uncovered.
-        ("POST", "/sandbox/rollout"): {
-            "image": "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:%s" % ("a" * 64),
-            "bom": {},
-            "actor": "route-coverage",
         },
         ("PUT", "/work-packages/{package_id}"): {
             "goal": "route coverage goal",
@@ -2496,16 +2451,6 @@ edges:
             "collection": "mac_memory_medium",
             "point_id": "route-point-case",
         },
-        ("POST", "/environments"): {
-            "name": "route-env-case",
-            "tenant_id": ctx["tenant_id"],
-            "channel": "fleet",
-        },
-        ("POST", "/environments/{env_id}/deploy"): {
-            "artifact_id": ctx["artifact_id"],
-            "actor": "operator",
-            "metadata": {"route_case": True},
-        },
         ("POST", "/runtimes"): {
             "name": "route-runtime-case",
             "manifest": _runtime_manifest(),
@@ -2563,35 +2508,6 @@ edges:
             "target_kind": "runtime_environment",
             "target_id": ctx["runtime_id"],
             "score": 0.83,
-        },
-        ("POST", "/rollouts"): {
-            "version": "route-rollout-case",
-            "strategy": "full",
-            "target_percent": 0,
-            "created_by": "operator",
-            "tenant_id": ctx["tenant_id"],
-            "runtime_environment_id": ctx["runtime_id"],
-            "artifact_uri": "https://example.test/artifacts/rollout-case.tar",
-            "artifact_hash": "sha256:" + "4" * 64,
-            "health_policy": {"required_checks": ["runtime"]},
-        },
-        ("POST", "/rollouts/{rollout_id}/advance"): {
-            "action": "pause",
-            "actor": "operator",
-            "detail": {"reason": "route coverage"},
-        },
-        ("POST", "/rollouts/{rollout_id}/artifact"): {
-            "artifact_uri": "https://example.test/artifacts/rollout-new.tar",
-            "artifact_hash": "sha256:" + "5" * 64,
-            "actor": "operator",
-        },
-        ("POST", "/rollouts/{rollout_id}/health"): {
-            "actor": "operator",
-            "checks": {"runtime": {"status": "passed"}},
-        },
-        ("POST", "/rollouts/{rollout_id}/rescue"): {
-            "actor": "operator",
-            "reason": "route coverage rescue",
         },
         # paused=False keeps the shared coverage project claimable for other cases.
         ("POST", "/projects/{project}/dispatch"): {

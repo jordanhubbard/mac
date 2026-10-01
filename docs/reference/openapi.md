@@ -145,12 +145,6 @@ request and response definitions.
 | `GET` | `/dispatch/dead-letters` | Dead Letters |
 | `GET` | `/dispatch/dead-letters/page` | Dead Letters Page |
 | `POST` | `/dispatch/tick` | Dispatch Tick |
-| `GET` | `/environments` | List Environments |
-| `POST` | `/environments` | Register Environment |
-| `GET` | `/environments/{env_id}` | Get Environment |
-| `GET` | `/environments/{env_id}/current` | Current Deployment |
-| `POST` | `/environments/{env_id}/deploy` | Deploy Artifact |
-| `GET` | `/environments/{env_id}/deployments` | List Deployments |
 | `GET` | `/eval-runs` | List Eval Runs |
 | `POST` | `/eval-runs` | Record Eval Run |
 | `GET` | `/eval-sets` | List Eval Sets |
@@ -267,12 +261,6 @@ request and response definitions.
 | `GET` | `/roles/{role_id_or_slug}` | Get Role |
 | `DELETE` | `/roles/{role_id}` | Delete Role |
 | `PUT` | `/roles/{role_id}` | Update Role |
-| `GET` | `/rollouts` | List Rollouts |
-| `POST` | `/rollouts` | Create Rollout |
-| `POST` | `/rollouts/{rollout_id}/advance` | Advance Rollout |
-| `POST` | `/rollouts/{rollout_id}/artifact` | Verify Rollout Artifact |
-| `POST` | `/rollouts/{rollout_id}/health` | Evaluate Rollout Health |
-| `POST` | `/rollouts/{rollout_id}/rescue` | Rescue Rollout |
 | `GET` | `/runtime-deltas` | List Runtime Deltas |
 | `POST` | `/runtime-deltas` | Propose Runtime Delta |
 | `GET` | `/runtime-deltas/{delta_id}` | Get Runtime Delta |
@@ -283,7 +271,6 @@ request and response definitions.
 | `POST` | `/runtime-runs/{run_id}/complete` | Complete Runtime Run |
 | `GET` | `/runtimes` | List Runtimes |
 | `POST` | `/runtimes` | Create Runtime |
-| `POST` | `/sandbox/rollout` | Roll Out Sandbox Image |
 | `GET` | `/secret-audits` | List Secret Audits |
 | `GET` | `/secrets` | List Secrets |
 | `POST` | `/secrets` | Create Secret |

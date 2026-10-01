@@ -105,8 +105,6 @@ from mac.models import (
     HumanMessageDelivery,
     MoodOverlay,
     ConversationThread,
-    Deployment,
-    Environment,
     normalize_evidence_kind,
     EvalRun,
     EvalSet,
@@ -145,7 +143,6 @@ from mac.models import (
     RepresentationBinding,
     Review,
     ReviewStatus,
-    Rollout,
     RuntimeEnvironment,
     RuntimeEnvironmentDelta,
     RuntimeRun,
@@ -206,8 +203,8 @@ from mac.agentbus_control import (
 from mac.action_event_service import ActionEventService
 from mac.agentbus_broadcast import BroadcastService
 from mac.agentbus_service import AgentBusService
+from mac.artifact_registry_service import ArtifactRegistryService
 from mac.canonical_reconcile import expected_head_sha_from_task
-from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
@@ -238,6 +235,7 @@ from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.project_repository_service import ProjectRepositoryService
 from mac.retention_service import RetentionPolicy, RetentionService
+from mac.runtime_environment_service import RuntimeEnvironmentService
 from mac.service_role_service import ServiceRoleService
 from mac.source_convergence_service import SourceConvergenceService
 from mac.source_release_service import SourceReleaseService
@@ -247,7 +245,6 @@ from mac.review_service import (
     review_diversity_requirements,
 )
 from mac.roles_service import RolesService
-from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
 from mac.store import Store, make_store_from_env
 from mac.task_kpis import derive_task_kpis
@@ -264,12 +261,6 @@ from mac.sandbox_bom import (
     derive_bom,
     manifest_drift,
     manifest_has_drift,
-)
-from mac.sandbox_rollout import (
-    ROLLOUT_SCHEMA,
-    plan_rollout,
-    scheduled_rollouts,
-    validate_image_ref,
 )
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_lifecycle_bus import TaskLifecycleBusPublisher, lifecycle_outbox_detail
@@ -2613,27 +2604,12 @@ class ControlPlane:
             self.observability,
             get_agent=self.get_agent,
         )
-        self.deploy = DeployService(
+        self.artifacts = ArtifactRegistryService(self.store, self.observability)
+        self.runtime_environments = RuntimeEnvironmentService(
             self.store,
-            self.observability,
-            get_tenant=self.get_tenant,
             get_task=self.get_task,
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
-        )
-        self.rollouts = RolloutService(
-            self.store,
-            self.observability,
-            get_tenant=self.get_tenant,
-            get_runtime=self.get_runtime,
-            get_eval_set=self.get_eval_set,
-            create_task=self.create_task,
-            add_memory=self.add_memory,
-            task_from_row=self._task_from_row,
-            deploy_artifact=self.deploy.deploy_artifact,
-            get_artifact_by_digest=self.deploy.get_artifact,
-            get_environment=self.deploy.get_environment,
-            current_deployment=self.deploy.current_deployment,
         )
         # Event-driven review advancement (opt-in; enabled by the hub's tick
         # wiring). Review-stage transitions used to wait for the next periodic
@@ -6700,11 +6676,7 @@ class ControlPlane:
                         "  1. mac admin sandbox-image bom --containerfile deploy/openshell/mac-hermes.Containerfile",
                         "  2. add anything it reports to the Containerfile, and",
                         "     mac admin sandbox-image bom --write deploy/openshell/sandbox-bom.json",
-                        "  3. publish the image through the reviewed workflow, then",
-                        "     mac admin sandbox-image rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
-                        "",
-                        "Step 3 is a barrier task per worker: each one drains before it "
-                        "updates, so the fleet rolls rather than stopping.",
+                        "  3. publish the image through the reviewed workflow.",
                     ]
                 ),
                 project=project,
@@ -6730,60 +6702,6 @@ class ControlPlane:
                 "checked": False,
                 "reason": "drift check failed: %s: %s" % (type(exc).__name__, exc),
             }
-
-    def roll_out_sandbox_image(
-        self,
-        image_ref: str,
-        *,
-        bom: Optional[Mapping[str, Any]] = None,
-        actor: str = "human",
-        project: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """File one barrier task per agent to install a reviewed image.
-
-        Rolling, not fleet-wide: each agent drains and updates independently,
-        so the fleet keeps working through the rollout instead of stopping at
-        once. Deduplicated per (agent, image) because a rollout re-filed on
-        every tick would queue a barrier per tick, and barriers quiesce their
-        agent -- the worker would stop taking work permanently.
-        """
-        image_ref = validate_image_ref(image_ref)
-        agents = [agent.to_dict() for agent in self.list_agents()]
-        plan = plan_rollout(
-            agents,
-            image_ref,
-            bom=bom or {},
-            # Ask SQL for the non-terminal tasks rather than reading all of
-            # them and discarding most in Python. On the fleet hub the table is
-            # 8,372 rows / 116MB and ~89% of it is terminal, so this fetched
-            # (and detoasted) roughly nine rows for every one it kept.
-            already_scheduled=scheduled_rollouts(self._non_terminal_tasks()),
-        )
-        filed: List[str] = []
-        skipped: List[str] = []
-        for item in plan:
-            try:
-                task = self.create_task(
-                    item["title"],
-                    description=item["description"],
-                    project=project,
-                    metadata=item["metadata"],
-                    actor=actor,
-                )
-            except (ValidationError, TransitionError, NotFoundError):
-                # One unfilable worker must not abort the rollout for the rest:
-                # a partial roll is recoverable by re-running, an aborted one
-                # leaves whichever workers were reached in an unknown mix.
-                skipped.append(item["agent_id"])
-            else:
-                filed.append(task.id)
-        return {
-            "schema": ROLLOUT_SCHEMA,
-            "image": image_ref,
-            "filed": filed,
-            "skipped": skipped,
-            "agents_considered": len(agents),
-        }
 
     def record_sandbox_excursion(
         self,
@@ -9276,7 +9194,6 @@ class ControlPlane:
 
     EVENT_SUBJECT_TYPES = (
         "task",
-        "rollout",
         "eval_set",
         "secret",
         "environment",
@@ -9347,9 +9264,7 @@ class ControlPlane:
             )
 
         simple_sources = (
-            ("rollout_events", "rollout", "rollout_id"),
             ("eval_set_events", "eval_set", "eval_set_id"),
-            ("environment_events", "environment", "environment_id"),
             ("project_events", "project", "project_id"),
             ("fleet_events", "fleet", "fleet_id"),
             ("agent_lifecycle_events", "agent", "agent_id"),
@@ -21860,80 +21775,61 @@ class ControlPlane:
 
     # Artifact registry
 
-    # Artifacts + environments + deployments + runtimes: thin facade over
-    # ``self.deploy``. New code should call ``cp.deploy.<method>`` directly.
+    # Artifacts: thin facade over ``self.artifacts``.
 
     def register_artifact(self, *args: Any, **kwargs: Any) -> Artifact:
-        return self.deploy.register_artifact(*args, **kwargs)
+        return self.artifacts.register_artifact(*args, **kwargs)
 
     def get_artifact(self, artifact_id_or_digest: str) -> Artifact:
-        return self.deploy.get_artifact(artifact_id_or_digest)
+        return self.artifacts.get_artifact(artifact_id_or_digest)
 
     def list_artifacts(self, *args: Any, **kwargs: Any) -> List[Artifact]:
-        return self.deploy.list_artifacts(*args, **kwargs)
+        return self.artifacts.list_artifacts(*args, **kwargs)
 
     def delete_artifact(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self.deploy.delete_artifact(*args, **kwargs)
+        return self.artifacts.delete_artifact(*args, **kwargs)
 
-    def register_environment(self, *args: Any, **kwargs: Any) -> Environment:
-        return self.deploy.register_environment(*args, **kwargs)
-
-    def get_environment(self, env_id_or_name: str) -> Environment:
-        return self.deploy.get_environment(env_id_or_name)
-
-    def list_environments(self, *args: Any, **kwargs: Any) -> List[Environment]:
-        return self.deploy.list_environments(*args, **kwargs)
-
-    def deploy_artifact(self, *args: Any, **kwargs: Any) -> Deployment:
-        return self.deploy.deploy_artifact(*args, **kwargs)
-
-    def get_deployment(self, deployment_id: str) -> Deployment:
-        return self.deploy.get_deployment(deployment_id)
-
-    def current_deployment(self, environment_id: str) -> Optional[Deployment]:
-        return self.deploy.current_deployment(environment_id)
-
-    def list_deployments(self, environment_id: str) -> List[Deployment]:
-        return self.deploy.list_deployments(environment_id)
+    # Runtime environments, deltas, and runs: thin facade over
+    # ``self.runtime_environments``.
 
     def create_runtime(self, *args: Any, **kwargs: Any) -> RuntimeEnvironment:
-        return self.deploy.create_runtime(*args, **kwargs)
+        return self.runtime_environments.create_runtime(*args, **kwargs)
 
     def get_runtime(self, runtime_id_or_name: str) -> RuntimeEnvironment:
-        return self.deploy.get_runtime(runtime_id_or_name)
+        return self.runtime_environments.get_runtime(runtime_id_or_name)
 
     def list_runtimes(self) -> List[RuntimeEnvironment]:
-        return self.deploy.list_runtimes()
+        return self.runtime_environments.list_runtimes()
 
     def propose_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.propose_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.propose_runtime_delta(*args, **kwargs)
 
     def get_runtime_delta(self, delta_id: str) -> RuntimeEnvironmentDelta:
-        return self.deploy.get_runtime_delta(delta_id)
+        return self.runtime_environments.get_runtime_delta(delta_id)
 
     def list_runtime_deltas(self, *args: Any, **kwargs: Any) -> List[RuntimeEnvironmentDelta]:
-        return self.deploy.list_runtime_deltas(*args, **kwargs)
+        return self.runtime_environments.list_runtime_deltas(*args, **kwargs)
 
     def validate_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.validate_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.validate_runtime_delta(*args, **kwargs)
 
     def reject_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.reject_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.reject_runtime_delta(*args, **kwargs)
 
     def promote_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.promote_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.promote_runtime_delta(*args, **kwargs)
 
     def create_runtime_run(self, *args: Any, **kwargs: Any) -> RuntimeRun:
-        return self.deploy.create_runtime_run(*args, **kwargs)
+        return self.runtime_environments.create_runtime_run(*args, **kwargs)
 
     def complete_runtime_run(self, *args: Any, **kwargs: Any) -> RuntimeRun:
-        return self.deploy.complete_runtime_run(*args, **kwargs)
+        return self.runtime_environments.complete_runtime_run(*args, **kwargs)
 
     def get_runtime_run(self, run_id: str) -> RuntimeRun:
-        return self.deploy.get_runtime_run(run_id)
+        return self.runtime_environments.get_runtime_run(run_id)
 
     def list_runtime_runs(self) -> List[RuntimeRun]:
-        return self.deploy.list_runtime_runs()
+        return self.runtime_environments.list_runtime_runs()
 
     # Project bridge
 
@@ -22205,34 +22101,6 @@ class ControlPlane:
 
     def list_eval_runs(self, *args: Any, **kwargs: Any) -> List[EvalRun]:
         return self.evaluations.list_eval_runs(*args, **kwargs)
-
-    # Rollout and rescue
-
-    # Rollouts: thin facade over ``self.rollouts``.
-
-    def create_rollout(self, *args: Any, **kwargs: Any) -> Rollout:
-        return self.rollouts.create_rollout(*args, **kwargs)
-
-    def get_rollout(self, rollout_id: str) -> Rollout:
-        return self.rollouts.get_rollout(rollout_id)
-
-    def list_rollouts(self, *args: Any, **kwargs: Any) -> List[Rollout]:
-        return self.rollouts.list_rollouts(*args, **kwargs)
-
-    def list_rollout_events(self, rollout_id: str) -> List[JsonDict]:
-        return self.rollouts.list_rollout_events(rollout_id)
-
-    def verify_rollout_artifact(self, *args: Any, **kwargs: Any) -> Rollout:
-        return self.rollouts.verify_rollout_artifact(*args, **kwargs)
-
-    def advance_rollout(self, *args: Any, **kwargs: Any) -> Rollout:
-        return self.rollouts.advance_rollout(*args, **kwargs)
-
-    def evaluate_rollout_health(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.rollouts.evaluate_rollout_health(*args, **kwargs)
-
-    def rescue_rollout(self, *args: Any, **kwargs: Any) -> Tuple[Rollout, Task]:
-        return self.rollouts.rescue_rollout(*args, **kwargs)
 
     # Row mapping
 

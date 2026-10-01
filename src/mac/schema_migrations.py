@@ -284,6 +284,20 @@ MIGRATIONS: tuple[Migration, ...] = (
            AND to_regclass(current_schema() || '.merge_queue_windows') IS NULL
         """,
     ),
+    Migration(
+        "0006_drop_rollout_and_deploy_tables",
+        _load_sql(MIGRATION_PATH / "0006_drop_rollout_and_deploy_tables.sql"),
+        """
+        SELECT bool_and(to_regclass(current_schema() || '.' || name) IS NULL)
+        FROM unnest(ARRAY[
+            'rollout_events',
+            'rollouts',
+            'deployments',
+            'environment_events',
+            'managed_task_publication_rollout'
+        ]) AS name
+        """,
+    ),
 )
 
 

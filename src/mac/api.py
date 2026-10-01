@@ -150,7 +150,7 @@ class TokenPrincipal:
     def refuse_tenant_bound(self) -> None:
         """Refuse the call for tenant-bound, non-admin tokens.
 
-        Machines, agents, runtimes, environments, and rollouts are part of the
+        Machines, agents, and runtimes are part of the
         shared fleet today. A tenant-bound token has no business reaching them
         until we extend the schema to be tenant-aware.
 
@@ -1546,13 +1546,6 @@ class DashboardTerminalClose(BaseModel):
     sender_agent_id: Optional[str] = None
 
 
-class SandboxRolloutRequest(BaseModel):
-    image: str
-    bom: Optional[Dict[str, Any]] = None
-    project: Optional[str] = None
-    actor: Optional[str] = None
-
-
 class ObservabilityMetricCreate(BaseModel):
     name: str
     value: float
@@ -1837,21 +1830,6 @@ class VectorRefRecord(BaseModel):
     created_by: str = "human"
 
 
-class EnvironmentRegister(BaseModel):
-    name: str
-    tenant_id: Optional[str] = None
-    channel: str = "fleet"
-    promotes_from: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_by: str = "human"
-
-
-class DeploymentCreate(BaseModel):
-    artifact_id: str
-    actor: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
 class RuntimeCreate(BaseModel):
     name: str
     manifest: Dict[str, Any]
@@ -2007,20 +1985,6 @@ class FleetUpgradeEpochAbort(BaseModel):
     disposition: str = "restore"
 
 
-class RolloutCreate(BaseModel):
-    version: str
-    strategy: str
-    target_percent: int
-    created_by: str
-    tenant_id: Optional[str] = None
-    channel: str = "fleet"
-    runtime_environment_id: Optional[str] = None
-    artifact_uri: Optional[str] = None
-    artifact_hash: Optional[str] = None
-    health_policy: Dict[str, Any] = Field(default_factory=dict)
-    required_eval_set_id: Optional[str] = None
-
-
 class EvalSetCreate(BaseModel):
     name: str
     scoring: str = "higher_is_better"
@@ -2044,29 +2008,6 @@ class EvalRunRecord(BaseModel):
     detail: Dict[str, Any] = Field(default_factory=dict)
     evidence_id: Optional[str] = None
     created_by: str = "human"
-
-
-class RolloutAdvance(BaseModel):
-    action: str
-    actor: str
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RolloutRescue(BaseModel):
-    actor: str
-    reason: str
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RolloutArtifactVerify(BaseModel):
-    artifact_uri: str
-    artifact_hash: str
-    actor: str
-
-
-class RolloutHealthReport(BaseModel):
-    actor: str
-    checks: Dict[str, Any]
 
 
 def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
@@ -2271,12 +2212,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "read" if method == "GET" else "deploy"
     if path.startswith("/secrets") or path.startswith("/secret-audits"):
         return "secret"
-    if (
-        path.startswith("/runtimes")
-        or path.startswith("/runtime-deltas")
-        or path.startswith("/environments")
-        or path.startswith("/rollouts")
-    ):
+    if path.startswith("/runtimes") or path.startswith("/runtime-deltas"):
         return "deploy"
     if path.startswith("/roles") or path.endswith("/role"):
         return "roles"
@@ -2849,29 +2785,6 @@ def _dashboard_hermes_activity(
     return {"context": context, "interaction_tasks": interaction_tasks}
 
 
-def _dashboard_rollout_status(cp: ControlPlane, rollout_id: str) -> Dict[str, Any]:
-    rollout = cp.get_rollout(rollout_id)
-    runtime = (
-        cp.get_runtime(rollout.runtime_environment_id).to_dict()
-        if rollout.runtime_environment_id
-        else None
-    )
-    latest_eval = None
-    if rollout.required_eval_set_id is not None:
-        latest = cp.latest_eval_run(
-            rollout.required_eval_set_id,
-            "rollout_version",
-            rollout.version,
-        )
-        latest_eval = latest.to_dict() if latest is not None else None
-    return {
-        "rollout": rollout.to_dict(),
-        "runtime": runtime,
-        "events": cp.list_rollout_events(rollout_id),
-        "latest_eval_run": latest_eval,
-    }
-
-
 TOKENHUB_SESSION_TICKET_PURPOSE = "tokenhub-admin-session-v1"
 
 
@@ -3313,7 +3226,6 @@ def _dashboard_ide_state(
     secrets = [secret.to_dict() for secret in cp.list_secrets()][-200:]
     runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()][-120:]
-    rollouts = [rollout.to_dict() for rollout in cp.list_rollouts()][-120:]
     fleets = [fleet.to_dict() for fleet in cp.list_fleets()][-120:]
 
     return {
@@ -3358,7 +3270,6 @@ def _dashboard_ide_state(
         "runtimes": [],
         "runtime_deltas": runtime_deltas,
         "runtime_runs": runtime_runs,
-        "rollouts": rollouts,
         "secrets": secrets,
         "secret_audits": [],
         "service_links": _dashboard_service_links(hermes_startup),
@@ -3384,7 +3295,6 @@ def _dashboard_state(
     tasks = cp.list_tasks()
     task_dicts = [task.to_dict() for task in tasks]
     dead_letters = [task.to_dict() for task in cp.list_dead_letters()]
-    rollouts = cp.list_rollouts()
     roles = [role.to_dict() for role in cp.list_roles()]
     provisioning_requests = [
         request.to_dict() for request in cp.provisioning.list_requests(limit=120)
@@ -3426,7 +3336,6 @@ def _dashboard_state(
     openshell_agent_statuses = [cp.get_openshell_status(agent.id) for agent in agents]
     action_events = [event.to_dict() for event in cp.list_action_events(limit=240)]
     task_details = [_dashboard_task_summary(task) for task in tasks[:DASHBOARD_TASK_LIMIT]]
-    rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
     hermes_work_contexts = {
         instance["id"]: cp.persona_work_context(instance["id"], task_limit=40)
@@ -3458,7 +3367,6 @@ def _dashboard_state(
                     1 for task in tasks if task.state not in TERMINAL_DASHBOARD_STATES
                 ),
                 "dead_letters": len(dead_letters),
-                "rollouts": len(rollouts),
                 "secrets": len(secrets),
                 "secret_audits": len(secret_audits),
                 "roles": len(roles),
@@ -3538,7 +3446,6 @@ def _dashboard_state(
         "runtimes": [runtime.to_dict() for runtime in cp.list_runtimes()],
         "runtime_deltas": runtime_deltas,
         "runtime_runs": runtime_runs,
-        "rollouts": rollout_statuses,
         "eval_sets": [eval_set.to_dict() for eval_set in cp.list_eval_sets()],
         "eval_runs": [run.to_dict() for run in cp.list_eval_runs()],
         "observability": cp.observability_summary(),
@@ -7531,21 +7438,6 @@ def create_app(
             limit=limit,
         )
 
-    @app.post("/sandbox/rollout")
-    def roll_out_sandbox_image(body: SandboxRolloutRequest) -> Dict[str, Any]:
-        """File one drained-worker barrier task per agent for a reviewed image.
-
-        Served over HTTP because the hub is how the fleet is actually operated.
-        Without this the command worked only against a direct --db authority,
-        which is the maintenance path, not the one anybody uses.
-        """
-        return cp.roll_out_sandbox_image(
-            body.image,
-            bom=body.bom or {},
-            actor=body.actor or "human",
-            project=body.project,
-        )
-
     @app.get("/events/stream")
     async def stream_events(
         request: Request,
@@ -8921,38 +8813,6 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [ref.to_dict() for ref in cp.list_vector_refs(memory_id, vector_db, collection)]
 
-    @app.post("/environments")
-    def register_environment(
-        body: EnvironmentRegister,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.assert_tenant(body.tenant_id)
-        return cp.register_environment(**_data(body)).to_dict()
-
-    @app.get("/environments")
-    def list_environments(
-        tenant_id: Optional[str] = Query(default=None),
-        channel: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return [env.to_dict() for env in cp.list_environments(tenant_id, channel)]
-
-    @app.get("/environments/{env_id}")
-    def get_environment(env_id: str) -> Dict[str, Any]:
-        return cp.get_environment(env_id).to_dict()
-
-    @app.post("/environments/{env_id}/deploy")
-    def deploy_artifact(env_id: str, body: DeploymentCreate) -> Dict[str, Any]:
-        return cp.deploy_artifact(env_id, body.artifact_id, body.actor, body.metadata).to_dict()
-
-    @app.get("/environments/{env_id}/current")
-    def current_deployment(env_id: str) -> Optional[Dict[str, Any]]:
-        current = cp.current_deployment(env_id)
-        return current.to_dict() if current is not None else None
-
-    @app.get("/environments/{env_id}/deployments")
-    def list_deployments(env_id: str) -> List[Dict[str, Any]]:
-        return [d.to_dict() for d in cp.list_deployments(env_id)]
-
     @app.post("/runtimes")
     def create_runtime(
         body: RuntimeCreate,
@@ -9586,43 +9446,6 @@ def create_app(
         target_id: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         return [run.to_dict() for run in cp.list_eval_runs(eval_set_id, target_id)]
-
-    @app.post("/rollouts")
-    def create_rollout(
-        body: RolloutCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.assert_tenant(body.tenant_id)
-        return cp.create_rollout(**_data(body)).to_dict()
-
-    @app.get("/rollouts")
-    def list_rollouts(
-        tenant_id: Optional[str] = Query(default=None),
-        channel: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return [rollout.to_dict() for rollout in cp.list_rollouts(tenant_id, channel)]
-
-    @app.post("/rollouts/{rollout_id}/advance")
-    def advance_rollout(rollout_id: str, body: RolloutAdvance) -> Dict[str, Any]:
-        return cp.advance_rollout(rollout_id, body.action, body.actor, body.detail).to_dict()
-
-    @app.post("/rollouts/{rollout_id}/artifact")
-    def verify_rollout_artifact(rollout_id: str, body: RolloutArtifactVerify) -> Dict[str, Any]:
-        return cp.verify_rollout_artifact(
-            rollout_id,
-            body.artifact_uri,
-            body.artifact_hash,
-            body.actor,
-        ).to_dict()
-
-    @app.post("/rollouts/{rollout_id}/health")
-    def evaluate_rollout_health(rollout_id: str, body: RolloutHealthReport) -> Dict[str, Any]:
-        return cp.evaluate_rollout_health(rollout_id, body.checks, body.actor)
-
-    @app.post("/rollouts/{rollout_id}/rescue")
-    def rescue_rollout(rollout_id: str, body: RolloutRescue) -> Dict[str, Any]:
-        rollout, task = cp.rescue_rollout(rollout_id, body.actor, body.reason, body.detail)
-        return {"rollout": rollout.to_dict(), "task": task.to_dict()}
 
     # th-merge-02: optional in-mac OpenAI front door (provider router + recovering
     # breaker). No-op unless MAC_ROUTER_BACKEND=inproc, so the standalone TokenHub
