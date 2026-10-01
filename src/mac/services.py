@@ -2729,6 +2729,50 @@ def run_repository_contract_test_in_openshell(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+_VERIFIER_OUTPUT_EDGE_CHARS = 2000
+_SANITY_SELECTION_RE = re.compile(r"^sanity selection: (.*)$", re.MULTILINE)
+_SANITY_SELECTION_MODE_RE = re.compile(r"^(\S+) \((.*)\)$")
+_PYTEST_SUMMARY_COUNT_RE = re.compile(r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed)\b")
+
+
+def _verifier_output_record(output: str) -> JsonDict:
+    """What a gate run said about itself, bounded for evidence.
+
+    Records the selection line ``run-sanity-tests.sh`` prints, the head and
+    tail of the output (the selection is at the top, pytest's verdict at the
+    bottom) and the test count from pytest's final summary line when one
+    parses. A selector that answered ``full`` is flagged so a fallback --
+    for example a fresh clone with no impact index -- is visible rather than
+    indistinguishable from a deliberate full run.
+    """
+    text = str(output or "")
+    record: JsonDict = {
+        "output_head": text[:_VERIFIER_OUTPUT_EDGE_CHARS],
+        "output_tail": (
+            text[-_VERIFIER_OUTPUT_EDGE_CHARS:] if len(text) > _VERIFIER_OUTPUT_EDGE_CHARS else ""
+        ),
+        "output_chars": len(text),
+    }
+    selection = _SANITY_SELECTION_RE.search(text)
+    if selection:
+        line = selection.group(1).strip()
+        record["selection"] = "sanity selection: " + line
+        parsed = _SANITY_SELECTION_MODE_RE.match(line)
+        if parsed:
+            record["selection_mode"] = parsed.group(1)
+            record["selection_reason"] = parsed.group(2)
+            if parsed.group(1) == "full":
+                record["selection_fallback_full"] = True
+    for line in reversed(text.splitlines()):
+        if " in " not in line or not _PYTEST_SUMMARY_COUNT_RE.search(line):
+            continue
+        record["test_count"] = sum(
+            int(count) for count, _kind in _PYTEST_SUMMARY_COUNT_RE.findall(line)
+        )
+        break
+    return record
+
+
 def verify_unpublished_repository(
     worktree: Path,
     command: str,
@@ -2736,7 +2780,7 @@ def verify_unpublished_repository(
     *,
     timeout_seconds: Optional[float] = None,
     allow_untracked: bool = False,
-    prepared_base_sha: str = "",
+    selection_base_sha: str = "",
 ) -> JsonDict:
     """Test a pristine copy of this exact commit on the Linux gateway before push.
 
@@ -2744,6 +2788,14 @@ def verify_unpublished_repository(
     source in a fresh clone, executes through the existing verifier transport,
     and rejects a source change while verification was in flight. No repository
     bootstrap or test command is executed by the native host.
+
+    *selection_base_sha* scopes a sanity-capable contract gate to the diff
+    ``base..HEAD``. Publishing callers pass the canonical tip the worktree was
+    just rebased onto, so the selection is the task's own change rather than
+    whatever else landed since the lease was prepared. The selection the
+    script announced, a bounded head and tail of the output and the parsed
+    test count are recorded on the result; a selector that fell back to the
+    full suite is recorded too (``selection_fallback_full``).
     """
     import math
 
@@ -2803,7 +2855,7 @@ def verify_unpublished_repository(
         head, tree = source_identity()
         if (
             command in {"scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh"}
-            and _GIT_SHA_RE.fullmatch(prepared_base_sha)
+            and _GIT_SHA_RE.fullmatch(selection_base_sha)
             and (worktree / "test-policy.toml").is_file()
             and os.access(worktree / "scripts/run-sanity-tests.sh", os.X_OK)
             and subprocess.run(
@@ -2813,7 +2865,7 @@ def verify_unpublished_repository(
                     str(worktree),
                     "merge-base",
                     "--is-ancestor",
-                    prepared_base_sha,
+                    selection_base_sha,
                     head,
                 ],
                 capture_output=True,
@@ -2823,9 +2875,9 @@ def verify_unpublished_repository(
             == 0
         ):
             result["contract_command"] = command
-            command = "scripts/run-sanity-tests.sh --base %s" % prepared_base_sha
+            command = "scripts/run-sanity-tests.sh --base %s" % selection_base_sha
             result["command"] = (bootstrap_command + " && " if bootstrap_command else "") + command
-            result["selected_base_sha"] = prepared_base_sha
+            result["selected_base_sha"] = selection_base_sha
         identity: JsonDict = {}
         rc, output = run_repository_contract_test_in_openshell(
             "",
@@ -2839,6 +2891,7 @@ def verify_unpublished_repository(
             verifier_identity=identity,
         )
         result.update(returncode=rc, stdout=output)
+        result.update(_verifier_output_record(output))
         result.update(
             (key, identity[key])
             for key in (
@@ -27148,6 +27201,7 @@ class ControlPlane:
             allow_empty_repo_change=self._allows_empty_repo_change_evidence(task, evidence_type),
             repo_coupled=self._task_is_repo_coupled(task),
             require_tests=self._task_requires_tests(task),
+            require_verifier_tests=bool(_repository_contract_test_command_for_task(task)),
             expected_reconcile_head_sha=expected_head_sha_from_task(
                 {"id": task.id, "metadata": task.metadata}
             ),
@@ -27276,6 +27330,12 @@ class ControlPlane:
         if isinstance(item, list):
             return any(self._verification_item_passed(nested) for nested in item)
         if not isinstance(item, dict):
+            return False
+        if item.get("skipped") is True or str(item.get("status") or "").strip().lower() in {
+            "skipped",
+            "deferred",
+        }:
+            # Nothing ran: whatever else the item says, it is not a pass.
             return False
         if "returncode" in item:
             return self._verification_int_value(item["returncode"]) == 0

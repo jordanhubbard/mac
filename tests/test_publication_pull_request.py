@@ -21,7 +21,7 @@ import pytest
 from mac import gitops
 from mac.models import ReviewStatus, TaskState, ValidationError
 from mac.services import ControlPlane
-from tests.conftest import submit_review_verdict
+from tests.conftest import submit_review_verdict, verifier_test_item
 from tests.test_control_plane import _sign, register_agent
 
 
@@ -196,7 +196,7 @@ def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
                 "files_changed": ["feature.txt"],
                 **({"pull_request": pull_request} if pull_request else {}),
             },
-            "tests": [{"command": "make smoke", "returncode": 0}],
+            "tests": [verifier_test_item(task_head)],
         },
     )
     evidence = cp.add_evidence(

@@ -22,10 +22,22 @@ def test_deferred_code_test_cannot_authorize_push():
     assert any("passing test" in p for p in problems)
 
 
+def _verified(returncode=0):
+    return {
+        "name": "repository contract test",
+        "returncode": returncode,
+        "status": "pass" if returncode == 0 else "fail",
+        "execution_environment": "openshell_sandbox",
+        "executed_head_sha": "a" * 40,
+        "executed_tree_sha": "c" * 40,
+        "stdout": "12 passed in 1.0s\n",
+    }
+
+
 @pytest.mark.parametrize("returncode,blocked", [(0, False), (1, True)])
 def test_actual_test_result_controls_prepush(returncode, blocked):
     problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), {"returncode": returncode}, hub_verify=True
+        {}, _repo(), _verified(returncode), hub_verify=True
     )
     assert bool(problems) is blocked
 
@@ -285,7 +297,7 @@ def test_pre_push_preserves_trustworthy_affected_scope_and_timeout(
     result = services.verify_unpublished_repository(
         committed_repo,
         "scripts/run-contract-tests.sh",
-        prepared_base_sha=base if known_base else "b" * 40,
+        selection_base_sha=base if known_base else "b" * 40,
     )
     assert result["returncode"] == 0
     assert calls[0][0][3] == (

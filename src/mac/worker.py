@@ -126,6 +126,7 @@ from mac.models import (
 )
 from mac.gitops import (
     agent_pull_request,
+    canonical_sync_selection_base,
     guarded_push,
     resolve_canonical_publication_target,
     strip_git_remote_auth,
@@ -4773,7 +4774,12 @@ class MacWorker(
         # non-canonical shape the strict validator treats as missing. Re-finalize
         # from the adopted host worktree to re-run the contract test and emit a
         # valid manifest. Otherwise keep an existing agent manifest untouched.
-        if manifest_path.exists() and not adopted and not is_dirty:
+        if (
+            manifest_path.exists()
+            and not adopted
+            and not is_dirty
+            and not _agent_manifest_lacks_verifier_tests(manifest_path, task)
+        ):
             return False
 
         try:
@@ -4926,7 +4932,14 @@ class MacWorker(
         test_command = _repository_contract_test_command(task)
         hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
         test_item = self._run_repository_contract_test(
-            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify, task=task
+            worktree,
+            test_command,
+            task_dir=task_dir,
+            hub_verify=hub_verify,
+            task=task,
+            # The tip HEAD was just rebased onto: the scoped gate then selects
+            # this task's change, not everything landed since the lease.
+            selection_base_sha=canonical_sync_selection_base(canonical_sync, prepared_base_sha),
         )
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
@@ -4979,6 +4992,18 @@ class MacWorker(
         elif prepush_problems:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
+        elif publication_target is not None and publication_target.task_head_sha != test_item.get(
+            "executed_head_sha"
+        ):
+            # Rebase -> verify -> guarded_push: the commit pushed must be the
+            # commit verified, and guarded_push refuses any HEAD but this one.
+            problems.append(
+                "verified head %s is not the head being pushed %s; refusing to push"
+                % (
+                    str(test_item.get("executed_head_sha") or "")[:12],
+                    publication_target.task_head_sha[:12],
+                )
+            )
         elif _worker_verification_item_passed(test_item) is True:
             if publication_target is not None:
                 if not self._assignment_is_current(task_id, lease_id):
@@ -5187,6 +5212,7 @@ class MacWorker(
         task_dir: Optional[Path] = None,
         hub_verify: bool = False,
         task: Optional[JsonDict] = None,
+        selection_base_sha: str = "",
     ) -> JsonDict:
         # A task-local sandbox receipt may describe the pre-rebase tree or be
         # written by the coding agent. Run the final committed source through
@@ -5201,7 +5227,7 @@ class MacWorker(
             worktree,
             command,
             str(bootstrap.get("command") or ""),
-            prepared_base_sha=_repository_prepared_base(task),
+            selection_base_sha=selection_base_sha or _repository_prepared_base(task),
         )
 
     def _execution_submission_problems(self, task_dir: Path, evidence: JsonDict) -> List[str]:
@@ -5259,6 +5285,7 @@ class MacWorker(
                         task_payload,
                         evidence_type,
                     ),
+                    require_verifier_tests=bool(_repository_contract_test_command(task_payload)),
                 )
             )
             if evidence_type == "review_verdict":
@@ -7914,10 +7941,67 @@ def _repository_finalizer_prepush_problems(
         or _worker_verification_item_passed(test_item) is not True
     ):
         problems.append("repo code evidence requires at least one passing test/check")
-    if test_item.get("executed_head_sha") and test_item["executed_head_sha"] != head_sha:
-        problems.append("repository tests do not match the commit being pushed")
+    # Only the pre-push verifier's own record of running the gate on this exact
+    # commit authorizes a push. It used to be enough for executed_head_sha to
+    # match WHEN PRESENT, so an item without one -- a clean-tree sandbox receipt
+    # where nothing ran, a deferred placeholder -- passed this check.
+    from mac.evidence_validators import verifier_test_item_problems
+
+    verifier_problems = verifier_test_item_problems(test_item, head_sha)
+    if verifier_problems:
+        problems.append(
+            "repository tests are not a verifier result for the commit being pushed: %s"
+            % "; ".join(verifier_problems)
+        )
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
+
+
+def _agent_manifest_lacks_verifier_tests(manifest_path: Path, task: JsonDict) -> bool:
+    """True when an agent-written repo_change manifest has no verifier pass.
+
+    The agent's own ``tests`` list is not evidence that the contract gate ran
+    on the commit being published. Rather than submit it and have both gates
+    refuse it, re-finalize from the host worktree: the finalizer rebases,
+    runs the pre-push verifier on that exact commit, and publishes only on a
+    pass. Tasks whose contract defines no tests, and non-repository outcomes,
+    keep the agent's manifest.
+    """
+    from mac.evidence_validators import VERIFIER_EXECUTION_ENVIRONMENTS, verifier_tests_problems
+
+    if not _repository_contract_test_command(task):
+        return False
+    if declared_non_repository_outcome_evidence_type(ensure_json_object(task.get("metadata"))):
+        return False
+    try:
+        loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(loaded, dict):
+        return False
+    if str(loaded.get("evidence_type") or "").strip().lower() != "repo_change":
+        return False
+    repo = loaded.get("repo") if isinstance(loaded.get("repo"), dict) else {}
+    if _worker_allows_empty_repo_change_evidence(task, "repo_change") and not _manifest_list(
+        repo.get("files_changed")
+    ):
+        return False
+    if str(loaded.get("status") or "").strip().lower() != "complete":
+        # A failed or partial finalizer record states why it did not publish;
+        # re-running the finalizer over it would only repeat that failure.
+        return False
+    tests = loaded.get("tests")
+    tests = [tests] if isinstance(tests, dict) else tests if isinstance(tests, list) else []
+    if any(
+        isinstance(item, dict)
+        and str(item.get("execution_environment") or "") in VERIFIER_EXECUTION_ENVIRONMENTS
+        and item.get("executed_head_sha")
+        and str(item.get("status") or "").strip().lower() != "pass"
+        for item in tests
+    ):
+        # The verifier ran and did not pass: that verdict stands.
+        return False
+    return bool(verifier_tests_problems(loaded))
 
 
 def _hub_verify_deferred_test_item(command: str) -> JsonDict:
@@ -7990,7 +8074,13 @@ def _sandbox_repository_verification_item(
         stderr="\n".join(
             part for part in (str(loaded.get("stderr") or "").strip(), record_problem) if part
         ),
+        # A skipped gate ran nothing. Dropping this flag is how a sandbox
+        # receipt for an untested tree used to arrive here as a plain pass.
+        skipped=bool(loaded.get("skipped"))
+        or str(loaded.get("status") or "").strip().lower() == "skipped",
     )
+    if item.get("skipped") and loaded.get("skipped_reason"):
+        item["skipped_reason"] = str(loaded.get("skipped_reason"))
     item["execution_environment"] = "openshell_sandbox"
     if isinstance(loaded.get("environment_delta"), dict):
         item["environment_delta"] = loaded["environment_delta"]
@@ -8051,7 +8141,19 @@ def _process_check_item(
     command: str,
     stdout: str,
     stderr: str,
+    skipped: bool = False,
 ) -> JsonDict:
+    if skipped:
+        # Not a result: no returncode, so nothing downstream can read it as 0.
+        return {
+            "name": name,
+            "command": command,
+            "returncode": None,
+            "status": "skipped",
+            "skipped": True,
+            "stdout": _truncate_process_text(stdout),
+            "stderr": _truncate_process_text(stderr),
+        }
     return {
         "name": name,
         "command": command,
@@ -8223,13 +8325,25 @@ def _worker_verification_contract_problems(
     evidence_type: str,
     *,
     allow_empty_repo_change: bool = False,
+    require_verifier_tests: bool = False,
 ) -> List[str]:
     if evidence_type == "repo_change":
-        return _worker_repo_verification_problems(
+        problems = _worker_repo_verification_problems(
             manifest,
             require_tests=True,
             allow_empty_repo_change=allow_empty_repo_change,
         )
+        repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+        no_op = allow_empty_repo_change and not _manifest_list(repo.get("files_changed"))
+        if require_verifier_tests and not no_op:
+            # Same rule the hub applies (RepoChangeValidator): when the
+            # repository contract defines tests, only the pre-push verifier's
+            # record of running them on repo.head_sha counts as a pass. An
+            # allowed empty change (a no-op source refresh) has nothing to test.
+            from mac.evidence_validators import verifier_tests_problems
+
+            problems.extend(verifier_tests_problems(manifest))
+        return problems
     if evidence_type == "documentation":
         return _worker_repo_verification_problems(manifest, require_tests=False)
     if evidence_type == "deployment":
@@ -8431,6 +8545,12 @@ def _worker_verification_item_passed(item: Any) -> bool:
     if isinstance(item, list):
         return any(_worker_verification_item_passed(nested) for nested in item)
     if not isinstance(item, dict):
+        return False
+    if item.get("skipped") is True or str(item.get("status") or "").strip().lower() in {
+        "skipped",
+        "deferred",
+    }:
+        # Nothing ran: whatever else the item says, it is not a pass.
         return False
     if "returncode" in item:
         return _worker_int_value(item["returncode"]) == 0

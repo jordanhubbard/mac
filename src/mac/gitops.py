@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import sys
 from urllib.parse import quote as _quote, urlparse, urlsplit, urlunsplit
 
@@ -765,6 +765,22 @@ def sync_worktree_with_canonical(
             )[:500],
         }
     return {"status": "rebased", "canonical_tip": tip}
+
+
+def canonical_sync_selection_base(canonical_sync: Any, fallback: str = "") -> str:
+    """The base a scoped test gate should diff against after canonical sync.
+
+    After a clean ``fresh``/``rebased`` sync HEAD contains the canonical tip,
+    so ``tip..HEAD`` is exactly the task's change. Any other outcome leaves
+    no trustworthy tip and the caller's *fallback* (the prepared base) is
+    used; the selector itself escalates to the full suite when that base is
+    unusable.
+    """
+    if isinstance(canonical_sync, dict) and canonical_sync.get("status") in {"fresh", "rebased"}:
+        tip = str(canonical_sync.get("canonical_tip") or "").strip()
+        if _GIT_SHA_RE.fullmatch(tip):
+            return tip
+    return str(fallback or "").strip()
 
 
 @_git_timeout_scoped

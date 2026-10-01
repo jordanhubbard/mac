@@ -50,6 +50,7 @@ from mac.services import ControlPlane
 from mac.store import StoreError
 from mac.test_support import ephemeral_dsn, ephemeral_store, store_on
 from mac.models import ensure_json_object
+from tests.conftest import verifier_test_item
 
 
 @pytest.fixture()
@@ -310,7 +311,7 @@ def verified_repo_metadata(
             "dirty": False,
             "files_changed": files,
         },
-        "tests": [{"command": "pytest tests/test_example.py", "returncode": 0}],
+        "tests": [verifier_test_item(head_sha)],
     }
     if cp is not None and agent_id is not None:
         manifest = _sign(cp, agent_id, manifest)
@@ -6958,7 +6959,7 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
                 "dirty": False,
                 "files_changed": ["feature.txt"],
             },
-            "tests": [{"command": "make smoke", "returncode": 0}],
+            "tests": [verifier_test_item(task_head)],
         },
     )
     evidence = cp.add_evidence(
@@ -7071,7 +7072,7 @@ def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
                 "dirty": False,
                 "files_changed": ["feature.txt"],
             },
-            "tests": [{"command": "pytest -q", "returncode": 0}],
+            "tests": [verifier_test_item(task_head)],
         },
     )
     evidence = cp.add_evidence(
@@ -7174,7 +7175,7 @@ def _publishable_task_and_evidence(
                 "dirty": False,
                 "files_changed": ["feature.txt"],
             },
-            "tests": [{"command": "make smoke", "returncode": 0}],
+            "tests": [verifier_test_item(task_head)],
         },
     )
     evidence = cp.add_evidence(
