@@ -219,13 +219,6 @@ def _configured_semantic_retry_routes(metadata: Dict[str, Any]) -> List[Dict[str
         raw = metadata.get("model_candidates")
     if not isinstance(raw, list):
         raw = metadata.get("retry_models")
-    if not isinstance(raw, list):
-        try:
-            from mac.model_selection import selected_models
-
-            raw = selected_models()
-        except Exception:  # noqa: BLE001 - absence of a ladder must not block retry.
-            raw = []
     routes: List[Dict[str, str]] = []
     for item in raw if isinstance(raw, list) else []:
         if isinstance(item, dict):

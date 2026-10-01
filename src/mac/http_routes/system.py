@@ -19,7 +19,6 @@ class RepositoryRefReconcileRequest(BaseModel):
 class SystemRouteServices:
     repository_ref_reconciler: Any
     github_ingestor: Any
-    model_selection_service: Any
 
 
 def build_system_router(
@@ -74,24 +73,6 @@ def build_system_router(
             return controller.run_once(trigger="operator")
 
     controller_routes("github-ingest", services.github_ingestor)
-
-    @router.get("/model-selection/status")
-    def model_selection_status() -> Dict[str, Any]:
-        return services.model_selection_service.status()
-
-    @router.post("/model-selection/refresh")
-    def model_selection_refresh(
-        principal: Any = Depends(get_principal),
-    ) -> Dict[str, Any]:
-        refuse_tenant_bound(principal)
-        return services.model_selection_service.run_once(trigger="operator")
-
-    @router.post("/model-selection/promote")
-    def model_selection_promote(
-        principal: Any = Depends(get_principal),
-    ) -> Dict[str, Any]:
-        refuse_tenant_bound(principal)
-        return services.model_selection_service.promote(actor="operator")
 
     @router.get("/.well-known/acp")
     def acp_manifest_route() -> Dict[str, Any]:

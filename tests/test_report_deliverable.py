@@ -820,7 +820,6 @@ def test_executor_clean_read_only_report_skips_git_finalizer(tmp_path, monkeypat
     monkeypatch.setattr(te, "maybe_auto_decompose", lambda *_args: False)
     monkeypatch.setattr(te, "emit_telemetry", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
 
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
@@ -875,7 +874,6 @@ def test_read_only_verification_failure_overwrites_complete_model_manifest(tmp_p
     )
     monkeypatch.setattr(te, "emit_telemetry", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
 
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,

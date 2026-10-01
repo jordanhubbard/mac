@@ -7504,7 +7504,7 @@ def _review_claim_identity(claim: JsonDict) -> JsonDict:
     }
 
 
-def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
+def _task_model_override(task: JsonDict) -> str:
     """Per-task LLM model override from task metadata.
 
     Executor tasks use ``metadata.model`` (flat, what ``mac task create
@@ -7512,39 +7512,20 @@ def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
     they use ``metadata.review_model`` (or the corresponding runtime key) and
     otherwise fall back to the reviewer's fleet default. This preserves model
     independence instead of silently asking the reviewer to use the author's
-    pinned model.
-    ``metadata.model_strength`` (int 1..10) is the name-decoupled alternative:
-    1 = cheapest/weakest, 10 = strongest, resolved to a concrete available model
-    via the active strength ladder (so the task stays decoupled from model names
-    as they churn). ``metadata.runtime.model`` is honored last. Empty string when
+    pinned model. ``metadata.runtime.model`` is honored last. Empty string when
     the task pins nothing — the agent's fleet default applies.
 
-    The ladder is resolved from the LOCAL selection store first (co-located hub
-    process), then, if that is empty, from the hub's ``/model-selection/status``
-    via ``hub_client`` — without that fallback a spoke worker (which has no local
-    selection file) would silently ignore ``--model-strength`` and always drop to
-    the fleet default."""
+    ``metadata.model_strength`` / ``review_model_strength`` are advisory only:
+    the strength ladder that once resolved them was removed, so a task carrying
+    one runs on the fleet default model like any unpinned task."""
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return ""
     is_review = isinstance(metadata.get("review_context"), dict)
     model_key = "review_model" if is_review else "model"
-    strength_key = "review_model_strength" if is_review else "model_strength"
     value = str(metadata.get(model_key) or "").strip()
     if value:
         return value[:256]
-    strength = metadata.get(strength_key)
-    if strength is None and isinstance(metadata.get("runtime"), dict):
-        strength = metadata["runtime"].get(strength_key)
-    if strength is not None and str(strength).strip():
-        try:
-            scale = int(strength)
-        except (TypeError, ValueError):
-            scale = None
-        if scale is not None:
-            resolved = _resolve_strength_local_or_hub(scale, hub_client)
-            if resolved:
-                return resolved[:256]
     runtime = metadata.get("runtime")
     if isinstance(runtime, dict):
         return str(runtime.get(model_key) or "").strip()[:256]
@@ -7572,30 +7553,6 @@ def _task_iteration_override(task: JsonDict) -> Optional[int]:
     except (TypeError, ValueError):
         return None
     return resolved if 1 <= resolved <= 500 else None
-
-
-def _resolve_strength_local_or_hub(scale: int, hub_client: Any = None) -> str:
-    """Resolve a 1..10 strength to a concrete model via the LOCAL active ladder,
-    falling back to the hub's ``/model-selection/status`` ladder for spoke
-    workers that have no local selection file. Best-effort — "" on any failure."""
-    try:
-        from mac.model_selection import resolve_strength, resolve_strength_from_selection
-    except Exception:  # noqa: BLE001
-        return ""
-    try:
-        resolved = resolve_strength_from_selection(scale)
-    except Exception:  # noqa: BLE001
-        resolved = ""
-    if resolved:
-        return resolved
-    if hub_client is not None:
-        try:
-            status = hub_client.get("/model-selection/status")
-            ladder = (((status or {}).get("active") or {}).get("ladder")) or []
-            return resolve_strength(scale, [str(m) for m in ladder if str(m).strip()])
-        except Exception:  # noqa: BLE001 - hub fallback is best-effort.
-            return ""
-    return ""
 
 
 def _task_payload_from_workspace(task_dir: Path) -> JsonDict:

@@ -1270,57 +1270,15 @@ The delivered-nudge cap prevents an unparseable or crashing reviewer from
 spinning forever. It does not currently learn general executor/harness
 failures as reviewer-routing exclusions; track and repair those separately.
 
-## Dynamic model selection (opt-in, hub only)
+## Per-task model pins
 
-The hub can periodically propose the fleet's "powerhouse" models from web-search
-mentions, filtered against the configured providers' models.dev catalogs. It is
-**opt-in** and does not control the default deployed router today: explicit
-`MAC_ROUTER_DEFAULT_MODEL` and `MAC_ROUTER_WILDCARD_MODELS` values still win.
-The first successful selection is stored as active because there is no incumbent;
-later dynamic changes remain pending unless an enabled eval gate approves them or
-an operator runs `mac admin fleet model-selection promote`.
-
-Do not describe the current selection as proof that the router can serve a model.
-The catalog namespace is not yet reconciled with the router's exact model allowlist,
-and the per-worker strength ladder is not distributed from the hub. These gaps are
-why deployment leaves both selection and its automated swap evaluator disabled by
-default.
-
-Environment variables (hub):
-
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `MAC_MODEL_SELECT_ENABLED` | off | Run the weekly selection refresher. |
-| `MAC_MODEL_SELECT_INTERVAL_SECONDS` | 604800 | Refresh cadence. |
-| `MAC_MODEL_SELECTION_FILE` | `$MAC_HOME/model-selection.json` | Where the active/pending selection + strength ladder are persisted. |
-| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for `mac admin fleet model-selection promote`. |
-| `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSON or JSONL golden set of eval cases. |
-
-The built-in floor includes paired benchmark-labelled and production-shaped
-agentic-integrity cases for fabricated work, test tampering, score
-falsification, and tool-result concealment. Every pair uses the same behavioral
-requirement with `pair_id` plus `presentation` (`benchmark` or `realistic`). The
-swap gate records `realism_gap`, the mean absolute score gap within complete
-pairs, and blocks candidates whose gap increases by more than the configured
-drift threshold. Integrity requirements belong in `safety_required_points`;
-each entry may be a string or a list of acceptable phrasings. Missing one is a
-safety violation and forces that case's correctness to zero.
-
-The built-in cases are a smoke-test floor, not a deployment-quality corpus.
-Configure a version-controlled, rotating, production-shaped holdout that covers
-the fleet's actual tool, repository, evidence, and reviewer workflows. Keep a
-private portion out of model-facing prompts, preserve benchmark/realistic pair
-IDs, and review both aggregate quality and the realism gap before promotion.
-
-Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
-pins by capability (resolved via the strength ladder; **hub agent only** until
-ladder distribution lands).
+Per task, `--model <name>` pins a model by name. `--model-strength 1..10` is
+still accepted and recorded in task metadata for compatibility, but it is
+advisory only: no strength ladder resolves it, so the task runs on the fleet
+default model unless `--model` also pins one.
 
 ## Known limitations
 
-- Dynamic model selection is opt-in and does not override the explicit router
-  defaults installed by fleet deployment. Catalog/allowlist reconciliation and
-  ladder distribution must land before it becomes a fleet routing control.
 - Every topology requires PostgreSQL. Multi-replica deployments share one
   schema authority and must coordinate migrations before service startup.
 - No built-in TLS. Put a reverse proxy in front.

@@ -2,7 +2,7 @@
 
 Provides:
 * Executor telemetry (build_telemetry_record, emit_telemetry)
-* Memory feed: recall prior deployment lessons, record new lessons, curate via LLM
+* Memory feed: recall prior deployment lessons, record new lessons
 * Plan-outcome learning: record and recall plan decomposition patterns
 * classify_outcome: derive run outcome from evidence manifest
 """
@@ -10,13 +10,10 @@ Provides:
 from __future__ import annotations
 
 import json
-import os
 import re as _re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mac.env_config import env_bool, resolve_env_chain
-from mac.fleet_env import resolve as fleet_resolve
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
@@ -590,99 +587,3 @@ def recall_plan_lessons(task: Dict[str, Any], *, limit: int = 3) -> List[str]:
             break
 
     return lessons[:limit]
-
-
-_LESSON_CURATION_PROMPT = """You are the fleet's lesson curator. A task just finished; distill what the NEXT agent working on this project should know.
-
-Task: {title}
-Outcome: {outcome} (evidence_type={evidence_type})
-Signals: {signals}
-Failure hint: {error_signature}
-
-The project already knows these lessons:
-{existing}
-
-Write 1-3 NEW lessons, ONE PER LINE, no bullets or numbering. Each lesson must be a single self-contained sentence under 250 characters stating a reusable, project-specific fact or pitfall (environment quirks, commands that worked/failed, gotchas). Ground every lesson in the outcome above - do not speculate. Do NOT restate or rephrase anything the project already knows; only add what is genuinely novel. If nothing NEW generalizes beyond this one task, output exactly: NOTHING
-"""
-
-
-def curate_lessons_from_outcome(task: Dict[str, Any], outcome: Dict[str, Any]) -> List[str]:
-    """LLM-curated lessons from a finished run (the Hermes background-review
-    pattern, made outcome-grounded and fleet-shared).
-
-    Hermes forks an LLM every N iterations to journal into per-host text files
-    with no outcome signal; here the fork runs ONCE per task, is shown the
-    VERIFIED outcome (tests/push/checks signals), and its lessons land in the
-    HUB memory service as ``mac.deployment_learning.v1`` records - recalled by
-    every agent on the project via the existing lesson recall. Opt-in via
-    MAC_LESSON_CURATION_ENABLED; router endpoint from
-    MAC_ROUTER_URL/OPENAI_BASE_URL (the eval runner's seam). Best-effort: any
-    failure returns [] and the run's outcome is unaffected."""
-    if not env_bool("MAC_LESSON_CURATION_ENABLED"):
-        return []
-    router_url = (
-        resolve_env_chain("MAC_ROUTER_URL", "MAC_ROUTER_INTERNAL_URL")
-        or os.environ.get("OPENAI_BASE_URL", "").strip()
-    )
-    model = resolve_env_chain(
-        "MAC_LESSON_CURATION_MODEL", "MAC_TASK_MODEL", "MAC_HERMES_GATEWAY_MODEL"
-    )
-    if not router_url or not model:
-        return []
-    try:
-        from mac.eval_runner import router_model_caller
-
-        # Show the curator what the project already knows (v2 dedup): the first
-        # live batch re-derived the same pushed=false insight across three
-        # failures. Best-effort — recall failure just means an empty list.
-        try:
-            existing = recall_deployment_lessons(task, limit=8)
-        except Exception:  # noqa: BLE001
-            existing = []
-        prompt = _LESSON_CURATION_PROMPT.format(
-            existing="\n".join("- " + lesson for lesson in existing) or "- (none yet)",
-            title=str(task.get("title") or "")[:200],
-            outcome=outcome.get("outcome"),
-            evidence_type=outcome.get("evidence_type"),
-            signals=json.dumps(outcome.get("signals") or {}, sort_keys=True)[:400],
-            error_signature=str(outcome.get("error_signature") or "none")[:200],
-        )
-        # Resolve fleet-aware so a legacy flat MAC_API_TOKEN can't shadow the
-        # scoped MAC_API_TOKEN__<FLEET> form; fleet derives from MAC_FLEET
-        # (mac-g55y). Preserve the previous trim/empty-default behavior.
-        caller = router_model_caller(
-            router_url,
-            token=(fleet_resolve("MAC_API_TOKEN", fleet=os.environ.get("MAC_FLEET")) or "").strip(),
-        )
-        answer, _cites, _ms = caller(model, prompt, "")
-    except Exception:  # noqa: BLE001 - curation is advisory.
-        return []
-    lessons: List[str] = []
-    for line in str(answer or "").splitlines():
-        text = line.strip().strip("-*\u2022 ").strip()
-        if not text or text.upper() == "NOTHING":
-            continue
-        lessons.append(text[:250])
-        if len(lessons) >= 3:
-            break
-    return lessons
-
-
-def record_curated_lessons(task: Dict[str, Any], outcome: Dict[str, Any]) -> int:
-    """Persist LLM-curated lessons as deployment-learning records (best-effort).
-    Returns the number recorded."""
-    lessons = curate_lessons_from_outcome(task, outcome)
-    recorded = 0
-    for lesson in lessons:
-        payload = build_learning_record(
-            task,
-            {
-                "evidence_type": outcome.get("evidence_type"),
-                "outcome": outcome.get("outcome"),
-                "signals": {**(outcome.get("signals") or {}), "curated": True},
-                "error_signature": lesson,
-            },
-        )
-        if _hub_post("/memory", payload):
-            recorded += 1
-    return recorded

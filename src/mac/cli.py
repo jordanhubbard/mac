@@ -1418,29 +1418,6 @@ def cmd_fleet_ssh_spec(args: argparse.Namespace) -> None:
     _print(spec.to_dict())
 
 
-def cmd_fleet_model_selection_status(args: argparse.Namespace) -> None:
-    """Show the active/pending powerhouse-model selection + last refresh."""
-    cp = _plane(args)
-    status = cp.model_selection_status()
-    _print(status.to_dict() if hasattr(status, "to_dict") else status)
-
-
-def cmd_fleet_model_selection_refresh(args: argparse.Namespace) -> None:
-    """Trigger an immediate refresh (discover → moderate → select). A swap is
-    recorded pending, not adopted, until promoted."""
-    cp = _plane(args)
-    out = cp.model_selection_refresh()
-    _print(out.to_dict() if hasattr(out, "to_dict") else out)
-
-
-def cmd_fleet_model_selection_promote(args: argparse.Namespace) -> None:
-    """Promote the pending model swap to active (operator gate). Routing changes
-    only here — never on an unvalidated swap."""
-    cp = _plane(args)
-    out = cp.model_selection_promote()
-    _print(out.to_dict() if hasattr(out, "to_dict") else out)
-
-
 def cmd_fleet_connect(args: argparse.Namespace) -> None:
     """Print a fleet's hub URL and bearer token together, ready to paste.
 
@@ -2183,9 +2160,9 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         metadata["model"] = model
     strength = getattr(args, "model_strength", None)
     if strength is not None:
-        # Name-decoupled pin: 1 = cheapest/weakest .. 10 = strongest. Resolved
-        # to a concrete available model at run time via the strength ladder, so
-        # the task stays valid as model names churn. --model wins if both given.
+        # Advisory only: recorded on the task for compatibility with existing
+        # callers, but nothing routes on it any more (the strength ladder was
+        # removed). The task runs on the fleet default model unless --model pins one.
         if not 1 <= int(strength) <= 10:
             raise MACError("--model-strength must be an integer 1..10")
         metadata["model_strength"] = int(strength)
@@ -7596,9 +7573,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="1..10",
-        help="pin the model by STRENGTH instead of name: 1 = cheapest/weakest .. "
-        "10 = strongest/most expensive. Resolved to a concrete available model at "
-        "run time, so it stays valid as model names change. --model wins if both.",
+        help="advisory model strength (1 = cheapest/weakest .. 10 = strongest), "
+        "recorded in task metadata for compatibility. It no longer selects a "
+        "model: the task runs on the fleet default unless --model pins one.",
     )
     create.add_argument("--actor", default="human")
     create.add_argument(
@@ -9553,31 +9530,6 @@ def build_parser() -> argparse.ArgumentParser:
     ft_list = fleet_target.add_parser("list", help="list every pinned role target")
     ft_list.add_argument("--manifest", help="override manifest path")
     _set(cmd_fleet_target_list, ft_list)
-
-    # mac-model-select: dynamic powerhouse-model selection. A swap is recorded
-    # pending and only changes routing when promoted (operator/eval gate).
-    fleet_msel = fleet.add_parser(
-        "model-selection",
-        help="dynamic powerhouse-model selection: status, refresh, promote a pending swap",
-    )
-    msel_sub = fleet_msel.add_subparsers(dest="model_selection_command")
-    msel_sub.required = True
-    _set(
-        cmd_fleet_model_selection_status,
-        msel_sub.add_parser("status", help="show active + pending selection and last refresh"),
-    )
-    _set(
-        cmd_fleet_model_selection_refresh,
-        msel_sub.add_parser(
-            "refresh", help="refresh now (a swap is recorded pending, not adopted)"
-        ),
-    )
-    _set(
-        cmd_fleet_model_selection_promote,
-        msel_sub.add_parser(
-            "promote", help="promote the pending swap to active (routing changes here)"
-        ),
-    )
 
     fleet_ssh_spec = fleet.add_parser(
         "ssh-spec",

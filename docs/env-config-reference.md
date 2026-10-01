@@ -589,8 +589,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LEDGER_BACKUP_DIR` | str | consumer-defined | core | Core setting: ledger backup dir. |
 | `MAC_LEDGER_BACKUP_ENABLED` | bool | consumer-defined | core | Core setting: ledger backup enabled. |
 | `MAC_LEGACY_HERMES_HOME` | str | consumer-defined | core | Core setting: legacy hermes home. |
-| `MAC_LESSON_CURATION_ENABLED` | bool | consumer-defined | core | Core setting: lesson curation enabled. |
-| `MAC_LESSON_CURATION_MODEL` | str | consumer-defined | core | Core setting: lesson curation model. |
 | `MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: linux manager command timeout seconds. |
 | `MAC_LINUX_SERVICE_TX_ACTIVE` | str | consumer-defined | core | Core setting: linux service tx active. |
 | `MAC_LINUX_SERVICE_TX_BACKUP` | str | consumer-defined | core | Core setting: linux service tx backup. |
@@ -623,11 +621,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MERGE_QUEUE_WINDOW_INCREMENT` | str | consumer-defined | merge-queue | Merge Queue setting: merge queue window increment. |
 | `MAC_MIGRATION_DATABASE_URL` | str | consumer-defined | core | Core setting: migration database url. |
 | `MAC_MODELS_DEV_CACHE_FILE` | str | consumer-defined | core | Core setting: models dev cache file. |
-| `MAC_MODEL_SELECTION_FILE` | str | consumer-defined | core | Core setting: model selection file. |
-| `MAC_MODEL_SELECT_ENABLED` | bool | consumer-defined | core | Core setting: model select enabled. |
-| `MAC_MODEL_SELECT_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: model select interval seconds. |
-| `MAC_MODEL_SWAP_EVAL_ENABLED` | bool | consumer-defined | core | Core setting: model swap eval enabled. |
-| `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | str | consumer-defined | core | Core setting: model swap eval golden set. |
 | `MAC_NEMOCLAW_AGENT_ID` | str | consumer-defined | core | Core setting: nemoclaw agent id. |
 | `MAC_NEMOCLAW_FLEET_NAME` | str | consumer-defined | core | Core setting: nemoclaw fleet name. |
 | `MAC_NEMOCLAW_GATEWAY_PORT` | int | consumer-defined | core | Core setting: nemoclaw gateway port. |
@@ -965,7 +958,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ROUTER_IMAGE_MODEL` | str | consumer-defined | router | Router setting: router image model. |
 | `MAC_ROUTER_IMAGE_TIMEOUT` | int | consumer-defined | router | Router setting: router image timeout. |
 | `MAC_ROUTER_IMAGE_UPSTREAM` | str | consumer-defined | router | Router setting: router image upstream. |
-| `MAC_ROUTER_INTERNAL_URL` | str | consumer-defined | router | Router setting: router internal url. |
 | `MAC_ROUTER_MAX_TOKENS_FLOOR` | int | consumer-defined | router | Router setting: router max tokens floor. |
 | `MAC_ROUTER_MEDIA_JSON` | str | consumer-defined | router | Router setting: router media json. |
 | `MAC_ROUTER_PORT` | int | consumer-defined | router | Router setting: router port. |
@@ -973,9 +965,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ROUTER_REJECT_MISMATCHED_PRINCIPAL` | bool | consumer-defined | router | Router setting: router reject mismatched principal. |
 | `MAC_ROUTER_STREAM_TIMEOUT` | int | consumer-defined | router | Router setting: router stream timeout. |
 | `MAC_ROUTER_TIMEOUT` | int | consumer-defined | router | Router setting: router timeout. |
-| `MAC_ROUTER_TOKEN` | str | consumer-defined | router | Router setting: router token. |
 | `MAC_ROUTER_TOKENS` | str | consumer-defined | router | Router setting: router tokens. |
-| `MAC_ROUTER_URL` | str | consumer-defined | router | Router setting: router url. |
 | `MAC_ROUTER_VIDEO_KEY` | str | consumer-defined | router | Router setting: router video key. |
 | `MAC_ROUTER_VIDEO_TIMEOUT` | int | consumer-defined | router | Router setting: router video timeout. |
 | `MAC_ROUTER_VIDEO_UPSTREAM` | str | consumer-defined | router | Router setting: router video upstream. |

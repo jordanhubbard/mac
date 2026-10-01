@@ -335,7 +335,7 @@ class SubprocessExecutor:
         # that declares a cheaper (or stronger) model gets it without any
         # fleet-wide config change. llm.route records requested/resolved
         # model per completion, so the override is visible in observability.
-        model_override = _task_model_override(task, hub_client=getattr(self, "client", None))
+        model_override = _task_model_override(task)
         if model_override:
             env["MAC_TASK_MODEL"] = model_override
         iteration_override = _task_iteration_override(task)

@@ -206,9 +206,6 @@ request and response definitions.
 | `POST` | `/memory/summarize-actions` | Memory Summarize Actions |
 | `GET` | `/messages` | List Messages |
 | `POST` | `/messages` | Send Message |
-| `POST` | `/model-selection/promote` | Model Selection Promote |
-| `POST` | `/model-selection/refresh` | Model Selection Refresh |
-| `GET` | `/model-selection/status` | Model Selection Status |
 | `GET` | `/notifications` | List Notifications |
 | `POST` | `/notifications/{notification_id}/delivered` | Mark Notification Delivered |
 | `GET` | `/notifier/channels` | List Notifier Channels |

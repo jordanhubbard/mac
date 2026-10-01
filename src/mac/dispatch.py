@@ -916,15 +916,6 @@ class RemoteDispatch:
     def github_ingest_run(self) -> _Dictish:
         return _Dictish(self._post("/github-ingest/run", {}))
 
-    def model_selection_status(self) -> _Dictish:
-        return _Dictish(self._get("/model-selection/status"))
-
-    def model_selection_refresh(self) -> _Dictish:
-        return _Dictish(self._post("/model-selection/refresh", {}))
-
-    def model_selection_promote(self) -> _Dictish:
-        return _Dictish(self._post("/model-selection/promote", {}))
-
     def register_project(
         self,
         repository_url: str,

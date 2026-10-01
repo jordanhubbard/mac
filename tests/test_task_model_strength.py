@@ -1,43 +1,51 @@
-"""Per-task model selection: by-name (preserved) + by-strength (new)."""
+"""Per-task model selection: by-name pins route; ``model_strength`` is advisory.
+
+The strength ladder that once mapped ``--model-strength`` to a concrete model
+was removed. Existing callers and tasks may still carry the value, so the CLI
+keeps recording it and the worker must ignore it (fleet default model) rather
+than crash or route on it.
+"""
 
 from __future__ import annotations
 
-from mac.model_selection import ModelSelection, write_selection
+import io
+import json
+import sys
+
+from mac.cli import main
+from mac.test_support import dsn_for
 from mac.worker import _task_model_override
 
 
-def _persist_ladder(tmp_path, monkeypatch, ladder):
-    monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "sel.json"))
-    write_selection(ModelSelection(models=[ladder[-1]], source="dynamic", at="T", ladder=ladder))
-
-
-def test_by_name_override_preserved(tmp_path, monkeypatch):
-    _persist_ladder(tmp_path, monkeypatch, ["p/mini", "p/opus"])
-    # An explicit name wins over everything (the faster/cheaper direct pin).
+def test_by_name_override_preserved():
+    # An explicit name wins; a strength alongside it changes nothing.
     task = {"metadata": {"model": "p/exact-choice", "model_strength": 10}}
     assert _task_model_override(task) == "p/exact-choice"
 
 
-def test_by_strength_resolves_via_ladder(tmp_path, monkeypatch):
-    _persist_ladder(tmp_path, monkeypatch, ["p/mini", "p/base", "p/opus"])
-    assert _task_model_override({"metadata": {"model_strength": 1}}) == "p/mini"
-    assert _task_model_override({"metadata": {"model_strength": 10}}) == "p/opus"
+def test_strength_alone_falls_back_to_fleet_default():
+    # Empty string means "no pin": the agent's fleet default model applies.
+    assert _task_model_override({"metadata": {"model_strength": 9}}) == ""
+    assert _task_model_override({"metadata": {"model_strength": 1}}) == ""
+    assert _task_model_override({"metadata": {"model_strength": "not-a-number"}}) == ""
+    assert _task_model_override({"metadata": {"runtime": {"model_strength": 10}}}) == ""
 
 
-def test_strength_under_runtime_bag(tmp_path, monkeypatch):
-    _persist_ladder(tmp_path, monkeypatch, ["p/mini", "p/opus"])
-    assert _task_model_override({"metadata": {"runtime": {"model_strength": 10}}}) == "p/opus"
+def test_runtime_model_still_honored_with_strength():
+    task = {"metadata": {"model_strength": 9, "runtime": {"model": "p/runtime"}}}
+    assert _task_model_override(task) == "p/runtime"
 
 
-def test_no_pin_returns_empty(tmp_path, monkeypatch):
-    _persist_ladder(tmp_path, monkeypatch, ["p/mini", "p/opus"])
+def test_no_pin_returns_empty():
     assert _task_model_override({"metadata": {}}) == ""
+    assert _task_model_override({}) == ""
 
 
 def test_review_model_is_independent_from_executor_model():
     review = {
         "metadata": {
             "model": "author/model",
+            "review_model_strength": 9,
             "review_context": {"review_id": "review_1"},
         }
     }
@@ -47,41 +55,22 @@ def test_review_model_is_independent_from_executor_model():
     assert _task_model_override(review) == "reviewer/model"
 
 
-def test_strength_with_no_persisted_ladder_falls_through(tmp_path, monkeypatch):
-    # No selection file AND no hub client -> strength can't resolve -> empty
-    # (fleet default applies).
-    monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "absent.json"))
-    assert _task_model_override({"metadata": {"model_strength": 8}}) == ""
+def _run(tmp_path, *args):
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(["--db", dsn_for(tmp_path), *args])
+    finally:
+        sys.stdout = old
+    raw = out.getvalue().strip()
+    return rc, json.loads(raw) if raw else None
 
 
-class _FakeHubClient:
-    """Serves /model-selection/status like the hub does, for spoke-fallback tests."""
-
-    def __init__(self, ladder):
-        self._ladder = list(ladder)
-        self.calls = 0
-
-    def get(self, path):
-        self.calls += 1
-        assert path == "/model-selection/status"
-        return {"active": {"models": [self._ladder[-1]], "ladder": self._ladder}}
-
-
-def test_strength_resolves_from_hub_when_no_local_file(tmp_path, monkeypatch):
-    # A SPOKE worker has no local selection file; without the hub fallback the
-    # --model-strength pin was silently dropped. It must resolve via the hub's
-    # active ladder instead.
-    monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "absent.json"))
-    client = _FakeHubClient(["p/mini", "p/base", "p/opus"])
-    assert _task_model_override({"metadata": {"model_strength": 10}}, hub_client=client) == "p/opus"
-    assert _task_model_override({"metadata": {"model_strength": 1}}, hub_client=client) == "p/mini"
-    assert client.calls == 2
-
-
-def test_local_ladder_wins_over_hub(tmp_path, monkeypatch):
-    # When a local ladder IS present (co-located hub process) it is used and the
-    # hub is never queried.
-    _persist_ladder(tmp_path, monkeypatch, ["l/mini", "l/opus"])
-    client = _FakeHubClient(["h/mini", "h/opus"])
-    assert _task_model_override({"metadata": {"model_strength": 10}}, hub_client=client) == "l/opus"
-    assert client.calls == 0
+def test_cli_still_accepts_and_records_model_strength(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_SECRET_KEY", "cli-test-key-with-at-least-32-characters")
+    rc, task = _run(tmp_path, "task", "create", "strength task", "--model-strength", "9")
+    assert rc == 0, task
+    assert task["metadata"]["model_strength"] == 9
+    assert "model" not in task["metadata"]
+    assert _task_model_override(task) == ""

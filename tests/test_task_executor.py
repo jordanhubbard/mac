@@ -1395,7 +1395,6 @@ def test_clean_failed_agent_skips_outer_finalizers_and_decomposition(tmp_path, m
         lambda event, **detail: telemetry.append((event, detail)) or True,
     )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
 
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
@@ -1480,7 +1479,6 @@ def test_repository_verification_failure_overwrites_success_and_skips_finalizer(
     )
     monkeypatch.setattr(te, "emit_telemetry", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
 
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,

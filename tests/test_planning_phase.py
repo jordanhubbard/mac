@@ -370,7 +370,6 @@ def _patch_run_executor_base(monkeypatch, *, tmp_path: Path) -> Dict[str, List]:
         lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []},
     )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
     monkeypatch.setattr(te, "record_plan_outcome", lambda *a, **kw: True)
     monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda task: None)
     monkeypatch.setattr(
