@@ -568,8 +568,7 @@ def reap_orphaned_task_sandboxes(
 # that exited cleanly, crashed, or ran on a now-unreachable host has a recorded
 # ``mac.pid`` that is either dead-but-unprovable or belongs to an unrelated
 # process on the reaping host. The authoritative source of truth for whether a
-# task is still being worked is the durable lease store, exactly as the k8s
-# controller reconciles stuck Jobs (see ``mac.k8s.controller``).
+# task is still being worked is the durable lease store.
 #
 # This reconciler stamps the same fail-closed discipline onto lease authority: a
 # task sandbox is reaped only when the lease store *positively* proves the work
@@ -1072,7 +1071,7 @@ def reconcile_leftover_task_sandboxes(
 # This reconciler is meant to run inside the *controller* (the component that
 # already owns the authoritative task/lease store), driven by a lifecycle
 # trigger rather than by a worker's own shutdown. It is deliberately
-# fail-closed on the SAME lease-authority discipline as the k8s controller:
+# fail-closed on lease authority:
 #
 #   * a sandbox is reaped only when the hub *positively proves* the recorded
 #     lease is no longer live for its ``mac.task.id`` -- the task is terminal,

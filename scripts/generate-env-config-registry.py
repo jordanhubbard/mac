@@ -60,7 +60,6 @@ FAMILIES = (
     ("MAC_WEBDAV_", "webdav-publish"),
     ("MAC_PUBLISH_", "publication"),
     ("MAC_MEMORY_", "memory"),
-    ("MAC_RUNNER_", "kubernetes-runner"),
     ("MAC_ACP_", "acp"),
     ("MAC_AGENT_", "agent"),
     ("MAC_HUB_", "hub"),

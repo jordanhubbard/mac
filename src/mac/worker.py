@@ -593,7 +593,7 @@ def _emit_task_progress(
     """Emit a coarse progress boundary when the host supports AgentBus.
 
     ``execute_assignment`` is intentionally reusable by small harnesses in
-    tests and K8s adapters. Those hosts implement the execution contract but
+    tests. Those hosts implement the execution contract but
     do not necessarily mix in worker observability, so progress remains
     best-effort rather than becoming a new execution prerequisite.
     """
@@ -1813,8 +1813,7 @@ class MacWorker(
 
         Caller is responsible for the claim; this method only does
         start -> prepare -> execute -> record -> publish -> submit-for-review.
-        Suitable for K8s-mode where the runner has pre-claimed the task
-        and the Job pod just needs to execute it.
+        Suitable when something else has pre-claimed the task.
         """
         task_id = task["id"]
         lease_id = str(lease["id"])
@@ -6972,9 +6971,9 @@ def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
         return None
     repository_path = str(origin.get("repository_path") or "").strip()
     repository_url = str(origin.get("repository_url") or "").strip()
-    # mac-k8s clone path: allow tasks that ship only a remote URL (the
-    # Job pod has no local source). Either a local path or a remote URL
-    # is now sufficient to identify a repository-mode task.
+    # Remote clone path: allow tasks that ship only a remote URL (the
+    # worker has no local source). Either a local path or a remote URL
+    # is sufficient to identify a repository-mode task.
     if not repository_path and not repository_url:
         return None
 
@@ -8459,7 +8458,7 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
 
     Used for clone where the target directory does not yet exist (so
     ``git -C <target>`` is invalid). Mirrors ``_run_git`` for timeout
-    + capture behaviour so the K8s clone path is testable via the
+    + capture behaviour so the remote clone path is testable via the
     same monkeypatch surface."""
     try:
         timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))

@@ -809,28 +809,6 @@ network_policies:
     )
     ctx["draft_id"] = draft["id"]
 
-    provisioning = _ok(
-        client.post(
-            "/provisioning/requests",
-            json={
-                "reason": "route coverage provision",
-                "capabilities": ["python"],
-                "tenant_id": tenant["id"],
-            },
-        )
-    )
-    ctx["request_id"] = provisioning["id"]
-    ctx["cancel_request_id"] = _ok(
-        client.post(
-            "/provisioning/requests",
-            json={
-                "reason": "route coverage cancel",
-                "capabilities": ["ops"],
-                "tenant_id": tenant["id"],
-            },
-        )
-    )["id"]
-
     notification = cp.record_notification(
         "route.coverage",
         "Route coverage notification",
@@ -1371,7 +1349,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/crash-reports/{report_id}"): {"report_id": "crash_report_id"},
         ("POST", "/crash-reports/{report_id}/resolve"): {"report_id": "crash_report_id"},
         ("POST", "/agents/{agent_id}/service-claims/sync"): {"agent_id": "agent_id"},
-        ("POST", "/provisioning/requests/{request_id}/cancel"): {"request_id": "cancel_request_id"},
         ("DELETE", "/roles/{role_id}"): {"role_id": "delete_role_id"},
         ("DELETE", "/workflows/{workflow_id}"): {"workflow_id": "delete_workflow_id"},
         ("DELETE", "/artifacts/{artifact_id_or_digest}"): {
@@ -1442,7 +1419,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "notification_id": ctx["notification_id"],
         "policy_id": ctx["openshell_policy_id"],
         "project": ctx["project_name"],
-        "request_id": ctx["request_id"],
         "review_id": ctx["review_id"],
         "report_id": ctx["crash_report_id"],
         "role_id": ctx["role_id"],
@@ -2022,13 +1998,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("PUT", "/roles/{role_id}"): {"description": "updated qa route role"},
         ("POST", "/roles/seed"): {},
         ("POST", "/agents/{agent_id}/role"): {"role_id_or_slug": ctx["role_slug"]},
-        ("POST", "/provisioning/requests"): {
-            "reason": "case provision",
-            "capabilities": ["python"],
-            "tenant_id": ctx["tenant_id"],
-        },
-        ("POST", "/provisioning/requests/{request_id}/fulfill"): {"agent_id": ctx["agent_id"]},
-        ("POST", "/provisioning/requests/{request_id}/cancel"): {"reason": "route coverage cancel"},
         ("POST", "/workflows"): {
             "slug": "route-workflow-case",
             "name": "Route Workflow Case",

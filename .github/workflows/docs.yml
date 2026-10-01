@@ -139,23 +139,6 @@ jobs:
         run: uv sync --locked --extra dev --extra docs
       - name: Exercise the PostgreSQL contract used by the deployment chapter
         run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
-      - name: Validate Kubernetes manifests
-        run: uv run --extra dev pytest -q tests/test_k8s_manifests.py tests/test_k8s_bootstrap.py
-      - name: Create a live kind control plane
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc
-        with:
-          version: v0.31.0
-          cluster_name: mac-docs
-      - name: Server-validate both Kubernetes deployment overlays
-        run: |
-          kubectl create namespace mac
-          kubectl -n mac create secret generic mac-api-config \
-            --from-literal=MAC_DATABASE_URL="$MAC_TEST_PG_URL" \
-            --from-literal=MAC_SECRET_KEY="$MAC_SECRET_KEY" \
-            --from-literal=MAC_WORKER_TOKEN=docs-worker-token \
-            --from-literal=MAC_API_TOKENS='{}'
-          kubectl apply --server-side --dry-run=server -k deploy/k8s/mac-api
-          kubectl apply --server-side --dry-run=server -k deploy/k8s/mac-runner
       - name: Set up QEMU for the documented ARM64 boundary
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:

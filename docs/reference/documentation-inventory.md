@@ -175,7 +175,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`hermes-integration.md`](../hermes-integration.md) | Hermes Integration |
 | supplemental reference | [`hermes-retirement-premises.md`](../hermes-retirement-premises.md) | Testing the premises for retiring the vendored Hermes tree |
 | supplemental reference | [`hermes-vendor-fate.md`](../hermes-vendor-fate.md) | Fate of the vendored Hermes tree |
-| supplemental reference | [`hgx-elastic-capacity.md`](../hgx-elastic-capacity.md) | HGX elastic capacity |
 | supplemental reference | [`home-consolidation.md`](../home-consolidation.md) | Home-Directory Consolidation: Analysis & Plan |
 | runbook | [`hub-availability.md`](../hub-availability.md) | Hub Availability |
 | supplemental reference | [`hub-host-saturation-remediation.md`](../hub-host-saturation-remediation.md) | Hub-Host Saturation Remediation |
@@ -227,7 +226,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`structured-task-bodies.md`](../structured-task-bodies.md) | Structured task bodies: actions on a Component |
 | historical archive | [`superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
 | historical archive | [`superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) | Autonomous Project Routing and Review/Fix Loop Design |
-| historical archive | [`superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md`](../superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md) | K8s bootstrap fleet registration — design |
 | historical archive | [`superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md`](../superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md) | Native Darwin OpenClaw and Slack home-channel routing — design |
 | runbook | [`synchronized-fleet-cutover.md`](../synchronized-fleet-cutover.md) | Synchronized Fleet Cut-over |
 | supplemental reference | [`task-dependency-semantics.md`](../task-dependency-semantics.md) | Task dependency failure semantics |

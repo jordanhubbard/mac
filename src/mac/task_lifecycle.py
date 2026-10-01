@@ -196,9 +196,6 @@ class DispatchService:
         # bounded fallback prevents a missed event from delaying work while
         # avoiding a full-backlog compatibility matrix once per second.
         self._empty_pull_round_interval_seconds = 5.0
-        self._provisioning_signal_lock = threading.Lock()
-        self._provisioning_signal_last_at: Dict[str, float] = {}
-        self._provisioning_signal_interval_seconds = 300.0
 
     def dispatch_once(self, *args: Any, **kwargs: Any) -> Optional[JsonDict]:
         return self._dispatch_once_impl(*args, **kwargs)
@@ -240,13 +237,12 @@ class DispatchService:
             self.control_plane._expire_leases_sweep_page(limit=limit_value)
             self.control_plane._unblock_ready_sweep_page(limit=limit_value)
             self.control_plane._auto_retry_blocked_attempts_sweep_page(limit=limit_value)
-        result, tasks_by_id, _agents_by_id = self._allocate_v2_round(
+        result, _tasks_by_id, _agents_by_id = self._allocate_v2_round(
             lease_seconds=lease_seconds,
             limit=limit_value,
             skip_tenants=skip_tenants,
             dry_run=False,
         )
-        self._emit_dispatch_provisioning_signals(result, tasks_by_id)
         return [dict(item.assignment) for item in result.assignments]
 
     @staticmethod
@@ -1009,87 +1005,6 @@ class DispatchService:
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
             pass
 
-    def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
-        from mac.services import (
-            _repository_host_required_commands_from_metadata,
-            _repository_required_commands_from_metadata,
-        )
-
-        required_role = None
-        hardware: JsonDict = {}
-        metadata = ensure_json_object(task.metadata)
-        required_commands = _repository_required_commands_from_metadata(metadata)
-        host_required_commands = _repository_host_required_commands_from_metadata(metadata)
-        if isinstance(task.metadata, dict):
-            md_role = task.metadata.get("required_role")
-            if isinstance(md_role, str) and md_role.strip():
-                required_role = md_role.strip()
-            md_hw = task.metadata.get("hardware")
-            if isinstance(md_hw, dict):
-                hardware = md_hw
-        self.control_plane.provisioning.request_agent(
-            reason="dispatch.no_eligible_agent",
-            role_slug=required_role,
-            capabilities=list(task.required_capabilities or []),
-            hardware=hardware,
-            task_id=task.id,
-            tenant_id=self.control_plane._task_tenant_id(task),
-            detail={
-                "task_state": task.state,
-                "task_title": task.title,
-                "required_commands": required_commands,
-                "sandbox_host_required_commands": host_required_commands,
-                "sandbox_required_commands": required_commands,
-            },
-        )
-
-    def _emit_dispatch_provisioning_signals(
-        self,
-        result: AllocationRoundResult,
-        tasks_by_id: Mapping[str, Task],
-    ) -> None:
-        """Emit bounded capacity demand from either push or pull dispatch.
-
-        Worker pulls can arrive every second.  An unresolved hard-capability
-        mismatch is one durable demand condition, not a new provisioning
-        request on every poll, so rate-limit by task while still allowing a
-        periodic refresh for long-lived demand.
-        """
-
-        unmatched_task_ids = [
-            decision.task_id
-            for decision in result.decisions
-            if decision.status == "unmatched" and decision.task_id in tasks_by_id
-        ]
-        if not unmatched_task_ids:
-            return
-        now = time.monotonic()
-        interval = max(1.0, float(self._provisioning_signal_interval_seconds))
-        due: List[str] = []
-        with self._provisioning_signal_lock:
-            cutoff = now - interval
-            self._provisioning_signal_last_at = {
-                task_id: observed_at
-                for task_id, observed_at in self._provisioning_signal_last_at.items()
-                if observed_at >= cutoff
-            }
-            for task_id in unmatched_task_ids:
-                last_at = self._provisioning_signal_last_at.get(task_id, 0.0)
-                if last_at and now - last_at < interval:
-                    continue
-                self._provisioning_signal_last_at[task_id] = now
-                due.append(task_id)
-        for task_id in due:
-            try:
-                self._emit_dispatch_provisioning_signal(tasks_by_id[task_id])
-            except Exception:
-                # A failed request must be eligible for the next pull rather
-                # than suppressed for the full throttle window.
-                with self._provisioning_signal_lock:
-                    if self._provisioning_signal_last_at.get(task_id) == now:
-                        self._provisioning_signal_last_at.pop(task_id, None)
-                continue
-
     def _prepare_task_dispatch_admission(self, task: Task) -> Task:
         """Persist deterministic sizing before an implementation lease exists.
 
@@ -1197,12 +1112,11 @@ class DispatchService:
                 # scheduler.  Reconciliation claims write durable lease rows
                 # even when there is no work, so maintenance remains on the
                 # explicit push/tick path.
-                result, tasks_by_id, _agents_by_id = self._allocate_v2_round(
+                result, _tasks_by_id, _agents_by_id = self._allocate_v2_round(
                     lease_seconds=lease_seconds,
                     limit=100,
                     dry_run=False,
                 )
-                self._emit_dispatch_provisioning_signals(result, tasks_by_id)
                 self._last_empty_pull_round_at = (
                     time.monotonic() if result.assigned_count == 0 else 0.0
                 )

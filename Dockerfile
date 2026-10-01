@@ -27,9 +27,9 @@ COPY .python-version pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN test "$(python3 --version)" = "Python $(cat .python-version)" \
     && uv sync --frozen --no-dev --no-editable \
-      --extra postgres --extra k8s \
+      --extra postgres \
     && /opt/mac-venv/bin/python -c \
-      "import cryptography, fastapi, kubernetes, psycopg, uvicorn, yaml"
+      "import cryptography, fastapi, psycopg, uvicorn, yaml"
 
 
 FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f
@@ -54,7 +54,7 @@ RUN printf '%s\n' 'mac:x:10001:' >> /etc/group && \
 COPY --from=builder /opt/mac-venv /opt/mac-venv
 COPY --chmod=0755 deploy/mac-crash-observer.py /usr/local/bin/mac-crash-observer
 # The copied environment is resolved exclusively from uv.lock, including the
-# postgres and k8s extras needed by the shared deployment image. Runtime
+# postgres extra needed by the shared deployment image. Runtime
 # backend selection still comes from environment configuration.
 
 USER mac

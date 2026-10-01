@@ -2414,7 +2414,6 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert "integration_findings" in state
     assert "integration_observations" in state
     assert "roles" in state
-    assert "provisioning_requests" in state
     assert "workflows" in state
     assert "workflow_runs" in state
     assert "agentbus_streams" in state

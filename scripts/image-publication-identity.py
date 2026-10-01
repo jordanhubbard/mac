@@ -578,7 +578,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
             'test "$(id -u)" = 10001; test "$(id -g)" = 10001; '
             "test -x /usr/local/bin/mac-crash-observer; "
             "test -x /opt/mac-venv/bin/mac-git-askpass; "
-            'python -c "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml"'
+            'python -c "import cryptography, fastapi, mac.api, psycopg, uvicorn, yaml"'
         )
         return [
             docker,

@@ -212,7 +212,7 @@ ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
 # `python -m hermes_cli.main chat`).
 COPY .python-version pyproject.toml uv.lock README.md /tmp/mac-src/
 COPY src /tmp/mac-src/src
-# Install the [dev] extra (pytest, coverage, psycopg, kubernetes) so the task
+# Install the [dev] extra (pytest, coverage, psycopg) so the task
 # sandbox can RUN the repository contract test — scripts/run-contract-tests.sh
 # collects the full suite, which imports those at collection time. Without it,
 # in-sandbox verification of a repo-coupled code task fails to execute

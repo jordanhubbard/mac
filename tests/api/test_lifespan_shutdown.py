@@ -88,14 +88,14 @@ def test_failed_service_start_unwinds_the_services_already_started(monkeypatch):
     before_tick = _threads_named("mac-hub-tick")
     before_advance = _threads_named("mac-review-advance")
 
-    # The autoscaler starts late in the sequence, so a failure there proves the
-    # earlier services (hub tick + review advance among them) are unwound.
-    autoscaler = app.state.hgx_autoscaler
+    # The GitHub ingestor starts late in the sequence, so a failure there proves
+    # the earlier services (hub tick + review advance among them) are unwound.
+    ingestor = app.state.github_ingestor
 
     def _explode() -> None:
         raise RuntimeError("simulated service start failure")
 
-    monkeypatch.setattr(autoscaler, "start", _explode)
+    monkeypatch.setattr(ingestor, "start", _explode)
 
     with pytest.raises(RuntimeError, match="simulated service start failure"):
         with TestClient(app):

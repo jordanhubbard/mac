@@ -97,8 +97,7 @@ def cmd_sign(args: argparse.Namespace) -> int:
     if not key:
         sys.stderr.write(
             "[mac-evidence] %s is unset; refusing to write an unsigned manifest. "
-            "Set the HMAC key on the environment (e.g. via MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS).\n"
-            % key_env
+            "Set the HMAC key on the environment.\n" % key_env
         )
         return 2
     manifest = _read_manifest(args)

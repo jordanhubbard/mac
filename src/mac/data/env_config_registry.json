@@ -86,8 +86,7 @@
     "name": "MAC_AGENT_ATTESTATION_KEY",
     "retired": false,
     "sources": [
-      "src/mac/evidence_cli.py",
-      "src/mac/k8s/runner.py"
+      "src/mac/evidence_cli.py"
     ],
     "type": "str"
   },
@@ -262,7 +261,6 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac-agent-journal.service",
@@ -279,8 +277,6 @@
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_runtime.py",
       "src/mac/openshell_supervisor.py",
@@ -378,17 +374,6 @@
       "src/mac/worker_runtime_deps.py"
     ],
     "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Agent setting: agent role.",
-    "family": "agent",
-    "name": "MAC_AGENT_ROLE",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -546,9 +531,6 @@
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
       "src/mac/ide_launcher.py",
-      "src/mac/k8s/bootstrap.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/orchestrator.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
@@ -563,8 +545,6 @@
     "name": "MAC_API_TOKENS",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-api/deployment.yaml",
-      "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/systemd/mac.service",
       "src/mac/api.py",
       "src/mac/cli.py",
@@ -692,7 +672,6 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/k8s/mac-api/deployment.yaml",
       "deploy/systemd/mac.service",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
@@ -1126,19 +1105,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: config file.",
-    "family": "core",
-    "name": "MAC_CONFIG_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/bootstrap.py",
-      "src/mac/k8s/config_loader.py",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: continuity bus chunk scan.",
     "family": "core",
     "name": "MAC_CONTINUITY_BUS_CHUNK_SCAN",
@@ -1271,17 +1237,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: controller interval seconds.",
-    "family": "core",
-    "name": "MAC_CONTROLLER_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/orchestrator.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: control plane db password.",
     "family": "core",
     "name": "MAC_CONTROL_PLANE_DB_PASSWORD",
@@ -1336,7 +1291,6 @@
     "name": "MAC_CRASH_SPOOL_DIR",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py"
     ],
     "type": "str"
@@ -1386,8 +1340,6 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "deploy/install-postgres-service.sh",
-      "deploy/k8s/mac-api/deployment.yaml",
-      "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/systemd/mac.service",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
@@ -4966,7 +4918,6 @@
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/ide_launcher.py",
-      "src/mac/k8s/orchestrator.py",
       "src/mac/router_app.py",
       "src/mac/worker.py"
     ],
@@ -5576,259 +5527,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: hgx autoscale cluster.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_CLUSTER",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale cooldown seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale cpu.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_CPU",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale enabled.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale gpu.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_GPU",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale headroom.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_HEADROOM",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale initial delay seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale interval seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale max sessions.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_MAX_SESSIONS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale memory gib.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_MEMORY_GIB",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale min ready.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_MIN_READY",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale name prefix.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_NAME_PREFIX",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale poll interval seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_POLL_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale scale down stabilization seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale scale down step.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale scale up stabilization seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale scale up step.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_SCALE_UP_STEP",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale spare min age seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale state file.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_STATE_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx autoscale wait timeout seconds.",
-    "family": "core",
-    "name": "MAC_HGX_AUTOSCALE_WAIT_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx binary.",
-    "family": "core",
-    "name": "MAC_HGX_BINARY",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx command timeout seconds.",
-    "family": "core",
-    "name": "MAC_HGX_COMMAND_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: hgx registered agents file.",
-    "family": "core",
-    "name": "MAC_HGX_REGISTERED_AGENTS_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/hgx_autoscaler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: home.",
     "family": "core",
     "name": "MAC_HOME",
@@ -6134,8 +5832,6 @@
       "src/mac/hermes_adapter.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py",
       "src/mac/local_console.py",
       "src/mac/mesh_bind.py",
       "src/mac/openshell_collector.py",
@@ -6837,8 +6533,6 @@
       "src/mac/coding_agent.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -8868,7 +8562,6 @@
     "name": "MAC_PG_POOL_SIZE",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-api/deployment.yaml",
       "src/mac/store.py"
     ],
     "type": "int"
@@ -10513,38 +10206,15 @@
   },
   {
     "default": null,
-    "description": "Review setting: review tick interval seconds.",
-    "family": "review",
-    "name": "MAC_REVIEW_TICK_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/orchestrator.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Review setting: review tick limit.",
     "family": "review",
     "name": "MAC_REVIEW_TICK_LIMIT",
     "retired": false,
     "sources": [
       "src/mac/api.py",
-      "src/mac/k8s/orchestrator.py",
       "src/mac/services.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review tick loop enabled.",
-    "family": "review",
-    "name": "MAC_REVIEW_TICK_LOOP_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/orchestrator.py"
-    ],
-    "type": "bool"
   },
   {
     "default": null,
@@ -11213,201 +10883,6 @@
   },
   {
     "default": null,
-    "description": "Kubernetes Runner setting: runner active deadline seconds.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_ACTIVE_DEADLINE_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner agent token secrets.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_AGENT_TOKEN_SECRETS",
-    "retired": false,
-    "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner capabilities.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_CAPABILITIES",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner default image.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_DEFAULT_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "scripts/build-and-push-image.sh",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner job poll interval seconds.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_JOB_POLL_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner lease renew interval seconds.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_LEASE_RENEW_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner namespace.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_NAMESPACE",
-    "retired": false,
-    "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner opencode configmap name.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_OPENCODE_CONFIGMAP_NAME",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner poll interval seconds.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_POLL_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner role attestation key secrets.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS",
-    "retired": false,
-    "sources": [
-      "src/mac/evidence_cli.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner task secret key secret key.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TASK_SECRET_KEY_SECRET_KEY",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner task secret key secret name.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TASK_SECRET_KEY_SECRET_NAME",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner task secret name.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TASK_SECRET_NAME",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner task service account.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TASK_SERVICE_ACCOUNT",
-    "retired": false,
-    "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner task token secret key.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TASK_TOKEN_SECRET_KEY",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner task token secret name.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TASK_TOKEN_SECRET_NAME",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Kubernetes Runner setting: runner ttl seconds after finished.",
-    "family": "kubernetes-runner",
-    "name": "MAC_RUNNER_TTL_SECONDS_AFTER_FINISHED",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Openshell Sandbox setting: sandbox base path.",
     "family": "openshell-sandbox",
     "name": "MAC_SANDBOX_BASE_PATH",
@@ -11548,8 +11023,6 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/k8s/mac-api/deployment.yaml",
-      "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/systemd/mac.service",
       "scripts/prove-c26-inception.py",
       "scripts/setup-fleet.py",
@@ -11558,7 +11031,6 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/fleet_setup.py",
-      "src/mac/k8s/runner.py",
       "src/mac/secrets_service.py",
       "src/mac/services.py"
     ],
@@ -11993,29 +11465,6 @@
   },
   {
     "default": null,
-    "description": "Task Execution setting: task evidence manifest path.",
-    "family": "task-execution",
-    "name": "MAC_TASK_EVIDENCE_MANIFEST_PATH",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Task Execution setting: task executor command.",
-    "family": "task-execution",
-    "name": "MAC_TASK_EXECUTOR_COMMAND",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Task Execution setting: task executor python.",
     "family": "task-execution",
     "name": "MAC_TASK_EXECUTOR_PYTHON",
@@ -12043,18 +11492,6 @@
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Task Execution setting: task executor timeout seconds.",
-    "family": "task-execution",
-    "name": "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "int"
   },
   {
     "default": null,
@@ -12104,8 +11541,6 @@
     "sources": [
       "src/mac/coding_agent.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py",
       "src/mac/prompt_master.py",
       "src/mac/router_app.py",
       "src/mac/worker_subprocess.py"
@@ -12338,17 +11773,6 @@
     "retired": false,
     "sources": [
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Task Execution setting: task title.",
-    "family": "task-execution",
-    "name": "MAC_TASK_TITLE",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py"
     ],
     "type": "str"
   },
@@ -12765,7 +12189,6 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
@@ -12777,9 +12200,6 @@
       "src/mac/hermes_adapter.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py",
       "src/mac/local_console.py",
       "src/mac/mesh_bind.py",
       "src/mac/openshell_collector.py",
@@ -13095,10 +12515,7 @@
     "name": "MAC_WORKER_CREDENTIAL_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13110,9 +12527,7 @@
     "name": "MAC_WORKER_CREDENTIAL_FINGERPRINT",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13124,10 +12539,7 @@
     "name": "MAC_WORKER_CREDENTIAL_ID",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13150,10 +12562,7 @@
     "name": "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13165,10 +12574,7 @@
     "name": "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13180,9 +12586,7 @@
     "name": "MAC_WORKER_CREDENTIAL_VERSION",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13270,8 +12674,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/k8s/orchestrator.py"
+      "src/mac/deploy_env.py"
     ],
     "type": "int"
   },
@@ -13311,9 +12714,7 @@
     "name": "MAC_WORKER_IDENTITY_MODE",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker_credentials.py"
     ],
     "type": "str"
@@ -13448,9 +12849,7 @@
     "name": "MAC_WORKER_RUNNING_DIGEST",
     "retired": false,
     "sources": [
-      "deploy/k8s/mac-runner/deployment.yaml",
       "src/mac/deploy_env.py",
-      "src/mac/k8s/runner.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
     ],
@@ -13487,9 +12886,6 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
-      "deploy/k8s/mac-api/secret.example.yaml",
-      "deploy/k8s/mac-runner/deployment.yaml",
-      "deploy/k8s/mac-runner/serviceaccount.yaml",
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
@@ -13498,10 +12894,6 @@
       "src/mac/executor_sandbox.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
-      "src/mac/k8s/bootstrap.py",
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/orchestrator.py",
-      "src/mac/k8s/runner.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",

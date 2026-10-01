@@ -34,7 +34,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENT_PLIST_MUTATED` | str | consumer-defined | agent | Agent setting: agent plist mutated. |
 | `MAC_AGENT_QUARANTINE_THRESHOLD` | int | consumer-defined | agent | Agent setting: agent quarantine threshold. |
 | `MAC_AGENT_RECONCILE_RUNTIME_DEPS` | bool | consumer-defined | agent | Agent setting: agent reconcile runtime deps. |
-| `MAC_AGENT_ROLE` | str | consumer-defined | agent | Agent setting: agent role. |
 | `MAC_AGENT_SERVICE_NAME` | str | consumer-defined | agent | Agent setting: agent service name. |
 | `MAC_AGENT_STALE_AFTER_SECONDS` | int | consumer-defined | agent | Agent setting: agent stale after seconds. |
 | `MAC_AGENT_STARTUP_SELF_TEST` | str | consumer-defined | agent | Agent setting: agent startup self test. |
@@ -95,7 +94,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | int | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route max age seconds. |
 | `MAC_COMMAND_AUDIT_RETENTION_SECONDS` | int | consumer-defined | core | Core setting: command audit retention seconds. |
 | `MAC_COMMAND_ID` | str | consumer-defined | core | Core setting: command id. |
-| `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |
 | `MAC_CONTINUITY_BUS_CHUNK_SCAN` | str | consumer-defined | core | Core setting: continuity bus chunk scan. |
 | `MAC_CONTINUITY_BUS_STREAM_SCAN` | str | consumer-defined | core | Core setting: continuity bus stream scan. |
 | `MAC_CONTINUITY_MAX_ITEMS` | str | consumer-defined | core | Core setting: continuity max items. |
@@ -108,7 +106,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONTRACT_RUNTIME_VENV` | str | consumer-defined | core | Core setting: contract runtime venv. |
 | `MAC_CONTRACT_SNAPSHOT` | str | consumer-defined | core | Core setting: contract snapshot. |
 | `MAC_CONTRACT_SOURCE` | str | consumer-defined | core | Core setting: contract source. |
-| `MAC_CONTROLLER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: controller interval seconds. |
 | `MAC_CONTROL_PLANE_DB_PASSWORD` | str | consumer-defined | core | Core setting: control plane db password. |
 | `MAC_CONTROL_PLANE_ROLE` | str | consumer-defined | core | Core setting: control plane role. |
 | `MAC_CRASH_CORE_MAX_BYTES` | int | consumer-defined | core | Core setting: crash core max bytes. |
@@ -468,29 +465,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_STARTUP_CHECK` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes startup check. |
 | `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes sync slack home channels. |
 | `MAC_HERMES_WORKSPACE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes workspace. |
-| `MAC_HGX_AUTOSCALE_CLUSTER` | str | consumer-defined | core | Core setting: hgx autoscale cluster. |
-| `MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale cooldown seconds. |
-| `MAC_HGX_AUTOSCALE_CPU` | str | consumer-defined | core | Core setting: hgx autoscale cpu. |
-| `MAC_HGX_AUTOSCALE_ENABLED` | bool | consumer-defined | core | Core setting: hgx autoscale enabled. |
-| `MAC_HGX_AUTOSCALE_GPU` | str | consumer-defined | core | Core setting: hgx autoscale gpu. |
-| `MAC_HGX_AUTOSCALE_HEADROOM` | str | consumer-defined | core | Core setting: hgx autoscale headroom. |
-| `MAC_HGX_AUTOSCALE_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale initial delay seconds. |
-| `MAC_HGX_AUTOSCALE_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale interval seconds. |
-| `MAC_HGX_AUTOSCALE_MAX_SESSIONS` | str | consumer-defined | core | Core setting: hgx autoscale max sessions. |
-| `MAC_HGX_AUTOSCALE_MEMORY_GIB` | str | consumer-defined | core | Core setting: hgx autoscale memory gib. |
-| `MAC_HGX_AUTOSCALE_MIN_READY` | str | consumer-defined | core | Core setting: hgx autoscale min ready. |
-| `MAC_HGX_AUTOSCALE_NAME_PREFIX` | str | consumer-defined | core | Core setting: hgx autoscale name prefix. |
-| `MAC_HGX_AUTOSCALE_POLL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale poll interval seconds. |
-| `MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale scale down stabilization seconds. |
-| `MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP` | str | consumer-defined | core | Core setting: hgx autoscale scale down step. |
-| `MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale scale up stabilization seconds. |
-| `MAC_HGX_AUTOSCALE_SCALE_UP_STEP` | str | consumer-defined | core | Core setting: hgx autoscale scale up step. |
-| `MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale spare min age seconds. |
-| `MAC_HGX_AUTOSCALE_STATE_FILE` | str | consumer-defined | core | Core setting: hgx autoscale state file. |
-| `MAC_HGX_AUTOSCALE_WAIT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale wait timeout seconds. |
-| `MAC_HGX_BINARY` | str | consumer-defined | core | Core setting: hgx binary. |
-| `MAC_HGX_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: hgx command timeout seconds. |
-| `MAC_HGX_REGISTERED_AGENTS_FILE` | str | consumer-defined | core | Core setting: hgx registered agents file. |
 | `MAC_HOME` | str | consumer-defined | core | Core setting: home. |
 | `MAC_HOME_DIR` | str | consumer-defined | core | Core setting: home dir. |
 | `MAC_HOSTNAME` | str | consumer-defined | core | Core setting: hostname. |
@@ -886,9 +860,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REVIEWED_PYTHON_VERSION` | str | consumer-defined | core | Core setting: reviewed python version. |
 | `MAC_REVIEWED_UV_VERSION` | str | consumer-defined | core | Core setting: reviewed uv version. |
 | `MAC_REVIEW_TICK_HUB_AGENT` | str | consumer-defined | review | Review setting: review tick hub agent. |
-| `MAC_REVIEW_TICK_INTERVAL_SECONDS` | int | consumer-defined | review | Review setting: review tick interval seconds. |
 | `MAC_REVIEW_TICK_LIMIT` | int | consumer-defined | review | Review setting: review tick limit. |
-| `MAC_REVIEW_TICK_LOOP_ENABLED` | bool | consumer-defined | review | Review setting: review tick loop enabled. |
 | `MAC_REVIEW_TICK_ON_HEARTBEAT` | str | consumer-defined | review | Review setting: review tick on heartbeat. |
 | `MAC_ROLLBACK_ACTIVE_GATEWAY` | str | consumer-defined | core | Core setting: rollback active gateway. |
 | `MAC_ROLLBACK_AGENT` | str | consumer-defined | core | Core setting: rollback agent. |
@@ -946,23 +918,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ROUTER_VIDEO_UPSTREAM` | str | consumer-defined | router | Router setting: router video upstream. |
 | `MAC_ROUTER_WILDCARD_MODELS` | str | consumer-defined | router | Router setting: router wildcard models. |
 | `MAC_ROUTE_FINGERPRINT` | str | consumer-defined | core | Core setting: route fingerprint. |
-| `MAC_RUNNER_ACTIVE_DEADLINE_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner active deadline seconds. |
-| `MAC_RUNNER_AGENT_TOKEN_SECRETS` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner agent token secrets. |
-| `MAC_RUNNER_CAPABILITIES` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner capabilities. |
-| `MAC_RUNNER_DEFAULT_IMAGE` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner default image. |
-| `MAC_RUNNER_JOB_POLL_INTERVAL_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner job poll interval seconds. |
-| `MAC_RUNNER_LEASE_RENEW_INTERVAL_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner lease renew interval seconds. |
-| `MAC_RUNNER_NAMESPACE` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner namespace. |
-| `MAC_RUNNER_OPENCODE_CONFIGMAP_NAME` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner opencode configmap name. |
-| `MAC_RUNNER_POLL_INTERVAL_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner poll interval seconds. |
-| `MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner role attestation key secrets. |
-| `MAC_RUNNER_TASK_SECRET_KEY_SECRET_KEY` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner task secret key secret key. |
-| `MAC_RUNNER_TASK_SECRET_KEY_SECRET_NAME` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner task secret key secret name. |
-| `MAC_RUNNER_TASK_SECRET_NAME` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner task secret name. |
-| `MAC_RUNNER_TASK_SERVICE_ACCOUNT` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner task service account. |
-| `MAC_RUNNER_TASK_TOKEN_SECRET_KEY` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner task token secret key. |
-| `MAC_RUNNER_TASK_TOKEN_SECRET_NAME` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner task token secret name. |
-| `MAC_RUNNER_TTL_SECONDS_AFTER_FINISHED` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner ttl seconds after finished. |
 | `MAC_SANDBOX_BASE_PATH` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: sandbox base path. |
 | `MAC_SANDBOX_NETWORK_CONCURRENCY` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: sandbox network concurrency. |
 | `MAC_SANDBOX_NODE_VERSION` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: sandbox node version. |
@@ -1011,11 +966,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TAILSCALE_SOCKS5_PROXY` | str | consumer-defined | core | Core setting: tailscale socks5 proxy. |
 | `MAC_TASK_ATTEMPT` | str | consumer-defined | task-execution | Task Execution setting: task attempt. |
 | `MAC_TASK_CANONICAL_REMOTE` | str | consumer-defined | task-execution | Task Execution setting: task canonical remote. |
-| `MAC_TASK_EVIDENCE_MANIFEST_PATH` | str | consumer-defined | task-execution | Task Execution setting: task evidence manifest path. |
-| `MAC_TASK_EXECUTOR_COMMAND` | str | consumer-defined | task-execution | Task Execution setting: task executor command. |
 | `MAC_TASK_EXECUTOR_PYTHON` | str | consumer-defined | task-execution | Task Execution setting: task executor python. |
 | `MAC_TASK_EXECUTOR_SCRIPT` | str | consumer-defined | task-execution | Task Execution setting: task executor script. |
-| `MAC_TASK_EXECUTOR_TIMEOUT_SECONDS` | int | consumer-defined | task-execution | Task Execution setting: task executor timeout seconds. |
 | `MAC_TASK_FILE` | str | consumer-defined | task-execution | Task Execution setting: task file. |
 | `MAC_TASK_FLOW_TICK_SINCE_HOURS` | str | consumer-defined | task-execution | Task Execution setting: task flow tick since hours. |
 | `MAC_TASK_GIT_TOKEN` | str | consumer-defined | task-execution | Task Execution setting: task git token. |
@@ -1038,7 +990,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_REPO_URL` | str | consumer-defined | task-repository | Task Repository setting: task repo url. |
 | `MAC_TASK_REPO_WORKTREE` | str | consumer-defined | task-repository | Task Repository setting: task repo worktree. |
 | `MAC_TASK_SUMMARY_BEGIN` | str | consumer-defined | task-execution | Task Execution setting: task summary begin. |
-| `MAC_TASK_TITLE` | str | consumer-defined | task-execution | Task Execution setting: task title. |
 | `MAC_TASK_WORKSPACE` | str | consumer-defined | task-execution | Task Execution setting: task workspace. |
 | `MAC_TEST_CHECKPOINT` | str | consumer-defined | core | Core setting: test checkpoint. |
 | `MAC_TEST_CHECKPOINT_DIR` | str | consumer-defined | core | Core setting: test checkpoint dir. |
