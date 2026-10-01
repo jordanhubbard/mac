@@ -84,7 +84,6 @@ from mac.task_flow_analytics import TaskFlowAnalyticsService
 from mac.models import (
     Agent,
     AgentInstanceKind,
-    AgentProvisioningRequest,
     AgentRole,
     Workflow,
     WorkflowRun,
@@ -235,7 +234,6 @@ from mac.openshell_runtime import (
     verifier_resource_profile,
 )
 from mac.openshell_service import OpenShellService
-from mac.provisioning_service import ProvisioningService
 from mac.project_repository_service import ProjectRepositoryService
 from mac.retention_service import RetentionPolicy, RetentionService
 from mac.service_role_service import ServiceRoleService
@@ -2502,7 +2500,6 @@ class ControlPlane:
         self.task_lifecycle_bus = TaskLifecycleBusPublisher(self)
         self.source_releases = SourceReleaseService(self.store)
         self.source_convergence = SourceConvergenceService(self)
-        self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
         self.roles = RolesService(
             self.store,
@@ -4737,24 +4734,6 @@ class ControlPlane:
 
     def unassign_role(self, agent_id: str) -> Agent:
         return self.roles.unassign_role(agent_id)
-
-    def list_provisioning_requests(
-        self, *args: Any, **kwargs: Any
-    ) -> List[AgentProvisioningRequest]:
-        return self.provisioning.list_requests(*args, **kwargs)
-
-    def get_provisioning_request(self, request_id: str) -> AgentProvisioningRequest:
-        return self.provisioning.get_request(request_id)
-
-    def fulfill_provisioning_request(
-        self, request_id: str, agent_id: str
-    ) -> AgentProvisioningRequest:
-        return self.provisioning.fulfill_request(request_id, agent_id)
-
-    def cancel_provisioning_request(
-        self, request_id: str, *, reason: str = "operator-cancelled"
-    ) -> AgentProvisioningRequest:
-        return self.provisioning.cancel_request(request_id, reason=reason)
 
     def agent_identity(self, agent_id: str) -> JsonDict:
         """Layered identity for an agent: soul → role → mood → hardware.
@@ -17603,35 +17582,6 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
             pass
 
-    def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
-        required_role = None
-        hardware: JsonDict = {}
-        metadata = ensure_json_object(task.metadata)
-        required_commands = _repository_required_commands_from_metadata(metadata)
-        host_required_commands = _repository_host_required_commands_from_metadata(metadata)
-        if isinstance(task.metadata, dict):
-            md_role = task.metadata.get("required_role")
-            if isinstance(md_role, str) and md_role.strip():
-                required_role = md_role.strip()
-            md_hw = task.metadata.get("hardware")
-            if isinstance(md_hw, dict):
-                hardware = md_hw
-        self.provisioning.request_agent(
-            reason="dispatch.no_eligible_agent",
-            role_slug=required_role,
-            capabilities=list(task.required_capabilities or []),
-            hardware=hardware,
-            task_id=task.id,
-            tenant_id=self._task_tenant_id(task),
-            detail={
-                "task_state": task.state,
-                "task_title": task.title,
-                "required_commands": required_commands,
-                "sandbox_host_required_commands": host_required_commands,
-                "sandbox_required_commands": required_commands,
-            },
-        )
-
     def _prepare_task_dispatch_admission(self, task: Task) -> Task:
         """Persist deterministic sizing before an implementation lease exists.
 
@@ -17864,7 +17814,7 @@ class ControlPlane:
                 detail={"error": str(exc)},
             )
         try:
-            self.reconcile_service_roles()  # media-01: reap stale claims + signal zero-holder ops
+            self.reconcile_service_roles()  # media-01: reap stale claims + report zero-holder ops
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
         unblocked_page = self._unblock_ready_sweep_page(limit=limit_value)
@@ -19428,10 +19378,9 @@ class ControlPlane:
             raise ValidationError("git publication canonical branch is invalid: %s" % exc) from exc
         repo_path_raw = str(origin.get("repository_path") or "").strip()
         repository_url = str(origin.get("repository_url") or "").strip()
-        # mac-k8s: remote-clone tasks (jordanh-gke and any K8s fleet) have no
-        # local repository_path on the hub. Rather than refuse to publish, merge
-        # via a transient authed clone of the remote so K8s-mode work can reach
-        # main. The clone is cleaned up before returning (best-effort on errors).
+        # Remote-clone tasks have no local repository_path on the hub. Rather
+        # than refuse to publish, merge via a transient authed clone of the
+        # remote. The clone is cleaned up before returning (best-effort on errors).
         # Read the executor evidence first: its repo block records the remote the
         # worker actually pushed the task branch to, which lets us publish a
         # local-repo task (origin has only an agent-side repository_path that does
@@ -27187,12 +27136,11 @@ class ControlPlane:
     def reconcile_service_roles(self) -> JsonDict:
         """Periodic (called from tick): seed desired ops from MAC_SERVICE_ROLE_OPS
         (opt-in; unset = no election, agents advertise as before), expire silent/
-        overloaded holders, drop offline holders, and emit a provisioning demand
-        signal for any desired op with zero live holders ("the cluster needs a
-        <op> agent")."""
+        overloaded holders, drop offline holders, and report every desired op
+        with zero live holders as ``unheld``."""
         self._ensure_service_roles_seeded()
         expired = self.service_roles.expire_service_claims()
-        requested: List[str] = []
+        unheld: List[str] = []
         for role in self.service_roles.desired_services(tenant_id=None):
             live = [
                 c
@@ -27203,18 +27151,8 @@ class ControlPlane:
                 if not self._service_holder_live(claim.agent_id):
                     self.service_roles.release_service_claim(claim.id, reason="holder_offline")
             if not live:
-                try:
-                    self.provisioning.request_agent(
-                        reason="service_role:%s" % role.slug,
-                        capabilities=role.required_capabilities,
-                        hardware=role.hardware_requirements,
-                        detail={"op": role.op, "model_id": role.model_id},
-                        requested_by="service-role-reconciler",
-                    )
-                    requested.append(role.op)
-                except Exception:  # noqa: BLE001 - demand signal is best-effort
-                    pass
-        return {"expired": len(expired), "requested": requested}
+                unheld.append(role.op)
+        return {"expired": len(expired), "unheld": unheld}
 
     def reconcile_openshell_task_sandbox_lifecycle(
         self,
@@ -27253,7 +27191,7 @@ class ControlPlane:
                 return self.get_task(task_id).to_dict()
             except NotFoundError:
                 # A task the store cannot resolve fails closed downstream (the
-                # sandbox is preserved), matching the k8s controller discipline.
+                # sandbox is preserved).
                 return None
 
         try:

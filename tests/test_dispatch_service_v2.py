@@ -289,23 +289,20 @@ def test_idle_pull_is_write_free_and_does_not_claim_reconciliation_leases():
     assert cp.store.query_all("SELECT * FROM dispatch_rounds") == []
 
 
-def test_pull_provisions_unmatched_work_once_and_deduplicates_rounds():
+def test_pull_deduplicates_unmatched_rounds():
     cp = ControlPlane.in_memory()
     active_project(cp)
     python_worker = worker(cp, "python-only", capabilities=["python"])
-    task = cp.create_task(
+    cp.create_task(
         "needs gpu",
         project="mac",
         required_capabilities=["gpu"],
     )
-    emitted = []
     cp.dispatch._empty_pull_round_interval_seconds = 0
-    cp.dispatch._emit_dispatch_provisioning_signal = emitted.append
 
     assert cp.claim_next_for_agent(python_worker.id) is None
     assert cp.claim_next_for_agent(python_worker.id) is None
 
-    assert [item.id for item in emitted] == [task.id]
     rows = cp.store.query_all("SELECT unmatched_count, assignment_count FROM dispatch_rounds")
     assert len(rows) == 1
     assert rows[0]["unmatched_count"] == 1
@@ -342,39 +339,6 @@ def test_pull_dry_run_uses_global_snapshot_without_creating_a_lease():
         )
         is None
     )
-
-
-def test_only_runnable_but_unmatched_work_emits_provisioning_signal():
-    cp = ControlPlane.in_memory()
-    active_project(cp)
-    worker(cp, "python-only", capabilities=["python"])
-    dependency = cp.create_task(
-        "dependency",
-        project="mac",
-        required_capabilities=["python"],
-        metadata={"no_dispatch": True},
-    )
-    blocked = cp.create_task(
-        "blocked",
-        project="mac",
-        dependencies=[dependency.id],
-        required_capabilities=["gpu"],
-    )
-    unmatched = cp.create_task(
-        "needs gpu",
-        project="mac",
-        required_capabilities=["gpu"],
-    )
-
-    assignments = cp.dispatch._dispatch_batch_impl(
-        limit=10,
-        run_maintenance=False,
-    )
-
-    assert assignments == []
-    requests = cp.list_provisioning_requests()
-    assert [request.task_id for request in requests] == [unmatched.id]
-    assert blocked.id not in {request.task_id for request in requests}
 
 
 def test_named_target_resolves_to_unique_agent_id():

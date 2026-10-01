@@ -197,11 +197,10 @@ class RepoPrepMixin:
             )
         if origin is None:
             return None
-        # K8s mode: when there is no usable local source on disk, fall
-        # back to ``git clone <remote>`` into the task workspace. The
-        # local-path branch is preferred when both are available (host
-        # workers continue to use their pre-existing checkout). See
-        # CLAUDE.md fork-audit notes for context.
+        # When there is no usable local source on disk, fall back to
+        # ``git clone <remote>`` into the task workspace. The local-path
+        # branch is preferred when both are available (host workers
+        # continue to use their pre-existing checkout).
         repository_path = str(origin.get("repository_path") or "").strip()
         local_source: Optional[Path] = None
         if repository_path:
@@ -814,7 +813,7 @@ class RepoPrepMixin:
         origin: JsonDict,
         remote_url: str,
     ) -> JsonDict:
-        """K8s-mode repository preparation: clone the remote into a
+        """Remote repository preparation: clone the remote into a
         per-lease directory and check out a task branch.
 
         This produces the same ``mac.repository_task_worktree.v1`` context
@@ -979,7 +978,7 @@ class RepoPrepMixin:
 
         # Mirror the local-worktree context shape exactly; downstream
         # readers (evidence validators, _load_repository_context) treat
-        # the K8s clone identically to a host-mode git worktree.
+        # the remote clone identically to a host-mode git worktree.
         context: JsonDict = {
             "schema": "mac.repository_task_worktree.v1",
             "checkout_policy": "k8s_task_owned_clone",

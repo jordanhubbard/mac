@@ -284,6 +284,13 @@ MIGRATIONS: tuple[Migration, ...] = (
            AND to_regclass(current_schema() || '.merge_queue_windows') IS NULL
         """,
     ),
+    Migration(
+        "0007_drop_agent_provisioning_requests",
+        _load_sql(MIGRATION_PATH / "0007_drop_agent_provisioning_requests.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.agent_provisioning_requests') IS NULL
+        """,
+    ),
 )
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import subprocess
 import threading
@@ -28,9 +27,7 @@ from mac.worker_credentials import (
     WorkerCredentialLifecycle,
     WorkerCredentialPolicyProvider,
     WorkerCredentialPrincipalProvider,
-    apply_kubernetes_secret,
     authenticated_credential_resource,
-    build_kubernetes_secret,
     build_readiness_inventory,
     credential_resource_from_env,
     evaluate_worker_actor,
@@ -434,40 +431,12 @@ def test_vm_install_rolls_every_fleet_scoped_worker_token_alias_forward(
     assert values["MAC_WORKER_TOKEN__MAC"] == issue.token
 
 
-def test_kubernetes_apply_verifies_secret_readback_without_token_in_argv(
-    tmp_path: Path,
-) -> None:
+def test_only_vm_credentials_can_be_issued() -> None:
     cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle, environment="k8s")
-    manifest = installation_manifest(issue)
-    secret = build_kubernetes_secret(manifest)
-    calls = []
-
-    def run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        if argv[:2] == ["kubectl", "apply"]:
-            return SimpleNamespace(returncode=0, stdout="configured", stderr="")
-        data = {
-            key: base64.b64encode(value.encode()).decode()
-            for key, value in secret["stringData"].items()
-        }
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"data": data}), stderr="")
-
-    receipt = apply_kubernetes_secret(manifest, runner=run)
-    assert calls[0][0] == ["kubectl", "apply", "-f", "-"]
-    assert calls[1][0][:4] == ["kubectl", "get", "secret", secret["metadata"]["name"]]
-    assert issue.token not in json.dumps(calls[0][0])
-    assert issue.token in calls[0][1]["input"]
-    assert issue.token not in json.dumps(receipt)
-    assert receipt["destination_verification"]["method"] == "k8s_secret_readback"
-    _observe(cp, issue, secret["stringData"])
-    lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)
-    assert lifecycle.list(agent_id="agent_alpha")[0]["state"] == "active"
-
-    vm_issue = _package_issue(lifecycle)
-    with pytest.raises(WorkerCredentialError, match="different environment"):
-        build_kubernetes_secret(installation_manifest(vm_issue))
+    with pytest.raises(WorkerCredentialError, match="must be vm"):
+        _package_issue(lifecycle, environment="k8s")
+    assert lifecycle.list(agent_id="agent_alpha") == []
 
 
 def test_inventory_and_package_membership_require_live_authenticated_exact_state(

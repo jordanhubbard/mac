@@ -68,7 +68,6 @@ def test_bootstrap_checks_existing_venv_patch(monkeypatch, version, supported):
 def test_standalone_onboarding_receipts_agree_with_policy():
     for name in [
         "deploy/fleet-node-machine-onboard.py",
-        "deploy/openshell/hgx-fungible-bootstrap.py",
     ]:
         tree = ast.parse((ROOT / name).read_text())
         values = {

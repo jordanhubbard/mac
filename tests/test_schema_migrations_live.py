@@ -155,7 +155,7 @@ def test_known_existing_schema_requires_and_accepts_explicit_baseline(pg_dsn: st
 
 def test_explicit_upgrade_applies_in_order_and_proves_postcondition(pg_dsn: str) -> None:
     upgrade = Migration(
-        "0006_upgrade_probe",
+        "0099_upgrade_probe",
         "CREATE TABLE migration_upgrade_probe (id INTEGER PRIMARY KEY)",
         "SELECT to_regclass('migration_upgrade_probe') IS NOT NULL",
     )
@@ -164,13 +164,14 @@ def test_explicit_upgrade_applies_in_order_and_proves_postcondition(pg_dsn: str)
         store.apply_migrations(applied_by="pytest:bootstrap")
         result = store.apply_migrations(applied_by="pytest:upgrade", migrations=chain)
 
-        assert result["applied"] == ["0006_upgrade_probe"]
-        assert result["current_version"] == "0006_upgrade_probe"
+        assert result["applied"] == ["0099_upgrade_probe"]
+        assert result["current_version"] == "0099_upgrade_probe"
         assert (
-            store.query_one("SELECT migration_id FROM schema_migrations WHERE ordinal = 6")[
-                "migration_id"
-            ]
-            == "0006_upgrade_probe"
+            store.query_one(
+                "SELECT migration_id FROM schema_migrations WHERE ordinal = ?",
+                (len(MIGRATIONS) + 1,),
+            )["migration_id"]
+            == "0099_upgrade_probe"
         )
 
 
@@ -232,7 +233,7 @@ def test_schema_version_rejects_inconsistency_and_verification_detects_tampering
 
 def test_missing_or_out_of_order_ledger_is_refused(pg_dsn: str) -> None:
     upgrade = Migration(
-        "0006_order_probe",
+        "0099_order_probe",
         "CREATE TABLE migration_order_probe (id INTEGER PRIMARY KEY)",
         "SELECT to_regclass('migration_order_probe') IS NOT NULL",
     )
@@ -249,7 +250,7 @@ def test_missing_or_out_of_order_ledger_is_refused(pg_dsn: str) -> None:
 
 def test_failed_migration_rolls_back_ddl_and_receipt(pg_dsn: str) -> None:
     broken = Migration(
-        "0006_rollback_probe",
+        "0099_rollback_probe",
         "CREATE TABLE migration_rollback_probe (id INTEGER PRIMARY KEY)",
         "SELECT FALSE",
     )
@@ -318,7 +319,7 @@ def test_partial_or_empty_authority_is_refused(pg_dsn: str) -> None:
 
 def test_pending_migration_without_postcondition_is_refused(pg_dsn: str) -> None:
     missing_proof = Migration(
-        "0006_missing_proof",
+        "0099_missing_proof",
         "CREATE TABLE migration_missing_proof (id INTEGER PRIMARY KEY)",
     )
     with _fresh_store(pg_dsn) as store:
@@ -412,7 +413,7 @@ def test_failure_after_legacy_drop_rolls_back_tables_rows_and_ledger(pg_dsn: str
     from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
 
     broken = Migration(
-        "0006_legacy_prune_rollback_probe",
+        "0099_legacy_prune_rollback_probe",
         "CREATE TABLE legacy_prune_rollback_probe (id INTEGER PRIMARY KEY)",
         "SELECT FALSE",
     )
@@ -455,6 +456,7 @@ def test_upgrade_drops_leftover_work_package_task_triggers(pg_dsn: str) -> None:
             "0003_drop_leftover_work_package_triggers",
             "0004_drop_removed_feature_tables",
             "0005_drop_native_merge_queue_tables",
+            "0007_drop_agent_provisioning_requests",
         ]
         assert not _function_exists(store, "trg_work_package_task_claim_authority")
         assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
@@ -574,6 +576,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert status["pending"] == [
             "0004_drop_removed_feature_tables",
             "0005_drop_native_merge_queue_tables",
+            "0007_drop_agent_provisioning_requests",
         ]
         assert status["requires_backup"] is True
 
@@ -582,6 +585,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert result["applied"] == [
             "0004_drop_removed_feature_tables",
             "0005_drop_native_merge_queue_tables",
+            "0007_drop_agent_provisioning_requests",
         ]
         assert not [table for table in _REMOVED_FEATURE_TABLES if _relation_exists(store, table)]
         # Rows outside the dropped tables survive, and 0002's re-proved
@@ -589,7 +593,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert store.query_one("SELECT COUNT(*) AS n FROM agents")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 1
         verified = store.verify_schema()
-        assert verified["current_version"] == "0005_drop_native_merge_queue_tables"
+        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
         assert "0002_dream_candidate_store" in verified["proof"]["postconditions"]
 
 
@@ -637,19 +641,25 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             assert store.query_one('SELECT COUNT(*) AS n FROM "%s"' % table)["n"] == 1, table
 
         status = store.migration_status()
-        assert status["pending"] == ["0005_drop_native_merge_queue_tables"]
+        assert status["pending"] == [
+            "0005_drop_native_merge_queue_tables",
+            "0007_drop_agent_provisioning_requests",
+        ]
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:drop-native-merge-queue")
 
-        assert result["applied"] == ["0005_drop_native_merge_queue_tables"]
+        assert result["applied"] == [
+            "0005_drop_native_merge_queue_tables",
+            "0007_drop_agent_provisioning_requests",
+        ]
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         # The task the queue entry pointed at is untouched: it is still
         # REVIEWING and the land loop picks it up on the next tick.
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "reviewing"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0005_drop_native_merge_queue_tables"
+        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
 
 
 def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None:
@@ -658,4 +668,61 @@ def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0005_drop_native_merge_queue_tables"
+        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+
+
+def _populate_agent_provisioning_requests(conn) -> None:
+    """Pending and fulfilled demand rows, as a hub at 0005 could still hold them."""
+
+    now = "2026-10-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, state, required_capabilities, "
+        "dependencies, metadata, created_at, updated_at) "
+        "VALUES ('t1', 'task', '', 'open', '[\"gpu\"]', '[]', '{}', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO agent_provisioning_requests (id, status, reason, capabilities, "
+        "task_id, created_at, updated_at) "
+        "VALUES ('pr1', 'pending', 'dispatch.no_eligible_agent', '[\"gpu\"]', 't1', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO agent_provisioning_requests (id, status, reason, created_at, "
+        "updated_at, closed_at) "
+        "VALUES ('pr2', 'cancelled', 'service_role:media', %s, %s, %s)",
+        (now, now, now),
+    )
+
+
+def test_upgrade_from_0005_drops_agent_provisioning_requests_with_rows(pg_dsn: str) -> None:
+    """A hub at 0005 still holds provisioning demand rows; 0007 drops the table."""
+
+    with _fresh_store(pg_dsn) as store:
+        store.apply_migrations(applied_by="pytest:through-0005", migrations=MIGRATIONS[:5])
+        with store._pool.connection() as conn:
+            _populate_agent_provisioning_requests(conn)
+        assert store.query_one("SELECT COUNT(*) AS n FROM agent_provisioning_requests")["n"] == 2
+
+        status = store.migration_status()
+        assert status["pending"] == ["0007_drop_agent_provisioning_requests"]
+        assert status["requires_backup"] is True
+
+        result = store.apply_migrations(applied_by="pytest:drop-provisioning-requests")
+
+        assert result["applied"] == ["0007_drop_agent_provisioning_requests"]
+        assert not _relation_exists(store, "agent_provisioning_requests")
+        # The task a request pointed at is untouched and still dispatchable.
+        assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "open"
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+
+
+def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str) -> None:
+    with _fresh_store(pg_dsn) as store:
+        store.initialize()
+        assert not _relation_exists(store, "agent_provisioning_requests")
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"

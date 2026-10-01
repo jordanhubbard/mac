@@ -1,6 +1,9 @@
 # ADR 0005 — Elastic executor tier vs. the static fleet (and "every agent is a GitHub runner")
 
-- Status: **Proposed**
+- Status: **Withdrawn (2026-10-01)** — the elastic tier was built (GKE/HGX
+  autoscaler, the k8s Job runner, provisioning requests) and then deleted: in
+  90 days the GKE pods completed 3 tasks and failed 74, and the k8s runner
+  served only one retired fleet. The static fleet is the execution tier.
 - Date: 2026-06-11
 - Decision owner: `<user>`
 - Context: the fleet is configured statically in `~/.mac/fleets.yaml` — named
@@ -266,8 +269,8 @@ the brain has **no traffic to protect**, so gpu-node's GPU is the *easiest*, not
 hardest, to hand to the elastic executor tier — dedicate it outright. The
 persistent-services principle still holds in general (it's right for a brain that
 *is* serving); it just doesn't currently apply to *this* GPU. A concrete
-device-plugin + node-label draft for exactly this conversion lives at
-[`deploy/k8s/gpu-worker/`](../../deploy/k8s/gpu-worker/).
+device-plugin + node-label draft for exactly this conversion lived at
+`deploy/k8s/gpu-worker/` (deleted 2026-10-01).
 
 (Method/caveat: the telemetry only captures hub-routed requests; a process hitting
 `gpu-node:8000` directly would not appear. Confirm with gpu-node's vLLM

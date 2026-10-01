@@ -1,6 +1,6 @@
 # Production Deployment
 
-Three supported topologies:
+Two supported topologies:
 
 1. **Single host, systemd** — one machine, one PostgreSQL database, one FastAPI
    process. Suitable for dev fleets, personal Hermes runtimes, and pilot
@@ -8,14 +8,6 @@ Three supported topologies:
 2. **Containerized, single-instance** — image at `Dockerfile`. Same PostgreSQL
    topology, but lifecycle is managed by Docker Engine/Moby or k8s as a
    single-replica deployment. See the container section below.
-3. **Kubernetes, multi-replica, Postgres-backed** — stateless `mac-api`
-   Deployment in front of an externally-managed Postgres 17 cluster.
-   Multiple `mac-api` replicas share the same durable state via
-   `MAC_DATABASE_URL`. The cluster itself (CloudNativePG, RDS, Cloud
-   SQL, vendor-managed, etc.) is provisioned outside this repo and its
-   DSN is supplied via the `mac-api-config` Secret. See
-   [`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md) and
-   [`docs/archive/field-notes/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md).
 
 PostgreSQL is the only supported control-plane authority in every topology.
 Set `MAC_DATABASE_URL` to an explicit PostgreSQL DSN. The legacy `MAC_DB`
@@ -493,8 +485,7 @@ is also included in OpenShell's private mode-`0600` environment bundle so
 confined tasks can clone and publish without copied host SSH keys. Do not put
 the value in `~/.mac/fleets.yaml`, a fleet spec, task metadata, or source
 control. A vault record by itself does not populate a worker environment;
-deploy or the Kubernetes runner Secret must inject the corresponding
-environment key.
+deploy must inject the corresponding environment key.
 
 Deployment installs a reviewed MAC source bundle and locked service environment
 on each selected host. The configured gateway implementation determines the
@@ -653,7 +644,7 @@ lands, and the hub's job is to record that it happened and to gate completion.
 **The agent's forge credential.** The agent uses the credential already in its
 own process environment (`GH_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN` — the same
 variable `guarded_push` authenticates with, written into `~/.mac/mac.env` at
-deploy time and mounted as an optional `secretKeyRef` on K8s workers). When it
+deploy time). When it
 has none, it resolves `github.token` from the **hub's secret store** by name,
 at the moment of use — audited, never cached, never written to evidence, never
 carried in a bus message or task metadata. A resolved secret that does not
@@ -1012,7 +1003,7 @@ To broadcast a source update from the hub:
 mac admin agentbus repo-update agent_<hub> --all-agents
 ```
 
-## Roles, Workflows, and Provisioning
+## Roles and Workflows
 
 Production mac includes an API-level organization model for coordinated work:
 
@@ -1021,8 +1012,6 @@ Production mac includes an API-level organization model for coordinated work:
   scope. `/roles/seed` loads the built-in Loom-style role set.
 - `/agents/{id}/role` assigns a role to a registered agent. If the agent is
   bound to a Hermes persona, role assignment respects that persona's allowlist.
-- `/provisioning/requests` records missing capacity requests when the fleet has
-  no suitable agent for a role/capability requirement.
 - `/workflows` stores versioned DAG definitions. `/workflows/import-yaml` and
   `/workflows/seed` provide operator-friendly loading paths.
 - `/workflows/{id}/start`, `/workflows/runs`, and `/workflows/runs/tick` run
@@ -1121,38 +1110,6 @@ Keep failed candidates and their affected workers held for diagnosis, then
 repair forward. Restoring an older source or database is an explicit
 break-glass operation, not an automatic response to a failed check. A release
 artifact alone does not authorize bypassing the cohort's fault-matrix gates.
-
-## Kubernetes (K8s-native topology)
-
-For multi-replica `mac-api`, deploy the manifests under `deploy/k8s/`.
-The Postgres cluster itself is **not** managed from this repo — bring
-your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.) and
-supply the DSN via the `mac-api-config` Secret. Likewise, ArgoCD
-`Application` manifests are not shipped here; point one Application
-per kustomize tree from your platform-config repo if you sync with ArgoCD.
-
-```console
-# 1. Create the namespace + operator-supplied Secret carrying the DSN
-#    and bearer tokens (or apply your ExternalSecret).
-kubectl create namespace mac
-kubectl -n mac create secret generic mac-api-config \
-  --from-literal=MAC_DATABASE_URL='postgresql://user:pass@host:5432/mac' \
-  --from-literal=MAC_SECRET_KEY="$(openssl rand -base64 48)" \
-  --from-literal=MAC_WORKER_TOKEN="$(openssl rand -hex 32)"
-
-# 2. mac-api Deployment + Service (replicas: 2, no PVC).
-kubectl apply -k deploy/k8s/mac-api
-
-# 3. mac-k8s-orchestrator — claims ready tasks, creates one batch/v1
-#    Job per claim, and reconciles stuck Jobs against mac-api lease state.
-kubectl apply -k deploy/k8s/mac-runner
-```
-
-The full apply order and ExternalSecret wiring are documented in
-[`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md). The persistence layer uses PostgreSQL in every supported topology. The
-legacy SQL compatibility helpers do not constitute a second supported engine.
-The archived Kubernetes rewrite plan records migration history, not current
-backend selection.
 
 ## Troubleshooting
 

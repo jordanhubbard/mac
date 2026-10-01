@@ -2545,8 +2545,8 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     token = resolve_env_var("MAC_API_TOKEN", fleet=fleet, env=env)
     if token:
         return token
-    # K8s Job pods carry MAC_WORKER_TOKEN (set by the runner); accept it
-    # as a fallback so wrappers can call ``mac admin pull-request open`` etc.
+    # Workers carry MAC_WORKER_TOKEN; accept it as a fallback so wrappers
+    # can call ``mac admin pull-request open`` etc.
     # without an extra env-export shim.
     return env.get("MAC_WORKER_TOKEN") or None
 

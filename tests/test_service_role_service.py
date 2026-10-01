@@ -91,7 +91,7 @@ def test_release_on_unwilling_then_renew():
     assert set(cp.service_roles.held_ops_for_agent(a.id)) == {"image.generate"}
 
 
-def test_expire_reopens_and_reconcile_signals_zero_holders():
+def test_expire_reopens_and_reconcile_reports_zero_holders():
     cp = ControlPlane.in_memory()
     _seed(cp)
     a = _gpu_agent(cp, "natasha", capacity=5)
@@ -103,7 +103,7 @@ def test_expire_reopens_and_reconcile_signals_zero_holders():
     assert any(c.agent_id == a.id for c in expired)
     assert cp.service_roles.list_active_claims(role_id=role.id) == []
     out = cp.reconcile_service_roles()
-    assert "image.generate" in out["requested"]  # cluster needs an image agent
+    assert "image.generate" in out["unheld"]  # no live image holder
 
 
 def test_one_agent_cannot_double_hold_an_op():
@@ -159,13 +159,13 @@ def test_losing_the_claim_race_returns_the_winners_claim(monkeypatch):
     assert calls["n"] == 2
 
 
-def test_reconcile_auto_seeds_from_env_and_signals_zero_holders(monkeypatch):
+def test_reconcile_auto_seeds_from_env_and_reports_zero_holders(monkeypatch):
     cp = ControlPlane.in_memory()
     monkeypatch.setenv("MAC_SERVICE_ROLE_OPS", "image.generate, video.generate")
     out = cp.reconcile_service_roles()
     ops = {r.op for r in cp.service_roles.desired_services()}
     assert {"image.generate", "video.generate"} <= ops  # auto-seeded
-    assert set(out["requested"]) == {"image.generate", "video.generate"}  # zero holders
+    assert set(out["unheld"]) == {"image.generate", "video.generate"}  # zero holders
 
 
 def test_offline_holder_is_reaped_by_reconcile():

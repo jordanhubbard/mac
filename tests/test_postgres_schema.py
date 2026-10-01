@@ -132,7 +132,6 @@ EXPECTED_TABLES = [
     "agent_deploy_configs",
     "agent_events",
     "agent_lifecycle_events",
-    "agent_provisioning_requests",
     "agent_roles",
     "agentbus_chunks",
     "agentbus_consumer_cursors",
@@ -494,6 +493,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0003_drop_leftover_work_package_triggers",
         "0004_drop_removed_feature_tables",
         "0005_drop_native_merge_queue_tables",
+        "0007_drop_agent_provisioning_requests",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -510,6 +510,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0005_drop_native_merge_queue_tables": (
             "3cfc5b4536aee2fa783c2ad90ac3f84b1c52db7f33a4062c42eedf679d9e9d0f"
+        ),
+        "0007_drop_agent_provisioning_requests": (
+            "e78a3705bc9b36b8993626794672ca2c8f7ed19eed1b63a5e4e4cfed2067ea91"
         ),
     }
     for migration in MIGRATIONS:

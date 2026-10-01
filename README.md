@@ -54,8 +54,8 @@ integration or protocol influence is not mistaken for copied source:
   installs and invokes the Codex CLI for repository-editing workers inside its
   evidence and sandbox gates.
 - **[OpenCode](https://github.com/anomalyco/opencode) — coding executor and
-  reviewer:** MAC's Kubernetes runner includes OpenCode build and independent
-  review paths, wrapped by MAC-owned test, evidence, and publication gates.
+  reviewer:** MAC ships OpenCode build and independent review executors,
+  wrapped by MAC-owned test, evidence, and publication gates.
 - **[NVIDIA NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) — optional
   observability:** MAC maps request, task, tool, and model activity into Relay
   scopes when the `relay` extra is enabled.
@@ -119,7 +119,7 @@ This project provides durable contracts for coordinating a fleet:
 - Managed repository-ref lifecycles that distinguish superseded work from
   deferred or failed attempts, plus a hub-owned recurring reconciler that
   retires only exact-SHA eligible refs after a grace period.
-- Role catalog, role assignment, provisioning requests, and data-driven DAG
+- Role catalog, role assignment, and data-driven DAG
   workflows that turn multi-step plans into durable tasks with per-node role
   requirements and run history.
 - Evaluation contract: named `eval_sets` (scoring direction, baseline, regression threshold) and `eval_runs` against rollout versions, runtime environments, or agent builds; rollouts can require a passing `eval_run` before `promote`.
@@ -535,7 +535,6 @@ Key route groups:
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`
 - `/roles`, `/agents/{id}/role`, `/agents/{id}/identity`
-- `/provisioning/requests`
 - `/workflows`, `/workflows/import-yaml`, `/workflows/seed`, `/workflows/{id}/start`, `/workflows/runs`, `/workflows/runs/tick`
 - `/messages`
 - `/agentbus`, `/agentbus/streams`, `/agentbus/streams/{id}/chunks`, `/agentbus/streams/{id}/events`

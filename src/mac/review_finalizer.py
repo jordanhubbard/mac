@@ -1,6 +1,6 @@
 """CLI bridge for the canonical MAC review finalizer.
 
-Kubernetes review executors and host workers both finish through
+Every review executor finishes through
 ``task_executor.run_deterministic_review_verdict`` so verdict semantics cannot
 drift between execution substrates.
 """

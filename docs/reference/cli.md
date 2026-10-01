@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-50 administrative commands live under `mac admin` (`mac admin help` lists them).
+49 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -249,7 +249,6 @@ Getting started:
 Fleet and machines:
   fleet          deploy, inspect and maintain the fleet as a whole
   machine        hosts that agents run on
-  hgx            HGX / GPU capacity management
   openshell      sandboxed execution environments for agents
   mcp            serve the ledger to coding agents as Model Context Protocol tools
   plugin         install mac skills and MCP into Claude, Codex, Cursor, OpenCode
