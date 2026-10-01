@@ -415,8 +415,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_large001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
@@ -435,8 +433,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_large_atomic",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
@@ -468,8 +464,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_large_nohub",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
@@ -508,8 +502,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_empty_plan",
-            review_context=None,
-            is_review=False,
         )
 
         loaded = json.loads((tmp_path / "mac-evidence.json").read_text(encoding="utf-8"))
@@ -535,8 +527,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_large002",
-            review_context=None,
-            is_review=False,
         )
 
         assert state["git_finalizer_calls"] == [], (
@@ -558,8 +548,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_small001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
@@ -587,33 +575,11 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_planfirst001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
         assert "PLANNING MODE" in state["prompts"][0]
         assert "planning_phase_started" in state["telemetry"]
-
-    def test_review_task_never_enters_planning_phase(self, monkeypatch, tmp_path: Path):
-        """Review tasks must never enter planning mode."""
-        state = _patch_run_executor_base(monkeypatch, tmp_path=tmp_path)
-        monkeypatch.setattr(te, "build_review_prompt", lambda *a, **kw: "review prompt text")
-        monkeypatch.setattr(te, "run_deterministic_review_verdict", lambda *a, **kw: None)
-
-        task = _large_task(task_id="task_rev001")
-        te._run_executor(
-            runner=_fake_runner,
-            task=task,
-            task_workspace=tmp_path,
-            task_id="task_rev001",
-            review_context={"task_id": "task_original"},
-            is_review=True,
-        )
-
-        assert "planning_phase_started" not in state["telemetry"]
-        assert len(state["prompts"]) == 1
-        assert state["prompts"][0] == "review prompt text"
 
     def test_large_task_without_plan_evidence_falls_back_to_git_finalizer(
         self, monkeypatch, tmp_path: Path
@@ -641,8 +607,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_large003",
-            review_context=None,
-            is_review=False,
         )
 
         assert state["git_finalizer_calls"] == [1], (
@@ -662,8 +626,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_child001",
-            review_context=None,
-            is_review=False,
         )
 
         assert "planning_phase_started" not in state["telemetry"]
@@ -678,8 +640,6 @@ class TestRunExecutorPlanningPhase:
             task=task,
             task_workspace=tmp_path,
             task_id="task_large_retry",
-            review_context=None,
-            is_review=False,
         )
 
         assert "planning_phase_started" not in state["telemetry"]

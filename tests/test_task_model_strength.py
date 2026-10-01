@@ -41,20 +41,6 @@ def test_no_pin_returns_empty():
     assert _task_model_override({}) == ""
 
 
-def test_review_model_is_independent_from_executor_model():
-    review = {
-        "metadata": {
-            "model": "author/model",
-            "review_model_strength": 9,
-            "review_context": {"review_id": "review_1"},
-        }
-    }
-    assert _task_model_override(review) == ""
-
-    review["metadata"]["review_model"] = "reviewer/model"
-    assert _task_model_override(review) == "reviewer/model"
-
-
 def _run(tmp_path, *args):
     out = io.StringIO()
     old = sys.stdout

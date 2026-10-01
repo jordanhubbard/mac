@@ -651,7 +651,7 @@ def _reviewing_publication_parked(
 ) -> List[Finding]:
     """Report approved work that nothing will ever move to COMPLETED.
 
-    ``REVIEWING -> COMPLETED`` happens only in ``publish_task``, which needs a
+    Approved work reaches ``COMPLETED`` only in ``publish_task``, which needs a
     resolved publication target. A task with none parks, and until this check
     existed nothing downstream of that decision said so: four tasks sat approved
     and undeliverable from 2026-08-01 to 2026-08-05 and surfaced only because an

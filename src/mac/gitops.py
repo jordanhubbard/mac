@@ -907,6 +907,24 @@ def _http_post_json(url: str, headers: dict, body: dict, timeout: float = 20.0) 
         ) from exc
 
 
+def _http_patch_json(url: str, headers: dict, body: dict, timeout: float = 20.0) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", **headers},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read().decode("utf-8")
+            return json.loads(data) if data else {}
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            "PATCH %s -> %d %s: %s" % (url, exc.code, exc.reason, body_text[:500])
+        ) from exc
+
+
 def _http_get_json(url: str, headers: dict, timeout: float = 20.0) -> dict:
     req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -1197,7 +1215,36 @@ def required_status_check_contexts(
     Returns ``None`` when the answer is unknown (unsupported forge, API error,
     insufficient scope).  Callers must treat ``None`` and ``()`` as "the forge
     is not gating this merge for us" and keep their own gate.
+    """
+    policy = required_status_check_policy(
+        repo_url, branch, github_token=github_token, gitea_token=gitea_token
+    )
+    return None if policy is None else policy.contexts
 
+
+@dataclass(frozen=True)
+class RequiredStatusChecks:
+    """The forge's required-checks rule for a branch.
+
+    ``strict`` is GitHub's "require branches to be up to date before merging"
+    (``strict_required_status_checks_policy``): a pull request that falls
+    behind the base cannot merge until it is updated and its checks re-run.
+    """
+
+    contexts: Tuple[str, ...]
+    strict: bool = False
+
+
+def required_status_check_policy(
+    repo_url: str,
+    branch: str,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Optional[RequiredStatusChecks]:
+    """Required status checks for ``branch``, and whether they are strict.
+
+    ``None`` means unknown, exactly as for ``required_status_check_contexts``.
     Uses GitHub's ``/rules/branches/{branch}`` endpoint rather than the branch
     protection API because it needs no admin scope and reports rulesets, which
     is how this repository's ``main`` is actually protected.
@@ -1223,6 +1270,7 @@ def required_status_check_contexts(
     if not isinstance(rules, list):
         return None
     contexts: list[str] = []
+    strict = False
     for rule in rules:
         if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
             continue
@@ -1231,7 +1279,9 @@ def required_status_check_contexts(
         for check in checks or []:
             if isinstance(check, dict) and str(check.get("context") or "").strip():
                 contexts.append(str(check["context"]).strip())
-    return tuple(dict.fromkeys(contexts))
+        if isinstance(params, dict) and params.get("strict_required_status_checks_policy") is True:
+            strict = True
+    return RequiredStatusChecks(contexts=tuple(dict.fromkeys(contexts)), strict=strict)
 
 
 def _http_put_json(
@@ -1525,8 +1575,90 @@ def pull_request_state(
         "state": str(pr.get("state") or ""),
         "head_sha": str((head or {}).get("sha") or "").strip(),
         "head_ref": str((head or {}).get("ref") or "").strip(),
+        # GitHub's "behind" means a strict ruleset will not let it merge until
+        # the branch is updated with the base.
+        "mergeable_state": str(pr.get("mergeable_state") or "").strip(),
         "host": host_kind,
     }
+
+
+def update_pull_request_branch(
+    repo_url: str,
+    number: int,
+    *,
+    expected_head_sha: Optional[str] = None,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Dict[str, object]:
+    """Merge the base into PR ``number``'s branch (GitHub's update-branch).
+
+    A strict required-checks ruleset refuses to merge a pull request that is
+    behind its base, and nothing else will ever update it. ``expected_head_sha``
+    pins the head we observed, so a branch that moved under us is refused
+    rather than updated.
+
+    Returns ``updated`` (the forge accepted; checks re-run on a new head),
+    ``conflict`` (the base does not merge cleanly: the change must be rebased
+    by its author) and ``reason``. Other failures come back with both False.
+    """
+    try:
+        host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+            repo_url, github_token=github_token, gitea_token=gitea_token
+        )
+    except ValueError as exc:
+        return {"updated": False, "conflict": False, "reason": str(exc)[:300]}
+    if host_kind != "github":
+        return {"updated": False, "conflict": False, "reason": "update-branch is GitHub-only"}
+    body: Dict[str, object] = {}
+    if expected_head_sha:
+        body["expected_head_sha"] = expected_head_sha
+    status, _decoded, error = _http_put_json(
+        "%s/repos/%s/%s/pulls/%d/update-branch" % (api_base, owner, repo, int(number)),
+        headers,
+        body,
+    )
+    reason = _scrub_secret(error or ("HTTP %d" % status), token)[:300]
+    if 200 <= status < 300:
+        return {"updated": True, "conflict": False, "reason": ""}
+    return {
+        "updated": False,
+        "conflict": status == 422 and "conflict" in reason.lower(),
+        "reason": reason,
+    }
+
+
+def close_pull_request(
+    repo_url: str,
+    number: int,
+    *,
+    comment: str = "",
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> None:
+    """Close PR ``number``, leaving ``comment`` on it first when given.
+
+    Raises on failure; callers that must not be blocked by a forge hiccup
+    catch and log.
+    """
+    host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+        repo_url, github_token=github_token, gitea_token=gitea_token
+    )
+    try:
+        if comment:
+            _http_post_json(
+                "%s/repos/%s/%s/issues/%d/comments" % (api_base, owner, repo, int(number)),
+                headers,
+                {"body": comment},
+            )
+        _http_patch_json(
+            "%s/repos/%s/%s/pulls/%d" % (api_base, owner, repo, int(number)),
+            headers,
+            {"state": "closed"},
+        )
+    except Exception as exc:  # noqa: BLE001 - re-raised without the credential
+        raise RuntimeError(
+            "could not close pull request #%d: %s" % (int(number), _scrub_secret(str(exc), token))
+        ) from None
 
 
 def request_pull_request_merge(

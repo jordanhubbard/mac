@@ -1401,8 +1401,6 @@ def test_clean_failed_agent_skips_outer_finalizers_and_decomposition(tmp_path, m
         task=task,
         task_workspace=tmp_path,
         task_id=task["id"],
-        review_context=None,
-        is_review=False,
     )
 
     assert rc == 42
@@ -1485,8 +1483,6 @@ def test_repository_verification_failure_overwrites_success_and_skips_finalizer(
         task=task,
         task_workspace=tmp_path,
         task_id=task["id"],
-        review_context=None,
-        is_review=False,
     )
 
     manifest = json.loads((tmp_path / "mac-evidence.json").read_text())

@@ -132,7 +132,7 @@ def test_run_once_applies_pending_update_before_claiming(tmp_path, monkeypatch):
     monkeypatch.setattr(instance, "_maybe_sync_service_claims", lambda: None)
     monkeypatch.setattr(instance, "_maintain_openclaw_gateway_leases", lambda: None)
     monkeypatch.setattr(instance, "_process_human_delivery_outbox", lambda: None)
-    monkeypatch.setattr(instance, "_process_review_nudges", lambda: None)
+    monkeypatch.setattr(instance, "_process_control_messages", lambda: None)
     monkeypatch.setattr(instance, "_observe_log", lambda *_a, **_k: None)
 
     def must_not_claim():

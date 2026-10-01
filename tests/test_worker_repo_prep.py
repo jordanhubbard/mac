@@ -92,39 +92,6 @@ def test_invalid_remote_is_rejected_without_echoing_secret(tmp_path) -> None:
     assert secret_url not in str(exc.value)
 
 
-def test_repository_access_learning_records_secret_free_memory(tmp_path) -> None:
-    worker = _Worker(tmp_path)
-    result = worker._record_repository_access_learning(
-        project="mac",
-        task_id="task_1",
-        review_id="review_1",
-        remote="git@github.com:example/project.git",
-        credential_source="GH_TOKEN",
-        outcome="success",
-    )
-    assert result == {"id": "memory-1"}
-    path, payload = worker.client.posts[0]
-    assert path == "/memory"
-    assert "git@github.com" not in str(payload)
-
-
-def test_repository_access_learning_failure_is_best_effort(tmp_path) -> None:
-    worker = _Worker(tmp_path, fail_client=True)
-    assert (
-        worker._record_repository_access_learning(
-            project="mac",
-            task_id="task_1",
-            review_id="review_1",
-            remote="git@github.com:example/project.git",
-            credential_source="GH_TOKEN",
-            outcome="failure",
-            error="denied",
-        )
-        is None
-    )
-    assert worker.logs[-1][0] == "worker.repository_access_learning.failed"
-
-
 def test_is_disk_full_error_detects_git_enospc_markers() -> None:
     from mac.worker_repo_prep import _is_disk_full_error
 

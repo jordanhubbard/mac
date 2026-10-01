@@ -87,7 +87,6 @@
     "retired": false,
     "sources": [
       "src/mac/evidence_cli.py",
-      "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py"
     ],
     "type": "str"
@@ -626,7 +625,6 @@
       "src/mac/deployment_attestation.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/k8s/job_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -10498,30 +10496,6 @@
   },
   {
     "default": null,
-    "description": "Review setting: review id.",
-    "family": "review",
-    "name": "MAC_REVIEW_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review target evidence id.",
-    "family": "review",
-    "name": "MAC_REVIEW_TARGET_EVIDENCE_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py",
-      "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Review setting: review tick hub agent.",
     "family": "review",
     "name": "MAC_REVIEW_TICK_HUB_AGENT",
@@ -10579,17 +10553,6 @@
     "retired": false,
     "sources": [
       "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review workspace root.",
-    "family": "review",
-    "name": "MAC_REVIEW_WORKSPACE_ROOT",
-    "retired": false,
-    "sources": [
-      "src/mac/k8s/job_executor.py"
     ],
     "type": "str"
   },
@@ -12102,7 +12065,6 @@
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
-      "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -12361,7 +12323,6 @@
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/k8s/job_executor.py",
       "src/mac/read_only_report_verifier.py",
       "src/mac/services.py",
       "src/mac/worker.py"
@@ -12400,7 +12361,6 @@
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
-      "src/mac/k8s/job_executor.py",
       "src/mac/read_only_report_verifier.py",
       "src/mac/review_finalizer.py",
       "src/mac/worker_subprocess.py"
@@ -13010,7 +12970,6 @@
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/k8s/job_executor.py",
       "src/mac/openshell_runtime.py",
       "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py"

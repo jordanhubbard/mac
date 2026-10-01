@@ -57,7 +57,7 @@ def test_executor_runs_command_and_emits_audit(tmp_path) -> None:
     assert records[-1]["task_id"] == "task_test"
 
 
-def test_read_only_review_fences_git_credentials_without_repository_context(
+def test_read_only_report_fences_git_credentials_without_repository_context(
     tmp_path, monkeypatch
 ) -> None:
     # Isolate the child-environment fence; approved-wrapper identity has its
@@ -100,7 +100,6 @@ def test_read_only_review_fences_git_credentials_without_repository_context(
                 "schema": "mac.report_repository_access.v1",
                 "mode": "read_only",
             },
-            "review_context": {"executor_evidence_id": "evidence_x"},
         },
     }
 

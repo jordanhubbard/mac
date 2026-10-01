@@ -840,6 +840,44 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
     )
 
 
+def _rebase_onto_tip_section(task: Dict[str, Any]) -> str:
+    """Tell a sent-back task what the land loop needs from this attempt.
+
+    The hub's land loop sends an approved task back to OPEN when its reviewed
+    head no longer lands as verified: the default branch moved past the base
+    the verifier ran on, or the head conflicts with it. The directive is in
+    ``metadata.rebase_onto_tip``; stating it here keeps the agent from redoing
+    the task from scratch when the work only needs to move onto the new tip.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    directive = metadata.get("rebase_onto_tip") if isinstance(metadata, dict) else None
+    if not isinstance(directive, dict):
+        return ""
+    tip = str(directive.get("canonical_tip") or "").strip() or "the current default-branch tip"
+    previous_ref = str(directive.get("previous_remote_ref") or "").strip()
+    previous_head = str(directive.get("reviewed_head_sha") or "").strip()
+    previous = previous_ref or previous_head or "your previous attempt"
+    if previous_ref and previous_head:
+        previous = "%s (%s)" % (previous_ref, previous_head)
+    conflicted = [
+        str(path).strip() for path in directive.get("conflicted_files") or [] if str(path).strip()
+    ]
+    if str(directive.get("reason") or "") == "conflict" or conflicted:
+        why = "the default branch moved and your change now conflicts with it"
+    else:
+        why = "the default branch moved after your verifier ran"
+    lines = [
+        "Sent back to rebase:",
+        "Your previous attempt was approved, but it no longer lands as verified: %s." % why,
+        "- Rebase onto %s." % tip,
+    ]
+    if conflicted:
+        lines.append("- Resolve the conflicts in: %s." % ", ".join(conflicted[:20]))
+    lines.append("- Keep the previous work from %s; do not redo the task from scratch." % previous)
+    lines.append("- Finish as usual: the host re-runs the verifier on the rebased head.")
+    return "\n".join(lines)
+
+
 def _coordination_section(task: Dict[str, Any]) -> str:
     """Tell the executor it is one of several agents, and how to say so.
 
@@ -924,6 +962,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
     integration_section = _cooperative_integration_section(task)
     if integration_section:
         parts.append(integration_section)
+    rebase_section = _rebase_onto_tip_section(task)
+    if rebase_section:
+        parts.append(rebase_section)
     parts.append(
         "Finally, for the per-task activity log, print a short plain-language recap "
         "of what you did and how you verified it (1-3 sentences, no code or diff), "

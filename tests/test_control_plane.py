@@ -2006,9 +2006,13 @@ def test_default_review_workflow_refuses_without_publication_target(cp):
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_publication_target"
     assert cp.list_publications(task.id) == []
-    # Task remains in REVIEWING — the review approval landed but
-    # publication is held until a target is configured.
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    # The task stays in NEEDS_REVIEW — the review approval landed (the
+    # default workflow never enters REVIEWING) but publication is held until a
+    # target is configured, and the task says why.
+    parked = cp.get_task(task.id)
+    assert parked.state == TaskState.NEEDS_REVIEW.value
+    assert parked.metadata["publication_block"]["reason"] == "no_publication_target"
+    assert [item["id"] for item in cp.parked_reviewing_tasks()] == [task.id]
     # The waiting condition is asserted via result["status"] above. The
     # 'no_publication_target' log is silenced (mem-04): the review tick re-emits
     # it every cycle for a stuck task — 262K durable rows in ~4 days on rocky —

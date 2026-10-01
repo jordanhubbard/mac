@@ -82,6 +82,11 @@ class FakeForge:
         self.checks_failed: tuple = ()
         self.checks_known = True
         self.pr_head_ref = ""
+        self.mergeable_state = ""
+        self.update_conflict = False
+        self.branch_updates: list[dict] = []
+        self.closed: list[dict] = []
+        self.close_error = ""
 
     # -- required checks --------------------------------------------------
     def required_check_verdicts(self, repo_url, sha, contexts, **_):
@@ -102,7 +107,32 @@ class FakeForge:
             "state": "closed" if self.queue_merged_sha else "open",
             "head_sha": "",
             "head_ref": self.pr_head_ref,
+            "mergeable_state": self.mergeable_state,
         }
+
+    def update_pull_request_branch(self, repo_url, number, *, expected_head_sha=None, **_):
+        """GitHub's update-branch: merge main into the PR branch, for real."""
+        self.branch_updates.append({"number": number, "expected_head_sha": expected_head_sha})
+        if self.update_conflict:
+            return {"updated": False, "conflict": True, "reason": "merge conflict"}
+        checkout = self.workdir / ("update-%d" % len(self.branch_updates))
+        subprocess.run(
+            ["git", "clone", "--branch", "task/feature", str(self.remote), str(checkout)],
+            check=True,
+            capture_output=True,
+        )
+        git(checkout, "config", "user.email", "forge@example.com")
+        git(checkout, "config", "user.name", "Fake Forge")
+        git(checkout, "fetch", "origin", "main")
+        git(checkout, "merge", "--no-ff", "--no-edit", "origin/main")
+        git(checkout, "push", "origin", "HEAD:refs/heads/task/feature")
+        self.mergeable_state = ""
+        return {"updated": True, "conflict": False, "reason": ""}
+
+    def close_pull_request(self, repo_url, number, *, comment="", **_):
+        if self.close_error:
+            raise RuntimeError(self.close_error)
+        self.closed.append({"repo_url": repo_url, "number": number, "comment": comment})
 
     def land_from_queue(self, sha: str, number: int = 101) -> str:
         """Land the PR behind publication's back (a human, or a dead attempt)."""
@@ -145,9 +175,16 @@ class FakeForge:
         return merged
 
 
-def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",)):
+def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",), strict=False):
     monkeypatch.setattr(gitops, "resolve_forge", lambda url: "github")
     monkeypatch.setattr(gitops, "required_status_check_contexts", lambda url, branch: tuple(checks))
+    monkeypatch.setattr(
+        gitops,
+        "required_status_check_policy",
+        lambda url, branch: gitops.RequiredStatusChecks(tuple(checks), strict),
+    )
+    monkeypatch.setattr(gitops, "update_pull_request_branch", forge.update_pull_request_branch)
+    monkeypatch.setattr(gitops, "close_pull_request", forge.close_pull_request)
     monkeypatch.setattr(gitops, "open_pull_request", forge.open_pull_request)
     monkeypatch.setattr(gitops, "merge_pull_request", forge.merge_pull_request)
     monkeypatch.setattr(gitops, "required_check_verdicts", forge.required_check_verdicts)
@@ -508,6 +545,99 @@ def test_required_status_check_contexts_reads_rulesets(monkeypatch):
         "sanity",
         "compatibility",
     )
+
+
+def test_required_status_check_policy_reports_a_strict_ruleset(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    rules = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [{"context": "sanity"}],
+            },
+        }
+    ]
+    monkeypatch.setattr(gitops, "_http_get_json", lambda *a, **k: rules)
+    policy = gitops.required_status_check_policy("https://github.com/acme/widgets.git", "main")
+    assert policy == gitops.RequiredStatusChecks(contexts=("sanity",), strict=True)
+
+    rules[0]["parameters"]["strict_required_status_checks_policy"] = False
+    policy = gitops.required_status_check_policy("https://github.com/acme/widgets.git", "main")
+    assert policy.strict is False
+    assert gitops.required_status_check_contexts("https://github.com/acme/widgets.git", "main") == (
+        "sanity",
+    )
+
+
+def test_update_pull_request_branch_reports_updated_and_conflict(monkeypatch):
+    token = "ghp_" + "u" * 36
+    monkeypatch.setenv("GH_TOKEN", token)
+    calls = []
+
+    def put(url, headers, body, timeout=30.0):
+        calls.append((url, body))
+        return responses.pop(0)
+
+    responses = [
+        (202, {"message": "Updating pull request branch."}, ""),
+        (422, {}, "merge conflict between base and head"),
+        (422, {}, "expected head sha didn't match current head ref %s" % token),
+    ]
+    monkeypatch.setattr(gitops, "_http_put_json", put)
+    url = "https://github.com/acme/widgets.git"
+
+    assert gitops.update_pull_request_branch(url, 7, expected_head_sha="a" * 40) == {
+        "updated": True,
+        "conflict": False,
+        "reason": "",
+    }
+    assert calls[0] == (
+        "https://api.github.com/repos/acme/widgets/pulls/7/update-branch",
+        {"expected_head_sha": "a" * 40},
+    )
+    conflict = gitops.update_pull_request_branch(url, 7)
+    assert conflict["updated"] is False and conflict["conflict"] is True
+    moved = gitops.update_pull_request_branch(url, 7)
+    assert moved["updated"] is False and moved["conflict"] is False
+    assert token not in moved["reason"]
+
+
+def test_close_pull_request_comments_then_closes(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "c" * 36)
+    calls = []
+    monkeypatch.setattr(
+        gitops, "_http_post_json", lambda url, headers, body, **_: calls.append(("POST", url, body))
+    )
+    monkeypatch.setattr(
+        gitops,
+        "_http_patch_json",
+        lambda url, headers, body, **_: calls.append(("PATCH", url, body)),
+    )
+
+    gitops.close_pull_request("https://github.com/acme/widgets.git", 9, comment="superseded")
+
+    assert calls == [
+        (
+            "POST",
+            "https://api.github.com/repos/acme/widgets/issues/9/comments",
+            {"body": "superseded"},
+        ),
+        ("PATCH", "https://api.github.com/repos/acme/widgets/pulls/9", {"state": "closed"}),
+    ]
+
+
+def test_close_pull_request_failure_never_echoes_the_token(monkeypatch):
+    token = "ghp_" + "t" * 36
+    monkeypatch.setenv("GH_TOKEN", token)
+
+    def refuse(url, headers, body, **_):
+        raise RuntimeError("PATCH %s -> 403 bad credentials %s" % (url, token))
+
+    monkeypatch.setattr(gitops, "_http_patch_json", refuse)
+    with pytest.raises(RuntimeError) as excinfo:
+        gitops.close_pull_request("https://github.com/acme/widgets.git", 9)
+    assert token not in str(excinfo.value)
 
 
 def test_required_status_check_contexts_is_unknown_without_credentials(monkeypatch):

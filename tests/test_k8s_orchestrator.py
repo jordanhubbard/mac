@@ -539,12 +539,11 @@ def test_main_starts_review_tick_daemon_thread(
     assert t.daemon is True, "review-tick thread must be a daemon"
 
 
-def test_loop_helpers_log_processed_stuck_jobs_and_review_failure(
+def test_loop_helpers_log_processed_stuck_jobs_and_review_ticks(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     import mac.k8s.controller as controller_mod
-    import mac.k8s.runner as runner_mod
 
     monkeypatch.setattr(
         controller_mod,
@@ -582,23 +581,8 @@ def test_loop_helpers_log_processed_stuck_jobs_and_review_failure(
         )
     assert "processed=2" in caplog.text
 
-    monkeypatch.setattr(runner_mod, "review_loop", lambda *_a: None)
-    orchestrator._run_review_loop_forever(
-        object(), object(), object(), logging.getLogger("review-edge")
-    )
-    monkeypatch.setattr(
-        runner_mod,
-        "review_loop",
-        lambda *_a: (_ for _ in ()).throw(RuntimeError("review failed")),
-    )
-    orchestrator.review_loop_failures = 0
-    orchestrator._run_review_loop_forever(
-        object(), object(), object(), logging.getLogger("review-edge")
-    )
-    assert orchestrator.review_loop_failures == 1
 
-
-def test_main_warns_on_drift_starts_review_and_defaults_bad_tick_limit(
+def test_main_warns_on_drift_and_defaults_bad_tick_limit(
     baseline_env: None,
     patched_runtime: Dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -606,7 +590,6 @@ def test_main_warns_on_drift_starts_review_and_defaults_bad_tick_limit(
     import mac.k8s.runner as runner_mod
 
     cfg = runner_mod.RunnerConfig.from_env()
-    cfg.reviewer_agent_ids = {"reviewer": "agent-reviewer"}
     monkeypatch.setattr(runner_mod.RunnerConfig, "from_env", staticmethod(lambda: cfg))
     monkeypatch.setattr(runner_mod, "check_dispatcher_capabilities", lambda *_a: ["gpu"])
     monkeypatch.setenv("MAC_REVIEW_TICK_LIMIT", "not-an-int")
@@ -622,5 +605,4 @@ def test_main_warns_on_drift_starts_review_and_defaults_bad_tick_limit(
 
     monkeypatch.setattr(orchestrator.threading, "Thread", FakeThread)
     assert orchestrator.main([]) == 0
-    assert "mac-orchestrator-review" in started
     assert "mac-orchestrator-review-tick" in started

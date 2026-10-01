@@ -25,10 +25,8 @@ from mac.k8s.runner import (
     _resolve_task_role,
     _sanitize_dns_label,
     build_job_spec,
-    build_review_job_spec,
     check_dispatcher_capabilities,
     claim_and_launch_one,
-    claim_and_launch_review_one,
 )
 
 # imports relocated from test_k8s_runner_edges.py
@@ -1319,97 +1317,6 @@ def test_check_dispatcher_capabilities_tolerates_dispatcher_fetch_failure(
     ), "expected a warning naming the dispatcher fetch failure"
 
 
-def _review_cfg(**overrides: Any) -> RunnerConfig:
-    base = _cfg()
-    base.role_images = {"python-reviewer": "ghcr.io/x/reviewer:latest"}
-    base.role_executors = {
-        "python-reviewer": "/usr/local/bin/mac-task-executor-opencode-review",
-    }
-    base.role_attestation_key_secrets = {
-        "python-reviewer": {"name": "mac-attn", "key": "python-reviewer"},
-    }
-    base.reviewer_agent_ids = {"python-reviewer": "mac-worker-python-reviewer"}
-    for k, v in overrides.items():
-        setattr(base, k, v)
-    return base
-
-
-def test_build_review_job_spec_sets_required_env() -> None:
-    cfg = _review_cfg(
-        role_executors={"python-reviewer": "/usr/local/bin/mac-task-executor-codex-review"}
-    )
-    spec = build_review_job_spec(
-        "review-1",
-        "task-abc",
-        "mac-worker-python-reviewer",
-        "ev-target",
-        cfg,
-        canonical_task={"id": "task-abc", "metadata": {}},
-    )
-    envs = {e["name"]: e for e in spec["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert envs["MAC_REVIEW_ID"]["value"] == "review-1"
-    assert envs["MAC_REVIEW_TARGET_EVIDENCE_ID"]["value"] == "ev-target"
-    assert envs["MAC_TASK_ID"]["value"] == "task-abc"
-    assert envs["MAC_AGENT_ID"]["value"] == "mac-worker-python-reviewer"
-    assert envs["MAC_AGENT_ROLE"]["value"] == "python-reviewer"
-    assert (
-        envs["MAC_TASK_EXECUTOR_COMMAND"]["value"]
-        == "/usr/local/bin/mac-task-executor-opencode-review"
-    )
-    assert "MAC_LEASE_ID" not in envs, "review Jobs are not lease-bound"
-    assert "GH_TOKEN" in envs
-    assert "GITHUB_TOKEN" in envs
-    assert "GITEA_TOKEN" in envs
-    assert "MAC_SECRET_KEY" not in envs
-    assert spec["metadata"]["labels"]["mac.review.id"]
-    assert spec["metadata"]["labels"]["app.kubernetes.io/component"] == "review-executor"
-
-
-def test_build_review_job_spec_uses_reviewer_image() -> None:
-    spec = build_review_job_spec(
-        "r1",
-        "t1",
-        "mac-worker-python-reviewer",
-        "ev1",
-        _review_cfg(),
-        canonical_task={"id": "t1", "metadata": {}},
-    )
-    image = spec["spec"]["template"]["spec"]["containers"][0]["image"]
-    assert image == "ghcr.io/x/reviewer:latest"
-
-
-def test_build_review_job_spec_rejects_read_only_report_before_secret_projection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    projected: List[bool] = []
-
-    def record_projection(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
-        projected.append(True)
-        return []
-
-    monkeypatch.setattr("mac.k8s.runner._build_executor_container_env", record_projection)
-    with pytest.raises(ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON):
-        build_review_job_spec(
-            "r1",
-            "t1",
-            "mac-worker-python-reviewer",
-            "ev1",
-            _review_cfg(),
-            canonical_task={
-                "id": "t1",
-                "metadata": {
-                    "deliverable": "report",
-                    "report_repository_access": {
-                        "schema": "mac.report_repository_access.v1",
-                        "mode": "read_only",
-                    },
-                },
-            },
-        )
-
-    assert projected == []
-
-
 class _FakeMacForReview:
     def __init__(
         self,
@@ -1437,121 +1344,6 @@ class _FakeMacForReview:
     def get(self, path: str) -> Dict[str, Any]:
         self.gotten.append(path)
         return self._task
-
-
-def test_claim_and_launch_review_returns_none_when_no_reviewers() -> None:
-    cfg = _cfg()  # no reviewer_agent_ids
-    mac = _FakeMacForReview({})
-    jobs = _FakeJobs()
-    assert claim_and_launch_review_one(mac, jobs, cfg) is None
-    assert jobs.created == []
-
-
-def test_claim_and_launch_review_returns_none_when_no_nudges() -> None:
-    cfg = _review_cfg()
-    mac = _FakeMacForReview({"mac-worker-python-reviewer": []})
-    jobs = _FakeJobs()
-    assert claim_and_launch_review_one(mac, jobs, cfg) is None
-    assert jobs.created == []
-
-
-def test_claim_and_launch_review_happy_path() -> None:
-    cfg = _review_cfg()
-    nudge = {
-        "id": "msg-1",
-        "message_type": "nudge",
-        "payload": {
-            "reason": "produce_review_verdict",
-            "task_id": "task-abc",
-            "review_id": "review-1",
-            "executor_evidence_id": "ev-target",
-        },
-    }
-    mac = _FakeMacForReview({"mac-worker-python-reviewer": [nudge]})
-    jobs = _FakeJobs()
-    result = claim_and_launch_review_one(mac, jobs, cfg)
-    assert result is not None
-    assert result["status"] == "launched"
-    assert result["review_id"] == "review-1"
-    assert result["task_id"] == "task-abc"
-    assert result["reviewer_agent_id"] == "mac-worker-python-reviewer"
-    assert result["role"] == "python-reviewer"
-    assert len(jobs.created) == 1
-    claim_posts = [p for p in mac.posted if p["path"].endswith("/claim")]
-    assert (
-        claim_posts and claim_posts[0]["body"]["reviewer_agent_id"] == "mac-worker-python-reviewer"
-    )
-
-
-def test_claim_and_launch_review_leaves_read_only_report_unclaimed_without_job(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cfg = _review_cfg()
-    nudge = {
-        "id": "msg-1",
-        "message_type": "nudge",
-        "payload": {
-            "reason": "produce_review_verdict",
-            "task_id": "task-abc",
-            "review_id": "review-1",
-            "executor_evidence_id": "ev-target",
-        },
-    }
-    task = {
-        "id": "task-abc",
-        "metadata": {
-            "deliverable": "report",
-            "report_repository_access": {
-                "schema": "mac.report_repository_access.v1",
-                "mode": "read_only",
-            },
-        },
-    }
-    projected: List[bool] = []
-
-    def record_projection(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
-        projected.append(True)
-        return []
-
-    monkeypatch.setattr("mac.k8s.runner._build_executor_container_env", record_projection)
-    mac = _FakeMacForReview({"mac-worker-python-reviewer": [nudge]}, task_response=task)
-    jobs = _FakeJobs()
-
-    assert claim_and_launch_review_one(mac, jobs, cfg) is None
-    assert mac.gotten == ["/tasks/task-abc"]
-    assert not any(post["path"].endswith("/claim") for post in mac.posted)
-    assert jobs.created == []
-    assert projected == []
-
-
-def test_claim_and_launch_review_skips_when_claim_rejected() -> None:
-    cfg = _review_cfg()
-    nudge = {
-        "id": "msg-1",
-        "message_type": "nudge",
-        "payload": {
-            "reason": "produce_review_verdict",
-            "task_id": "task-abc",
-            "review_id": "review-1",
-            "executor_evidence_id": "ev-target",
-        },
-    }
-    mac = _FakeMacForReview(
-        {"mac-worker-python-reviewer": [nudge]},
-        claim_response={"status": "not_claimable", "reason": "already_claimed"},
-    )
-    jobs = _FakeJobs()
-    assert claim_and_launch_review_one(mac, jobs, cfg) is None
-    assert jobs.created == []
-
-
-def test_claim_and_launch_review_ignores_non_verdict_messages() -> None:
-    cfg = _review_cfg()
-    other = {"id": "m1", "message_type": "status_update", "payload": {}}
-    mac = _FakeMacForReview({"mac-worker-python-reviewer": [other]})
-    jobs = _FakeJobs()
-    assert claim_and_launch_review_one(mac, jobs, cfg) is None
-    assert jobs.created == []
 
 
 # --- relocated from test_k8s_runner_edges.py (coverage companion folded in) ---
@@ -1642,15 +1434,15 @@ def test_agent_token_secret_map_is_reference_only_and_fail_closed() -> None:
 
 
 def test_dispatcher_capability_probe_shape_and_role_failures() -> None:
-    cfg = _cfg_edges(role_agent_ids={"worker": "worker"}, reviewer_agent_ids={"review": "reviewer"})
+    cfg = _cfg_edges(role_agent_ids={"worker": "worker"})
     assert runner.check_dispatcher_capabilities(cfg, _Mac([RuntimeError("offline")])) == []
     assert runner.check_dispatcher_capabilities(cfg, _Mac([[]])) == []
-    mac = _Mac(
-        [{"capabilities": []}, RuntimeError("review missing"), RuntimeError("worker missing")]
-    )
+    mac = _Mac([{"capabilities": []}, RuntimeError("worker missing")])
     assert runner.check_dispatcher_capabilities(cfg, mac) == []
-    mac = _Mac([{"capabilities": []}, {"capabilities": ["review", "shared"]}, []])
+    mac = _Mac([{"capabilities": []}, []])
     assert runner.check_dispatcher_capabilities(cfg, mac) == []
+    mac = _Mac([{"capabilities": ["shared"]}, {"capabilities": ["shared", "python"]}])
+    assert runner.check_dispatcher_capabilities(cfg, mac) == ["python"]
 
 
 def test_claim_next_failures_and_missing_lease() -> None:
@@ -1688,79 +1480,11 @@ def test_claim_job_create_failure_and_renewal_start_failure(monkeypatch) -> None
     assert result["job_uid"] == "uid"
 
 
-def _nudge(**extra):
-    payload = {
-        "reason": "produce_review_verdict",
-        "review_id": "review",
-        "task_id": "task",
-        "executor_evidence_id": "evidence",
-    }
-    payload.update(extra)
-    return {"message_type": "nudge", "payload": payload}
-
-
-def test_review_claim_filters_delivery_and_malformed_messages() -> None:
-    cfg = _cfg_edges(reviewer_agent_ids={"reviewer": "reviewer-agent"})
-    assert runner.claim_and_launch_review_one(_Mac([RuntimeError("offline")]), _Jobs(), cfg) is None
-    assert runner.claim_and_launch_review_one(_Mac([{}]), _Jobs(), cfg) is None
-    messages = [
-        "bad",
-        {"message_type": "other"},
-        {"message_type": "nudge", "payload": {"reason": "other"}},
-        _nudge(review_id=""),
-    ]
-    assert runner.claim_and_launch_review_one(_Mac([messages]), _Jobs(), cfg) is None
-
-
-def test_review_claim_and_create_failures_then_success() -> None:
-    cfg = _cfg_edges(reviewer_agent_ids={"reviewer": "reviewer-agent"})
-    assert (
-        runner.claim_and_launch_review_one(
-            _Mac([[_nudge()], {"id": "task", "metadata": {}}, RuntimeError("claim failed")]),
-            _Jobs(),
-            cfg,
-        )
-        is None
-    )
-    assert (
-        runner.claim_and_launch_review_one(
-            _Mac(
-                [
-                    [_nudge()],
-                    {"id": "task", "metadata": {}},
-                    {"status": "skipped", "reason": "busy"},
-                ]
-            ),
-            _Jobs(),
-            cfg,
-        )
-        is None
-    )
-    assert (
-        runner.claim_and_launch_review_one(
-            _Mac([[_nudge()], {"id": "task", "metadata": {}}, {"status": "claimed"}]),
-            _Jobs(RuntimeError("create failed")),
-            cfg,
-        )
-        is None
-    )
-    result = runner.claim_and_launch_review_one(
-        _Mac([[_nudge()], {"id": "task", "metadata": {}}, {"status": "claimed"}]), _Jobs(), cfg
-    )
-    assert result["status"] == "launched"
-    assert result["role"] == "reviewer"
-
-
-def test_runner_and_review_loops_count_launches_and_sleep(monkeypatch) -> None:
+def test_runner_loop_counts_launches_and_sleeps(monkeypatch) -> None:
     outcomes = iter(
         [None, {"status": "launched", "task_id": "t", "lease_id": "l", "job_name": "j"}]
     )
     monkeypatch.setattr(runner, "claim_and_launch_one", lambda *_a: next(outcomes))
     sleeps = []
     assert runner.runner_loop(_Mac(), _Jobs(), _cfg_edges(), iterations=2, sleep=sleeps.append) == 1
-    assert sleeps == [0]
-    outcomes = iter([{"status": "failed"}, {"status": "launched"}])
-    monkeypatch.setattr(runner, "claim_and_launch_review_one", lambda *_a: next(outcomes))
-    sleeps = []
-    assert runner.review_loop(_Mac(), _Jobs(), _cfg_edges(), iterations=2, sleep=sleeps.append) == 1
     assert sleeps == [0]

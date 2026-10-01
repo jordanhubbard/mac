@@ -12,7 +12,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from mac.k8s.config_loader import load_config_file
 from mac.models import metadata_declares_read_only_report_repository
@@ -105,7 +105,6 @@ class RunnerConfig:
     # Exact agent identity -> per-agent Secret created by
     # mac.worker_credentials. Absence means legacy compatibility mode.
     agent_token_secrets: Dict[str, str] = field(default_factory=dict)
-    reviewer_agent_ids: Dict[str, str] = field(default_factory=dict)
     lease_renew_interval_seconds: float = float(DEFAULT_LEASE_RENEW_INTERVAL_SECONDS)
     job_poll_interval_seconds: float = float(DEFAULT_JOB_POLL_INTERVAL_SECONDS)
     opencode_configmap_name: str = DEFAULT_OPENCODE_CONFIGMAP_NAME
@@ -161,7 +160,6 @@ class RunnerConfig:
             agent_token_secrets=_agent_token_secret_map(
                 os.environ.get("MAC_RUNNER_AGENT_TOKEN_SECRETS", "")
             ),
-            reviewer_agent_ids=cfg_file.reviewer_agent_ids(),
             lease_renew_interval_seconds=float(
                 os.environ.get(
                     "MAC_RUNNER_LEASE_RENEW_INTERVAL_SECONDS",
@@ -284,8 +282,6 @@ def _build_executor_container_env(
     base_env: List[JsonDict],
     executor_cmd: Optional[str],
     attestation_secret: Optional[Dict[str, str]],
-    include_secret_key: bool,
-    optional_secret_keys: Tuple[str, ...] = _OPTIONAL_SECRET_ENV_KEYS,
 ) -> List[JsonDict]:
     env: List[JsonDict] = list(base_env)
     if executor_cmd is not None:
@@ -334,19 +330,18 @@ def _build_executor_container_env(
             }
         )
         env.append({"name": "MAC_WORKER_IDENTITY_MODE", "value": "compatibility"})
-    if include_secret_key:
-        env.append(
-            {
-                "name": "MAC_SECRET_KEY",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_secret_key,
-                        "key": cfg.secret_key_for_secret_key,
-                    }
-                },
-            }
-        )
-    for key in optional_secret_keys:
+    env.append(
+        {
+            "name": "MAC_SECRET_KEY",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": cfg.secret_name_for_secret_key,
+                    "key": cfg.secret_key_for_secret_key,
+                }
+            },
+        }
+    )
+    for key in _OPTIONAL_SECRET_ENV_KEYS:
         env.append(
             {
                 "name": key,
@@ -467,7 +462,6 @@ def build_job_spec(
         base_env=base_env,
         executor_cmd=executor_cmd,
         attestation_secret=attestation_secret,
-        include_secret_key=True,
     )
 
     job_labels = {
@@ -648,23 +642,6 @@ def check_dispatcher_capabilities(cfg: RunnerConfig, mac: MacApiProtocol) -> Lis
         return []
     dispatcher_caps = {str(c) for c in (dispatcher.get("capabilities") or [])}
 
-    # Collect capabilities that belong exclusively to reviewer agents.
-    # The dispatcher intentionally does NOT carry `review` (and any other
-    # reviewer-only capabilities) — it is an orchestrator, not a reviewer.
-    # Reviewer roles are handled by dedicated agents registered via
-    # reviewer_agent_ids; warning about them as "missing" is a false positive.
-    reviewer_only_caps: set = set()
-    for role, reviewer_agent_id in (cfg.reviewer_agent_ids or {}).items():
-        try:
-            reviewer_agent = mac.get("/agents/%s" % reviewer_agent_id)
-        except Exception:  # noqa: BLE001
-            continue
-        if not isinstance(reviewer_agent, dict):
-            continue
-        for cap in reviewer_agent.get("capabilities") or []:
-            reviewer_only_caps.add(str(cap))
-    # Only treat a capability as reviewer-only if NO non-reviewer role agent
-    # carries it either.
     worker_caps: set = set()
     for role, role_agent_id in cfg.role_agent_ids.items():
         try:
@@ -688,11 +665,7 @@ def check_dispatcher_capabilities(cfg: RunnerConfig, mac: MacApiProtocol) -> Lis
             continue
         for cap in role_agent.get("capabilities") or []:
             worker_caps.add(str(cap))
-    reviewer_only_caps -= worker_caps  # caps shared with workers are still checked
-
-    union_role_caps = worker_caps
-    missing = sorted((union_role_caps - reviewer_only_caps) - dispatcher_caps)
-    return missing
+    return sorted(worker_caps - dispatcher_caps)
 
 
 def claim_and_launch_one(
@@ -858,289 +831,6 @@ def claim_and_launch_one(
         "job_uid": (created.get("metadata") or {}).get("uid"),
         "image": manifest["spec"]["template"]["spec"]["containers"][0]["image"],
     }
-
-
-def _resolve_role_for_reviewer_agent(reviewer_agent_id: str, cfg: RunnerConfig) -> Optional[str]:
-    for role, agent_id in cfg.reviewer_agent_ids.items():
-        if agent_id == reviewer_agent_id:
-            return role
-    return None
-
-
-def _review_job_name(review_id: str, reviewer_agent_id: str) -> str:
-    short_review = review_id.split("_")[-1][:12] if "_" in review_id else review_id[:12]
-    raw = "mac-review-%s-%s" % (_sanitize_dns_label(reviewer_agent_id), short_review)
-    return _sanitize_dns_label(raw)
-
-
-def build_review_job_spec(
-    review_id: str,
-    task_id: str,
-    reviewer_agent_id: str,
-    executor_evidence_id: str,
-    cfg: RunnerConfig,
-    *,
-    canonical_task: JsonDict,
-) -> JsonDict:
-    """Job spec for a reviewer agent running mac-task-executor-*-review.
-
-    Differs from :func:`build_job_spec` only by env (MAC_REVIEW_ID +
-    MAC_REVIEW_TARGET_EVIDENCE_ID), labels (review-executor component,
-    mac.review.id), and the absence of MAC_LEASE_ID — review claims
-    are gated by ``/reviews/{id}/claim``, not leases. Everything else
-    (pod template, secret env block) flows through the shared helpers.
-    """
-    # The review mailbox nudge is only a routing hint.  It is not a trusted
-    # task-policy snapshot, so require the caller to supply the canonical task
-    # fetched from the hub and reject the legacy Job boundary before any
-    # credential-bearing environment is assembled.
-    if not isinstance(canonical_task, dict):
-        raise ValueError("canonical review task must be an object")
-    canonical_task_id = str(canonical_task.get("id") or "").strip()
-    if canonical_task_id != task_id:
-        raise ValueError("canonical review task id does not match nudge task id")
-    if metadata_declares_read_only_report_repository(canonical_task.get("metadata")):
-        raise ValueError(READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON)
-
-    role = _resolve_role_for_reviewer_agent(reviewer_agent_id, cfg)
-    # Review Jobs use one audited implementation across every role.  Role
-    # executor maps still select coding executors, but may not reintroduce the
-    # historical always-approve or no-checkout reviewer scripts.
-    executor_cmd = "/usr/local/bin/mac-task-executor-opencode-review"
-    attestation_secret = _resolve_attestation_key_secret_for_role(role, cfg)
-    image = cfg.role_images.get(role) if role else None
-    if not image:
-        image = cfg.default_image
-    name = _review_job_name(review_id, reviewer_agent_id)
-
-    base_env: List[JsonDict] = [
-        {"name": "MAC_URL", "value": cfg.mac_url},
-        {"name": "MAC_TASK_ID", "value": task_id},
-        {"name": "MAC_REVIEW_ID", "value": review_id},
-        {"name": "MAC_REVIEW_TARGET_EVIDENCE_ID", "value": executor_evidence_id},
-        {"name": "MAC_AGENT_ID", "value": reviewer_agent_id},
-        {"name": "MAC_AGENT_ROLE", "value": role or ""},
-    ]
-    if cfg.executor_timeout_seconds:
-        base_env.append(
-            {
-                "name": "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS",
-                "value": str(cfg.executor_timeout_seconds),
-            }
-        )
-    # Reviewers do not need MAC_SECRET_KEY, but they do need read access to
-    # private repositories. Give them the same optional Git-host credentials
-    # used by task Jobs; the worker injects a token only for the Git command
-    # and immediately scrubs it from origin.
-    container_env = _build_executor_container_env(
-        cfg,
-        credential_agent_id=reviewer_agent_id,
-        base_env=base_env,
-        executor_cmd=executor_cmd,
-        attestation_secret=attestation_secret,
-        include_secret_key=False,
-        optional_secret_keys=_OPTIONAL_SECRET_ENV_KEYS,
-    )
-
-    job_labels = {
-        "app.kubernetes.io/name": "mac-task",
-        "app.kubernetes.io/component": "review-executor",
-        "app.kubernetes.io/managed-by": "mac-k8s-runner",
-        "mac.task.id": _sanitize_dns_label(task_id),
-        "mac.review.id": _sanitize_dns_label(review_id),
-        "mac.runner.agent": _sanitize_dns_label(cfg.agent_id),
-        "mac.role": _sanitize_dns_label(role or "default"),
-        "mac.agent.id": _sanitize_dns_label(reviewer_agent_id),
-    }
-    template_labels = {
-        "app.kubernetes.io/name": "mac-task",
-        "app.kubernetes.io/component": "review-executor",
-        "mac.task.id": _sanitize_dns_label(task_id),
-        "mac.review.id": _sanitize_dns_label(review_id),
-    }
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": {
-            "name": name,
-            "namespace": cfg.namespace,
-            "labels": job_labels,
-        },
-        "spec": {
-            "backoffLimit": cfg.backoff_limit,
-            "activeDeadlineSeconds": cfg.active_deadline_seconds,
-            "ttlSecondsAfterFinished": cfg.ttl_seconds_after_finished,
-            "template": _build_executor_pod_template(
-                cfg,
-                image=image,
-                container_env=container_env,
-                template_labels=template_labels,
-            ),
-        },
-    }
-
-
-def claim_and_launch_review_one(
-    mac: MacApiProtocol,
-    k8s: K8sJobsProtocol,
-    cfg: RunnerConfig,
-) -> Optional[JsonDict]:
-    """Poll each registered reviewer agent's mailbox for verdict nudges.
-
-    On the first claimable nudge: POST ``/reviews/{id}/claim`` (so the
-    review is committed to this reviewer before we spend the Job), then
-    create the K8s Job. Returns ``None`` when no nudge was found.
-    """
-    if not cfg.reviewer_agent_ids:
-        return None
-    for role, reviewer_agent_id in cfg.reviewer_agent_ids.items():
-        try:
-            messages = mac.post(
-                "/agents/%s/messages/deliver?limit=5" % reviewer_agent_id,
-                {},
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "review-dispatch: deliver failed for reviewer=%s: %s",
-                reviewer_agent_id,
-                exc,
-            )
-            continue
-        if not isinstance(messages, list):
-            continue
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            if str(message.get("message_type") or "") != "nudge":
-                continue
-            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
-            if str(payload.get("reason") or "") != "produce_review_verdict":
-                continue
-            review_id = str(payload.get("review_id") or "")
-            task_id = str(payload.get("task_id") or "")
-            executor_evidence_id = str(payload.get("executor_evidence_id") or "")
-            if not review_id or not task_id or not executor_evidence_id:
-                log.warning(
-                    "review-dispatch: nudge missing fields review=%s task=%s evid=%s",
-                    review_id,
-                    task_id,
-                    executor_evidence_id,
-                )
-                continue
-            # A delivered nudge is untrusted and may have been queued before a
-            # task policy or worker-boundary change.  Fetch the canonical task
-            # before claiming the review.  Read-only repository reports are
-            # intentionally left pending and unclaimed so the hub's reviewer
-            # eligibility pass can retract/reroute them to an OpenShell peer.
-            try:
-                canonical_task = mac.get("/tasks/%s" % task_id)
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "review-dispatch: task lookup failed task=%s review=%s: %s",
-                    task_id,
-                    review_id,
-                    exc,
-                )
-                continue
-            if (
-                not isinstance(canonical_task, dict)
-                or str(canonical_task.get("id") or "").strip() != task_id
-            ):
-                log.warning(
-                    "review-dispatch: canonical task mismatch task=%s review=%s",
-                    task_id,
-                    review_id,
-                )
-                continue
-            if metadata_declares_read_only_report_repository(canonical_task.get("metadata")):
-                log.warning(
-                    "review-dispatch: refusing read-only repository report "
-                    "task=%s review=%s boundary=kubernetes_job required=openshell",
-                    task_id,
-                    review_id,
-                )
-                continue
-            try:
-                claim = mac.post(
-                    "/reviews/%s/claim" % review_id,
-                    {
-                        "reviewer_agent_id": reviewer_agent_id,
-                        "executor_evidence_id": executor_evidence_id,
-                        "actor": cfg.agent_id,
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "review-dispatch: claim_review failed review=%s reviewer=%s: %s",
-                    review_id,
-                    reviewer_agent_id,
-                    exc,
-                )
-                continue
-            if isinstance(claim, dict) and claim.get("status") != "claimed":
-                log.info(
-                    "review-dispatch: review=%s not claimable (%s) — skipping",
-                    review_id,
-                    claim.get("reason") or claim.get("status"),
-                )
-                continue
-            manifest = build_review_job_spec(
-                review_id,
-                task_id,
-                reviewer_agent_id,
-                executor_evidence_id,
-                cfg,
-                canonical_task=canonical_task,
-            )
-            try:
-                created = k8s.create(cfg.namespace, manifest)
-            except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "review-dispatch: k8s Job create failed review=%s: %s",
-                    review_id,
-                    exc,
-                )
-                continue
-            log.info(
-                "review-dispatch: launched review=%s task=%s reviewer=%s role=%s job=%s",
-                review_id,
-                task_id,
-                reviewer_agent_id,
-                role,
-                manifest["metadata"]["name"],
-            )
-            return {
-                "status": "launched",
-                "review_id": review_id,
-                "task_id": task_id,
-                "reviewer_agent_id": reviewer_agent_id,
-                "role": role,
-                "job_name": manifest["metadata"]["name"],
-                "job_uid": (created.get("metadata") or {}).get("uid"),
-            }
-    return None
-
-
-def review_loop(
-    mac: MacApiProtocol,
-    k8s: K8sJobsProtocol,
-    cfg: RunnerConfig,
-    *,
-    iterations: Optional[int] = None,
-    sleep: Optional[Any] = None,
-) -> int:
-    """Repeatedly claim and launch review jobs until iterations are exhausted."""
-    sleeper = sleep or time.sleep
-    launched = 0
-    i = 0
-    while iterations is None or i < iterations:
-        i += 1
-        result = claim_and_launch_review_one(mac, k8s, cfg)
-        if result and result.get("status") == "launched":
-            launched += 1
-        else:
-            sleeper(cfg.poll_interval_seconds)
-    return launched
 
 
 def runner_loop(

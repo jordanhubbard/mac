@@ -467,8 +467,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_rec_001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["plan_outcome_calls"]) == 1, (
@@ -494,8 +492,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_recall_001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(plan_recall_calls) >= 1, (
@@ -517,8 +513,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_inject_001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
@@ -550,8 +544,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_small_nop",
-            review_context=None,
-            is_review=False,
         )
 
         assert state["plan_outcome_calls"] == [], (
@@ -577,8 +569,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_nomanifest",
-            review_context=None,
-            is_review=False,
         )
 
         assert state["plan_outcome_calls"] == [], (

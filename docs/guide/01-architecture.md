@@ -112,6 +112,8 @@ stateDiagram-v2
     open --> claimed
     claimed --> running
     running --> needs_review
+    needs_review --> completed
+    needs_review --> open
     needs_review --> reviewing
     reviewing --> completed
 
@@ -136,10 +138,17 @@ Two properties surprise people, and both are deliberate:
 
 - **`completed` is the only truly terminal state.** `failed` and `cancelled`
   both allow `-> open`, because a task that died is often a task to retry.
-- **You cannot jump to `completed`.** It is reachable only from `reviewing`,
-  and only with durable canonical integration proof — a merged commit on the
-  canonical branch. `mac task force-complete` exists as audited break-glass and
-  still refuses without that proof.
+- **You cannot jump to `completed`.** It is reachable only from review
+  (`needs_review`, or `reviewing`), only with an approved review, and only with
+  durable canonical integration proof — a merged commit on the canonical
+  branch. `mac task force-complete` exists as audited break-glass and still
+  refuses without that proof.
+
+The default workflow never enters `reviewing`: the hub-reviewer approves from
+the worker's verified evidence and the land loop publishes straight from
+`needs_review` (a rejection or a rebase send-back reopens the task). Only a
+human-requested review (`POST /tasks/{id}/reviews`) moves a task to
+`reviewing`; older rows in that state still complete through the land loop.
 
 ## How work actually flows
 

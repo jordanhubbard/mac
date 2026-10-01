@@ -715,12 +715,18 @@ its merge (someone pushed outside mac), the guarded push or the re-validation
 refuses, and the step retries once at once; the retry then sees a tip the
 worker never verified and sends the task back.
 
-**Rebase and retest.** A send-back moves the SAME task from REVIEWING to OPEN
-with a `rebase_onto_tip` directive in its metadata (the canonical tip, the
-verified base, the reviewed head and branch, any conflicted paths). The next
-claim re-runs the worker, whose finalizer rebases onto the current tip before
-the verifier runs, so the new evidence is verified against the tip it will land
-on. Send-backs are counted in `metadata.landing.rebases` and capped at two;
+**Rebase and retest.** A send-back moves the SAME task from review
+(`needs_review`, or a legacy `reviewing` row) to OPEN with a `rebase_onto_tip`
+directive in its metadata (the canonical tip, the verified base, the reviewed
+head and branch, any conflicted paths). The executor prompt renders it as a
+"Sent back to rebase" section: rebase onto the tip, resolve the named
+conflicts, keep the previous work. The next claim re-runs the worker, whose
+finalizer rebases onto the current tip before the verifier runs, so the new
+evidence is verified against the tip it will land on. The previous attempt's
+pull request (the agent's, or the one a land step was working on) is closed
+with a "Superseded" comment; a forge that refuses is logged
+(`workflow.default_review.superseded_pr_close_failed`) and never blocks the
+send-back. Send-backs are counted in `metadata.landing.rebases` and capped at two;
 the third blocks the task (`landing_rebase_cap_exhausted`). New evidence resets
 the rest of the landing budget but not this count.
 
@@ -735,14 +741,28 @@ required_checks | worker_verifier`) and on the canonical-integration proof.
 mac's native speculative merge queue was removed on 2026-10-01 (it landed 4.7%
 of its entries); migration `0005_drop_native_merge_queue_tables` drops its
 `merge_queue_entries` and `merge_queue_windows` tables. Approved tasks that were
-waiting on it are still REVIEWING and land through the loop on the next tick.
+waiting on it are still `reviewing` and land through the loop on the next tick.
 
 **Checks still running.** A merge the forge refuses because its own gates have
 not finished is not a failure. Publication defers with
 `publication_failure_kind=pull_request_checks_pending` and the existing
 publication-retry backoff re-attempts later; the pull request is reused rather
-than reopened, so retries are cheap. The task stays in `reviewing` — approved
-but not completed — until the change is genuinely on the canonical branch.
+than reopened, so retries are cheap. The task stays in `needs_review` (or a
+legacy `reviewing`) — approved but not completed — until the change is
+genuinely on the canonical branch.
+
+**Branches that must be up to date.** A ruleset with "require branches to be up
+to date before merging" (`strict_required_status_checks_policy`, read by
+`gitops.required_status_check_policy`) will not merge a pull request that is
+behind the base, and nothing else updates it — it used to wait out the landing
+deadline. When the forge reports the PR `behind` (or the canonical tip is not in
+its head), the land step calls GitHub's update-branch
+(`gitops.update_pull_request_branch`, pinned to the observed head) and waits
+for the required checks on the updated head
+(`publication_failure_kind=pull_request_branch_updated`, charged to the
+deadline only). The updated head — the reviewed head plus merges of the
+canonical branch, nothing else — is what the checks verify and the merge is
+pinned to. If the forge reports a conflict, the task is sent back to rebase.
 
 **Squash and the integration proof.** A squash merge lands the reviewed
 *content* under a new SHA, so the reviewed commit is deliberately not an

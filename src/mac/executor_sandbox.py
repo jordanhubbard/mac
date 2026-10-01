@@ -6117,9 +6117,6 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
         task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
         task_payload = json.loads(task_file.read_text(encoding="utf-8"))
         task = task_payload.get("task", task_payload)
-        metadata = task.get("metadata") if isinstance(task, dict) else {}
-        review_context = metadata.get("review_context") if isinstance(metadata, dict) else None
-        is_review = isinstance(review_context, dict)
         task_id = task.get("id") if isinstance(task, dict) else None
     except Exception as exc:  # noqa: BLE001 - startup must fail closed, not open
         detail = "%s: %s" % (type(exc).__name__, exc)
@@ -6161,8 +6158,6 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
                 task=task,
                 task_workspace=task_workspace,
                 task_id=task_id,
-                review_context=review_context,
-                is_review=is_review,
             )
         finally:
             relay_observability.flush()
@@ -6326,8 +6321,6 @@ def _run_executor(
     task: Any,
     task_workspace: Path,
     task_id: Any,
-    review_context: Any,
-    is_review: bool,
 ) -> int:
     """Inner executor body extracted so the relay scope wraps the whole run."""
     started = time.monotonic()
@@ -6335,34 +6328,19 @@ def _run_executor(
     # Planning-phase flag — determined after the scope estimate below.
     _is_planning = False
     _wanted_planning = False
-    _hub_capability: Dict[str, Any] = {}
-    if is_review:
-        # Memory feed (in): recall prior deployment lessons (and this task's own
-        # prior-attempt outcomes) so the reviewer works with the fleet's
-        # hindsight, mirroring the task-execution path. Best-effort — never
-        # blocks the run.
-        prior_attempt = recall_prior_attempt_lessons(task)
-        project_lessons = recall_deployment_lessons(task)
-        lessons: List[str] = prior_attempt + [
-            lesson for lesson in project_lessons if lesson not in prior_attempt
-        ]
-        prompt = build_review_prompt(task, task_workspace, review_context, lessons)
-    else:
-        # Memory feed (in): recall prior deployment lessons so the agent works
-        # with the fleet's hindsight. Best-effort — never blocks the run. On a
-        # retry, lead with THIS task's own prior-attempt outcome (exact match,
-        # highest-value hindsight) before the project-wide lessons.
-        prior_attempt = recall_prior_attempt_lessons(task)
-        project_lessons = recall_deployment_lessons(task)
-        lessons = prior_attempt + [
-            lesson for lesson in project_lessons if lesson not in prior_attempt
-        ]
-        # Prompt is built after planning-phase decision below.
-        prompt = ""
+    # Memory feed (in): recall prior deployment lessons so the agent works
+    # with the fleet's hindsight. Best-effort — never blocks the run. On a
+    # retry, lead with THIS task's own prior-attempt outcome (exact match,
+    # highest-value hindsight) before the project-wide lessons.
+    prior_attempt = recall_prior_attempt_lessons(task)
+    project_lessons = recall_deployment_lessons(task)
+    lessons: List[str] = prior_attempt + [
+        lesson for lesson in project_lessons if lesson not in prior_attempt
+    ]
     emit_telemetry(
         "started",
         task_id=task_id,
-        kind="review" if is_review else "task",
+        kind="task",
         recalled_lessons=len(lessons),
         sandboxed=_openshell_enabled() and break_glass_authorization is None,
         execution_boundary=("host" if break_glass_authorization is not None else "sandbox"),
@@ -6371,103 +6349,97 @@ def _run_executor(
         ),
     )
 
-    # Scope-estimate preflight (scope-01): on the FIRST attempt of a non-review
-    # task, compute a deterministic scope estimate and record it as
+    # Scope-estimate preflight (scope-01): on the FIRST attempt of a task,
+    # compute a deterministic scope estimate and record it as
     # metadata.scope_estimate on the hub.  Best-effort — never blocks the run.
-    if not is_review:
-        try:
-            estimate = maybe_preflight_scope_estimate(task)
-            if estimate is not None:
-                emit_telemetry(
-                    "scope_estimated",
-                    task_id=task_id,
-                    size=estimate.get("size"),
-                    estimated_units=estimate.get("estimated_units"),
-                    signals=estimate.get("signals", []),
-                )
-                # Merge the just-computed estimate into the local task dict so
-                # is_planning_phase() can read it without another hub round-trip.
-                metadata_local = task.get("metadata")
-                if not isinstance(metadata_local, dict):
-                    metadata_local = {}
-                    task["metadata"] = metadata_local  # type: ignore[index]
-                metadata_local.setdefault("scope_estimate", estimate)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
+    try:
+        estimate = maybe_preflight_scope_estimate(task)
+        if estimate is not None:
+            emit_telemetry(
+                "scope_estimated",
+                task_id=task_id,
+                size=estimate.get("size"),
+                estimated_units=estimate.get("estimated_units"),
+                signals=estimate.get("signals", []),
+            )
+            # Merge the just-computed estimate into the local task dict so
+            # is_planning_phase() can read it without another hub round-trip.
+            metadata_local = task.get("metadata")
+            if not isinstance(metadata_local, dict):
+                metadata_local = {}
+                task["metadata"] = metadata_local  # type: ignore[index]
+            metadata_local.setdefault("scope_estimate", estimate)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
 
     # Planning-phase execution (plan-01): when scope_estimate=large or
     # metadata.plan_first=true, the first run PLANS instead of executing —
     # but only when this process can actually write children to the hub.
     _hub_capability: Dict[str, Any] = {}
-    if not is_review:
-        try:
-            _hub_capability = hub_write_capability()
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("hub connectivity probe failed: %s\n" % exc)
-            _hub_capability = {
-                "schema": "mac.sandbox_hub_connectivity.v1",
-                "ready": False,
-                "reason": "hub_probe_exception",
-            }
-        try:
-            (task_workspace / "sandbox-hub-connectivity.json").write_text(
-                json.dumps(_hub_capability, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            sys.stderr.write("hub connectivity record failed: %s\n" % exc)
-        emit_telemetry(
-            "sandbox_hub_connectivity",
-            task_id=task_id,
-            level="info" if _hub_capability.get("ready") else "warning",
-            **{key: value for key, value in _hub_capability.items() if key != "schema"},
+    try:
+        _hub_capability = hub_write_capability()
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("hub connectivity probe failed: %s\n" % exc)
+        _hub_capability = {
+            "schema": "mac.sandbox_hub_connectivity.v1",
+            "ready": False,
+            "reason": "hub_probe_exception",
+        }
+    try:
+        (task_workspace / "sandbox-hub-connectivity.json").write_text(
+            json.dumps(_hub_capability, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
-        try:
-            _wanted_planning = is_planning_phase(task)
-            _is_planning = should_enter_planning_phase(task, hub_capability=_hub_capability)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("planning phase check failed: %s\n" % exc)
-            _wanted_planning = False
-            _is_planning = False
-        if _wanted_planning and not _is_planning:
-            emit_telemetry(
-                "planning_phase_skipped",
-                task_id=task_id,
-                level="warning",
-                reason=str(_hub_capability.get("reason") or "hub_writes_unavailable"),
-                environment_fault=True,
-            )
+    except OSError as exc:
+        sys.stderr.write("hub connectivity record failed: %s\n" % exc)
+    emit_telemetry(
+        "sandbox_hub_connectivity",
+        task_id=task_id,
+        level="info" if _hub_capability.get("ready") else "warning",
+        **{key: value for key, value in _hub_capability.items() if key != "schema"},
+    )
+    try:
+        _wanted_planning = is_planning_phase(task)
+        _is_planning = should_enter_planning_phase(task, hub_capability=_hub_capability)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("planning phase check failed: %s\n" % exc)
+        _wanted_planning = False
+        _is_planning = False
+    if _wanted_planning and not _is_planning:
+        emit_telemetry(
+            "planning_phase_skipped",
+            task_id=task_id,
+            level="warning",
+            reason=str(_hub_capability.get("reason") or "hub_writes_unavailable"),
+            environment_fault=True,
+        )
 
-    if not is_review:
-        if _is_planning:
-            # plan-learn-01: enrich the planning prompt with prior decomposition
-            # shapes for similar tasks so the second big migration starts from
-            # the first one's shape.  Best-effort — never blocks the run.
-            try:
-                plan_lessons = recall_plan_lessons(task)
-            except Exception:  # noqa: BLE001
-                plan_lessons = []
-            combined_lessons = (lessons or []) + (plan_lessons or [])
-            prompt = build_planning_prompt(task, combined_lessons)
-            emit_telemetry("planning_phase_started", task_id=task_id, level="info")
-        else:
-            prompt = build_task_prompt(task, lessons)
-            if _wanted_planning:
-                prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
+    if _is_planning:
+        # plan-learn-01: enrich the planning prompt with prior decomposition
+        # shapes for similar tasks so the second big migration starts from
+        # the first one's shape.  Best-effort — never blocks the run.
+        try:
+            plan_lessons = recall_plan_lessons(task)
+        except Exception:  # noqa: BLE001
+            plan_lessons = []
+        combined_lessons = (lessons or []) + (plan_lessons or [])
+        prompt = build_planning_prompt(task, combined_lessons)
+        emit_telemetry("planning_phase_started", task_id=task_id, level="info")
+    else:
+        prompt = build_task_prompt(task, lessons)
+        if _wanted_planning:
+            prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
 
     if break_glass_authorization is not None:
-        if is_review:
-            raise RuntimeError("review tasks cannot execute through host break-glass")
         prompt += _break_glass_prompt(break_glass_authorization)
 
-    audit_task_id = review_context.get("task_id") if is_review else task_id
     result = _invoke_agent(
         runner,
         prompt,
         task_workspace,
-        str(audit_task_id) if audit_task_id else None,
+        str(task_id) if task_id else None,
         {
-            "execution_kind": "review" if is_review else "task",
+            "execution_kind": "task",
             "timeout": _agent_timeout(),
             "task": task,
         },
@@ -6576,7 +6548,7 @@ def _run_executor(
             reason="clean_agent_failure",
             returncode=result.returncode,
         )
-    elif not is_review and (
+    elif (
         metadata_declares_report_deliverable(
             task.get("metadata") if isinstance(task, dict) else None
         )
@@ -6595,7 +6567,7 @@ def _run_executor(
             ),
             returncode=result.returncode,
         )
-    elif not is_review:
+    else:
         try:
             # Never treat zero-child plan_decomposed as a completed plan.
             reject_empty_plan_decomposed_evidence(task_workspace)
@@ -6619,17 +6591,11 @@ def _run_executor(
                 finalize_with_new_file_recovery(task_workspace, task, task_id)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
-    else:
-        try:
-            run_deterministic_review_verdict(task_workspace, task, review_context)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
 
     # Task-sizing: if the agent wrote plan_steps in its evidence, auto-post them
     # as child tasks so the parent blocks on the children.  Best-effort.
     if (
-        not is_review
-        and not clean_agent_failure
+        not clean_agent_failure
         and not authoritative_read_only_failure
         and repository_verification_failure is None
     ):
@@ -6640,7 +6606,7 @@ def _run_executor(
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("auto-decompose failed: %s\n" % exc)
 
-    write_fallback_evidence_manifest(task_workspace, task, result, review_context)
+    write_fallback_evidence_manifest(task_workspace, task, result, None)
 
     # loop-01 resilience: if the run was bounded/failed (e.g. a wedged TokenHub
     # trailing turn) but the agent or a deterministic finalizer already wrote a
@@ -6659,24 +6625,22 @@ def _run_executor(
         rc = 0
 
     # Memory feed (out): distill this run's outcome into a deployment lesson so
-    # the fleet's recall gets richer with every task. Reviews don't feed
-    # deployment lessons.
-    if not is_review:
-        outcome = classify_outcome(task_workspace, task, rc)
-        emit_telemetry(
-            "finalized",
-            task_id=task_id,
-            level="info" if outcome["outcome"] == "success" else "warning",
-            evidence_type=outcome["evidence_type"],
-            outcome=outcome["outcome"],
-            signals=outcome["signals"],
-        )
-        with _FinalizerPhaseContext(
-            task_workspace,
-            task_id,
-            "deployment_learning",
-        ):
-            record_deployment_learning(task, outcome)
+    # the fleet's recall gets richer with every task.
+    outcome = classify_outcome(task_workspace, task, rc)
+    emit_telemetry(
+        "finalized",
+        task_id=task_id,
+        level="info" if outcome["outcome"] == "success" else "warning",
+        evidence_type=outcome["evidence_type"],
+        outcome=outcome["outcome"],
+        signals=outcome["signals"],
+    )
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "deployment_learning",
+    ):
+        record_deployment_learning(task, outcome)
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

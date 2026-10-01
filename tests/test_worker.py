@@ -284,7 +284,7 @@ def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: P
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
     reviewed = cp.get_task(task.id)
-    assert reviewed.state == TaskState.REVIEWING.value
+    assert reviewed.state == TaskState.NEEDS_REVIEW.value
     assert reviewed.owner_agent_id is None
     assert reviewed.lease_id is None
     assert cp.get_task(skipped.id).state == TaskState.OPEN.value
@@ -325,7 +325,7 @@ def test_mac_worker_executes_assignment_already_claimed_by_dispatcher(tmp_path: 
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
     assert any(
         row.name == "worker.routing.resumed" and row.subject_id == task.id
         for row in cp.list_observability(
@@ -459,449 +459,7 @@ def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-
-
-def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: Path):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-    task = cp.create_task(
-        "Reviewable repo task",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://publish"},
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-            "remote_ref": "origin/main",
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["src/example.py"],
-        },
-        "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-    requested = cp.request_review(task.id, reviewer.id)
-    first = {"review_id": requested.id, "reviewer_agent_id": reviewer.id}
-    # The default workflow no longer chases agent reviewers; deliver the
-    # verdict request an operator-driven review would send.
-    cp.send_message(
-        "dispatcher",
-        reviewer.id,
-        "nudge",
-        {
-            "task_id": task.id,
-            "review_id": requested.id,
-            "executor_evidence_id": evidence.id,
-            "reason": "produce_review_verdict",
-        },
-        task_id=task.id,
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        assert context["task_id"] == task.id
-        assert context["review_id"] == first["review_id"]
-        assert context["executor_evidence_id"] == evidence.id
-        assert context["review_claim"]["review_id"] == first["review_id"]
-        assert context["review_claim"]["reviewer_agent_id"] == reviewer.id
-        assert context["review_claim"]["executor_evidence_id"] == evidence.id
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": dict(executor_manifest["repo"]),
-            "checks": [{"name": "reviewer independent verification", "returncode": 0}],
-            "worktree_digest": "sha256:" + ("0" * 64),
-            "findings": ["executor evidence is signed and tests passed"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path,
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    verdict_evidence = [e for e in cp.list_evidence(task.id) if e.created_by == reviewer.id][-1]
-    manifest = verdict_evidence.metadata["verification"]
-    assert verdict_evidence.kind == "review"
-    assert manifest["evidence_type"] == "review_verdict"
-    assert manifest["signed_by"] == reviewer.id
-    assert manifest["reviewed_evidence_id"] == evidence.id
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    assert cp.get_agent(reviewer.id).status == "idle"
-    task_metadata = cp.get_task(task.id).metadata
-    assert task_metadata["review_claims"][first["review_id"]]["reviewer_agent_id"] == reviewer.id
-    assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
-
-
-def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path: Path):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-    _seed, repo = _git_fixture(tmp_path)
-    _git(repo, "config", "user.email", "mac-tests@example.invalid")
-    _git(repo, "config", "user.name", "mac tests")
-    remote_url = _git(repo, "remote", "get-url", "origin")
-    branch = "mac/review-proof"
-    _git(repo, "checkout", "-b", branch)
-    (repo / "README.md").write_text("reviewed change\n", encoding="utf-8")
-    _git(repo, "add", "README.md")
-    _git(repo, "commit", "-m", "reviewed change")
-    _git(repo, "push", "-u", "origin", branch)
-    reviewed_head = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "checkout", "main")
-    hub_checkout_head = _git(repo, "rev-parse", "HEAD")
-
-    metadata = _repository_task_metadata(repo)
-    metadata["publication_target"] = "git://main"
-    task = cp.create_task(
-        "Reviewable pushed branch",
-        project="repo-beads-mac",
-        required_capabilities=["python"],
-        metadata=metadata,
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": reviewed_head,
-            "remote_ref": "refs/heads/%s" % branch,
-            "remote_url": remote_url,
-            "path": str(repo),
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["README.md"],
-        },
-        "tests": [verifier_test_item(reviewed_head)],
-        "checks": [{"name": "executor tests", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-    requested = cp.request_review(task.id, reviewer.id)
-    first = {"review_id": requested.id, "reviewer_agent_id": reviewer.id}
-    # The default workflow no longer chases agent reviewers; deliver the
-    # verdict request an operator-driven review would send.
-    cp.send_message(
-        "dispatcher",
-        reviewer.id,
-        "nudge",
-        {
-            "task_id": task.id,
-            "review_id": requested.id,
-            "executor_evidence_id": evidence.id,
-            "reason": "produce_review_verdict",
-        },
-        task_id=task.id,
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        runtime = task_payload["metadata"]["runtime"]
-        assert context["review_claim"]["reviewer_agent_id"] == reviewer.id
-        assert context["review_claim"]["executor_evidence_id"] == evidence.id
-        assert "project" not in context["review_claim"]
-        assert "repository_worktree" not in context["review_claim"]
-        assert "repository_files_changed" not in context["review_claim"]
-        review_worktree = Path(runtime["repository_worktree"])
-        assert review_worktree.is_dir()
-        assert _git(review_worktree, "rev-parse", "HEAD") == reviewed_head
-        assert _git(review_worktree, "remote", "get-url", "origin") == remote_url
-        assert context["review_repository_worktree"]["repository_worktree"] == str(review_worktree)
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": {
-                "head_sha": reviewed_head,
-                "pushed": True,
-                "dirty": False,
-                "files_changed": ["README.md"],
-            },
-            "checks": [
-                {
-                    "name": "reviewer checkout head",
-                    "command": "git rev-parse HEAD",
-                    "returncode": 0,
-                    "status": "pass",
-                }
-            ],
-            "worktree_digest": "sha256:" + ("1" * 64),
-            "findings": ["review worktree checked out pushed executor branch"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path / "workspaces",
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    verdict_manifest = cp.list_evidence(task.id)[-1].metadata["verification"]
-    assert verdict_manifest["repo"]["remote_ref"] == "refs/heads/%s" % branch
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    assert cp.list_publications(task.id)[0].target == "git://main"
-    # Publication is isolated from the long-lived hub checkout. The remote
-    # canonical branch advances, while this checkout stays untouched.
-    assert _git(repo, "rev-parse", "HEAD") == hub_checkout_head
-    assert _git(repo, "ls-remote", "origin", "refs/heads/main").split()[0] == reviewed_head
-    _git(repo, "fetch", "origin", "main")
-    assert _git(repo, "rev-parse", "origin/main") == reviewed_head
-    learnings = cp.search_memory(
-        subject_type="agent",
-        subject_id=reviewer.id,
-        record_type=REPOSITORY_ACCESS_RECORD_TYPE,
-    )
-    parsed = [parse_repository_access_learning(item.content) for item in learnings]
-    assert [item["outcome"] for item in parsed if item is not None] == ["success"]
-    assert parsed[0] is not None and parsed[0]["credential_source"] == "local"
-
-
-def test_private_review_clone_uses_env_token_but_persists_only_clean_remote(
-    tmp_path: Path,
-    monkeypatch,
-):
-    remote_url = "https://github.com/acme/private.git"
-    token = "review-token-secret"
-    head_sha = "abc123abc123abc123abc123abc123abc123abcd"
-    task_detail = {
-        "task": {"id": "task-private", "project": "demo"},
-        "evidence": [
-            {
-                "id": "ev-private",
-                "metadata": {
-                    "verification": {
-                        "repo": {
-                            "head_sha": head_sha,
-                            "base_sha": "def456def456def456def456def456def456def4",
-                            "remote_ref": "refs/heads/mac/private-review",
-                            "remote_url": remote_url,
-                        }
-                    }
-                },
-            }
-        ],
-    }
-
-    class RecordingClient:
-        def __init__(self):
-            self.posts = []
-
-        def post(self, path, payload):
-            self.posts.append((path, payload))
-            return {"id": "mem-private"} if path == "/memory" else {}
-
-    client = RecordingClient()
-    worker = MacWorker(client, "agent-reviewer", tmp_path, lambda *_args: None)
-    commands = []
-
-    def successful_git(argv, *args, **kwargs):
-        command = list(argv)
-        commands.append(command)
-        if command[:3] == ["git", "clone", "--no-checkout"]:
-            Path(command[-1]).mkdir(parents=True)
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setenv("GH_TOKEN", token)
-    monkeypatch.setattr("mac.worker.subprocess.run", successful_git)
-    task_dir = tmp_path / "review"
-    task_dir.mkdir()
-
-    context = worker._prepare_review_repository_worktree(
-        task_dir,
-        task_detail,
-        "ev-private",
-        "review-private",
-    )
-
-    clone = next(
-        command for command in commands if command[:3] == ["git", "clone", "--no-checkout"]
-    )
-    assert "x-access-token:%s@github.com" % token in clone[4]
-    scrub = next(command for command in commands if "set-url" in command)
-    assert scrub[-1] == remote_url
-    fetch = next(command for command in commands if "fetch" in command)
-    assert any("x-access-token:%s@github.com" % token in arg for arg in fetch)
-    assert context is not None and context["repository_origin_remote"] == remote_url
-    serialized_context = (task_dir / "repository-worktree.json").read_text(encoding="utf-8")
-    assert token not in serialized_context
-    memory_payload = next(payload for path, payload in client.posts if path == "/memory")
-    assert token not in json.dumps(memory_payload, sort_keys=True)
-    learning = parse_repository_access_learning(memory_payload["content"])
-    assert learning is not None
-    assert learning["outcome"] == "success"
-    assert learning["credential_source"] == "env:GH_TOKEN"
-
-
-def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path):
-    from tests.conftest import submit_review_verdict
-
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-
-    def create_reviewable_task(title: str):
-        task = cp.create_task(
-            title,
-            required_capabilities=["python"],
-            metadata={"publication_target": "test://publish"},
-        )
-        cp.claim_task(task.id, executor_agent.id)
-        cp.start_task(task.id, executor_agent.id)
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "repo_change",
-            "repo": {
-                "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-                "remote_ref": "origin/main",
-                "pushed": True,
-                "dirty": False,
-                "files_changed": ["src/example.py"],
-            },
-            "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-            "signed_by": executor_agent.id,
-        }
-        manifest["signature"] = sign_verification_manifest(
-            cp._agent_attestation_key(executor_agent.id), manifest
-        )
-        evidence = cp.add_evidence(
-            task.id,
-            "log",
-            "file:///tmp/executor-result.json",
-            "executor completed",
-            executor_agent.id,
-            metadata={"returncode": 0, "verification": manifest},
-        )
-        cp.submit_for_review(task.id, executor_agent.id)
-        review = cp.request_review(task.id, reviewer.id)
-        cp.send_message(
-            "dispatcher",
-            reviewer.id,
-            "nudge",
-            {
-                "task_id": task.id,
-                "review_id": review.id,
-                "executor_evidence_id": evidence.id,
-                "reason": "produce_review_verdict",
-            },
-            task_id=task.id,
-        )
-        return task, evidence, {"review_id": review.id}, manifest
-
-    stale_task, stale_evidence, stale_tick, _ = create_reviewable_task("Stale review")
-    stale_verdict_id = submit_review_verdict(cp, stale_task.id, reviewer.id, stale_evidence.id)
-    cp.submit_review(
-        stale_tick["review_id"],
-        ReviewStatus.APPROVED.value,
-        reviewer.id,
-        evidence_id=stale_verdict_id,
-    )
-    current_task, current_evidence, current_tick, executor_manifest = create_reviewable_task(
-        "Current review"
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        assert context["task_id"] == current_task.id
-        assert context["review_id"] == current_tick["review_id"]
-        assert context["executor_evidence_id"] == current_evidence.id
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": dict(executor_manifest["repo"]),
-            "checks": [{"name": "reviewer independent verification", "returncode": 0}],
-            "worktree_digest": "sha256:" + ("0" * 64),
-            "findings": ["executor evidence is signed and tests passed"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path,
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    assert any(
-        evidence.created_by == reviewer.id
-        and evidence.metadata["verification"]["reviewed_evidence_id"] == current_evidence.id
-        for evidence in cp.list_evidence(current_task.id)
-    )
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
@@ -1150,7 +708,7 @@ def test_mac_worker_accepts_operator_result_without_repository_anchor(tmp_path: 
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
     assert manifest["evidence_type"] == "operator_result"
     assert manifest["signed_by"] == agent.id
@@ -2388,7 +1946,7 @@ def test_source_remediation_repo_change_allows_empty_files_changed_in_worker(tmp
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_mac_worker_renews_lease_while_executor_runs(tmp_path: Path):
@@ -3317,7 +2875,7 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
     assert result.task["id"] == task.id
     assert cp.get_agent(registered["id"]).name == "rocky"
     assert cp.get_agent(registered["id"]).capabilities == ["python"]
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_register_worker_reports_command_inventory_without_command_capability(
@@ -4145,7 +3703,7 @@ def test_mac_worker_completes_task_even_if_observability_writes_fail(tmp_path: P
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_self_install_name_parsers():
