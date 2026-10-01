@@ -5274,7 +5274,8 @@
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
-      "src/mac/worker_credentials.py"
+      "src/mac/worker_credentials.py",
+      "src/mac/worker_token_cli.py"
     ],
     "type": "str"
   },
@@ -13505,7 +13506,8 @@
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
       "src/mac/worker.py",
-      "src/mac/worker_credentials.py"
+      "src/mac/worker_credentials.py",
+      "src/mac/worker_token_cli.py"
     ],
     "type": "str"
   },

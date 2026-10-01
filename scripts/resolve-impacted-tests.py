@@ -82,6 +82,8 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_container_runtime_declaration.py",
         "tests/test_crash_observer.py",
         "tests/test_deploy_agent_configs.py",
+        # deploy/bin must stay byte-identical to the heredocs this script writes.
+        "tests/test_deploy_bin_wrappers.py",
         "tests/test_deploy_direct_hub_readiness.py",
         "tests/test_deploy_fleet_drain.py",
         "tests/test_deploy_fleet_parallel_staging.py",

@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-50 administrative commands live under `mac admin` (`mac admin help` lists them).
+51 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -292,10 +292,11 @@ Talking to people and systems:
   integrations      third-party integrations
 
 Who can do what:
-  tenant  tenant boundaries
-  human   people who own agents and file tasks
-  user    tenant-scoped user identities
-  client  API clients and their principals
+  tenant        tenant boundaries
+  human         people who own agents and file tasks
+  user          tenant-scoped user identities
+  client        API clients and their principals
+  worker-token  long-lived worker bearer tokens: issue, rotate, list
 
 Seeing what happened:
   events         the unified event stream
