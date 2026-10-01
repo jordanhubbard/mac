@@ -353,3 +353,171 @@ def test_a_task_parked_on_the_old_queue_lands_on_the_next_tick(cp, tmp_path, mon
     assert result["status"] == "published"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     assert forge.merges == [{"number": 101, "method": "squash", "sha": task_head}]
+
+
+# ---------------------------------------------------------------------------
+# A send-back closes the superseded attempt's pull request.
+# ---------------------------------------------------------------------------
+
+_AGENT_PR = {
+    "opened": True,
+    "number": 77,
+    "url": "https://github.invalid/acme/widgets/pull/77",
+    "base": "main",
+    "forge": "github",
+}
+
+
+def test_a_send_back_closes_the_superseded_pull_request(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge, checks=())
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head, pull_request=_AGENT_PR)
+    moved = _advance_main(remote, tmp_path)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "rebase_required"
+    assert cp.get_task(task.id).state == TaskState.OPEN.value
+    assert [item["number"] for item in forge.closed] == [77]
+    comment = forge.closed[0]["comment"]
+    assert comment.startswith("Superseded:") and task.id in comment and moved[:12] in comment
+    names = {event.name for event in cp.list_observability(limit=100)}
+    assert "workflow.default_review.superseded_pr_closed" in names
+
+
+def test_a_pull_request_that_will_not_close_does_not_block_the_send_back(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.close_error = "forge unavailable"
+    install_forge(monkeypatch, forge, checks=())
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head, pull_request=_AGENT_PR)
+    _advance_main(remote, tmp_path)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "rebase_required"
+    sent_back = cp.get_task(task.id)
+    assert sent_back.state == TaskState.OPEN.value
+    assert sent_back.metadata["rebase_onto_tip"]["rebase"] == 1
+    assert forge.closed == []
+    failures = [
+        event
+        for event in cp.list_observability(limit=100)
+        if event.name == "workflow.default_review.superseded_pr_close_failed"
+    ]
+    assert failures and failures[0].detail["pull_request_number"] == 77
+    assert "forge unavailable" in failures[0].detail["error"]
+
+
+def test_a_send_back_without_a_pull_request_closes_nothing(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge, checks=())
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    _advance_main(remote, tmp_path)
+
+    assert cp.advance_default_review_workflow(task.id)["status"] == "rebase_required"
+    assert forge.closed == []
+
+
+# ---------------------------------------------------------------------------
+# Strict required checks ("require branches to be up to date").
+# ---------------------------------------------------------------------------
+
+
+def _clear_landing_wait(cp, task_id):
+    metadata = dict(cp.get_task(task_id).metadata)
+    metadata["landing"] = {
+        key: value for key, value in metadata["landing"].items() if key != "not_before"
+    }
+    metadata.pop("publication_retry", None)
+    cp._persist_task_metadata_narrow(task_id, metadata, actor="test")
+
+
+def test_strict_checks_update_a_branch_that_fell_behind_then_land(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.mergeable_state = "behind"
+    install_forge(monkeypatch, forge, strict=True)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    moved = _advance_main(remote, tmp_path)
+
+    first = cp.advance_default_review_workflow(task.id)
+
+    # The forge was asked to update the PR branch, and the land step waits for
+    # the checks to re-run on it -- a wait, not a failed attempt.
+    assert first["status"] == "publish_failed"
+    assert forge.branch_updates == [{"number": 101, "expected_head_sha": task_head}]
+    assert forge.merges == []
+    landing = _landing(cp, task.id)
+    assert landing["last_reason"] == "pull_request_branch_updated"
+    assert landing["attempts"] == 0
+    assert cp.get_task(task.id).state in {
+        TaskState.NEEDS_REVIEW.value,
+        TaskState.REVIEWING.value,
+    }
+    updated_head = git(source, "ls-remote", "origin", "refs/heads/task/feature").split()[0]
+    assert updated_head != task_head
+
+    _clear_landing_wait(cp, task.id)
+    second = cp.advance_default_review_workflow(task.id)
+
+    # The updated head is kept (not reset to the reviewed head), its checks are
+    # what was verified, and the merge is pinned to it.
+    assert second["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert len(forge.branch_updates) == 1
+    assert forge.verified[-1]["sha"] == updated_head
+    assert forge.merges == [{"number": 101, "method": "squash", "sha": updated_head}]
+    assert git(source, "ls-remote", "origin", "refs/heads/task/feature").split()[0] == (
+        updated_head
+    )
+    detail = published_detail(cp, task.id)
+    assert detail["head_sha"] == task_head
+    assert detail["pull_request_head_sha"] == updated_head
+    git(source, "fetch", "origin", "main")
+    assert git(source, "rev-parse", "origin/main^") == moved
+
+
+def test_strict_checks_with_an_up_to_date_branch_do_not_update_it(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge, strict=True)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+
+    assert cp.advance_default_review_workflow(task.id)["status"] == "published"
+    assert forge.branch_updates == []
+    assert forge.merges == [{"number": 101, "method": "squash", "sha": task_head}]
+
+
+def test_non_strict_checks_never_update_the_branch(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.mergeable_state = "behind"
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    _advance_main(remote, tmp_path)
+
+    assert cp.advance_default_review_workflow(task.id)["status"] == "published"
+    assert forge.branch_updates == []
+
+
+def test_strict_update_branch_conflict_sends_the_task_back(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.update_conflict = True
+    install_forge(monkeypatch, forge, strict=True)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    moved = _advance_main(remote, tmp_path)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "rebase_required"
+    assert result["reason"] == "conflict"
+    assert forge.merges == []
+    sent_back = cp.get_task(task.id)
+    assert sent_back.state == TaskState.OPEN.value
+    assert sent_back.metadata["rebase_onto_tip"]["canonical_tip"] == moved
+    # The pull request the update was attempted on is superseded and closed.
+    assert [item["number"] for item in forge.closed] == [101]

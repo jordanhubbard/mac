@@ -123,6 +123,11 @@ class TaskState(StrEnum):
     #: allocator only considers OPEN tasks -- so nothing has to remember to
     #: skip it.
     STOPPED = "stopped"
+    #: A named reviewer was assigned and has not decided yet. Only a
+    #: human-requested review (``POST /tasks/{id}/reviews``) enters it now: the
+    #: default workflow approves from worker evidence and lands straight from
+    #: NEEDS_REVIEW. Kept so those reviews and older rows keep working; the land
+    #: loop completes a legacy REVIEWING task exactly like a NEEDS_REVIEW one.
     REVIEWING = "reviewing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -818,13 +823,18 @@ TASK_TRANSITIONS = {
         TaskState.FAILED.value,
         TaskState.CANCELLED.value,
     },
+    # The default workflow decides and lands from NEEDS_REVIEW: a rejection or
+    # a land-loop send-back reopens the task (OPEN) and publication completes it
+    # (COMPLETED). REVIEWING is entered only by a human-requested review.
     TaskState.NEEDS_REVIEW.value: {
         TaskState.NEEDS_INPUT.value,
         TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
+        TaskState.OPEN.value,
         TaskState.REVIEWING.value,
         TaskState.RUNNING.value,
+        TaskState.COMPLETED.value,
         TaskState.FAILED.value,
         TaskState.CANCELLED.value,
     },

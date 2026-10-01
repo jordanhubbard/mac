@@ -142,19 +142,13 @@ def test_taskless_legacy_dispatch_request_is_cancelled() -> None:
     assert controller.executions == []
 
 
-def test_reviewer_and_service_role_requests_do_not_create_generic_workers() -> None:
+def test_service_role_requests_do_not_create_generic_workers() -> None:
     cp = ControlPlane.in_memory()
-    review_task = cp.create_task("needs a reviewer")
-    review = cp.provisioning.request_agent(
-        reason="review.no_eligible_reviewer",
-        task_id=review_task.id,
-        capabilities=["review"],
-    )
     service = cp.provisioning.request_agent(
         reason="service_role:media:image.generate",
         capabilities=["image_generation"],
     )
-    clock = FakeClock(max(_epoch(review.created_at), _epoch(service.created_at)) + 500)
+    clock = FakeClock(_epoch(service.created_at) + 500)
     controller = FakeController()
     autoscaler = _autoscaler(cp, controller, clock)
 
@@ -162,11 +156,7 @@ def test_reviewer_and_service_role_requests_do_not_create_generic_workers() -> N
 
     assert report["pending_request_count"] == 0
     assert report["reconciled_stale_request_ids"] == []
-    assert report["ignored_request_counts"] == {
-        "review.no_eligible_reviewer": 1,
-        "service_role:media:image.generate": 1,
-    }
-    assert cp.provisioning.get_request(review.id).status == (ProvisioningStatus.PENDING.value)
+    assert report["ignored_request_counts"] == {"service_role:media:image.generate": 1}
     assert cp.provisioning.get_request(service.id).status == (ProvisioningStatus.PENDING.value)
     assert controller.executions == []
 

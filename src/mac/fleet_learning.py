@@ -42,14 +42,6 @@ class GitRemoteAccess:
     credential_source: str
 
 
-class RepositoryAccessError(RuntimeError):
-    """A classified, already-redacted repository access failure."""
-
-    def __init__(self, message: str, *, failure_class: str) -> None:
-        super().__init__(message)
-        self.failure_class = failure_class
-
-
 def repository_host(remote: str) -> str:
     """Return a normalized host label without retaining URL credentials."""
 

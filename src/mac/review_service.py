@@ -1,7 +1,10 @@
 """Review + Publication domain service.
 
-A task transitions ``RUNNING → NEEDS_REVIEW → REVIEWING → COMPLETED`` via
-this service. Reviewer independence is preferred and can be required by task
+A task transitions ``RUNNING → NEEDS_REVIEW → COMPLETED`` via this service:
+the default workflow assigns the hub-reviewer identity, decides from the
+worker's evidence and publishes without leaving NEEDS_REVIEW. A
+human-requested review still moves the task to ``REVIEWING`` while the named
+reviewer decides; every decision and publication path accepts either state. Reviewer independence is preferred and can be required by task
 policy, but the control plane may authorize a recorded fallback when no
 independent reviewer is available. Approving still requires signed verdict
 evidence that belongs to the reviewed task and, for agent-generated work, a
@@ -50,6 +53,11 @@ from mac.semantic_acceptance import (
     ACCEPTANCE_RESULT_SCHEMA,
     FAILURE_SEMANTIC_WORK,
 )
+
+
+#: States a review can be decided and a task published from. NEEDS_REVIEW is
+#: the default workflow's; REVIEWING is a human-requested review's.
+_REVIEWABLE_STATES = frozenset({TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value})
 
 
 def _state_value(state: Any) -> str:
@@ -402,8 +410,20 @@ class ReviewService:
     # Reviews -----------------------------------------------------------
 
     def request_review(
-        self, task_id: str, reviewer_agent_id: str, actor: str = "dispatcher"
+        self,
+        task_id: str,
+        reviewer_agent_id: str,
+        actor: str = "dispatcher",
+        *,
+        enter_reviewing: bool = True,
     ) -> Review:
+        """Assign ``reviewer_agent_id`` a pending review of ``task_id``.
+
+        ``enter_reviewing`` moves a NEEDS_REVIEW task to REVIEWING, which is
+        what a human-requested review means: someone named now owns the
+        decision. The default workflow passes ``False``: its hub-reviewer
+        decides in the same tick, so the task stays in NEEDS_REVIEW.
+        """
         task = self._get_task(task_id)
         reviewer = self._get_agent(reviewer_agent_id)
         self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
@@ -424,7 +444,7 @@ class ReviewService:
                 raise NotFoundError("task not found: %s" % task_id)
             current = conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
             current_state = str(current["state"])
-            if current_state == TaskState.NEEDS_REVIEW.value:
+            if current_state == TaskState.NEEDS_REVIEW.value and enter_reviewing:
                 if self._transition_task_in_transaction is None:
                     raise TransitionError("transactional task transition is unavailable")
                 transition_detail = {"reviewer_agent_id": reviewer_agent_id}
@@ -435,7 +455,7 @@ class ReviewService:
                     actor,
                     transition_detail,
                 )
-            elif current_state != TaskState.REVIEWING.value:
+            elif current_state not in _REVIEWABLE_STATES:
                 raise TransitionError("task must need review before requesting review")
             existing = conn.execute(
                 """
@@ -801,8 +821,16 @@ class ReviewService:
                 else:
                     # Verifier absence/version drift and malformed contracts are
                     # operator defects.  Park immediately without burning more
-                    # model attempts or publishing the rejected candidate.
-                    transition_target = TaskState.NEEDS_REVIEW.value
+                    # model attempts or publishing the rejected candidate. A
+                    # human review parks back in NEEDS_REVIEW; the default
+                    # workflow already decides from NEEDS_REVIEW, where the
+                    # next tick would re-review and re-reject the same
+                    # evidence, so it parks in BLOCKED.
+                    transition_target = (
+                        TaskState.BLOCKED.value
+                        if reviewed_task.state == TaskState.NEEDS_REVIEW.value
+                        else TaskState.NEEDS_REVIEW.value
+                    )
                     semantic_retry_update.pop("not_before", None)
                     semantic_retry_update["status"] = "operator_repair_required"
                     transition_detail = {
@@ -814,6 +842,8 @@ class ReviewService:
                         "verdict_evidence_id": evidence_id,
                         "manual_review_required": True,
                     }
+                    if transition_target == TaskState.BLOCKED.value:
+                        transition_detail["manual_repair_required"] = True
             if exhausted:
                 transition_detail["manual_repair_required"] = True
             if classification.is_infrastructure and transition_target == TaskState.BLOCKED.value:
@@ -826,9 +856,9 @@ class ReviewService:
             locked_task = conn.execute(
                 """
                 UPDATE tasks SET updated_at = updated_at
-                WHERE id = ? AND state = ?
+                WHERE id = ? AND state IN (?, ?)
                 """,
-                (review.task_id, TaskState.REVIEWING.value),
+                (review.task_id, TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value),
             )
             if locked_task.rowcount != 1:
                 raise TransitionError("reviewed task state changed during submission; retry")
@@ -949,7 +979,7 @@ class ReviewService:
         evidence_id: Optional[str] = None,
     ) -> Publication:
         task = self._get_task(task_id)
-        if task.state != TaskState.REVIEWING.value:
+        if task.state not in _REVIEWABLE_STATES:
             raise TransitionError("task must be in review before publication")
         if not self.completion_authorized(task_id):
             raise ValidationError("publication requires approved review and evidence")
@@ -1004,7 +1034,7 @@ class ReviewService:
                     completed_at = COALESCE(completed_at, ?), updated_at = ?
                 WHERE id = ? AND state = ?
                 """,
-                (TaskState.COMPLETED.value, now, now, task_id, TaskState.REVIEWING.value),
+                (TaskState.COMPLETED.value, now, now, task_id, task.state),
             )
             if cursor.rowcount != 1:
                 raise TransitionError("task state changed during publish; retry")
@@ -1037,7 +1067,7 @@ class ReviewService:
                 task_id,
                 "task.transitioned",
                 created_by,
-                TaskState.REVIEWING.value,
+                task.state,
                 TaskState.COMPLETED.value,
                 {"publication_id": publication_id},
                 conn=conn,

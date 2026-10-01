@@ -89,13 +89,6 @@ from mac.hub_load_shed import (
     default_control_plane_sampler,
     is_hub_host,
 )
-from mac.fleet_learning import (
-    RepositoryAccessError,
-    build_repository_access_learning,
-    build_repository_access_memory_payload,
-    classify_repository_access_failure,
-    resolve_git_remote_access,
-)
 from mac.api_client import MacApiClient, MacApiError
 from mac.repository_contract import (
     normalize_repo_relative_path as _normalize_repo_relative_path,
@@ -129,7 +122,6 @@ from mac.gitops import (
     canonical_sync_selection_base,
     guarded_push,
     resolve_canonical_publication_target,
-    strip_git_remote_auth,
     sync_worktree_with_canonical,
     validate_git_ref,
     validate_git_remote_url,
@@ -1262,12 +1254,6 @@ class MacWorker(
         # Rate-limit self-heal rotations: one per window, so a non-key cause of
         # signature rejections can never drive a rotation loop.
         self._last_attestation_heal_at = 0.0
-        # Rate-limit the post-verdict review-tick failure log: a genuine,
-        # ongoing outage (not the routine "token lacks required scope: admin"
-        # rejection this used to hit before every worker credential carried
-        # `review:advance`) should still be visible, but not as a warning per
-        # verdict recorded.
-        self._last_review_advance_failure_logged_at = 0.0
         self.poll_interval_seconds = float(poll_interval_seconds)
         self._inner_loop_wake = threading.Event()
         self._inner_loop = PersistentAgentLoop(
@@ -1774,9 +1760,7 @@ class MacWorker(
             return policy_gate
         self._maintain_openclaw_gateway_leases()
         self._process_human_delivery_outbox()
-        review_result = self._process_review_nudges()
-        if review_result is not None:
-            return review_result
+        self._process_control_messages()
         # A deferred repo update applies here — after the previous task
         # finished, before the next claim — so no task ever starts on a
         # stale pin while an update is pending.
@@ -2408,28 +2392,6 @@ class MacWorker(
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
 
-    def _review_heartbeat_interval_seconds(self) -> float:
-        """Cadence for the review liveness ticker — well inside the stale window."""
-        interval = self.lease_renew_interval_seconds
-        if interval is None or interval <= 0:
-            interval = max(5.0, min(60.0, float(self.lease_seconds or 120) / 4.0))
-        return float(interval)
-
-    def _heartbeat_until_stopped(self, stop: threading.Event, interval_seconds: float) -> None:
-        """Heartbeat busy on a background thread while a long REVIEW runs.
-
-        Reviews have no lease (so no lease ticker), yet a heavy review rebuilds and
-        runs the full contract suite for minutes, blocking this single-threaded
-        worker. Without this ping the hub flips the agent out of IDLE/BUSY and
-        retracts the review claim as `reviewer_not_available` before the verdict
-        lands. Best effort: a liveness ping must never disturb the review.
-        """
-        while not stop.wait(interval_seconds):
-            try:
-                self._heartbeat(status_override="busy")
-            except Exception:  # noqa: BLE001 - liveness ping is best-effort
-                pass
-
     def _claim_next_for_agent(self) -> Optional[JsonDict]:
         return self.client.post(
             "/agents/%s/claim-next" % quote(self.agent_id, safe=""),
@@ -2468,7 +2430,13 @@ class MacWorker(
         )
         return assignment
 
-    def _process_review_nudges(self) -> Optional[WorkerRunResult]:
+    def _process_control_messages(self) -> None:
+        """Drain the agent mailbox and forward hub status updates.
+
+        The only message this worker acts on is a ``status_update`` carrying a
+        task-progress notification; anything else is acknowledged by delivery
+        and ignored.
+        """
         try:
             messages = self.client.post(
                 "/agents/%s/messages/deliver?%s"
@@ -2477,34 +2445,19 @@ class MacWorker(
             )
         except Exception as exc:  # noqa: BLE001 - message polling must not break task polling.
             self._observe_log(
-                "worker.review_nudge.poll_failed",
+                "worker.control_messages.poll_failed",
                 level="warning",
                 detail={"agent_id": self.agent_id, "error": str(exc)},
             )
-            return None
+            return
 
         if not isinstance(messages, list):
-            return None
-        skipped_result: Optional[WorkerRunResult] = None
+            return
         for message in messages:
             if not isinstance(message, dict):
                 continue
             if str(message.get("message_type") or "") == "status_update":
                 self._handle_status_update_message(message)
-                continue
-            if str(message.get("message_type") or "") != "nudge":
-                continue
-            payload = message.get("payload")
-            if not isinstance(payload, dict):
-                continue
-            if str(payload.get("reason") or "") != "produce_review_verdict":
-                continue
-            result = self._handle_review_verdict_nudge(message, payload)
-            if result.status in {"review_not_claimable", "review_nudge_invalid"}:
-                skipped_result = result
-                continue
-            return result
-        return skipped_result
 
     def _handle_status_update_message(self, message: JsonDict) -> None:
         payload = message.get("payload")
@@ -2846,170 +2799,6 @@ class MacWorker(
                     subject_type="human_message_delivery",
                     subject_id=delivery_id,
                     detail={"error": str(exc)},
-                )
-
-    def _handle_review_verdict_nudge(self, message: JsonDict, payload: JsonDict) -> WorkerRunResult:
-        task_id = str(payload.get("task_id") or "").strip()
-        review_id = str(payload.get("review_id") or "").strip()
-        executor_evidence_id = str(payload.get("executor_evidence_id") or "").strip()
-        if not task_id or not review_id or not executor_evidence_id:
-            error = "review verdict nudge missing task_id, review_id, or executor_evidence_id"
-            self._observe_log(
-                "worker.review_nudge.invalid",
-                level="warning",
-                detail={"message_id": message.get("id"), "error": error, "payload": payload},
-            )
-            return WorkerRunResult(status="review_nudge_invalid", error=error)
-
-        try:
-            claim = self.client.post(
-                "/reviews/%s/claim" % quote(review_id, safe=""),
-                {
-                    "reviewer_agent_id": self.agent_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "actor": self.agent_id,
-                },
-            )
-            if isinstance(claim, dict) and claim.get("status") != "claimed":
-                return WorkerRunResult(
-                    status="review_not_claimable",
-                    task=(claim.get("task") if isinstance(claim.get("task"), dict) else None),
-                    error=str(claim.get("reason") or "review is not claimable"),
-                )
-            task_detail = self.client.get("/tasks/%s" % quote(task_id, safe=""))
-            task_dir = self._prepare_review_workspace(
-                task_id,
-                review_id,
-                executor_evidence_id,
-                task_detail if isinstance(task_detail, dict) else {},
-                message,
-                claim if isinstance(claim, dict) else {},
-            )
-            started = time.monotonic()
-            # Keep this agent alive while the (minutes-long) review runs, so the
-            # hub does not retract the claim as reviewer_not_available mid-review.
-            review_hb_stop = threading.Event()
-            review_hb = threading.Thread(
-                target=self._heartbeat_until_stopped,
-                args=(review_hb_stop, self._review_heartbeat_interval_seconds()),
-                daemon=True,
-            )
-            review_hb.start()
-            try:
-                execution = self._call_executor(
-                    self._review_task_payload(task_dir),
-                    task_dir,
-                    {
-                        "agent_id": self.agent_id,
-                        "task_id": task_id,
-                        "metadata": {
-                            "execution_kind": "review",
-                            "review_id": review_id,
-                            "executor_evidence_id": executor_evidence_id,
-                            "nudge_message_id": message.get("id"),
-                        },
-                    },
-                )
-            finally:
-                review_hb_stop.set()
-                review_hb.join(timeout=1.0)
-            duration_ms = (time.monotonic() - started) * 1000.0
-            self._observe_metric(
-                "worker.review.duration_ms",
-                duration_ms,
-                unit="ms",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "returncode": execution.returncode,
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                },
-            )
-            evidence = self._record_review_execution(
-                task_id,
-                task_dir,
-                execution,
-                review_id=review_id,
-                executor_evidence_id=executor_evidence_id,
-                message_id=str(message.get("id") or ""),
-            )
-            if execution.succeeded:
-                self._advance_review_workflow_after_verdict(task_id)
-            else:
-                self._heartbeat()
-            status = "review_verdict_recorded" if execution.succeeded else "review_verdict_failed"
-            self._observe_log(
-                "worker.%s" % status,
-                level="info" if execution.succeeded else "error",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "evidence_id": evidence.get("id"),
-                    "returncode": execution.returncode,
-                    "summary": execution.summary,
-                },
-            )
-            return WorkerRunResult(
-                status=status,
-                task=(task_detail.get("task") if isinstance(task_detail, dict) else None),
-                evidence=evidence,
-                error=None if execution.succeeded else execution.summary,
-            )
-        except Exception as exc:
-            error_text = str(redact_for_persistence(str(exc)))
-            if isinstance(exc, RepositoryAccessError):
-                # The repository-access learning is written before the
-                # exception is raised. Re-run reviewer selection immediately
-                # so the control plane can prefer a known-successful peer
-                # instead of re-nudging this reviewer with the same pattern.
-                self._advance_review_workflow_after_verdict(task_id)
-                try:
-                    self._heartbeat()
-                except Exception:  # noqa: BLE001 - the failure is already recorded.
-                    pass
-            self._observe_log(
-                "worker.review_nudge.exception",
-                level="error",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "message_id": message.get("id"),
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "error": error_text,
-                    "failure_class": getattr(exc, "failure_class", ""),
-                },
-            )
-            return WorkerRunResult(status="review_verdict_failed", error=error_text)
-
-    def _advance_review_workflow_after_verdict(self, task_id: str) -> None:
-        try:
-            self.client.post(
-                "/reviews/default/tick?%s" % urlencode({"limit": 10, "actor": self.agent_id}),
-                {},
-            )
-        except Exception as exc:  # noqa: BLE001 - verdict evidence is already recorded.
-            # This used to fire on every verdict recorded fleet-wide (any
-            # worker token lacked the scope for /reviews/default/tick,
-            # rejected "token lacks required scope: admin") -- a permanent,
-            # expected failure, not a transient one, so it was pure log spam
-            # rather than a signal anyone could act on. Now that
-            # `review:advance` is minted into every worker credential
-            # (WORKER_SCOPES), a failure here is a real, actionable signal
-            # again -- but still rate-limit it, since a genuine outage would
-            # otherwise still log once per verdict across the whole fleet.
-            now = time.monotonic()
-            if now - self._last_review_advance_failure_logged_at >= 300.0:
-                self._last_review_advance_failure_logged_at = now
-                self._observe_log(
-                    "worker.review_workflow.advance_failed",
-                    level="warning",
-                    subject_type="task",
-                    subject_id=task_id,
-                    detail={"agent_id": self.agent_id, "error": str(exc)},
                 )
 
     def _process_agentbus_control(
@@ -4543,11 +4332,6 @@ class MacWorker(
         )
         return snapshot
 
-    def _review_task_payload(self, task_dir: Path) -> JsonDict:
-        loaded = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
-        task = loaded.get("task", loaded)
-        return task if isinstance(task, dict) else loaded
-
     def _record_execution(
         self,
         task_id: str,
@@ -5284,8 +5068,6 @@ class MacWorker(
                     require_verifier_tests=bool(_repository_contract_test_command(task_payload)),
                 )
             )
-            if evidence_type == "review_verdict":
-                problems.extend(_worker_review_verdict_executor_repo_problems(task_dir, manifest))
             problems.extend(_worker_required_changed_file_problems(task_payload, manifest))
             problems.extend(
                 reconcile_evidence_problems(
@@ -5298,10 +5080,6 @@ class MacWorker(
         serialized_context = _load_repository_context(task_dir)
         trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
         repository_context = trusted_read_only_context or serialized_context
-        is_review_task = isinstance(
-            ensure_json_object(task_payload.get("metadata")).get("review_context"),
-            dict,
-        )
         if repository_context:
             worktree_raw = str(repository_context.get("repository_worktree") or "").strip()
             worktree = Path(worktree_raw).expanduser() if worktree_raw else Path()
@@ -5313,19 +5091,12 @@ class MacWorker(
                         trusted_read_only_context, serialized_context
                     )
                 )
-                expected_evidence_type = "review_verdict" if is_review_task else "operator_result"
-                if evidence_type != expected_evidence_type:
+                if evidence_type != "operator_result":
                     problems.append(
-                        "read-only repository %s evidence_type must be %s"
-                        % (
-                            "review" if is_review_task else "report",
-                            expected_evidence_type,
-                        )
+                        "read-only repository report evidence_type must be operator_result"
                     )
                 problems.extend(_read_only_repository_problems(worktree, repository_context))
                 expected_access = _read_only_repository_access_evidence(trusted_read_only_context)
-                if is_review_task:
-                    expected_access["independent_review_verified"] = True
                 if manifest.get("repository_access") != expected_access:
                     problems.append(
                         "verification.repository_access does not match the prepared "
@@ -5419,85 +5190,11 @@ class MacWorker(
         except OSError:
             pass
 
-    def _record_review_execution(
-        self,
-        task_id: str,
-        task_dir: Path,
-        execution: WorkerExecution,
-        *,
-        review_id: str,
-        executor_evidence_id: str,
-        message_id: str,
-    ) -> JsonDict:
-        execution = _redact_worker_execution(execution)
-        self._redact_verification_manifest(task_dir)
-        _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
-        _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
-        result_path = task_dir / "review-result.json"
-        metadata = self._execution_metadata(task_dir, execution)
-        _write_host_control_text(
-            result_path,
-            json.dumps(
-                {
-                    "returncode": execution.returncode,
-                    "summary": execution.summary,
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "metadata": metadata,
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            task_dir,
-        )
-        artifacts = _durable_evidence_artifacts(task_dir, result_path)
-        evidence_result = self.client.post(
-            "/tasks/%s/evidence" % quote(task_id, safe=""),
-            {
-                "kind": "review",
-                "uri": result_path.resolve().as_uri(),
-                "summary": execution.summary,
-                "created_by": self.agent_id,
-                "artifacts": artifacts,
-                "metadata": {
-                    "returncode": execution.returncode,
-                    "stdout": (task_dir / "stdout.txt").resolve().as_uri(),
-                    "stderr": (task_dir / "stderr.txt").resolve().as_uri(),
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "nudge_message_id": message_id,
-                    **metadata,
-                },
-            },
-        )
-        # The reviewer's findings in its own words. The approved/rejected verdict
-        # line is recorded separately when the workflow finalizes (submit_review);
-        # this captures what the reviewer actually looked at / found. Best-effort.
-        self._post_task_activity(task_id, "review", self._review_activity_summary(execution))
-        return evidence_result
-
-    def _review_activity_summary(self, execution: WorkerExecution) -> str:
-        """The reviewer's recap: its delimited summary block, else a prose tail,
-        else a harness-failure note."""
-        recap = _extract_marked_summary(execution.stdout)
-        if recap:
-            return recap
-        body = "\n".join(_prose_tail(execution.stdout, 4)).strip()
-        if body:
-            return body
-        if not execution.succeeded:
-            return "review harness did not produce a verdict (rc %s)" % execution.returncode
-        return (execution.summary or "").strip()
-
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = redact_for_persistence(dict(execution.metadata))
         task_payload = _task_payload_from_workspace(task_dir)
         serialized_context = _load_repository_context(task_dir)
         trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
-        is_review_task = isinstance(
-            ensure_json_object(task_payload.get("metadata")).get("review_context"),
-            dict,
-        )
         persisted_manifest = self._load_verification_manifest(task_dir)
         manifest = metadata.get("verification") or persisted_manifest
         if persisted_manifest.get("status") == "invalid":
@@ -5509,17 +5206,10 @@ class MacWorker(
             # imposing pushed-commit semantics on operator_result evidence.
             manifest = dict(manifest)
             manifest.pop("repo", None)
-            manifest["evidence_type"] = "review_verdict" if is_review_task else "operator_result"
-            authoritative_access = _read_only_repository_access_evidence(trusted_read_only_context)
-            if (
-                is_review_task
-                and ensure_json_object(manifest.get("repository_access")).get(
-                    "independent_review_verified"
-                )
-                is True
-            ):
-                authoritative_access["independent_review_verified"] = True
-            manifest["repository_access"] = authoritative_access
+            manifest["evidence_type"] = "operator_result"
+            manifest["repository_access"] = _read_only_repository_access_evidence(
+                trusted_read_only_context
+            )
             manifest, trusted_test_problems = _attach_trusted_read_only_report_test(
                 manifest, task_dir, task_payload
             )
@@ -7184,8 +6874,6 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         ),
         (task_dir / "openshell-salvage.json", "openshell-salvage.json", "sandbox_salvage"),
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
-        (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
-        (task_dir / "executor-task.json", "executor-task.json", "review_context"),
     ]
     try:
         wip_manifest = json.loads(
@@ -7449,125 +7137,38 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
     return loaded if isinstance(loaded, dict) else {}
 
 
-_BLIND_REVIEW_HIDDEN_METADATA_KEYS = frozenset(
-    {
-        "activity",
-        "latest_review_claim",
-        "model",
-        "model_strength",
-        "repository_ref_lifecycle",
-        "review_claims",
-        "review_context",
-        "review_model",
-        "review_model_strength",
-        "runtime",
-        "target_agent_id",
-    }
-)
-
-_REVIEW_CLAIM_IDENTITY_KEYS = frozenset(
-    {
-        "actor",
-        "claimed_at",
-        "executor_evidence_id",
-        "review_id",
-        "reviewer_agent_id",
-        "schema",
-        "task_id",
-    }
-)
-
-
-def _review_input_task(task: JsonDict) -> JsonDict:
-    """Return the pre-execution task contract visible to semantic reviewers.
-
-    Review claims, activity summaries, runtime publication anchors, and the
-    executor model are post-execution treatment data. They must not be copied
-    into ``executor-task.json`` or the review task metadata: the reviewer
-    must judge the task contract, not the executor's own account of it.
-    Unknown task-authored metadata remains available so custom
-    acceptance criteria are not lost.
-    """
-    safe = copy.deepcopy(task) if isinstance(task, dict) else {}
-    metadata = safe.get("metadata")
-    if isinstance(metadata, dict):
-        for key in _BLIND_REVIEW_HIDDEN_METADATA_KEYS:
-            metadata.pop(key, None)
-        # Registered host paths are preparation inputs, not semantic-review
-        # inputs. A reviewer receives only its task-owned exact-base checkout;
-        # never reveal an alternate host/source path it could try to access.
-        for container_key in ("origin", "execution_contract"):
-            container = metadata.get(container_key)
-            if isinstance(container, dict):
-                container.pop("repository_path", None)
-                contract = container.get("repository_contract")
-                if isinstance(contract, dict):
-                    contract.pop("repository_path", None)
-    for key in (
-        "attempt_count",
-        "completed_at",
-        "last_updated_at",
-        "lease_id",
-        "leased_until",
-        "owner_agent_id",
-        "started_at",
-        "state",
-        "updated_at",
-    ):
-        safe.pop(key, None)
-    return safe
-
-
-def _review_claim_identity(claim: JsonDict) -> JsonDict:
-    """Keep claim identity needed by finalization without leaking evidence."""
-    return {
-        key: copy.deepcopy(value)
-        for key, value in claim.items()
-        if key in _REVIEW_CLAIM_IDENTITY_KEYS
-    }
-
-
 def _task_model_override(task: JsonDict) -> str:
     """Per-task LLM model override from task metadata.
 
     Executor tasks use ``metadata.model`` (flat, what ``mac task create
-    --model`` writes). Review payloads deliberately do not inherit that model:
-    they use ``metadata.review_model`` (or the corresponding runtime key) and
-    otherwise fall back to the reviewer's fleet default. This preserves model
-    independence instead of silently asking the reviewer to use the author's
-    pinned model. ``metadata.runtime.model`` is honored last. Empty string when
-    the task pins nothing — the agent's fleet default applies.
+    --model`` writes); ``metadata.runtime.model`` is honored last. Empty string
+    when the task pins nothing — the agent's fleet default applies.
 
-    ``metadata.model_strength`` / ``review_model_strength`` are advisory only:
+    ``metadata.model_strength`` is advisory only:
     the strength ladder that once resolved them was removed, so a task carrying
     one runs on the fleet default model like any unpinned task."""
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return ""
-    is_review = isinstance(metadata.get("review_context"), dict)
-    model_key = "review_model" if is_review else "model"
-    value = str(metadata.get(model_key) or "").strip()
+    value = str(metadata.get("model") or "").strip()
     if value:
         return value[:256]
     runtime = metadata.get("runtime")
     if isinstance(runtime, dict):
-        return str(runtime.get(model_key) or "").strip()[:256]
+        return str(runtime.get("model") or "").strip()[:256]
     return ""
 
 
 def _task_iteration_override(task: JsonDict) -> Optional[int]:
     """Resolve a bounded Hermes iteration budget from immutable task metadata.
 
-    Review payloads use ``review_max_iterations`` so a review pass can be
-    bounded independently of the executor budget.
     Values outside 1..500 are ignored instead of producing an unsafe or
     effectively unbounded child process.
     """
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return None
-    is_review = isinstance(metadata.get("review_context"), dict)
-    key = "review_max_iterations" if is_review else "max_iterations"
+    key = "max_iterations"
     value = metadata.get(key)
     if value is None and isinstance(metadata.get("runtime"), dict):
         value = metadata["runtime"].get(key)
@@ -7588,36 +7189,6 @@ def _task_payload_from_workspace(task_dir: Path) -> JsonDict:
         return {}
     task = loaded.get("task")
     return task if isinstance(task, dict) else loaded
-
-
-def _task_detail_evidence(task_detail: JsonDict, evidence_id: str) -> JsonDict:
-    evidence_items = task_detail.get("evidence")
-    if not isinstance(evidence_items, list):
-        return {}
-    for item in evidence_items:
-        if isinstance(item, dict) and str(item.get("id") or "") == evidence_id:
-            return item
-    return {}
-
-
-def _task_detail_canonical_remote_url(task_detail: JsonDict) -> str:
-    task = ensure_json_object(task_detail.get("task"))
-    metadata = ensure_json_object(task.get("metadata"))
-    candidates = (
-        ensure_json_object(
-            ensure_json_object(metadata.get("execution_contract")).get("repository_contract")
-        ),
-        ensure_json_object(ensure_json_object(metadata.get("origin")).get("repository_contract")),
-        ensure_json_object(metadata.get("repository_contract")),
-        ensure_json_object(metadata.get("origin")),
-    )
-    for candidate in candidates:
-        remote_url = str(
-            candidate.get("canonical_remote_url") or candidate.get("repository_url") or ""
-        ).strip()
-        if remote_url:
-            return remote_url
-    return ""
 
 
 def _repository_context_env(context: JsonDict) -> Dict[str, str]:
@@ -8378,41 +7949,6 @@ def _plan_decomposed_is_environment_fault(
     if str(manifest.get("rejected_evidence_type") or "") == "plan_decomposed":
         return True
     return False
-
-
-def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> JsonDict:
-    try:
-        loaded = json.loads((task_dir / "executor-evidence.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    if not isinstance(loaded, dict):
-        return {}
-    metadata = loaded.get("metadata") if isinstance(loaded.get("metadata"), dict) else {}
-    manifest = (
-        metadata.get("verification") if isinstance(metadata.get("verification"), dict) else None
-    )
-    if manifest is None and isinstance(loaded.get("verification"), dict):
-        manifest = loaded.get("verification")
-    return dict(manifest) if isinstance(manifest, dict) else {}
-
-
-def _worker_review_verdict_executor_repo_problems(task_dir: Path, manifest: JsonDict) -> List[str]:
-    executor_manifest = _executor_verification_manifest_from_review_workspace(task_dir)
-    executor_repo = (
-        executor_manifest.get("repo") if isinstance(executor_manifest.get("repo"), dict) else {}
-    )
-    if not executor_repo:
-        return []
-    review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
-    problems: List[str] = []
-    executor_changed = _metadata_path_list(executor_repo.get("files_changed"))
-    review_changed = _metadata_path_list(review_repo.get("files_changed"))
-    if executor_changed and set(review_changed) != set(executor_changed):
-        problems.append(
-            "review_verdict repo.files_changed must match executor evidence: %s != %s"
-            % (review_changed, executor_changed)
-        )
-    return problems
 
 
 def _worker_repo_verification_problems(

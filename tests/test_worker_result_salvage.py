@@ -100,7 +100,7 @@ def test_late_nonzero_exit_preserves_complete_typed_accepted_deliverable(tmp_pat
     )
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
     evidence = cp.list_evidence(task.id)[0]
     assert evidence.metadata["returncode"] == 0
     salvage = evidence.metadata["late_exit_salvage"]

@@ -36,12 +36,7 @@ from mac.models import (
 
 AUTOSCALER_SCHEMA = "mac.hgx_autoscaler.v1"
 HGX_SCALABLE_REQUEST_REASONS = frozenset({"dispatch.no_eligible_agent"})
-TASK_BOUND_REQUEST_REASONS = frozenset(
-    {
-        "dispatch.no_eligible_agent",
-        "review.no_eligible_reviewer",
-    }
-)
+TASK_BOUND_REQUEST_REASONS = frozenset({"dispatch.no_eligible_agent"})
 DEFAULT_INTERVAL_SECONDS = 60.0
 DEFAULT_INITIAL_DELAY_SECONDS = 15.0
 DEFAULT_SCALE_UP_STABILIZATION_SECONDS = 120.0
@@ -464,14 +459,6 @@ class HgxAutoscaler:
             ):
                 self.control_plane.provisioning.cancel_request(
                     request.id, reason="task-no-longer-awaiting-dispatch"
-                )
-                reconciled.append(request.id)
-                continue
-            if request.reason == "review.no_eligible_reviewer" and (
-                task.state not in {TaskState.NEEDS_REVIEW.value}
-            ):
-                self.control_plane.provisioning.cancel_request(
-                    request.id, reason="task-no-longer-awaiting-reviewer"
                 )
                 reconciled.append(request.id)
                 continue

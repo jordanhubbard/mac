@@ -14,11 +14,9 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
-from mac.models import metadata_declares_read_only_report_repository
 from mac.fleet_env import resolve_first
 
 
@@ -32,8 +30,6 @@ log = logging.getLogger(__name__)
 DEFAULT_EXECUTOR_TIMEOUT_SECONDS = 1500  # 25 min < default activeDeadline 30 min
 
 DEFAULT_EVIDENCE_MANIFEST_PATH = "/tmp/mac-evidence.json"
-
-READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = "read_only_report_requires_openshell_isolation"
 
 
 @dataclass
@@ -103,11 +99,8 @@ def run_one_lease(
     env: Optional[Dict[str, str]] = None,
     sleeper: Optional[Callable[[float], None]] = None,
 ) -> JobExecutionResult:
-    """Execute a single leased task or review and return the execution result."""
+    """Execute a single leased task and return the execution result."""
     env = env if env is not None else os.environ
-    review_id = env.get("MAC_REVIEW_ID", "").strip()
-    if review_id:
-        return _run_one_review(mac=mac, executor=executor, env=env, sleeper=sleeper)
     task_id = env.get("MAC_TASK_ID", "").strip()
     lease_id = env.get("MAC_LEASE_ID", "").strip()
     agent_id = env.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
@@ -221,225 +214,6 @@ class _ExecResult:
     verification_manifest: Optional[Dict[str, Any]] = None
     manifest_path: Optional[str] = None
     manifest_error: Optional[str] = None
-
-
-def _run_one_review(
-    *,
-    mac: Optional[Any],
-    executor: Optional[Callable[[JsonDict], "_ExecResult"]],
-    env: Dict[str, str],
-    sleeper: Optional[Callable[[float], None]],
-) -> JobExecutionResult:
-    """Review-mode counterpart to the task flow.
-
-    The reviewer Job runs the review wrapper which produces a
-    ``mac.worker_evidence.v1`` manifest. We POST it as ``kind="review"``
-    and tick the default review workflow so the verdict applies.
-    Mirrors host worker.py:1862 ``_record_review_execution`` +
-    worker.py:961 ``_advance_review_workflow_after_verdict``.
-    """
-    task_id = env.get("MAC_TASK_ID", "").strip()
-    review_id = env.get("MAC_REVIEW_ID", "").strip()
-    target_evidence_id = env.get("MAC_REVIEW_TARGET_EVIDENCE_ID", "").strip()
-    agent_id = env.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
-    if not task_id or not review_id:
-        return JobExecutionResult(
-            status="missing-env",
-            task_id=task_id or None,
-            lease_id=None,
-            returncode=None,
-            error="MAC_TASK_ID and MAC_REVIEW_ID are required for review mode",
-        )
-
-    if mac is None:
-        mac_url = env.get("MAC_URL") or env.get("MAC_HUB_URL", "")
-        # Resolve fleet-aware (honors env["MAC_FLEET"]) so a legacy flat token
-        # can't shadow the scoped MAC_*__<FLEET> form (mac-g55y).
-        token = resolve_first(["MAC_WORKER_TOKEN", "MAC_API_TOKEN"], env=env) or ""
-        mac = _default_mac_client(mac_url, token)
-    task, early = _fetch_task_or_fail(mac, task_id, lease_id=None)
-    if early is not None:
-        return early
-    # A Job may survive a policy race or be forged independently of the K8s
-    # runner.  Re-check the authoritative task immediately before preparing a
-    # workspace or invoking the legacy review command.  Do not emit review
-    # evidence or block the task: the pending review must remain available for
-    # the hub to reroute to an isolated OpenShell reviewer.
-    if metadata_declares_read_only_report_repository(task.get("metadata")):
-        return JobExecutionResult(
-            status="no-evidence",
-            task_id=task_id,
-            lease_id=None,
-            returncode=None,
-            error=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
-        )
-    if executor is None:
-        try:
-            review_env = _prepare_canonical_review_environment(
-                mac,
-                env,
-                task_id=task_id,
-                review_id=review_id,
-                target_evidence_id=target_evidence_id,
-                reviewer_agent_id=agent_id,
-                task_detail=task,
-            )
-        except Exception as exc:  # noqa: BLE001 - checkout/preparation boundary
-            return JobExecutionResult(
-                status="no-evidence",
-                task_id=task_id,
-                lease_id=None,
-                returncode=None,
-                error="canonical review workspace preparation failed: %s" % exc,
-            )
-        executor = _default_subprocess_executor(review_env)
-
-    try:
-        exec_result, duration_ms = _execute_timed(executor, task)
-    except Exception as exc:  # noqa: BLE001
-        return _block_task_after_evidence(
-            mac,
-            task_id,
-            None,
-            agent_id,
-            reason="review_executor_exception",
-            evidence_id=None,
-            returncode=-1,
-            error="review executor raised: %s" % exc,
-            detail_extra={"review_id": review_id},
-        )
-
-    metadata: JsonDict = {
-        "returncode": exec_result.returncode,
-        "stdout_sha256": exec_result.stdout_sha256,
-        "stdout_bytes": len(exec_result.stdout.encode("utf-8", "replace")),
-        "duration_ms": duration_ms,
-        "review_id": review_id,
-        "executor_evidence_id": target_evidence_id,
-        "k8s_review_job": True,
-    }
-    if exec_result.verification_manifest is not None:
-        metadata["verification"] = exec_result.verification_manifest
-    if exec_result.manifest_path:
-        metadata["verification_manifest_path"] = exec_result.manifest_path
-    if exec_result.manifest_error:
-        metadata["verification_manifest_error"] = exec_result.manifest_error
-
-    try:
-        evidence = mac.post(
-            "/tasks/%s/evidence" % _q(task_id),
-            {
-                "kind": "review",
-                "uri": "stdout://mac-review-runner/%s" % review_id,
-                "summary": "review executor returncode=%d duration_ms=%.1f"
-                % (exec_result.returncode, duration_ms),
-                "created_by": agent_id,
-                "metadata": metadata,
-            },
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.error("review evidence POST failed for review=%s: %s", review_id, exc)
-        return JobExecutionResult(
-            status="no-evidence",
-            task_id=task_id,
-            lease_id=None,
-            returncode=exec_result.returncode,
-            duration_ms=duration_ms,
-            stdout_sha256=exec_result.stdout_sha256,
-            error="review evidence POST failed: %s" % exc,
-        )
-
-    if exec_result.returncode == 0:
-        try:
-            mac.post(
-                "/reviews/default/tick?limit=10&actor=%s" % _q(agent_id),
-                {},
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "post-review tick failed for review=%s (evidence already recorded): %s",
-                review_id,
-                exc,
-            )
-
-    if exec_result.returncode != 0:
-        return _block_task_after_evidence(
-            mac,
-            task_id,
-            None,
-            agent_id,
-            reason="review_executor_failed",
-            evidence_id=evidence.get("id") if isinstance(evidence, dict) else None,
-            returncode=exec_result.returncode,
-            duration_ms=duration_ms,
-            stdout_sha256=exec_result.stdout_sha256,
-            detail_extra={"review_id": review_id},
-        )
-
-    return JobExecutionResult(
-        status="submitted-for-review",
-        task_id=task_id,
-        lease_id=None,
-        returncode=exec_result.returncode,
-        evidence_id=evidence.get("id") if isinstance(evidence, dict) else None,
-        duration_ms=duration_ms,
-        stdout_sha256=exec_result.stdout_sha256,
-    )
-
-
-def _prepare_canonical_review_environment(
-    mac: Any,
-    env: Dict[str, str],
-    *,
-    task_id: str,
-    review_id: str,
-    target_evidence_id: str,
-    reviewer_agent_id: str,
-    task_detail: JsonDict,
-) -> Dict[str, str]:
-    """Materialize the exact executor evidence and checkout for a review Job."""
-    from mac.worker import MacWorker
-
-    workspace_root = Path(env.get("MAC_REVIEW_WORKSPACE_ROOT") or "/tmp/mac-review-workspaces")
-    preparer = MacWorker(
-        mac,
-        reviewer_agent_id,
-        workspace_root,
-        lambda *_args: None,
-        agentbus_control_enabled=False,
-        attestation_key=env.get("MAC_AGENT_ATTESTATION_KEY") or env.get("MAC_ATTESTATION_KEY"),
-    )
-    task_dir = preparer._prepare_review_workspace(
-        task_id,
-        review_id,
-        target_evidence_id,
-        task_detail,
-        {"id": "k8s-review-%s" % review_id},
-        {
-            "claim": {
-                "review_id": review_id,
-                "reviewer_agent_id": reviewer_agent_id,
-                "executor_evidence_id": target_evidence_id,
-            }
-        },
-    )
-    task_payload = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
-    review_task = task_payload.get("task", task_payload)
-    runtime = (
-        (review_task.get("metadata") or {}).get("runtime")
-        if isinstance(review_task, dict)
-        else None
-    )
-    prepared = dict(env)
-    prepared["MAC_TASK_WORKSPACE"] = str(task_dir)
-    prepared["MAC_TASK_FILE"] = str(task_dir / "task.json")
-    prepared["MAC_TASK_EVIDENCE_MANIFEST_PATH"] = str(task_dir / "mac-evidence.json")
-    prepared["MAC_WORKER_AGENT_ID"] = reviewer_agent_id
-    if prepared.get("MAC_AGENT_ATTESTATION_KEY"):
-        prepared["MAC_ATTESTATION_KEY"] = prepared["MAC_AGENT_ATTESTATION_KEY"]
-    if isinstance(runtime, dict) and runtime.get("repository_worktree"):
-        prepared["MAC_TASK_REPO_WORKTREE"] = str(runtime["repository_worktree"])
-    return prepared
 
 
 def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _ExecResult]:
@@ -649,14 +423,11 @@ def _block_task_after_evidence(
     error: Optional[str] = None,
     duration_ms: Optional[float] = None,
     stdout_sha256: Optional[str] = None,
-    detail_extra: Optional[JsonDict] = None,
 ) -> JobExecutionResult:
     detail: JsonDict = {
         "reason": reason,
         "manual_repair_required": True,
     }
-    if detail_extra:
-        detail.update(detail_extra)
     if returncode is not None:
         detail["returncode"] = returncode
     if evidence_id:

@@ -191,7 +191,7 @@ def test_request_listener_wakes_on_new_and_refreshed_durable_signal(cp):
     first = cp.provisioning.request_agent(reason="dispatch.no_eligible_agent")
     second = cp.provisioning.request_agent(reason="dispatch.no_eligible_agent")
     cp.provisioning.unregister_request_listener(listener)
-    cp.provisioning.request_agent(reason="review.no_eligible_reviewer")
+    cp.provisioning.request_agent(reason="service_role:media:image.generate")
 
     assert first.id == second.id
     assert seen == [first.id, first.id]

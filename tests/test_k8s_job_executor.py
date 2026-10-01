@@ -13,9 +13,7 @@ import pytest
 
 from mac.k8s.job_executor import (
     DEFAULT_EVIDENCE_MANIFEST_PATH,
-    READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
     JobExecutionResult,
-    _prepare_canonical_review_environment,
     _default_subprocess_executor,
     _ExecResult,
     _read_verification_manifest,
@@ -193,121 +191,6 @@ def test_start_already_running_is_tolerated() -> None:
     mac = _MacAlreadyRunning()
     result = run_one_lease(env=_env(), mac=mac, executor=_exec_ok, sleeper=_no_sleep)
     assert result.status == "submitted-for-review"
-
-
-def test_review_mode_nonzero_blocks_task_with_review_evidence() -> None:
-    mac = _FakeMac()
-    result = run_one_lease(
-        env=_env(MAC_REVIEW_ID="review-1", MAC_REVIEW_TARGET_EVIDENCE_ID="ev-target"),
-        mac=mac,
-        executor=_exec_fail,
-        sleeper=_no_sleep,
-    )
-
-    assert result.status == "blocked"
-    assert result.evidence_id == "ev-1"
-    evidence_post = next(p for p in mac.posts if p["path"].endswith("/evidence"))
-    assert evidence_post["body"]["kind"] == "review"
-    blocked_post = next(p for p in mac.posts if p["path"].endswith("/transition"))
-    assert blocked_post["body"]["target_state"] == "blocked"
-    assert blocked_post["body"]["detail"]["reason"] == "review_executor_failed"
-    assert blocked_post["body"]["detail"]["review_id"] == "review-1"
-    assert blocked_post["body"]["detail"]["manual_repair_required"] is True
-
-
-def test_review_mode_executor_exception_blocks_task_without_evidence() -> None:
-    mac = _FakeMac()
-    result = run_one_lease(
-        env=_env(MAC_REVIEW_ID="review-1", MAC_REVIEW_TARGET_EVIDENCE_ID="ev-target"),
-        mac=mac,
-        executor=_exec_raises,
-        sleeper=_no_sleep,
-    )
-
-    assert result.status == "blocked"
-    assert result.evidence_id is None
-    assert not any(p["path"].endswith("/evidence") for p in mac.posts)
-    blocked_post = next(p for p in mac.posts if p["path"].endswith("/transition"))
-    assert blocked_post["body"]["target_state"] == "blocked"
-    assert blocked_post["body"]["detail"]["reason"] == "review_executor_exception"
-    assert blocked_post["body"]["detail"]["review_id"] == "review-1"
-    assert blocked_post["body"]["detail"]["manual_repair_required"] is True
-
-
-def test_review_mode_rejects_read_only_report_before_legacy_executor() -> None:
-    task = {
-        "id": "task-1",
-        "title": "inspect repository",
-        "metadata": {
-            "deliverable": "report",
-            "report_repository_access": {
-                "schema": "mac.report_repository_access.v1",
-                "mode": "read_only",
-            },
-        },
-    }
-    calls: List[Dict[str, Any]] = []
-
-    def legacy_executor(value: Dict[str, Any]) -> _ExecResult:
-        calls.append(value)
-        return _exec_ok(value)
-
-    mac = _FakeMac(task=task)
-    result = run_one_lease(
-        env=_env(
-            MAC_REVIEW_ID="review-1",
-            MAC_REVIEW_TARGET_EVIDENCE_ID="ev-target",
-        ),
-        mac=mac,
-        executor=legacy_executor,
-        sleeper=_no_sleep,
-    )
-
-    assert result.status == "no-evidence"
-    assert result.error == READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
-    assert calls == []
-    assert mac.posts == []
-
-
-def test_canonical_review_environment_materializes_exact_evidence(tmp_path: Path) -> None:
-    mac = _FakeMac()
-    detail = {
-        "task": {"id": "task-1", "title": "review me", "metadata": {}},
-        "evidence": [
-            {
-                "id": "ev-target",
-                "task_id": "task-1",
-                "metadata": {
-                    "verification": {
-                        "schema": "mac.worker_evidence.v1",
-                        "status": "complete",
-                        "evidence_type": "operator_result",
-                        "summary": "planned result",
-                    }
-                },
-            }
-        ],
-    }
-    prepared = _prepare_canonical_review_environment(
-        mac,
-        {
-            "MAC_REVIEW_WORKSPACE_ROOT": str(tmp_path),
-            "MAC_AGENT_ATTESTATION_KEY": "review-secret",
-        },
-        task_id="task-1",
-        review_id="review-1",
-        target_evidence_id="ev-target",
-        reviewer_agent_id="reviewer-1",
-        task_detail=detail,
-    )
-
-    workspace = Path(prepared["MAC_TASK_WORKSPACE"])
-    assert json.loads((workspace / "executor-evidence.json").read_text())["id"] == "ev-target"
-    task = json.loads((workspace / "task.json").read_text())["task"]
-    assert task["metadata"]["review_context"]["executor_evidence_id"] == "ev-target"
-    assert prepared["MAC_TASK_FILE"] == str(workspace / "task.json")
-    assert prepared["MAC_TASK_EVIDENCE_MANIFEST_PATH"] == str(workspace / "mac-evidence.json")
-    assert prepared["MAC_ATTESTATION_KEY"] == "review-secret"
 
 
 def test_get_task_failure_aborts_cleanly() -> None:
@@ -604,8 +487,6 @@ class _Mac:
             raise RuntimeError("permission denied")
         if self.fail == "evidence" and path.endswith("/evidence"):
             raise RuntimeError("evidence down")
-        if self.fail == "tick" and path.startswith("/reviews/default/tick"):
-            raise RuntimeError("tick down")
         if self.fail == "transition" and path.endswith("/transition"):
             raise RuntimeError("transition down")
         if path.endswith("/evidence"):
@@ -649,53 +530,6 @@ def test_start_failure_without_already_aborts_before_execution() -> None:
     result = job_executor.run_one_lease(mac=_Mac(fail="start"), executor=_ok, env=_env_edges())
     assert result.status == "no-evidence"
     assert "start failed" in (result.error or "")
-
-
-def test_review_missing_task_and_get_failure_are_reported() -> None:
-    missing = job_executor._run_one_review(
-        mac=_Mac(), executor=_ok, env={"MAC_REVIEW_ID": "review-1"}, sleeper=None
-    )
-    failed_get = job_executor.run_one_lease(
-        mac=_Mac(fail="get"), executor=_ok, env=_env_edges(MAC_REVIEW_ID="review-1")
-    )
-    assert missing.status == "missing-env"
-    assert failed_get.status == "no-evidence"
-
-
-def test_review_metadata_success_and_tick_failure(caplog: pytest.LogCaptureFixture) -> None:
-    mac = _Mac(fail="tick", evidence="not-a-mapping")
-
-    def execute(_task: dict[str, Any]) -> job_executor._ExecResult:
-        return job_executor._ExecResult(
-            returncode=0,
-            stdout="reviewed",
-            stdout_sha256="digest",
-            verification_manifest={"status": "complete"},
-            manifest_path="/tmp/evidence.json",
-            manifest_error="advisory warning",
-        )
-
-    result = job_executor.run_one_lease(
-        mac=mac,
-        executor=execute,
-        env=_env_edges(MAC_REVIEW_ID="review-1", MAC_REVIEW_TARGET_EVIDENCE_ID="target-1"),
-    )
-    assert result.status == "submitted-for-review"
-    assert result.evidence_id is None
-    evidence = next((body for path, body in mac.posts if path.endswith("/evidence")))
-    metadata = evidence["metadata"]
-    assert metadata["verification"] == {"status": "complete"}
-    assert metadata["verification_manifest_path"] == "/tmp/evidence.json"
-    assert metadata["verification_manifest_error"] == "advisory warning"
-    assert "post-review tick failed" in caplog.text
-
-
-def test_review_evidence_failure_returns_no_evidence() -> None:
-    result = job_executor.run_one_lease(
-        mac=_Mac(fail="evidence"), executor=_ok, env=_env_edges(MAC_REVIEW_ID="review-1")
-    )
-    assert result.status == "no-evidence"
-    assert "evidence down" in (result.error or "")
 
 
 def test_unconfigured_executor_refuses_noop() -> None:
@@ -850,30 +684,3 @@ def test_resolve_prefers_fleet_scoped_worker_token(monkeypatch: pytest.MonkeyPat
         None,
     )
     assert captured["token"] == "api-rocky"
-
-
-def test_review_mode_token_read_is_fleet_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The review-mode token read must prefer the fleet-scoped worker token from
-    env["MAC_FLEET"] over the legacy flat form (mac-g55y)."""
-    captured: dict[str, Any] = {}
-
-    def _fake_client(url: str, token: str) -> Any:
-        captured.update(url=url, token=token)
-        return _Mac(fail="get")
-
-    monkeypatch.setattr(job_executor, "_default_mac_client", _fake_client)
-    job_executor._run_one_review(
-        mac=None,
-        executor=_ok,
-        env={
-            "MAC_REVIEW_ID": "review-1",
-            "MAC_TASK_ID": "task/1",
-            "MAC_URL": "http://mac",
-            "MAC_FLEET": "rocky",
-            "MAC_WORKER_TOKEN__ROCKY": "worker-rocky",
-            "MAC_WORKER_TOKEN": "worker-flat",
-            "MAC_API_TOKEN": "api-flat",
-        },
-        sleeper=None,
-    )
-    assert captured["token"] == "worker-rocky"

@@ -14,7 +14,6 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 controller_loop_failures = 0
-review_loop_failures = 0
 review_tick_loop_failures = 0
 
 # Keep the sleep seam local to this module. Patching ``time.sleep`` mutates the
@@ -193,26 +192,6 @@ def _run_controller_loop_forever(
         )
 
 
-def _run_review_loop_forever(
-    mac: "object",
-    jobs: "object",
-    cfg: "object",
-    log: logging.Logger,
-) -> None:
-    global review_loop_failures
-    from mac.k8s.runner import review_loop  # noqa: WPS433
-
-    try:
-        review_loop(mac, jobs, cfg)
-    except Exception:  # noqa: BLE001
-        review_loop_failures += 1
-        log.exception(
-            "review-dispatch loop crashed; review nudges will NOT be "
-            "consumed in this pod until restart. review_loop_failures=%d",
-            review_loop_failures,
-        )
-
-
 def _report_bound_worker_credential(mac: Any, agent_id: str, log: logging.Logger) -> bool:
     """Publish secret-free proof using the already-authenticated bound token."""
 
@@ -358,29 +337,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         daemon=True,
     )
     controller_thread.start()
-
-    if runner_cfg.reviewer_agent_ids:
-        log.info(
-            "review-dispatch loop: reviewers=%s",
-            sorted(runner_cfg.reviewer_agent_ids.values()),
-        )
-        review_thread = threading.Thread(
-            target=_run_review_loop_forever,
-            kwargs={
-                "mac": mac,
-                "jobs": jobs_client,
-                "cfg": runner_cfg,
-                "log": logging.getLogger("mac-k8s-orchestrator.review"),
-            },
-            name="mac-orchestrator-review",
-            daemon=True,
-        )
-        review_thread.start()
-    else:
-        log.info(
-            "review-dispatch loop: no reviewer roles configured "
-            "(no role has the 'review' capability) — skipping"
-        )
 
     # Review-tick loop: opens reviews for needs_review tasks. Enabled by
     # default; disable with MAC_REVIEW_TICK_LOOP_ENABLED=0.

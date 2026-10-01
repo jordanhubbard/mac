@@ -274,103 +274,10 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
     assert "did not authorise decomposition" in str(result.error)
 
 
-def test_executor_verification_manifest_shapes(tmp_path) -> None:
-    path = tmp_path / "executor-evidence.json"
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
-    path.write_text("not-json")
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
-    path.write_text("[]")
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
-    path.write_text(json.dumps({"metadata": {"verification": {"repo": {"head_sha": "a"}}}}))
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path)["repo"] == {
-        "head_sha": "a"
-    }
-    path.write_text(json.dumps({"verification": {"repo": {"head_sha": "b"}}}))
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path)["repo"] == {
-        "head_sha": "b"
-    }
-
-
-def test_prepare_review_workspace_hides_executor_treatment_from_blind_pass(
-    monkeypatch, tmp_path
-) -> None:
-    instance = object.__new__(worker.MacWorker)
-    instance.workspace = tmp_path
-    monkeypatch.setattr(
-        instance,
-        "_prepare_review_repository_worktree",
-        lambda *_args: {
-            "schema": "mac.review_repository_worktree.v1",
-            "repository_worktree": "/review/repo",
-            "repository_base_sha": "a" * 40,
-            "repository_reviewed_head_sha": "b" * 40,
-        },
-    )
-    task_detail = {
-        "task": {
-            "id": "task_1",
-            "title": "Review safely",
-            "description": "Preserve the original acceptance criteria.",
-            "state": "reviewing",
-            "owner_agent_id": "executor-agent",
-            "metadata": {
-                "custom_acceptance": {"must_preserve": True},
-                "model": "executor/model",
-                "review_model": "reviewer/model",
-                "activity": [{"summary": "executor changed secret.py"}],
-                "latest_review_claim": {"tests": [{"status": "pass"}]},
-                "review_claims": {"review_1": {"repository_files_changed": ["secret.py"]}},
-                "runtime": {"repository_head_sha": "b" * 40},
-                "target_agent_id": "executor-agent",
-            },
-        },
-        "evidence": [{"id": "ev_1", "metadata": {"verification": {"status": "complete"}}}],
-    }
-    claim = {
-        "claim": {
-            "schema": "mac.review_claim.detail.v1",
-            "task_id": "task_1",
-            "review_id": "review_1",
-            "reviewer_agent_id": "reviewer-agent",
-            "executor_evidence_id": "ev_1",
-            "checks": [{"name": "tests", "status": "pass"}],
-            "repository_files_changed": ["secret.py"],
-            "work_summary": "executor explanation",
-        }
-    }
-
-    task_dir = instance._prepare_review_workspace(
-        "task_1", "review_1", "ev_1", task_detail, {"id": "msg_1"}, claim
-    )
-
-    original = json.loads((task_dir / "executor-task.json").read_text())
-    review_task = json.loads((task_dir / "task.json").read_text())["task"]
-    serialized = json.dumps({"original": original, "review": review_task})
-    assert original["metadata"]["custom_acceptance"] == {"must_preserve": True}
-    assert review_task["metadata"]["review_model"] == "reviewer/model"
-    assert review_task["metadata"]["review_context"]["review_claim"] == {
-        "executor_evidence_id": "ev_1",
-        "review_id": "review_1",
-        "reviewer_agent_id": "reviewer-agent",
-        "schema": "mac.review_claim.detail.v1",
-        "task_id": "task_1",
-    }
-    assert "executor/model" not in serialized
-    assert "secret.py" not in serialized
-    assert "executor explanation" not in serialized
-    assert "latest_review_claim" not in serialized
-
-
-def test_task_iteration_override_separates_executor_and_reviewer_budgets() -> None:
+def test_task_iteration_override_bounds_executor_budget() -> None:
     metadata = {"max_iterations": 30, "review_max_iterations": "12"}
 
     assert worker._task_iteration_override({"metadata": metadata}) == 30
-    assert (
-        worker._task_iteration_override(
-            {"metadata": {**metadata, "review_context": {"review_id": "review_1"}}}
-        )
-        == 12
-    )
     assert worker._task_iteration_override({"metadata": {"max_iterations": 0}}) is None
     assert worker._task_iteration_override({"metadata": {"max_iterations": 501}}) is None
 
@@ -434,17 +341,6 @@ def test_subprocess_executor_does_not_inherit_task_scoped_overrides(monkeypatch,
 
     assert "MAC_TASK_MODEL" not in captured["env"]
     assert "MAC_TASK_MAX_ITERATIONS" not in captured["env"]
-
-
-def test_review_verdict_compares_executor_changed_files(tmp_path) -> None:
-    assert worker._worker_review_verdict_executor_repo_problems(tmp_path, {}) == []
-    (tmp_path / "executor-evidence.json").write_text(
-        json.dumps({"verification": {"repo": {"files_changed": ["./src//a.py", "b.py"]}}})
-    )
-    problems = worker._worker_review_verdict_executor_repo_problems(
-        tmp_path, {"repo": {"files_changed": ["other.py"]}}
-    )
-    assert "must match executor evidence" in problems[0]
 
 
 def test_repository_head_push_checks_remote_url_origin_and_branch(monkeypatch, tmp_path) -> None:

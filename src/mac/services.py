@@ -621,6 +621,7 @@ LANDING_BACKOFF_MAX_SECONDS = 3600
 _LANDING_WAIT_FAILURE_KINDS = frozenset(
     {
         "pull_request_checks_pending",
+        "pull_request_branch_updated",
         "landing_serialized",
     }
 )
@@ -1208,7 +1209,7 @@ def _hub_verify_exception_detail(exc: Exception) -> JsonDict:
 
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 #: Marker recorded on a task that was approved but has no publication
-#: destination, so the task itself says why it is sitting in REVIEWING instead
+#: destination, so the task itself says why it is still awaiting review instead
 #: of leaving the reason in a code comment (task_ce6c8ea3).
 PUBLICATION_BLOCK_SCHEMA = "mac.publication_block.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -1287,7 +1288,13 @@ class _LandingRebaseRequiredError(ValidationError):
         head_sha: str,
         conflicted_files: Sequence[str] = (),
         error: str = "",
+        forge_api_url: str = "",
+        pull_request_number: int = 0,
     ) -> None:
+        # Where the superseded attempt's pull request lives, so the send-back
+        # can close it (``_close_superseded_pull_request``). Empty/0: none.
+        self.forge_api_url = str(forge_api_url or "")
+        self.pull_request_number = _nonnegative_int(pull_request_number)
         self.canonical_tip = str(canonical_tip or "")
         self.verified_base = str(verified_base or "")
         self.head_sha = str(head_sha or "")
@@ -6902,8 +6909,9 @@ class ControlPlane:
         """Task counts by state (parity with bd stats).
 
         ``reviewing_parked`` is reported alongside the states whenever it is
-        non-zero: the count of REVIEWING tasks that are approved but have no
-        publication destination, so nothing will ever move them to COMPLETED.
+        non-zero: the count of approved tasks still in review (NEEDS_REVIEW, or
+        a legacy REVIEWING row) that have no publication destination, so
+        nothing will ever move them to COMPLETED.
         Without it a permanently parked task is counted under ``reviewing`` and
         is indistinguishable from work in flight — which is how four of them sat
         unnoticed for four days (task_ce6c8ea3). It is an addition, not a
@@ -6938,12 +6946,12 @@ class ControlPlane:
         """Add ``reviewing_parked`` to ``counts`` when there is anything to add.
 
         Resolving a publication target per task costs a project lookup, so this
-        short-circuits when nothing is in REVIEWING at all — which is the usual
+        short-circuits when nothing is in review at all — which is the usual
         case, and keeps `mac task stats` as cheap as it was.  A failure here
         must not take the stats call down with it: the counts are the primary
         answer and the parked count is an annotation on them.
         """
-        if not counts.get(TaskState.REVIEWING.value):
+        if not (counts.get(TaskState.REVIEWING.value) or counts.get(TaskState.NEEDS_REVIEW.value)):
             return counts
         try:
             parked = self.parked_reviewing_tasks(limit=1_000_000)
@@ -12260,7 +12268,10 @@ class ControlPlane:
         elif task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
             self._require_lease_actor(task, created_by, lease_id)
             fenced_lease_id = str(task.lease_id or "")
-        elif task.state == TaskState.REVIEWING.value:
+        elif task.state in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
+            # A review decided from NEEDS_REVIEW (the default workflow) or a
+            # human-requested one in REVIEWING; either way the author must hold
+            # exactly one current review of the task.
             fenced_review_status = (
                 ReviewStatus.APPROVED.value if kind == "publication" else ReviewStatus.PENDING.value
             )
@@ -12371,7 +12382,7 @@ class ControlPlane:
                 )
                 if (
                     current_task_row is None
-                    or current_task_row["state"] != TaskState.REVIEWING.value
+                    or current_task_row["state"] != task.state
                     or review_lock.rowcount != 1
                 ):
                     raise AuthorizationError(
@@ -19637,6 +19648,7 @@ class ControlPlane:
         root: Path,
         agent_pull_request: Optional[JsonDict] = None,
         required_checks: Tuple[str, ...] = (),
+        strict_checks: bool = False,
         verified_base_is_tip: bool = True,
         verified_base: str = "",
     ) -> JsonDict:
@@ -19663,6 +19675,14 @@ class ControlPlane:
         afterwards, so the canonical-integration proof records
         ``contains_reviewed_head`` honestly instead of asserting an ancestry
         that squashing destroys.
+
+        A strict ruleset ("require branches to be up to date") will not merge a
+        pull request that is behind the base, and nothing else updates it. When
+        it is behind, the land step asks the forge to update the branch
+        (``gitops.update_pull_request_branch``) and waits for the required
+        checks on the updated head under the landing budget; a conflict sends
+        the task back to rebase. The updated head is the reviewed head plus
+        merges of the canonical branch only, so it is kept, not reset.
         """
 
         from . import gitops as _gitops
@@ -19678,7 +19698,23 @@ class ControlPlane:
         )
         observed_sha = str(observed.get("stdout") or "").split(None, 1)
         observed_sha = observed_sha[0] if observed_sha else ""
-        if observed_sha != head_sha:
+        # The commit the forge's checks run on and the merge is pinned to: the
+        # reviewed head, or a forge update of it with the canonical branch.
+        landing_head = head_sha
+        if (
+            observed_sha
+            and observed_sha != head_sha
+            and strict_checks
+            and self._is_base_update_of(
+                git_step,
+                branch=branch,
+                candidate=observed_sha,
+                reviewed_head=head_sha,
+                canonical_tip=base_sha,
+            )
+        ):
+            landing_head = observed_sha
+        if observed_sha != landing_head:
             # NEVER a bare push: an explicit source:destination refspec, and a
             # lease pinned to exactly what we just observed, so a branch that
             # moved under us fails instead of being overwritten.
@@ -19813,11 +19849,26 @@ class ControlPlane:
         # yet" are NOT the same thing, and are recorded separately: the first
         # is a repository whose gate is the worker's verifier run; the second
         # is a gate that has not run, which waits.
+        if pre_merged is None and strict_checks:
+            landing_head = self._update_pull_request_branch_if_behind(
+                git_step,
+                api_url=api_url,
+                pr=pr,
+                observed_pr=observed_pr,
+                landing_head=landing_head,
+                head_sha=head_sha,
+                base_sha=base_sha,
+                verified_base=verified_base,
+                commands=commands,
+                attempt=attempt,
+            )
         if pre_merged is not None:
             verdicts: JsonDict = {}
             case = "already_merged"
         elif required_checks:
-            verdicts = _gitops.required_check_verdicts(api_url, head_sha, tuple(required_checks))
+            verdicts = _gitops.required_check_verdicts(
+                api_url, landing_head, tuple(required_checks)
+            )
             if verdicts.get("failed"):
                 case = "failed"
             elif not verdicts.get("known"):
@@ -19834,7 +19885,7 @@ class ControlPlane:
                 "name": "required_check_verification",
                 "attempt": attempt,
                 "case": case,
-                "head_sha": head_sha,
+                "head_sha": landing_head,
                 "contexts": list(verdicts.get("contexts") or []),
                 "passed": list(verdicts.get("passed") or []),
                 "pending": list(verdicts.get("pending") or []),
@@ -19850,7 +19901,7 @@ class ControlPlane:
                 "reviewed head %s: %s"
                 % (
                     pr.url or ("#%d" % pr.number),
-                    head_sha[:12],
+                    landing_head[:12],
                     ", ".join(str(item) for item in verdicts.get("failed") or []),
                 )
             )
@@ -19863,11 +19914,11 @@ class ControlPlane:
                 % (
                     pr.url or ("#%d" % pr.number),
                     canonical_branch,
-                    "could not read check results for %s" % head_sha[:12]
+                    "could not read check results for %s" % landing_head[:12]
                     if case == "unverifiable"
                     else "not yet reported for %s: %s"
                     % (
-                        head_sha[:12],
+                        landing_head[:12],
                         ", ".join(str(item) for item in verdicts.get("pending") or []),
                     ),
                 )
@@ -19881,6 +19932,8 @@ class ControlPlane:
                     canonical_tip=base_sha,
                     verified_base=verified_base,
                     head_sha=head_sha,
+                    forge_api_url=api_url,
+                    pull_request_number=pr.number,
                 )
             # OCC validation phase: the worker's verifier tested the tree that
             # lands only while the canonical tip is still the one it verified.
@@ -19922,7 +19975,7 @@ class ControlPlane:
                     authority = conn.execute(
                         "UPDATE tasks SET updated_at = updated_at "
                         "WHERE id = ? AND state = ? AND updated_at = ?",
-                        (task.id, TaskState.REVIEWING.value, admitted_task_updated_at),
+                        (task.id, task.state, admitted_task_updated_at),
                     )
                     if authority.rowcount != 1:
                         revoked = ValidationError(
@@ -19934,7 +19987,7 @@ class ControlPlane:
                     merge = _gitops.request_pull_request_merge(
                         api_url,
                         pr.number,
-                        sha=head_sha,
+                        sha=landing_head,
                         branch=canonical_branch,
                         method="squash",
                         commit_title="%s (#%d)" % (title, pr.number),
@@ -19965,8 +20018,8 @@ class ControlPlane:
         )
         if not merge.merged:
             # The PR exists and is correct; the forge's own gates simply have
-            # not finished. Publication is NOT complete, so the task stays in
-            # REVIEWING and waits under the landing deadline. Retrying is cheap
+            # not finished. Publication is NOT complete, so the task stays
+            # approved and waits under the landing deadline. Retrying is cheap
             # because the PR is reused, not reopened.
             pending = ValidationError(
                 "git publication is waiting on the pull request's own required "
@@ -20043,10 +20096,142 @@ class ControlPlane:
             "pull_request_opened_by": opened_by,
             "pull_request_number": pr.number,
             "pull_request_url": pr.url,
+            "pull_request_head_sha": landing_head,
             "contains_reviewed_head": bool(contains_reviewed_head),
             "attempt": attempt,
             "commands": commands,
         }
+
+    @staticmethod
+    def _is_base_update_of(
+        git_step: Any,
+        *,
+        branch: str,
+        candidate: str,
+        reviewed_head: str,
+        canonical_tip: str,
+    ) -> bool:
+        """Is ``candidate`` the reviewed head plus merges of the canonical branch?
+
+        That is what GitHub's update-branch makes: a merge commit whose first
+        parent is the previous head and whose second is on the canonical
+        branch, possibly repeated. Anything else on the PR branch is not what
+        was reviewed, and the land step resets the branch to the reviewed head.
+        """
+
+        git_step(
+            "fetch_pull_request_branch",
+            ["fetch", "origin", "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch)],
+            check=False,
+        )
+        current = candidate
+        for _ in range(20):
+            if current == reviewed_head:
+                return True
+            listed = git_step(
+                "inspect_pull_request_head",
+                ["rev-list", "--parents", "-n", "1", current],
+                check=False,
+            )
+            fields = str(listed.get("stdout") or "").split()
+            if _git_step_returncode(listed) != 0 or len(fields) != 3:
+                return False
+            _, first_parent, merged_parent = fields
+            on_canonical = git_step(
+                "pull_request_head_merges_canonical",
+                ["merge-base", "--is-ancestor", merged_parent, canonical_tip],
+                check=False,
+            )
+            if _git_step_returncode(on_canonical) != 0:
+                return False
+            current = first_parent
+        return False
+
+    @staticmethod
+    def _update_pull_request_branch_if_behind(
+        git_step: Any,
+        *,
+        api_url: str,
+        pr: Any,
+        observed_pr: Mapping[str, Any],
+        landing_head: str,
+        head_sha: str,
+        base_sha: str,
+        verified_base: str,
+        commands: List[JsonDict],
+        attempt: int,
+    ) -> str:
+        """Bring a strict-checks pull request up to date with the base.
+
+        Returns the head to verify and merge when the PR is current. When it is
+        behind (the forge says so, or the canonical tip is not in its head) the
+        forge is asked to update the branch, and the land step waits for the
+        checks on the new head under the landing deadline. A conflict sends
+        the task back to its worker to rebase.
+        """
+
+        from . import gitops as _gitops
+
+        contains_tip = (
+            _git_step_returncode(
+                git_step(
+                    "pull_request_contains_canonical_tip",
+                    ["merge-base", "--is-ancestor", base_sha, landing_head],
+                    check=False,
+                )
+            )
+            == 0
+        )
+        forge_state = str(observed_pr.get("mergeable_state") or "")
+        behind = forge_state == "behind" or not contains_tip
+        if not behind:
+            return landing_head
+        update = _gitops.update_pull_request_branch(
+            api_url, pr.number, expected_head_sha=landing_head
+        )
+        commands.append(
+            {
+                "name": "update_pull_request_branch",
+                "attempt": attempt,
+                "number": pr.number,
+                "mergeable_state": forge_state,
+                "contains_canonical_tip": contains_tip,
+                "expected_head_sha": landing_head,
+                "updated": bool(update.get("updated")),
+                "conflict": bool(update.get("conflict")),
+                "reason": str(update.get("reason") or "")[:300],
+            }
+        )
+        if update.get("conflict"):
+            raise _LandingRebaseRequiredError(
+                canonical_tip=base_sha,
+                verified_base=verified_base,
+                head_sha=head_sha,
+                error="the forge could not update the pull request branch: %s"
+                % str(update.get("reason") or "merge conflict")[:200],
+                forge_api_url=api_url,
+                pull_request_number=pr.number,
+            )
+        if update.get("updated"):
+            waiting = ValidationError(
+                "git publication updated %s with %s because the repository requires "
+                "branches to be up to date; waiting for its required checks to re-run"
+                % (getattr(pr, "url", "") or ("#%d" % pr.number), base_sha[:12])
+            )
+            waiting.publication_retry_after_seconds = 300
+            waiting.publication_failure_kind = "pull_request_branch_updated"
+            raise waiting
+        failed = ValidationError(
+            "git publication could not update %s, which is behind %s: %s"
+            % (
+                getattr(pr, "url", "") or ("#%d" % pr.number),
+                base_sha[:12],
+                str(update.get("reason") or "unknown")[:300],
+            )
+        )
+        failed.publication_retry_after_seconds = 600
+        failed.publication_failure_kind = "pull_request_update_branch_failed"
+        raise failed
 
     def _publish_git_target_attempt(
         self,
@@ -20175,11 +20360,14 @@ class ControlPlane:
 
             strategy = self._resolve_publication_strategy(clone_url)
             required_checks: Tuple[str, ...] = ()
+            strict_checks = False
+            forge_api_url = ""
             if strategy["strategy"] == "pull_request":
-                probed = _gitops.required_status_check_contexts(
-                    str(strategy["api_url"]), canonical_branch
-                )
-                required_checks = tuple(probed or ())
+                forge_api_url = str(strategy["api_url"])
+                policy = _gitops.required_status_check_policy(forge_api_url, canonical_branch)
+                if policy is not None:
+                    required_checks = tuple(policy.contexts)
+                    strict_checks = bool(policy.strict and required_checks)
             commands.append(
                 {
                     "name": "publication_strategy",
@@ -20187,8 +20375,13 @@ class ControlPlane:
                     "forge": strategy["forge"],
                     "reason": strategy["reason"],
                     "required_status_checks": list(required_checks),
+                    "required_status_checks_strict": strict_checks,
                     "test_gate": "required_checks" if required_checks else "worker_verifier",
                 }
+            )
+            agent_pr = ensure_json_object(agent_pull_request)
+            superseded_pr_number = (
+                _nonnegative_int(agent_pr.get("number")) if agent_pr.get("opened") else 0
             )
 
             already_integrated = (
@@ -20214,6 +20407,8 @@ class ControlPlane:
                         if str(path).strip() and str(path).strip() != "<unknown>"
                     ],
                     error=gate.error,
+                    forge_api_url=forge_api_url,
+                    pull_request_number=superseded_pr_number,
                 )
             # The worker's verifier tested the reviewed head. That result
             # covers the tree that lands only when the head already contains
@@ -20242,11 +20437,14 @@ class ControlPlane:
 
             if not required_checks and not verified_base_is_tip and not already_integrated:
                 # Decided before any pull request is pushed or opened, so a
-                # send-back leaves no hub-opened PR behind.
+                # send-back leaves no hub-opened PR behind; the agent's own PR
+                # for this attempt is closed by the send-back.
                 raise _LandingRebaseRequiredError(
                     canonical_tip=base_sha,
                     verified_base=verified_base,
                     head_sha=head_sha,
+                    forge_api_url=forge_api_url,
+                    pull_request_number=superseded_pr_number,
                 )
 
             if strategy["strategy"] == "pull_request":
@@ -20265,6 +20463,7 @@ class ControlPlane:
                     root=root,
                     agent_pull_request=agent_pull_request,
                     required_checks=required_checks,
+                    strict_checks=strict_checks,
                     verified_base_is_tip=verified_base_is_tip or already_integrated,
                     verified_base=verified_base,
                 )
@@ -20664,14 +20863,13 @@ class ControlPlane:
         """
         task_id = task.id
         reviews = self.list_reviews(task_id)
-        if task.state == TaskState.REVIEWING.value:
-            for existing in reversed(reviews):
-                if existing.status == ReviewStatus.APPROVED.value and self._review_verdict_targets(
-                    existing, evidence.id
-                ):
-                    # A previous tick approved this evidence; publication is
-                    # what remains.
-                    return existing
+        for existing in reversed(reviews):
+            if existing.status == ReviewStatus.APPROVED.value and self._review_verdict_targets(
+                existing, evidence.id
+            ):
+                # A previous tick approved this evidence (from NEEDS_REVIEW, or
+                # a legacy/human review in REVIEWING); landing is what remains.
+                return existing
         reviewer = self._ensure_hub_reviewer_agent(actor=actor)
         if reviewer is None:
             self._record_default_review_observation(
@@ -20714,7 +20912,9 @@ class ControlPlane:
                 actor,
             )
         try:
-            review = self.request_review(task_id, reviewer.id, actor=actor)
+            # The hub-reviewer decides in this same tick, so the task stays in
+            # NEEDS_REVIEW: REVIEWING is for a human-requested review only.
+            review = self.request_review(task_id, reviewer.id, actor=actor, enter_reviewing=False)
         except AuthorizationError as exc:
             return self._block_default_review(
                 task_id,
@@ -20971,7 +21171,7 @@ class ControlPlane:
             }
 
         task = self.get_task(task_id)
-        if task.state != TaskState.REVIEWING.value:
+        if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
             return {
                 "task_id": task_id,
                 "status": "approved_not_publishable",
@@ -21015,7 +21215,7 @@ class ControlPlane:
             else:
                 # No operator-configured publication destination; refuse to
                 # invent one. The review is approved, but the task stays in
-                # REVIEWING until an operator sets metadata.publication_target
+                # review until an operator sets metadata.publication_target
                 # (mac-w29).
                 #
                 # Stamp the reason onto the task as well as into the event
@@ -21113,13 +21313,13 @@ class ControlPlane:
         except (ValidationError, MACError) as exc:
             # A concurrent consumer may have completed + published this task
             # after the pre-publish re-read (or its publish_task landed the
-            # WHERE state=REVIEWING UPDATE first, so ours raised
+            # guarded state UPDATE first, so ours raised
             # TransitionError('task state changed during publish; retry') /
             # ValidationError). Re-read terminal state BEFORE recording any
             # failure telemetry: if the task is now completed/published, the
             # exception was caused by that concurrent completion, so treat it
             # as a successful no-op and never emit a spurious publish_failed
-            # diagnosis. Only genuine, still-in-REVIEWING failures (e.g. a real
+            # diagnosis. Only genuine, still-in-review failures (e.g. a real
             # merge conflict) fall through to the diagnosis below.
             terminal = self._terminal_review_noop(task_id)
             if terminal is not None:
@@ -21127,7 +21327,7 @@ class ControlPlane:
             # Auto-publish failed AFTER a genuine approval — most often the
             # reviewed branch no longer merges cleanly into main (a stale branch
             # base / merge conflict). Previously this exception propagated and was
-            # swallowed, leaving the task silently parked in REVIEWING with no
+            # swallowed, leaving the task silently parked in review with no
             # explanation (approved but never published). Surface it instead: an
             # observation for telemetry AND a glanceable Problem/Remediation
             # diagnosis on the task (via `mac task show`/`summary`), so the
@@ -21206,7 +21406,7 @@ class ControlPlane:
                         "diagnosis",
                         actor,
                         "Problem: Auto-publish to %s did not land after approval. "
-                        "The task is approved and stays in REVIEWING; the land loop "
+                        "The task is approved and stays in review; the land loop "
                         "retries it under its landing budget.\n"
                         "Remediation: None needed while the budget lasts; if the "
                         "error below cannot clear on its own, fix it and the next "
@@ -21513,6 +21713,7 @@ class ControlPlane:
                 "max_rebases": LANDING_MAX_REBASES,
             },
         )
+        self._close_superseded_pull_request(task_id, exc, actor=actor)
         try:
             self.append_task_activity(
                 task_id,
@@ -21540,6 +21741,57 @@ class ControlPlane:
             "rebases": rebases + 1,
             "state": TaskState.OPEN.value,
         }
+
+    def _close_superseded_pull_request(
+        self,
+        task_id: str,
+        exc: "_LandingRebaseRequiredError",
+        *,
+        actor: str,
+    ) -> None:
+        """Close the sent-back attempt's pull request; never block the send-back.
+
+        The re-run pushes a rebased head and opens its own pull request, so the
+        previous attempt's would otherwise stay open, stale and possibly
+        conflicting. A forge that refuses or cannot be reached is logged.
+        """
+
+        number = exc.pull_request_number
+        api_url = exc.forge_api_url
+        if not number or not api_url:
+            return
+        from . import gitops as _gitops
+
+        detail: JsonDict = {"pull_request_number": number, "canonical_tip": exc.canonical_tip}
+        try:
+            _gitops.close_pull_request(
+                api_url,
+                number,
+                comment="Superseded: task %s was re-run onto the new tip %s."
+                % (task_id, exc.canonical_tip[:12] or "of the default branch"),
+            )
+        except Exception as close_exc:  # noqa: BLE001 - must not block the send-back
+            logging.getLogger(__name__).warning(
+                "could not close superseded pull request #%s for %s: %s",
+                number,
+                task_id,
+                close_exc,
+            )
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.superseded_pr_close_failed",
+                "warning",
+                {**detail, "error": str(close_exc)[:300]},
+                actor,
+            )
+            return
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.superseded_pr_closed",
+            "info",
+            detail,
+            actor,
+        )
 
     def _record_review_outcome_lesson(self, task_id: str, *, outcome: str, detail: str) -> None:
         """Distill a review-stage outcome into a ``deployment_learning`` memory
@@ -26299,7 +26551,7 @@ class ControlPlane:
         (mac-w29). Previously this synthesized ``mac://tasks/{id}`` which
         is filler — no resolver exists for that URI. The auto-review
         workflow now treats ``None`` as "no publication destination
-        configured; leave the task in REVIEWING and emit a waiting
+        configured; leave the approved task in review and emit a waiting
         observability event."
         """
         metadata = task.metadata
@@ -26330,7 +26582,7 @@ class ControlPlane:
         if project_target and eligible(project_target):
             return project_target
         # Fleet-wide default (opt-in): when set, routine approved tasks publish
-        # via this target and auto-complete instead of parking in REVIEWING for
+        # via this target and auto-complete instead of parking in review for
         # want of a per-task/per-project destination. Unset => unchanged (mac-w29
         # hold). e.g. MAC_DEFAULT_PUBLICATION_TARGET=git://main
         #
@@ -26396,9 +26648,9 @@ class ControlPlane:
         evidence_id: Optional[str] = None,
         actor: str = "control-plane",
     ) -> None:
-        """Stamp a REVIEWING task with WHY it cannot leave that state.
+        """Stamp an approved task with WHY it cannot leave review.
 
-        Approval does not complete a task: ``REVIEWING -> COMPLETED`` happens
+        Approval does not complete a task: ``-> COMPLETED`` happens
         only inside :meth:`publish_task`, which needs a resolved publication
         target.  When none resolves the task parks, and until this marker
         existed the reason lived only in a code comment and a transient
@@ -26442,11 +26694,13 @@ class ControlPlane:
         min_age_seconds: float = 0.0,
         limit: int = 50,
     ) -> List[JsonDict]:
-        """REVIEWING tasks that cannot reach COMPLETED as things stand.
+        """Approved tasks that cannot reach COMPLETED as things stand.
 
-        A task is parked when it is in REVIEWING, nobody holds it, and no
-        publication target resolves for it — so nothing downstream will ever
-        move it on.  Resolution is re-evaluated live rather than trusted from
+        A task is parked when it is approved and still in review, nobody holds
+        it, and no publication target resolves for it — so nothing downstream
+        will ever move it on. The default workflow approves in NEEDS_REVIEW and
+        stamps ``metadata.publication_block`` when it parks; a legacy or
+        human-reviewed task parks in REVIEWING, possibly without the marker.  Resolution is re-evaluated live rather than trusted from
         the stored marker, because the marker is written when a task parks and
         an operator may have set ``metadata.publication_target`` (or a project
         target, or the fleet default) since; such a task is recoverable and must
@@ -26458,8 +26712,11 @@ class ControlPlane:
         ``updated_at`` otherwise, so a task keeps its original park time.
         """
         rows = self.store.query_all(
-            "SELECT id FROM tasks WHERE state = ? AND owner_agent_id IS NULL ORDER BY updated_at",
-            (TaskState.REVIEWING.value,),
+            "SELECT id FROM tasks WHERE owner_agent_id IS NULL AND ("
+            "state = ? OR (state = ? AND "
+            "json_extract(metadata, '$.publication_block.reason') IS NOT NULL)"
+            ") ORDER BY updated_at",
+            (TaskState.REVIEWING.value, TaskState.NEEDS_REVIEW.value),
         )
         now = parse_time(utcnow())
         parked: List[JsonDict] = []

@@ -885,14 +885,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_RETENTION_TICK_ENABLED` | bool | consumer-defined | core | Core setting: retention tick enabled. |
 | `MAC_REVIEWED_PYTHON_VERSION` | str | consumer-defined | core | Core setting: reviewed python version. |
 | `MAC_REVIEWED_UV_VERSION` | str | consumer-defined | core | Core setting: reviewed uv version. |
-| `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
-| `MAC_REVIEW_TARGET_EVIDENCE_ID` | str | consumer-defined | review | Review setting: review target evidence id. |
 | `MAC_REVIEW_TICK_HUB_AGENT` | str | consumer-defined | review | Review setting: review tick hub agent. |
 | `MAC_REVIEW_TICK_INTERVAL_SECONDS` | int | consumer-defined | review | Review setting: review tick interval seconds. |
 | `MAC_REVIEW_TICK_LIMIT` | int | consumer-defined | review | Review setting: review tick limit. |
 | `MAC_REVIEW_TICK_LOOP_ENABLED` | bool | consumer-defined | review | Review setting: review tick loop enabled. |
 | `MAC_REVIEW_TICK_ON_HEARTBEAT` | str | consumer-defined | review | Review setting: review tick on heartbeat. |
-| `MAC_REVIEW_WORKSPACE_ROOT` | str | consumer-defined | review | Review setting: review workspace root. |
 | `MAC_ROLLBACK_ACTIVE_GATEWAY` | str | consumer-defined | core | Core setting: rollback active gateway. |
 | `MAC_ROLLBACK_AGENT` | str | consumer-defined | core | Core setting: rollback agent. |
 | `MAC_ROLLBACK_AGENT_PRIOR_STATE` | str | consumer-defined | core | Core setting: rollback agent prior state. |

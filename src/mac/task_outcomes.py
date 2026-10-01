@@ -162,7 +162,7 @@ def task_outcome(store: Any, task_id: str) -> dict:
                 "requires": "read",
             }
         )
-    if state in {"reviewing", "completed"} and target:
+    if state in {"needs_review", "reviewing", "completed"} and target:
         actions.append(
             {
                 "label": "Record acceptance after checking the result",
@@ -204,7 +204,7 @@ def record_acceptance(
         if locked.rowcount != 1:
             raise NotFoundError("task not found: %s" % task_id)
         task = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
-        if task["state"] not in {"reviewing", "completed"}:
+        if task["state"] not in {"needs_review", "reviewing", "completed"}:
             raise ValidationError("acceptance requires a task in review or completed")
         if not evidence_id or _target(task) != evidence_id:
             raise ValidationError(
