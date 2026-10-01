@@ -946,7 +946,7 @@ MOOD_MODES: frozenset = frozenset(m.value for m in MoodMode)
 #   * ``_STORED_EVIDENCE_KINDS``  — kinds the CLI/API historically accept and store
 #     (``test``/``review``/``artifact``/``publication``/``log``/``eval``).
 #   * ``_INTERNAL_EVIDENCE_KINDS`` — kinds the runtime itself writes via
-#     ``add_evidence`` (auto-land bookkeeping + human notifications). These are
+#     ``add_evidence`` (human notifications). These are
 #     already persisted, so the registry must keep accepting them.
 #   * ``_VALIDATOR_EVIDENCE_KINDS`` — the verification ``evidence_type`` tokens the
 #     validator registry (``mac.evidence_validators.VALIDATORS``) advertises, e.g.
@@ -957,8 +957,6 @@ MOOD_MODES: frozenset = frozenset(m.value for m in MoodMode)
 #     registry is a subset of this set, so the two can never drift apart again.
 _STORED_EVIDENCE_KINDS = {"test", "review", "artifact", "publication", "log", "eval"}
 _INTERNAL_EVIDENCE_KINDS = {
-    "auto_land_ready",
-    "auto_land_decision",
     "mac_notify_human",
 }
 _VALIDATOR_EVIDENCE_KINDS = {

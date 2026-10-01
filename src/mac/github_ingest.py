@@ -510,7 +510,7 @@ class GitHubIssueIngestor:
                         "repository": getattr(repo, "name", ""),
                         "status": "fresh",
                         "resolved_at": existing.resolved_at,
-                        "mode": "merge_queue" if existing.use_forge_queue else "mac_native_queue",
+                        "mode": "mac_native_queue",
                     }
                 )
                 continue
@@ -540,7 +540,7 @@ class GitHubIssueIngestor:
                     "branch": resolved.branch,
                     "resolved_at": resolved.resolved_at,
                     "error": resolved.error,
-                    "mode": "merge_queue" if resolved.use_forge_queue else "mac_native_queue",
+                    "mode": "mac_native_queue",
                 }
             )
         return report

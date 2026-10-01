@@ -17,10 +17,11 @@
 > `openclaw_checkpoint_gc`, `openclaw_delivery_continuity`,
 > `openshell_static_runtime_refresh`, `remote_session`, `reported_version`,
 > `skill_auto_repair` — and their tests are **deleted** in the current tree; git
-> history retains them if any is wanted for real. The two survivors,
-> `predispatch_conflict` and `investigation_artifacts`, are **not** abandoned:
-> each is wired to a real, behaviour-exercising test and carries a dated owner
-> and a concrete wiring plan in §0.
+> history retains them if any is wanted for real. Of the two survivors,
+> `investigation_artifacts` is **not** abandoned: it is wired to a real,
+> behaviour-exercising test and carries a dated owner and a concrete wiring plan
+> in §0. The other, `predispatch_conflict`, passed its 2026-09-30 re-audit date
+> still unwired and was **deleted** with its test on 2026-10-01 (§0.2).
 
 ## 0. Current-tree resolution (2026-08-18) — supersedes §4/§5
 
@@ -58,7 +59,7 @@ caller and design contract.
 
 | module | owner (role, dated) | real test today | wiring plan: named integration point + trigger | re-audit by |
 |---|---|---|---|---|
-| `predispatch_conflict` | fleet dead-code steward, recorded 2026-08-18 | `tests/test_predispatch_conflict.py` drives `check_predispatch_conflict` against a real temp git repo (real `git merge-tree`, not mocked) | Consumed by dispatch-time ready-task selection as the symmetric, earlier counterpart to the land-time gate: `check_predispatch_conflict` wraps `mac.merge_queue.validate_projected_merge` (`src/mac/merge_queue.py`) the way `mac.auto_land.decide_land` wraps the land-time gate. Integration point: the ready-task selection / scheduler path (`mac.dispatch.ready_tasks` and the hub-side selector it fronts), which attaches the advisory verdict to task evidence or re-orders to prefer non-conflicting tasks. Design contract and intended behaviour: `docs/archive/field-notes/investigation-predispatch-conflict-5a43ad.md`. Trigger to wire: the first dispatch task that adds conflict-aware ordering. | 2026-09-30 |
+| `predispatch_conflict` | **DELETED 2026-10-01** | — | Never wired by its 2026-09-30 re-audit date. Deleted with `tests/test_predispatch_conflict.py` when the review/merge pipeline was simplified; git history retains it. | — |
 | `investigation_artifacts` | fleet dead-code steward, recorded 2026-08-18 | `tests/test_per_run_artifact_gitignore.py` imports `PER_RUN_INVESTIGATION_ARTIFACTS` and asserts the checked-in `.gitignore` root-anchors every name and masks no nested product file (real `git check-ignore`) | Single source of truth for the per-run artifact filename set the `.gitignore` publication-merge guard depends on. The module derives `PER_RUN_INVESTIGATION_ARTIFACT_GITIGNORE_PATTERNS` from `PER_RUN_INVESTIGATION_ARTIFACTS`; `tests/test_per_run_artifact_gitignore.py` enforces `.gitignore` against it so the two cannot drift. Trigger to fully wire in `src/`: replace the second, hand-maintained copy of the list in `tests/test_gitignore_investigation_artifacts.py` (and any `.gitignore` generator) with an import of this module, collapsing to one SSOT. | 2026-09-30 |
 
 Re-audit rule: on each subsequent dead-code pass, re-run the §1 enumeration and

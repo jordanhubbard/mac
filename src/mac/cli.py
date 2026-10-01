@@ -5929,48 +5929,6 @@ def cmd_review_decision(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_review_auto_land(args: argparse.Namespace) -> None:
-    author = getattr(args, "author", "") or os.environ.get("MAC_AGENT_ID", "")
-    if getattr(args, "dry_run", False):
-        # Preview only: never runs the contract gate, spawns a reviewer, or lands.
-        # The literal script name below is a fixed label, not necessarily what
-        # will run -- the real gate resolves the target's own repository
-        # contract test command first (see auto_land.run_contract_gate).
-        _print(
-            {
-                "schema": "mac.auto_land.dry_run.v1",
-                "target": args.target,
-                "repo_dir": args.repo_dir,
-                "base_ref": args.base_ref,
-                "push": bool(args.push),
-                "author": author,
-                "would_run": ["contract-gate", "adversarial-review"],
-                "gates": [
-                    "contract (the target's own repository-contract test command,"
-                    " falling back to scripts/run-contract-tests.sh)",
-                    "adversarial-review (independent agent, default-to-reject)",
-                    "independence (reviewer != author)",
-                    "head_sha (land only the reviewed revision)",
-                ],
-                "note": "dry-run: no gate/review/land executed",
-            }
-        )
-        return
-
-    from mac.auto_land import build_real_dependencies, run_auto_land
-
-    deps = build_real_dependencies(
-        plane=_plane(args),
-        repo_dir=args.repo_dir,
-        base_ref=args.base_ref,
-        created_by=args.created_by,
-        allow_push=args.push,
-        author=author,
-    )
-    decision = run_auto_land(args.target, **deps)
-    _print(decision)
-
-
 def cmd_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_task(
@@ -8101,7 +8059,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     force_complete = task.add_parser(
         "force-complete",
-        help="BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.",
+        help="BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial review and publication gates; audited). Not the normal path — adversarial review plus the contract gate is.",
     )
     force_complete.add_argument("task_id")
     force_complete.add_argument("--reason", default="")
@@ -8334,7 +8292,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     evidence = task.add_parser(
         "evidence",
-        help="attach evidence to a task: the record a review and auto-land read",
+        help="attach evidence to a task: the record a review reads",
     )
     evidence.add_argument("task_id")
     evidence.add_argument(
@@ -10236,47 +10194,6 @@ def build_parser() -> argparse.ArgumentParser:
     decision.add_argument("--reason")
     decision.add_argument("--evidence-id")
     _set(cmd_review_decision, decision)
-
-    auto_land = review.add_parser(
-        "auto-land",
-        help=(
-            "land a task/branch iff the contract gate is GREEN and an "
-            "independent adversarial reviewer APPROVEs (default-to-reject)"
-        ),
-    )
-    auto_land.add_argument("target", help="task id or branch/ref to auto-land")
-    auto_land.add_argument("--repo-dir", default=".", help="repository directory (default: cwd)")
-    auto_land.add_argument(
-        "--base-ref",
-        default="main",
-        help="base ref for the land-time merge-gate check (default: main)",
-    )
-    auto_land.add_argument("--created-by", default="auto-land")
-    auto_land.add_argument(
-        "--author",
-        default="",
-        help=(
-            "the change author's fleet agent id; the adversarial reviewer must "
-            "be a DIFFERENT agent (independence). Defaults to $MAC_AGENT_ID."
-        ),
-    )
-    auto_land.add_argument(
-        "--push",
-        action="store_true",
-        help=(
-            "on a branch target, perform a plain (never --force) git push after "
-            "both gates pass; off by default (only marks ready-to-land)"
-        ),
-    )
-    auto_land.add_argument(
-        "--dry-run",
-        action="store_true",
-        help=(
-            "print the plan (target + config + which gates would run) without "
-            "running the contract gate, spawning a reviewer, or landing anything"
-        ),
-    )
-    _set(cmd_review_auto_land, auto_land)
 
     publish = sub.add_parser("publish")
     publish.add_argument("task_id")

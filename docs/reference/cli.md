@@ -97,9 +97,9 @@ Execution:
   reopen   recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation
 
 Review and evidence:
-  evidence        attach evidence to a task: the record a review and auto-land read
+  evidence        attach evidence to a task: the record a review reads
   submit-review   hand a running task to the adversarial reviewer (to NEEDS_REVIEW)
-  force-complete  BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.
+  force-complete  BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial review and publication gates; audited). Not the normal path — adversarial review plus the contract gate is.
   audit           read-only reconciliation of every task's history, evidence, dependencies, replacements, and git ancestry
 
 Human input:

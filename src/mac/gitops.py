@@ -43,23 +43,13 @@ class PullRequestMergeResult:
     the PR is fine) from a hard error (raised, never returned).
 
     ``serialization`` names WHICH landing mechanism produced this outcome, so
-    the guarantee behind a merge is recorded rather than assumed:
-
-    ``merge_queue``
-        The forge's merge queue owns the landing.  It builds a speculative
-        merge candidate, tests the projected post-merge tree, and merges in
-        order — the property :mod:`mac.merge_queue` models (bors' "Not Rocket
-        Science Rule").  The tree that was tested IS the tree that lands.
-    ``direct_squash``
-        A plain squash merge.  Required status checks ran against a merge
-        candidate built from *some* canonical tip; nothing stops the canonical
-        branch from advancing between the checks finishing and the merge
-        executing, so the landed tree may never have been tested as such.
-        Callers must re-validate the canonical tip immediately before asking
-        for this merge; ``queued`` is False and the evidence says so.
-
-    ``queued`` is True when the PR was accepted into the merge queue but has
-    not landed yet: not a failure, and not yet a success.
+    the guarantee behind a merge is recorded rather than assumed.  The forge
+    side is always ``direct_squash``: a plain squash merge.  Required status
+    checks ran against a merge candidate built from *some* canonical tip;
+    nothing stops the canonical branch from advancing between the checks
+    finishing and the merge executing, so the caller must serialize the
+    landing itself (mac's native queue) or re-validate the canonical tip
+    immediately before asking for this merge.
     """
 
     merged: bool
@@ -68,7 +58,6 @@ class PullRequestMergeResult:
     blocked: bool = False
     reason: str = ""
     serialization: str = ""
-    queued: bool = False
 
 
 _GIT_REMOTE_URL_RE = re.compile(
@@ -1475,152 +1464,6 @@ def required_check_verdicts(
     return verdict
 
 
-# ----------------------------------------------------------------------
-# Merge queue: serialize the merges without serializing the test runs.
-# ----------------------------------------------------------------------
-
-
-def merge_queue_enabled(
-    repo_url: str,
-    branch: str,
-    *,
-    github_token: Optional[str] = None,
-    gitea_token: Optional[str] = None,
-) -> Optional[bool]:
-    """Whether ``branch`` is landed through the forge's merge queue.
-
-    ``True``/``False`` are answers; ``None`` means "unknown" (a forge with no
-    merge queue at all, an API error, or insufficient scope).  Callers must
-    treat ``None`` exactly like ``False`` *and say so in their evidence*: a
-    repository without a queue gets a plain squash merge, which does not carry
-    the queue's guarantee, and silently assuming otherwise just relocates the
-    hole.
-
-    Reuses the same ``/rules/branches/{branch}`` endpoint as
-    :func:`required_status_check_contexts` — no admin scope, and it reports
-    rulesets, which is how protection is actually configured here.
-    """
-    try:
-        host_kind, owner, repo, api_base, headers, _token = _forge_api_context(
-            repo_url, github_token=github_token, gitea_token=gitea_token
-        )
-    except ValueError:
-        return None
-    if host_kind != "github":
-        # gitea has no merge-queue equivalent. "Unknown" rather than False so
-        # the caller records "this forge cannot serialize merges for us".
-        return None
-    url = "%s/repos/%s/%s/rules/branches/%s" % (
-        api_base,
-        owner,
-        repo,
-        _quote(str(branch or ""), safe=""),
-    )
-    try:
-        rules = _http_get_json(url, headers)
-    except Exception:  # noqa: BLE001 - an unknown answer must not block publication
-        return None
-    if not isinstance(rules, list):
-        return None
-    for rule in rules:
-        if isinstance(rule, dict) and rule.get("type") == "merge_queue":
-            return True
-    return False
-
-
-def _graphql_url(host_kind: str, repo_url: str) -> str:
-    parsed = urlparse(repo_url if "://" in repo_url else "https://" + repo_url)
-    if host_kind == "github" and (parsed.hostname or "").lower() in {
-        "github.com",
-        "api.github.com",
-        "www.github.com",
-    }:
-        return "https://api.github.com/graphql"
-    scheme = parsed.scheme or "https"
-    port = (":" + str(parsed.port)) if parsed.port else ""
-    return "%s://%s%s/api/graphql" % (scheme, parsed.hostname or "", port)
-
-
-def _graphql(url: str, headers: dict, query: str, variables: dict, token: str) -> Tuple[dict, str]:
-    """POST a GraphQL document; return ``(data, error_text)`` without raising.
-
-    GitHub answers a rejected mutation with HTTP 200 and an ``errors`` array,
-    so errors are data here in exactly the way the merge endpoint's 4xx is.
-    """
-    body = {"query": query, "variables": variables}
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", **headers},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30.0) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        return {}, _scrub_secret("HTTP %d %s: %s" % (exc.code, exc.reason, raw[:500]), token)
-    except urllib.error.URLError as exc:
-        return {}, _scrub_secret(str(exc.reason), token)
-    try:
-        decoded = json.loads(raw) if raw else {}
-    except ValueError:
-        return {}, _scrub_secret("unparseable GraphQL response", token)
-    if not isinstance(decoded, dict):
-        return {}, _scrub_secret("unexpected GraphQL response", token)
-    errors = decoded.get("errors")
-    if errors:
-        messages = [str(err.get("message") or "") for err in errors if isinstance(err, dict)]
-        return _ensure_mapping(decoded.get("data")), _scrub_secret(
-            "; ".join(m for m in messages if m)[:500] or "GraphQL error", token
-        )
-    return _ensure_mapping(decoded.get("data")), ""
-
-
-def _ensure_mapping(value: object) -> dict:
-    """Return ``value`` when it is a dict, otherwise an empty dict."""
-    return value if isinstance(value, dict) else {}
-
-
-_PULL_REQUEST_NODE_QUERY = """
-query($owner:String!,$name:String!,$number:Int!){
-  repository(owner:$owner,name:$name){
-    pullRequest(number:$number){
-      id state merged headRefOid
-      mergeCommit{ oid }
-    }
-  }
-}
-"""
-
-_ENQUEUE_MUTATION = """
-mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){
-  enqueuePullRequest(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid}){
-    mergeQueueEntry{ id position state }
-  }
-}
-"""
-
-# GraphQL refusals that mean "the PR is fine, it is simply not landable yet".
-_ENQUEUE_BLOCKED_MARKERS = (
-    "not mergeable",
-    "is not in a mergeable state",
-    "required status check",
-    "checks have not",
-    "review is required",
-    "changes requested",
-    "already queued",
-    "already in the merge queue",
-    "pull request is in an unstable",
-    "merge queue is not enabled",
-    "base branch modified",
-    "head sha",
-    "expected head",
-    "waiting on code owner",
-    "protected branch",
-)
-
-
 def pull_request_state(
     repo_url: str,
     number: int,
@@ -1630,10 +1473,10 @@ def pull_request_state(
 ) -> Dict[str, object]:
     """Current forge state of PR ``number``: merged, its SHA, and its head.
 
-    Publication is retried, and between attempts a queued PR may have landed
-    on its own.  Asking the forge first is what makes "the merge queue merged
-    it while we were backing off" a success rather than a second merge
-    attempt.
+    Publication is retried, and between attempts the PR may have been merged
+    by a human or by an earlier attempt that died before recording it.
+    Asking the forge first is what makes that a success rather than a second
+    merge attempt.
     """
     host_kind, owner, repo, api_base, headers, token = _forge_api_context(
         repo_url, github_token=github_token, gitea_token=gitea_token
@@ -1672,87 +1515,6 @@ def pull_request_state(
     }
 
 
-def enqueue_pull_request(
-    repo_url: str,
-    number: int,
-    *,
-    sha: str,
-    github_token: Optional[str] = None,
-    gitea_token: Optional[str] = None,
-) -> PullRequestMergeResult:
-    """Add PR ``number`` to the forge's merge queue, pinned to ``sha``.
-
-    ``sha`` is the reviewed head, passed as ``expectedHeadOid``: the forge
-    refuses the enqueue if the branch moved underneath us.  That is the same
-    safety property the direct merge gets from its ``sha`` parameter and the
-    direct-push path gets from ``--force-with-lease``.
-
-    The queue lands the PR asynchronously, so a *successful* enqueue returns
-    ``merged=False, queued=True``: the caller defers through its existing
-    retry backoff and observes the merge on a later attempt.  A refusal that
-    names the forge's own gates comes back ``blocked=True``; anything else
-    raises.
-    """
-    if int(number) <= 0:
-        raise ValueError("pull request number is required to enqueue")
-    if not str(sha or "").strip():
-        raise ValueError("a reviewed head sha is required to enqueue")
-    host_kind, owner, repo, _api_base, headers, token = _forge_api_context(
-        repo_url, github_token=github_token, gitea_token=gitea_token
-    )
-    if host_kind != "github":
-        raise ValueError("merge queue enqueue is only supported on github")
-    url = _graphql_url(host_kind, repo_url)
-    data, error = _graphql(
-        url,
-        headers,
-        _PULL_REQUEST_NODE_QUERY,
-        {"owner": owner, "name": repo, "number": int(number)},
-        token,
-    )
-    pull = _ensure_mapping(
-        _ensure_mapping(_ensure_mapping(data).get("repository")).get("pullRequest")
-    )
-    if error or not pull.get("id"):
-        raise RuntimeError(
-            "could not resolve pull request #%d for the merge queue: %s"
-            % (int(number), error or "no pull request node")
-        )
-    if bool(pull.get("merged")):
-        return PullRequestMergeResult(
-            merged=True,
-            number=int(number),
-            sha=str(_ensure_mapping(pull.get("mergeCommit")).get("oid") or "").strip(),
-            serialization="merge_queue",
-        )
-
-    _data, error = _graphql(
-        url,
-        headers,
-        _ENQUEUE_MUTATION,
-        {"pullRequestId": str(pull["id"]), "expectedHeadOid": str(sha).strip()},
-        token,
-    )
-    if not error:
-        return PullRequestMergeResult(
-            merged=False,
-            number=int(number),
-            queued=True,
-            serialization="merge_queue",
-            reason="enqueued into the merge queue",
-        )
-    lowered = error.lower()
-    if any(marker in lowered for marker in _ENQUEUE_BLOCKED_MARKERS):
-        return PullRequestMergeResult(
-            merged=False,
-            number=int(number),
-            blocked=True,
-            serialization="merge_queue",
-            reason=error,
-        )
-    raise RuntimeError("enqueue of pull request #%d failed: %s" % (int(number), error))
-
-
 def request_pull_request_merge(
     repo_url: str,
     number: int,
@@ -1762,49 +1524,19 @@ def request_pull_request_merge(
     method: str = "squash",
     commit_title: Optional[str] = None,
     commit_message: Optional[str] = None,
-    queue_enabled: Optional[bool] = None,
     github_token: Optional[str] = None,
     gitea_token: Optional[str] = None,
 ) -> PullRequestMergeResult:
-    """Ask the forge to land PR ``number``, through its merge queue if there is one.
+    """Ask the forge to squash-merge PR ``number``, pinned to the reviewed ``sha``.
 
-    THE GUARANTEE, written down rather than assumed:
-
-    * **With a merge queue** (``queue_enabled`` True): the queue builds a
-      speculative merge candidate, runs the required checks against the
-      *projected post-merge* tree, and merges in order.  What was tested is
-      what lands — the property :mod:`mac.merge_queue` relies on, restored
-      without the serial-rebase cost of ``strict`` required status checks
-      (the queue serializes the merges, not the test runs).
-    * **Without one** (``None`` or False — a repo with no queue configured,
-      gitea, or an unreadable ruleset): a plain squash merge.  Required
-      checks alone do NOT guarantee the landed tree was tested, because the
-      canonical branch can advance between the checks finishing and the merge
-      executing.  The caller must re-validate the canonical tip immediately
-      before calling this, and the returned ``serialization`` says
-      ``direct_squash`` so the weaker guarantee is visible in the evidence.
-
-    Already-merged PRs (the queue landed it between attempts) return
-    ``merged=True`` rather than being merged twice.
+    THE GUARANTEE, written down rather than assumed: a plain squash merge.
+    Required checks alone do NOT guarantee the landed tree was tested, because
+    the canonical branch can advance between the checks finishing and the merge
+    executing.  The caller serializes the landing (mac's native queue) or
+    re-validates the canonical tip immediately before calling this, and the
+    returned ``serialization`` says ``direct_squash`` so the mechanism the
+    forge itself used is visible in the evidence.
     """
-    if queue_enabled:
-        observed = pull_request_state(
-            repo_url, number, github_token=github_token, gitea_token=gitea_token
-        )
-        if observed.get("known") and observed.get("merged"):
-            return PullRequestMergeResult(
-                merged=True,
-                number=int(number),
-                sha=str(observed.get("sha") or ""),
-                serialization="merge_queue",
-            )
-        return enqueue_pull_request(
-            repo_url,
-            number,
-            sha=sha,
-            github_token=github_token,
-            gitea_token=gitea_token,
-        )
     result = merge_pull_request(
         repo_url,
         number,

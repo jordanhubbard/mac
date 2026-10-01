@@ -77,7 +77,7 @@ collection-time failure in a carried-forward file is still caught.
 A JSON document under ``MAC_TEST_CHECKPOINT_DIR`` (default
 ``.mac-test-checkpoint/``, gitignored). That covers the two places the gate
 actually re-runs in the same workspace: an operator or agent iterating locally,
-and ``auto_land.run_contract_gate`` re-invoked in a task workspace. CI is
+and the contract gate re-invoked in a task workspace. CI is
 ephemeral, so ``.github/workflows/ci.yml`` restores the directory with
 ``actions/cache`` keyed per branch.
 

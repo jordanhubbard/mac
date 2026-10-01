@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from mac import gitops
+from mac import gitops, merge_capability
 from mac.merge_capability import (
     MergeCapability,
     merge_serialization_mode,
@@ -25,7 +25,6 @@ from mac.merge_capability import (
 )
 from mac.models import TaskState, ValidationError, utcnow
 from mac.native_merge_queue import (
-    MODE_FORGE_QUEUE,
     MODE_NATIVE_QUEUE,
     STATE_EVICTED,
     STATE_QUEUED,
@@ -393,17 +392,25 @@ def test_admission_is_idempotent_across_publication_retries(queue):
 # ---------------------------------------------------------------------------
 
 
-def test_a_repository_with_a_forge_queue_routes_to_the_forge():
-    capability = resolve_merge_capability(
-        REPO,
-        BRANCH,
-        resolve_forge=lambda url: "github",
-        queue_enabled=lambda url, branch: True,
+def test_a_stored_forge_queue_capability_still_routes_to_macs_queue():
+    """The forge merge-queue path is gone; a legacy yes-and-yes record cannot revive it."""
+
+    legacy = MergeCapability.from_dict(
+        {
+            "schema": "mac.merge_serialization_capability.v1",
+            "forge": "github",
+            "credential": True,
+            "supported": True,
+            "enabled": True,
+            "branch": BRANCH,
+            "remote": REPO,
+            "resolved_at": utcnow(),
+            "resolver": "github-ingest",
+        }
     )
-    assert capability.supported is True
-    assert capability.enabled is True
-    assert capability.use_forge_queue is True
-    assert merge_serialization_mode(capability) == MODE_FORGE_QUEUE
+    assert legacy is not None and legacy.enabled is True
+    assert merge_serialization_mode(legacy) == MODE_NATIVE_QUEUE
+    assert merge_serialization_mode(None) == MODE_NATIVE_QUEUE
 
 
 def test_supported_and_enabled_are_recorded_separately():
@@ -416,35 +423,18 @@ def test_supported_and_enabled_are_recorded_separately():
         REPO,
         BRANCH,
         resolve_forge=lambda url: "github",
-        queue_enabled=lambda url, branch: False,
         owner_is_organization=lambda url: True,
     )
     personal = resolve_merge_capability(
         REPO,
         BRANCH,
         resolve_forge=lambda url: "github",
-        queue_enabled=lambda url, branch: False,
         owner_is_organization=lambda url: False,
     )
     assert (org.supported, org.enabled) == (True, False)
     assert (personal.supported, personal.enabled) == (False, False)
     assert merge_serialization_mode(org) == MODE_NATIVE_QUEUE
     assert merge_serialization_mode(personal) == MODE_NATIVE_QUEUE
-
-
-def test_an_unknown_capability_takes_the_safe_branch_never_a_bare_squash():
-    unknown = resolve_merge_capability(
-        REPO,
-        BRANCH,
-        resolve_forge=lambda url: "github",
-        queue_enabled=lambda url, branch: None,
-    )
-    assert unknown.enabled is None
-    assert unknown.error
-    assert unknown.use_forge_queue is False
-    assert merge_serialization_mode(unknown) == MODE_NATIVE_QUEUE
-    # A repository with no capability record at all is the same answer.
-    assert merge_serialization_mode(None) == MODE_NATIVE_QUEUE
 
 
 def test_a_forge_that_cannot_be_reached_is_a_definite_native_answer():
@@ -458,18 +448,6 @@ def test_gitea_has_no_merge_queue_equivalent():
     capability = resolve_merge_capability(REPO, BRANCH, resolve_forge=lambda url: "gitea")
     assert capability.forge == "gitea"
     assert capability.enabled is False
-    assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
-
-
-def test_a_probe_that_raises_is_recorded_not_propagated():
-    def boom(url, branch):
-        raise RuntimeError("rate limited")
-
-    capability = resolve_merge_capability(
-        REPO, BRANCH, resolve_forge=lambda url: "github", queue_enabled=boom
-    )
-    assert capability.enabled is None
-    assert "rate limited" in capability.error
     assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
 
 
@@ -620,23 +598,6 @@ def test_an_unreadable_pull_request_state_defers_instead_of_merging(cp, tmp_path
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
 
 
-def test_a_forge_queue_still_wins_when_the_repository_actually_has_one(cp, tmp_path, monkeypatch):
-    """The native queue is the fallback, not a third parallel mechanism."""
-
-    remote, source, main_head, task_head = build_repo(tmp_path)
-    forge = FakeForge(remote, tmp_path / "forge", queue=True)
-    install_forge(monkeypatch, forge)
-    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-
-    with pytest.raises(ValidationError) as excinfo:
-        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    assert getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_queued"
-    # It went to the FORGE queue, and mac's queue never enrolled it.
-    assert forge.enqueued == [{"number": 101, "sha": task_head}]
-    assert cp.store.query_all("SELECT id FROM merge_queue_entries", ()) == []
-
-
 # ---------------------------------------------------------------------------
 # Capability refresh rides on the existing poller.
 # ---------------------------------------------------------------------------
@@ -674,12 +635,12 @@ def test_the_ingest_pass_resolves_capability_once_and_then_skips_it(monkeypatch)
 
     probes: list = []
 
-    def probe(url, branch):
-        probes.append((url, branch))
+    def probe(url):
+        probes.append(url)
         return False
 
     monkeypatch.setattr(gitops, "resolve_forge", lambda url: "github")
-    monkeypatch.setattr(gitops, "merge_queue_enabled", probe)
+    monkeypatch.setattr(merge_capability, "forge_owner_is_organization", probe)
 
     first = ingestor._refresh_merge_capabilities(actor="test")
     assert first["refreshed"] == 1
@@ -987,7 +948,6 @@ def test_a_rate_limited_organization_probe_leaves_supported_unknown(monkeypatch)
         REPO,
         BRANCH,
         resolve_forge=lambda url: "github",
-        queue_enabled=lambda url, branch: False,
         owner_is_organization=boom,
     )
     assert capability.supported is None

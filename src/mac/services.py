@@ -20107,7 +20107,7 @@ class ControlPlane:
         return owner
 
     def _resolve_merge_serialization(self, clone_url: str, canonical_branch: str) -> JsonDict:
-        """Decide WHICH mechanism serializes this landing, from stored state.
+        """Record the repository's merge capability; serialize through mac's queue.
 
         The capability is a project attribute refreshed by the existing GitHub
         ingest poller (see :mod:`mac.merge_capability`), not a per-merge probe.
@@ -20115,8 +20115,9 @@ class ControlPlane:
         a repository registered five minutes ago does not have to wait for a
         poll before it can publish.
 
-        If it still cannot be determined, the answer is mac's own queue.
-        "Unknown" is never permission to do an unserialized squash.
+        The mode is always mac's own queue: no repository uses a forge merge
+        queue, so that path was removed. "Unknown" is never permission to do an
+        unserialized squash.
         """
 
         from mac.merge_capability import (
@@ -20126,7 +20127,7 @@ class ControlPlane:
             resolve_merge_capability,
             stored_capability,
         )
-        from mac.native_merge_queue import MODE_FORGE_QUEUE, MODE_NATIVE_QUEUE
+        from mac.native_merge_queue import MODE_NATIVE_QUEUE
 
         wanted = _canonicalize_git_url(clone_url)
         record = None
@@ -20156,9 +20157,8 @@ class ControlPlane:
                     self.record_repository_merge_capability(record.id, capability.to_dict())
                 except Exception:  # noqa: BLE001 - caching is best effort
                     pass
-        mode = MODE_FORGE_QUEUE if capability.use_forge_queue else MODE_NATIVE_QUEUE
         return {
-            "mode": mode,
+            "mode": MODE_NATIVE_QUEUE,
             "source": source,
             "repository_id": getattr(record, "id", "") if record is not None else "",
             "capability": capability.to_dict(),
@@ -20500,31 +20500,19 @@ class ControlPlane:
         # what was tested IS what landed. A plain forge squash-merge does not
         # preserve that -- if the canonical branch advances between the status
         # checks finishing and the merge executing, the landed tree was never
-        # tested. Required status checks alone do not close that; a MERGE
+        # tested. Required status checks alone do not close that; a merge
         # QUEUE does, and unlike `strict` required checks it serializes the
         # merges without serializing the (here ~2 hour) test runs.
         #
-        # So: use the queue when the canonical branch has one. When it does
-        # not -- no queue configured yet, gitea, or an unreadable ruleset --
-        # degrade EXPLICITLY: re-validate that the canonical tip is still the
-        # base this candidate was projected and gated against, and name the
-        # weaker serialization in the evidence. Silently squash-merging while
-        # the code still assumes the queue's guarantee is the same hole in a
-        # harder-to-see place.
-        from mac.native_merge_queue import (
-            MODE_DIRECT_SQUASH,
-            MODE_FORGE_QUEUE,
-            MODE_NATIVE_QUEUE,
-        )
+        # So: use mac's own queue. Without one -- a direct caller, or a test
+        # exercising this method alone -- degrade EXPLICITLY: re-validate that
+        # the canonical tip is still the base this candidate was projected and
+        # gated against, and name the weaker serialization in the evidence.
+        # Silently squash-merging while the code still assumes the queue's
+        # guarantee is the same hole in a harder-to-see place.
+        from mac.native_merge_queue import MODE_DIRECT_SQUASH, MODE_NATIVE_QUEUE
 
-        mode = str(ensure_json_object(serialization).get("mode") or "")
-        if not mode:
-            # No capability was resolved for us (a direct caller, or a test
-            # exercising this method alone). Ask, and fail toward the mechanism
-            # that serializes: an unknown answer is never a licence to squash.
-            probed = _gitops.merge_queue_enabled(api_url, canonical_branch)
-            mode = MODE_FORGE_QUEUE if probed else MODE_DIRECT_SQUASH
-        queue_enabled = mode == MODE_FORGE_QUEUE
+        mode = str(ensure_json_object(serialization).get("mode") or "") or MODE_DIRECT_SQUASH
         native = bool(queue is not None and queue_entry_id and mode == MODE_NATIVE_QUEUE)
 
         pre_merged: Optional[Any] = None
@@ -20622,7 +20610,7 @@ class ControlPlane:
                     observed_tip = observed_tip[0] if observed_tip else ""
                     # The tested projection is stale. Re-project; do NOT merge.
                     raise _PublicationBaseMovedError(base_sha, observed_tip or why)
-        elif not queue_enabled:
+        else:
             observed_canonical = git_step(
                 "revalidate_canonical_tip",
                 ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
@@ -20637,15 +20625,12 @@ class ControlPlane:
             {
                 "name": "merge_serialization",
                 "attempt": attempt,
-                "merge_queue": bool(queue_enabled or native),
+                "merge_queue": native,
                 "mode": mode,
                 "queue_entry_id": queue_entry_id if native else "",
                 "queue": self._merge_queue_snapshot(queue, queue_entry_id) if native else None,
                 "guarantee": (
-                    "the forge merge queue tests the projected post-merge tree "
-                    "and merges in order: what was tested is what lands"
-                    if queue_enabled
-                    else "mac's own merge queue ordered this change, tested it "
+                    "mac's own merge queue ordered this change, tested it "
                     "against the tree it will land on, and refused the merge "
                     "unless the canonical tip's tree is still that exact tree: "
                     "what was tested is what lands"
@@ -20688,7 +20673,6 @@ class ControlPlane:
                         method="squash",
                         commit_title="%s (#%d)" % (title, pr.number),
                         commit_message=body,
-                        queue_enabled=queue_enabled,
                     )
         except Exception as exc:  # noqa: BLE001
             if getattr(exc, "publication_failure_kind", "") == "publication_authority_revoked":
@@ -20708,24 +20692,11 @@ class ControlPlane:
                 "number": pr.number,
                 "merged": merge.merged,
                 "blocked": merge.blocked,
-                "queued": merge.queued,
                 "serialization": merge.serialization,
                 "sha": merge.sha,
                 "reason": merge.reason,
             }
         )
-        if merge.queued and not merge.merged:
-            # Accepted into the merge queue. The queue tests the projected
-            # post-merge tree and lands it in order, so publication is not
-            # complete yet: defer through the SAME retry backoff pending
-            # checks use, and observe the merge on a later attempt.
-            queued = ValidationError(
-                "git publication placed %s in the %s merge queue; it lands once "
-                "the queue's checks pass" % (pr.url or ("#%d" % pr.number), canonical_branch)
-            )
-            queued.publication_retry_after_seconds = 600
-            queued.publication_failure_kind = "pull_request_queued"
-            raise queued
         if not merge.merged:
             # The PR exists and is correct; the forge's own gates simply have
             # not finished. Publication is NOT complete, so the task stays in

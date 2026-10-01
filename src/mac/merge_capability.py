@@ -1,13 +1,20 @@
-"""Which merge-serialization mechanism a repository actually has.
+"""What mac knows about how a repository's branch can be serialized.
+
+## The forge merge-queue path is gone
+
+#400 routed a landing through the forge's merge queue when the canonical branch
+had one.  No repository ever did (no workflow triggers on ``merge_group``, and
+no publication used the path), so on 2026-10-01 that path was deleted: every
+pull-request landing is serialized by mac's native queue.  The capability
+record below is still resolved and stored -- it is evidence and it feeds the
+ingest report -- but it no longer selects a mechanism, and ``enabled`` is
+always ``False`` because mac never asks the forge to queue anything.
 
 ## Why this is a stored project attribute and not a per-merge probe
 
-#400 asked the forge on every publication whether the canonical branch had a
-merge queue (``gitops.merge_queue_enabled`` -> ``GET /repos/{o}/{r}/rules/
-branches/{b}``).  That is one API call per land against a rate limit, to answer
-a question whose answer changes maybe twice a year -- and it answers it at the
-worst possible moment, inside the merge window, where a rate-limited or flaky
-response has to be turned into a landing decision.
+Asking the forge on every publication is one API call per land against a rate
+limit, to answer a question whose answer changes maybe twice a year -- and it
+answers it at the worst possible moment, inside the merge window.
 
 So the answer is resolved once and stored on the project's repository record,
 in ``project_repositories.metadata`` under
@@ -22,7 +29,7 @@ already parses owner/repo out of the remote, and already holds a forge
 credential.  Capability resolution rides along on that pass, behind a TTL:
 issue ingest wants to run every 60 seconds and merge-queue configuration
 essentially never changes, so re-probing the ruleset on every poll would spend
-1,440 API calls a day per repository to re-learn the same boolean.  The TTL
+1,440 API calls a day per repository to re-learn the same answer.  The TTL
 (``MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS``, default 24h) makes that one call.
 
 Forcing a refresh now needs no new endpoint: ``POST /github-ingest/run`` (CLI:
@@ -46,12 +53,8 @@ rather than trusting it silently.
 
 ## The decision rule
 
-* forge queue supported AND enabled -> the forge queue (#400's path).
-* anything else, INCLUDING unknown -> mac's native queue.
-
-"Unknown" is never permission to do an unserialized squash.  The native queue
-serializes correctly regardless of what the forge does, so it is the safe branch
-and it is where every ambiguous answer lands.
+Every repository -> mac's native queue.  The native queue serializes correctly
+regardless of what the forge does.
 """
 
 from __future__ import annotations
@@ -98,12 +101,6 @@ class MergeCapability:
     resolved_at: str = ""
     resolver: str = ""
     error: str = ""
-
-    @property
-    def use_forge_queue(self) -> bool:
-        """Only an unambiguous yes-and-yes routes to the forge."""
-
-        return self.supported is True and self.enabled is True
 
     def to_dict(self) -> JsonDict:
         return {
@@ -177,14 +174,14 @@ def stored_capability(metadata: Any) -> Optional[MergeCapability]:
 def merge_serialization_mode(capability: Optional[MergeCapability]) -> str:
     """Map a capability (possibly missing) onto a ``merge_serialization`` mode.
 
-    Imported lazily by callers to avoid a cycle; the string values are the same
-    contract #400 established.
+    Always mac's native queue now that the forge merge-queue path is gone; the
+    argument is kept so callers need not change.  Imported lazily to avoid a
+    cycle.
     """
 
-    from mac.native_merge_queue import MODE_FORGE_QUEUE, MODE_NATIVE_QUEUE
+    from mac.native_merge_queue import MODE_NATIVE_QUEUE
 
-    if capability is not None and capability.use_forge_queue:
-        return MODE_FORGE_QUEUE
+    del capability
     return MODE_NATIVE_QUEUE
 
 
@@ -195,7 +192,6 @@ def resolve_merge_capability(
     resolver: str = "github-ingest",
     now: Callable[[], str] = utcnow,
     resolve_forge: Optional[Callable[[str], Optional[str]]] = None,
-    queue_enabled: Optional[Callable[..., Optional[bool]]] = None,
     owner_is_organization: Optional[Callable[[str], Optional[bool]]] = None,
 ) -> MergeCapability:
     """Ask the forge once.  Never raises; an unanswerable question is recorded.
@@ -207,7 +203,6 @@ def resolve_merge_capability(
     from mac import gitops as _gitops
 
     _resolve_forge = resolve_forge or _gitops.resolve_forge
-    _queue_enabled = queue_enabled or _gitops.merge_queue_enabled
     _is_org = owner_is_organization or forge_owner_is_organization
 
     remote = str(remote_url or "").strip()
@@ -259,40 +254,6 @@ def resolve_merge_capability(
             resolver=resolver,
         )
     try:
-        enabled = _queue_enabled(remote, target)
-    except Exception as exc:  # noqa: BLE001
-        return MergeCapability(
-            forge=forge,
-            credential=True,
-            branch=target,
-            remote=remote,
-            resolved_at=stamp,
-            resolver=resolver,
-            error=_safe(exc),
-        )
-    if enabled is None:
-        return MergeCapability(
-            forge=forge,
-            credential=True,
-            branch=target,
-            remote=remote,
-            resolved_at=stamp,
-            resolver=resolver,
-            error="forge could not be asked whether %s has a merge queue" % target,
-        )
-    if enabled:
-        # A queue that is on is a queue that is supported.
-        return MergeCapability(
-            forge=forge,
-            credential=True,
-            supported=True,
-            enabled=True,
-            branch=target,
-            remote=remote,
-            resolved_at=stamp,
-            resolver=resolver,
-        )
-    try:
         organization = _is_org(remote)
     except Exception:  # noqa: BLE001
         organization = None
@@ -303,7 +264,7 @@ def resolve_merge_capability(
         # organization-only feature, so a User-owned repo can never enable one
         # however the operator configures it.  Unknown ownership leaves
         # ``supported`` unknown, which is honest -- and irrelevant to routing,
-        # because ``enabled`` is already a definite False.
+        # because mac never uses a forge queue, so ``enabled`` is False.
         supported=None if organization is None else bool(organization),
         enabled=False,
         branch=target,
