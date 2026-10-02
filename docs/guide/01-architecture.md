@@ -31,7 +31,7 @@ graph TB
     subgraph Workers["Worker agents (many)"]
         W1["mac-agent<br/>claim · lease · execute"]
         SB["OpenShell sandbox"]
-        CA["coding agent CLI<br/>claude / codex / cursor"]
+        CA["coding agent CLI<br/>opencode"]
     end
 
     FORGE["GitHub"]
@@ -95,9 +95,9 @@ because authority differs:
   describe what remains outside that control.
 - **Worker agent** (`mac-agent`) — registers, heartbeats, claims one task at a
   time under a lease, executes it, submits evidence.
-- **Coding agent** — the CLI (Claude Code, Codex, Cursor) the worker spawns
-  *inside* a sandbox to do the actual work. It is not a mac principal; the
-  worker is.
+- **Coding agent** — opencode, the one CLI the worker spawns *inside* a
+  sandbox to do the actual work. It takes its model from the hub router with a
+  per-task inference token. It is not a mac principal; the worker is.
 - **Reviewer** — an agent or the default review workflow, producing a verdict
   that gates publication.
 

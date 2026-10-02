@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-opencode-review"
+SCRIPT = REPO_ROOT / "deploy" / "task-runner" / "mac-task-executor-opencode-review"
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
 

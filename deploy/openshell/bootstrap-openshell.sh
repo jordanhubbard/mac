@@ -1545,10 +1545,10 @@ validate_openshell_runtime_image() {
       --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
-      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v opencode; opencode --version | grep -F 1.18.18; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/buildx visible through OpenShell"
+    log "runtime image smoke: Bash >=5.2 plus gh/opencode/buildx visible through OpenShell"
   else
     rc=$?
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
@@ -1877,20 +1877,6 @@ chmod 600 "$MAC_HOME/openshell-policy.yaml"
 
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
 validate_openshell_runtime_image
-codex_uploads=""
-if truthy "${MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0}"; then
-  if [ -s "$HOME/.codex/auth.json" ]; then
-    codex_uploads="$codex_uploads --upload $HOME/.codex/auth.json:/tmp/.codex/auth.json"
-  fi
-  # Deliberately NOT uploading config.toml: its top-level model pin is
-  # specific to the operator workstation's codex version and breaks a worker
-  # on an older codex ("model X requires a newer version of Codex"). auth.json
-  # is the portable credential; the fleet sets the model per task via --model.
-  # (mac admin fleet creds-sync ships a model-pin-stripped config.toml when custom
-  # provider config is genuinely needed.)
-else
-  log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
-fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
 sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
@@ -1902,7 +1888,7 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
   echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref$codex_uploads\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref\""
   echo "MAC_OPENSHELL_GPU_AVAILABLE=$gpu_runtime_available"
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
   # Pin the gateway every mac-agent subprocess talks to, matching what this

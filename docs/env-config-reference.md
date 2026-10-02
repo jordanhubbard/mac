@@ -60,25 +60,15 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
 | `MAC_CLIENT_PRINCIPALS_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals file. |
 | `MAC_CLIENT_PROFILES_DIR` | str | consumer-defined | core | Core setting: client profiles dir. |
-| `MAC_CODEX_BASE_URL` | str | consumer-defined | core | Core setting: codex base url. |
-| `MAC_CODEX_MODEL` | str | consumer-defined | core | Core setting: codex model. |
-| `MAC_CODEX_PROVIDER` | str | consumer-defined | core | Core setting: codex provider. |
-| `MAC_CODEX_TOKEN` | str | consumer-defined | core | Core setting: codex token. |
-| `MAC_CODEX_WIRE_API` | str | consumer-defined | core | Core setting: codex wire api. |
-| `MAC_CODING_AGENT` | str | consumer-defined | core | Core setting: coding agent. |
-| `MAC_CODING_AGENT_CLAUDE_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent claude cmd. |
-| `MAC_CODING_AGENT_CODEX_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent codex cmd. |
-| `MAC_CODING_AGENT_CURSOR_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent cursor cmd. |
-| `MAC_CODING_AGENT_OPENCODE_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent opencode cmd. |
-| `MAC_CODING_AGENT_PI_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent pi cmd. |
+| `MAC_CODING_AGENT` | str | consumer-defined | core | Coding CLI switch. Unset or `opencode` runs opencode through the hub model router, MAC's only coding CLI; `off` disables the coding route (the executor fails closed). Any other value is ignored. |
 | `MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight failure ttl seconds. |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight timeout. |
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight ttl seconds. |
 | `MAC_CODING_AGENT_SANDBOX` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent sandbox. |
 | `MAC_CODING_AGENT_SANDBOX_OK` | bool | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent sandbox ok. |
-| `MAC_CODING_ROUTE_LADDER` | str | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route ladder. |
-| `MAC_CODING_ROUTE_LADDER_FILE` | str | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route ladder file. |
-| `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | int | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route max age seconds. |
+| `MAC_CODING_DEFAULT_MODEL` | str | gpt-5.6-sol | core | Logical router model opencode runs on (`--model machub/<name>`) when the task does not pin one with `MAC_TASK_MODEL`. |
+| `MAC_CODING_MODELS` | str | gpt-5.6-sol | core | Comma-separated logical model names the generated opencode config declares under its one provider, `machub` (the hub router at `$MAC_HUB_URL/v1`). Each must be a model the hub's `MAC_ROUTER_PROVIDERS` aliases. The task's own model is always added. |
+| `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | int | consumer-defined | coding-route | Coding Route setting: coding route max age seconds. |
 | `MAC_COMMAND_AUDIT_RETENTION_SECONDS` | int | consumer-defined | core | Core setting: command audit retention seconds. |
 | `MAC_COMMAND_ID` | str | consumer-defined | core | Core setting: command id. |
 | `MAC_CONTINUITY_BUS_CHUNK_SCAN` | str | consumer-defined | core | Core setting: continuity bus chunk scan. |
@@ -95,8 +85,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CRASH_CORE_RETAIN_COUNT` | int | consumer-defined | core | Core setting: crash core retain count. |
 | `MAC_CRASH_SPOOL_DIR` | str | consumer-defined | core | Core setting: crash spool dir. |
 | `MAC_CREDENTIAL_RENEW_AT_FRACTION` | str | consumer-defined | core | Core setting: credential renew at fraction. |
-| `MAC_CURSOR_ENDPOINT` | str | consumer-defined | core | Core setting: cursor endpoint. |
-| `MAC_CURSOR_MODEL` | str | consumer-defined | core | Core setting: cursor model. |
 | `MAC_DATABASE_URL` | str | consumer-defined | core | Core setting: database url. |
 | `MAC_DB` | str | consumer-defined | core | Core setting: db. |
 | `MAC_DEAD_CODE_MIN_CONFIDENCE` | str | consumer-defined | core | Core setting: dead code min confidence. |
@@ -218,6 +206,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_IMAGE_SOURCE_SHA_FILE` | str | consumer-defined | core | Core setting: image source sha file. |
 | `MAC_IMAGE_TAG` | str | consumer-defined | core | Core setting: image tag. |
 | `MAC_IMPACT_MAP_CHECKED` | str | consumer-defined | core | Core setting: impact map checked. |
+| `MAC_INFERENCE_TOKEN` | str | consumer-defined | core | Set by the executor inside the task sandbox, never by an operator: a per-task token bound to the worker's agent that may call only POST /v1/chat/completions and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. The worker token never enters the sandbox. |
 | `MAC_JOURNAL_AGENT` | str | consumer-defined | core | Core setting: journal agent. |
 | `MAC_JOURNAL_BACKUP_HOOK` | str | consumer-defined | core | Core setting: journal backup hook. |
 | `MAC_JOURNAL_DATE` | str | consumer-defined | core | Core setting: journal date. |
@@ -352,9 +341,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup interval. |
 | `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup timeout. |
 | `MAC_OPENCLAW_WORKSPACE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw workspace. |
-| `MAC_OPENCODE_MODEL` | str | consumer-defined | core | Core setting: opencode model. |
 | `MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell adopt published runtime. |
-| `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow codex file auth. |
 | `MAC_OPENSHELL_ALLOW_NO_LANDLOCK` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow no landlock. |
 | `MAC_OPENSHELL_BIN` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell bin. |
 | `MAC_OPENSHELL_BUILD_LOCK_POLL_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell build lock poll seconds. |
@@ -390,7 +377,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox name. |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell stale after seconds. |
 | `MAC_OPENSHELL_TASK_EGRESS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell task egress. |
-| `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell upload codex auth. |
 | `MAC_OPENSHELL_VERIFICATION_START_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell verification start timeout. |
 | `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
 | `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
@@ -410,7 +396,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PG_BACKUP_VERIFY_TOLERANCE` | str | consumer-defined | core | Core setting: pg backup verify tolerance. |
 | `MAC_PG_BIN_DIR` | str | consumer-defined | core | Core setting: pg bin dir. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
-| `MAC_PI_MODEL` | str | consumer-defined | core | Core setting: pi model. |
 | `MAC_PORT` | int | consumer-defined | core | Core setting: port. |
 | `MAC_POSTGRES_RUNTIME_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: postgres runtime command timeout seconds. |
 | `MAC_PREFER_CODING_AGENT` | bool | consumer-defined | core | Core setting: prefer coding agent. |

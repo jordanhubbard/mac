@@ -184,14 +184,14 @@ design reference, or roadmap trace).
 
 | module | classification | evidence (file:line) | has_test | verdict |
 |---|---|---|---|---|
-| `evidence_cli` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:101` (`mac-evidence = "mac.evidence_cli:main"`); also `deploy/codex-runner/mac-task-executor-codex:48` | `tests/test_evidence_cli.py` (pass) | keep-wired |
+| `evidence_cli` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:101` (`mac-evidence = "mac.evidence_cli:main"`); also `deploy/task-runner/mac-task-executor-opencode-build:83` | `tests/test_evidence_cli.py` (pass) | keep-wired |
 | `git_askpass` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:107` (`mac-git-askpass = "mac.git_askpass:main"`) | `tests/test_git_askpass.py` (pass) | keep-wired |
 | `hermes_gateway` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:102` (`mac-hermes-gateway = "mac.hermes_gateway:main"`); `main` at `src/mac/hermes_gateway.py:122` | `tests/test_hermes_gateway_sandbox.py`, `tests/test_hermes_vendor.py` (pass) | keep-wired |
 | `openshell_supervisor` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:103` (`mac-openshell-supervisor = "mac.openshell_supervisor:main"`) | `tests/test_openshell_management.py`, `tests/test_infrastructure_coverage.py` (pass) | keep-wired |
 | `openshell_collector` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:104` (`mac-openshell-collector = "mac.openshell_collector:main"`) | `tests/test_openshell_management.py`, `tests/test_infrastructure_coverage.py` (pass) | keep-wired |
 | `webdav_server` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:91` (`mac-webdav-server = "mac.webdav_server:main"`); also `deploy/install-webdav-server.sh:193` | `tests/test_webdav_server.py` (pass) | keep-wired |
 | `project_inception` | WIRED-VIA-SCRIPT/DEPLOY | `scripts/prove-c26-inception.py:9` (`from mac.project_inception import run_c26_project_inception_proof`) | `tests/test_project_inception.py` (pass) | keep-wired |
-| `review_finalizer` | WIRED-VIA-SCRIPT/DEPLOY | `deploy/codex-runner/mac-task-executor-opencode-review:449` (`python3 -m mac.review_finalizer`) | `tests/test_review_finalizer.py` (pass) | keep-wired |
+| `review_finalizer` | WIRED-VIA-SCRIPT/DEPLOY | `deploy/task-runner/mac-task-executor-opencode-review:449` (`python3 -m mac.review_finalizer`) | `tests/test_review_finalizer.py` (pass) | keep-wired |
 | `hermes_chat_config` | WIRED-VIA-SCRIPT/DEPLOY | `deploy/fleet-node-install.sh:8755` (`python -m mac.hermes_chat_config ...`) | `tests/test_hermes_chat_config.py` (pass) | keep-wired |
 | `ide_launcher` | WIRED-VIA-SCRIPT/DEPLOY | `Makefile:302` (`"$(PYTHON)" -m mac.ide_launcher`) | `tests/test_ide_launcher.py` (pass) | keep-wired |
 | `dream_scanner` | WIRED-VIA-DESIGN-SURFACE | design ref `src/mac/dream_repair_tasks.py:22`; in `src/mac/data/test_impact_map.json`; §6.1 `docs/audit.md:259` | `tests/test_dream_scanner.py` (pass) | stage-with-tracking |

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 
 import pytest
 import yaml
@@ -109,42 +108,12 @@ def test_real_operator_template_renders(tmp_path):
     assert {"pypi.org", "files.pythonhosted.org"} <= package_hosts
     github_bins = {binary["path"] for binary in doc["network_policies"]["github"]["binaries"]}
     assert {"/usr/bin/gh", "/usr/local/bin/gh"} <= github_bins
-    claude_policy = doc["network_policies"]["claude_provider"]
-    assert {endpoint["host"] for endpoint in claude_policy["endpoints"]} == {"api.anthropic.com"}
-    cursor_policy = doc["network_policies"]["cursor_provider"]
-    assert {
-        "api2.cursor.sh",
-        "**.api5.cursor.sh",
-        "repo42.cursor.sh",
-        "authenticator.cursor.sh",
-    } <= {endpoint["host"] for endpoint in cursor_policy["endpoints"]}
-    cursor_api5 = next(
-        endpoint
-        for endpoint in cursor_policy["endpoints"]
-        if endpoint["host"] == "**.api5.cursor.sh"
-    )
-    assert cursor_api5 == {
-        "host": "**.api5.cursor.sh",
-        "port": 443,
-        "tls": "skip",
-    }
-    containerfile = (repo / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
-        encoding="utf-8"
-    )
-    claude_version = re.search(
-        r'^ARG CLAUDE_VERSION="([^"]+)"$', containerfile, re.MULTILINE
-    ).group(1)
-    cursor_version = re.search(
-        r'^ARG CURSOR_VERSION="([^"]+)"$', containerfile, re.MULTILINE
-    ).group(1)
-    assert {
-        "/usr/local/bin/claude",
-        f"/usr/local/lib/claude-code/versions/{claude_version}/claude",
-    } <= {binary["path"] for binary in claude_policy["binaries"]}
-    assert {
-        "/usr/local/bin/cursor-agent",
-        f"/usr/local/lib/cursor-agent/versions/{cursor_version}/node",
-    } <= {binary["path"] for binary in cursor_policy["binaries"]}
+    # opencode is the only coding CLI, and it reaches only the hub router.
+    policies = doc["network_policies"]
+    for retired in ("codex", "claude", "cursor", "pi", "opencode"):
+        assert "%s_provider" % retired not in policies
+    router = policies["opencode_router"]
+    assert [(e["host"], e["port"]) for e in router["endpoints"]] == [("100.125.137.89", 8789)]
     # operator policy is best_effort (OpenShell egress-proxy incompatibility with
     # hard_requirement); the executor's Landlock precheck recovers fail-closed.
     assert doc["landlock"]["compatibility"] == "best_effort"

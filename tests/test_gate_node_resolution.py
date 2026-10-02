@@ -1,6 +1,6 @@
 """Tests for the opencode-build gate's per-project Node version resolution.
 
-The gate (deploy/codex-runner/mac-task-executor-opencode-build) resolves the
+The gate (deploy/task-runner/mac-task-executor-opencode-build) resolves the
 Node version a JS/TS repo declares (.nvmrc / .node-version / engines.node / CI
 workflow) so the pre-push test gate runs under that toolchain instead of the
 image's baseline Node. The resolved value is interpolated into a shell that
@@ -24,7 +24,7 @@ import pytest
 GATE = (
     Path(__file__).resolve().parents[1]
     / "deploy"
-    / "codex-runner"
+    / "task-runner"
     / "mac-task-executor-opencode-build"
 )
 

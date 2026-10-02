@@ -82,9 +82,9 @@ mac-router = "mac.router_service:main"
 # mac-ledger-backup entry point went with its module.
 mac-pg-backup = "mac.pg_backup:main"
 mac-schema-migrate = "mac.schema_migrations:main"
-# Thin CLI shared by host-mode workers and the Job-pod codex stubs to
+# Thin CLI shared by host-mode workers and the Job-pod task-runner stubs to
 # sign worker_evidence manifests without re-implementing the canonical
-# HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).
+# HMAC in bash heredocs (see deploy/task-runner/mac-task-executor-*).
 mac-evidence = "mac.evidence_cli:main"
 mac-openshell-supervisor = "mac.openshell_supervisor:main"
 mac-openshell-collector = "mac.openshell_collector:main"

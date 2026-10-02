@@ -2,7 +2,7 @@
 
 The interesting invariant is byte-for-byte signature compatibility with
 ``mac.services.sign_verification_manifest`` — the bash stubs in
-``deploy/codex-runner`` and the host worker MUST produce the same HMAC
+``deploy/task-runner`` and the host worker MUST produce the same HMAC
 or evidence written by one path will fail to verify when consumed by
 the other.
 """
@@ -23,7 +23,7 @@ from mac.services import sign_verification_manifest
 
 def _sample_manifest() -> Dict[str, Any]:
     # Shape mirrors the operator_result stub produced by
-    # deploy/codex-runner/mac-task-executor-codex.
+    # deploy/task-runner/mac-task-executor-opencode-build.
     return {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",

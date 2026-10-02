@@ -166,10 +166,6 @@ def test_worker_token_still_reaches_v1() -> None:
     app, proxy = _app(cp)
     with TestClient(app) as client:
         assert _chat(client, worker).status_code == 200
-        responses = client.post(
-            "/v1/responses", headers=_bearer(worker), json={"model": "m", "input": "hi"}
-        )
-        assert responses.status_code == 200
     assert proxy.calls[0]["route_context"]["agent_id"] == "agent_alpha"
 
 

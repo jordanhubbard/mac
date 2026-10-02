@@ -15,7 +15,7 @@ def test_git_minimum_and_provisioning_assets_are_guarded() -> None:
 
     for relative in (
         "Dockerfile",
-        "Dockerfile.codex-runner",
+        "Dockerfile.task-runner",
         "deploy/openshell/mac-hermes.Containerfile",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")

@@ -81,8 +81,8 @@ def test_executor_compiles_after_route_selection_before_private_file(monkeypatch
 def test_all_known_script_dispatches_cross_compiler_boundary():
     root = Path(__file__).parents[1]
     for relative in (
-        "deploy/codex-runner/mac-task-executor-opencode-build",
-        "deploy/codex-runner/mac-task-executor-opencode-review",
+        "deploy/task-runner/mac-task-executor-opencode-build",
+        "deploy/task-runner/mac-task-executor-opencode-review",
     ):
         text = (root / relative).read_text(encoding="utf-8")
         assert "compile_coding_prompt" in text
