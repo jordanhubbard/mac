@@ -1,6 +1,6 @@
 """Integration tests for the opencode-build role executor script.
 
-Runs ``deploy/codex-runner/mac-task-executor-opencode-build`` (the same
+Runs ``deploy/task-runner/mac-task-executor-opencode-build`` (the same
 bash script the K8s Job pod invokes via MAC_TASK_EXECUTOR_COMMAND) with
 fake ``opencode``, ``git``, ``curl`` and ``mac`` binaries on PATH and
 asserts on the resulting ``mac.worker_evidence.v1`` manifest.
@@ -42,7 +42,7 @@ from mac.services import ControlPlane
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_SCRIPT = REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-opencode-build"
+BUILD_SCRIPT = REPO_ROOT / "deploy" / "task-runner" / "mac-task-executor-opencode-build"
 
 
 pytestmark = pytest.mark.skipif(

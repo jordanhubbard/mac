@@ -50,12 +50,11 @@ integration or protocol influence is not mistaken for copied source:
   OpenShell policy for always-on chat channels while MAC remains the durable
   task and fleet control plane. See
   [OpenClaw public identities](docs/openclaw-identities.md).
-- **[OpenAI Codex](https://github.com/openai/codex) — coding executor:** MAC
-  installs and invokes the Codex CLI for repository-editing workers inside its
-  evidence and sandbox gates.
 - **[OpenCode](https://github.com/anomalyco/opencode) — coding executor and
-  reviewer:** MAC ships OpenCode build and independent review executors,
-  wrapped by MAC-owned test, evidence, and publication gates.
+  reviewer:** OpenCode is MAC's only coding CLI. It runs inside MAC's sandbox
+  and evidence gates and takes its model from the hub router; MAC also ships
+  OpenCode build and independent review executors, wrapped by MAC-owned test,
+  evidence, and publication gates.
 - **[NVIDIA NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) — optional
   observability:** MAC maps request, task, tool, and model activity into Relay
   scopes when the `relay` extra is enabled.

@@ -150,8 +150,6 @@ marked `historical archive` and must not be read as current behaviour.
 | runbook | [`break-glass-host-recovery.md`](../break-glass-host-recovery.md) | Break-glass host recovery |
 | supplemental reference | [`c26-certifier-phase-profile-example.md`](../c26-certifier-phase-profile-example.md) | c26 certifier phase-profile example |
 | supplemental reference | [`client-bootstrap-contract.md`](../client-bootstrap-contract.md) | Client Bootstrap Contracts |
-| supplemental reference | [`coding-cli-credentials.md`](../coding-cli-credentials.md) | Coding-CLI Credentials and Model Selection |
-| supplemental reference | [`coding-route-ladder.md`](../coding-route-ladder.md) | The coding-route ladder |
 | supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis |
 | supplemental reference | [`dashboard-connection.md`](../dashboard-connection.md) | Dashboard Connection Contract |
 | supplemental reference | [`dedicated-vm-verifier.md`](../dedicated-vm-verifier.md) | Dedicated VM repository verification |

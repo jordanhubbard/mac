@@ -190,7 +190,6 @@
       "deploy/systemd/mac-openshell-supervisor.service",
       "scripts/run-contract-tests.sh",
       "src/mac/cli.py",
-      "src/mac/coding_agent.py",
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
@@ -343,6 +342,7 @@
       "src/mac/api.py",
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
+      "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -674,126 +674,9 @@
   },
   {
     "default": null,
-    "description": "Core setting: codex base url.",
-    "family": "core",
-    "name": "MAC_CODEX_BASE_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: codex model.",
-    "family": "core",
-    "name": "MAC_CODEX_MODEL",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: codex provider.",
-    "family": "core",
-    "name": "MAC_CODEX_PROVIDER",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: codex token.",
-    "family": "core",
-    "name": "MAC_CODEX_TOKEN",
-    "retired": false,
-    "sources": [
-      "src/mac/agent_command.py",
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: codex wire api.",
-    "family": "core",
-    "name": "MAC_CODEX_WIRE_API",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: coding agent.",
+    "description": "Coding CLI switch. Unset or `opencode` runs opencode through the hub model router, MAC's only coding CLI; `off` disables the coding route (the executor fails closed). Any other value is ignored.",
     "family": "core",
     "name": "MAC_CODING_AGENT",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/route_ladder.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Coding Agent Auth setting: coding agent claude cmd.",
-    "family": "coding-agent-auth",
-    "name": "MAC_CODING_AGENT_CLAUDE_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Coding Agent Auth setting: coding agent codex cmd.",
-    "family": "coding-agent-auth",
-    "name": "MAC_CODING_AGENT_CODEX_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Coding Agent Auth setting: coding agent cursor cmd.",
-    "family": "coding-agent-auth",
-    "name": "MAC_CODING_AGENT_CURSOR_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Coding Agent Auth setting: coding agent opencode cmd.",
-    "family": "coding-agent-auth",
-    "name": "MAC_CODING_AGENT_OPENCODE_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Coding Agent Auth setting: coding agent pi cmd.",
-    "family": "coding-agent-auth",
-    "name": "MAC_CODING_AGENT_PI_CMD",
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py"
@@ -857,31 +740,31 @@
     "type": "bool"
   },
   {
-    "default": null,
-    "description": "Coding Route Ladder setting: coding route ladder.",
-    "family": "coding-route-ladder",
-    "name": "MAC_CODING_ROUTE_LADDER",
+    "default": "gpt-5.6-sol",
+    "description": "Logical router model opencode runs on (`--model machub/<name>`) when the task does not pin one with `MAC_TASK_MODEL`.",
+    "family": "core",
+    "name": "MAC_CODING_DEFAULT_MODEL",
     "retired": false,
     "sources": [
-      "src/mac/route_ladder.py"
+      "src/mac/coding_agent.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": "gpt-5.6-sol",
+    "description": "Comma-separated logical model names the generated opencode config declares under its one provider, `machub` (the hub router at `$MAC_HUB_URL/v1`). Each must be a model the hub's `MAC_ROUTER_PROVIDERS` aliases. The task's own model is always added.",
+    "family": "core",
+    "name": "MAC_CODING_MODELS",
+    "retired": false,
+    "sources": [
+      "src/mac/coding_agent.py"
     ],
     "type": "str"
   },
   {
     "default": null,
-    "description": "Coding Route Ladder setting: coding route ladder file.",
-    "family": "coding-route-ladder",
-    "name": "MAC_CODING_ROUTE_LADDER_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/route_ladder.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Coding Route Ladder setting: coding route max age seconds.",
-    "family": "coding-route-ladder",
+    "description": "Coding Route setting: coding route max age seconds.",
+    "family": "coding-route",
     "name": "MAC_CODING_ROUTE_MAX_AGE_SECONDS",
     "retired": false,
     "sources": [
@@ -907,7 +790,6 @@
     "name": "MAC_COMMAND_ID",
     "retired": false,
     "sources": [
-      "src/mac/coding_agent.py",
       "src/mac/prompt_master.py",
       "src/mac/router_app.py"
     ],
@@ -1068,30 +950,6 @@
     "retired": false,
     "sources": [
       "src/mac/credential_renewal.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cursor endpoint.",
-    "family": "core",
-    "name": "MAC_CURSOR_ENDPOINT",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cursor model.",
-    "family": "core",
-    "name": "MAC_CURSOR_MODEL",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py",
-      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -1632,7 +1490,6 @@
     "retired": false,
     "sources": [
       "src/mac/cli.py",
-      "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
@@ -2353,8 +2210,10 @@
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
+      "deploy/openshell/mac-hermes-policy.yaml",
       "deploy/systemd/mac-fleet-context.service",
       "src/mac/cli.py",
+      "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -2571,6 +2430,20 @@
     "retired": false,
     "sources": [
       "scripts/run-sanity-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Set by the executor inside the task sandbox, never by an operator: a per-task token bound to the worker's agent that may call only POST /v1/chat/completions and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. The worker token never enters the sandbox.",
+    "family": "core",
+    "name": "MAC_INFERENCE_TOKEN",
+    "retired": false,
+    "sources": [
+      "src/mac/api.py",
+      "src/mac/coding_agent.py",
+      "src/mac/executor_sandbox.py",
+      "src/mac/inference_tokens.py"
     ],
     "type": "str"
   },
@@ -4121,17 +3994,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: opencode model.",
-    "family": "core",
-    "name": "MAC_OPENCODE_MODEL",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Openshell Sandbox setting: openshell adopt published runtime.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME",
@@ -4140,17 +4002,6 @@
       "src/mac/worker.py"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openshell Sandbox setting: openshell allow codex file auth.",
-    "family": "openshell-sandbox",
-    "name": "MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH",
-    "retired": false,
-    "sources": [
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "bool"
   },
   {
     "default": null,
@@ -4585,18 +4436,6 @@
   },
   {
     "default": null,
-    "description": "Openshell Sandbox setting: openshell upload codex auth.",
-    "family": "openshell-sandbox",
-    "name": "MAC_OPENSHELL_UPLOAD_CODEX_AUTH",
-    "retired": false,
-    "sources": [
-      "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Openshell Sandbox setting: openshell verification start timeout.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_VERIFICATION_START_TIMEOUT",
@@ -4647,7 +4486,6 @@
     "name": "MAC_PERSONA_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "src/mac/coding_agent.py",
       "src/mac/hermes_runtime.py",
       "src/mac/router_app.py"
     ],
@@ -4808,17 +4646,6 @@
       "src/mac/store.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: pi model.",
-    "family": "core",
-    "name": "MAC_PI_MODEL",
-    "retired": false,
-    "sources": [
-      "src/mac/coding_agent.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -7016,6 +6843,7 @@
     "name": "MAC_TOKEN",
     "retired": false,
     "sources": [
+      "src/mac/coding_agent.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/fleet_env.py",
@@ -7103,6 +6931,7 @@
     "sources": [
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
+      "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -7593,6 +7422,7 @@
     "sources": [
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
+      "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",

@@ -106,94 +106,17 @@ network_policies:
     binaries:
       - { path: __RUNTIME_PY__ }
 
-  # --- Codex CLI provider egress for repository-editing tasks. ---
-  # The CLI is a Node program. Both the symlink launcher and node itself are
-  # listed so policy enforcement remains correct regardless of exec handoff.
-  codex_provider:
-    name: codex-provider
-    endpoints:
-      - host: chatgpt.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: chat.openai.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: auth.openai.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: api.openai.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-    binaries:
-      - { path: /usr/local/bin/codex }
-      - { path: /usr/bin/node }
-
-  # --- Claude Code provider egress for repository-editing tasks. ---
-  # Claude is a reviewed native CLI in this image.  List both the stable PATH
-  # entry and its pinned resolved executable so OpenShell can attribute the
-  # socket after symlink resolution.
-  claude_provider:
-    name: claude-provider
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      # NOT added, deliberately: NVIDIA's pi policy allows claude.ai and
-      # platform.claude.com. Those serve the BROWSER OAuth login, which a
-      # headless sandbox cannot perform; mac's claude route authenticates from
-      # ANTHROPIC_API_KEY or ~/.claude/.credentials.json, and both talk to
-      # api.anthropic.com. Adding them would widen a deny-by-default boundary
-      # for a flow that cannot happen here. test_real_operator_template_renders
-      # pins this host set precisely so that stays a decision.
-    binaries:
-      - { path: /usr/local/bin/claude }
-      - { path: /usr/local/lib/claude-code/versions/2.1.220/claude }
-
-  # --- Cursor Agent provider egress for repository-editing tasks. ---
-  # Cursor's agent transport uses streaming connections to its own backend.
-  # Scope raw TLS to the reviewed CLI's documented service hosts instead of
-  # forcing those streams through REST inspection.  The versioned Node path is
-  # intentional: cursor-agent resolves its launcher symlink and execs that
-  # bundled runtime.  tests/test_openshell_policy.py binds these paths to the
-  # pinned Containerfile versions so a CLI upgrade cannot silently drift.
-  cursor_provider:
-    name: cursor-provider
-    endpoints:
-      - { host: api2.cursor.sh, port: 443 }
-      - { host: api3.cursor.sh, port: 443 }
-      - { host: api4.cursor.sh, port: 443 }
-      # Cursor fetches a region-specific agent URL from api2 at runtime (for
-      # example agentn.us.api5.cursor.sh). OpenShell's ** DNS glob covers one
-      # or more leading labels while remaining scoped to Cursor's api5 zone.
-      # The agent stream negotiates HTTP/2; `tls: skip` disables OpenShell's
-      # HTTP/1-oriented TLS auto-detection and keeps this endpoint as the raw
-      # TCP passthrough declared by the omitted protocol field.
-      - { host: "**.api5.cursor.sh", port: 443, tls: skip }
-      - { host: repo42.cursor.sh, port: 443 }
-      - { host: authenticator.cursor.sh, port: 443 }
-      - { host: prod.authentication.cursor.sh, port: 443 }
-      - { host: api.cursor.com, port: 443 }
-    binaries:
-      - { path: /usr/local/bin/cursor-agent }
-      - { path: /usr/local/lib/cursor-agent/versions/2026.07.23-e383d2b/node }
-
   # --- opencode -> the hub's model router: the coding CLI's model path. ---
   # The executor generates an opencode config whose only provider is the hub
   # router ($MAC_HUB_URL/v1) and hands the sandbox a per-task token that may
   # call POST /v1/chat/completions and /v1/embeddings and nothing else. This
   # block holds the CLI to the same two routes at the proxy, so even a
-  # misbehaving opencode cannot reach the hub's task/ledger API with it. The
-  # binaries are the same pair opencode_provider lists below.
+  # misbehaving opencode cannot reach the hub's task/ledger API with it.
+  # opencode is npm-installed and reached through a symlink, so both the PATH
+  # entry and the resolved target are listed for socket attribution after
+  # symlink resolution. The `.exe` suffix is upstream's naming on every
+  # platform, not a Windows artefact. It is the only coding-CLI egress: any
+  # provider failover happens in the hub router, not in the sandbox.
   opencode_router:
     name: opencode-router
     endpoints:
@@ -207,70 +130,6 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/opencode }
       - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
-
-  # --- opencode provider egress (legacy direct-provider route). ---
-  # Used only by a worker without hub credentials; with them, opencode goes
-  # through opencode_router above.
-  # opencode is a multi-provider client: the provider is chosen per model in
-  # ~/.config/opencode/opencode.json, so unlike claude/codex/cursor there is no
-  # single vendor host implied by the CLI itself. This fleet's opencode config
-  # authenticates to the NVIDIA inference API, so that is what is allowed here.
-  # Changing the configured provider therefore requires changing this block --
-  # deliberately, because silently following a config file into an unreviewed
-  # endpoint is the thing the deny-by-default proxy exists to prevent.
-  #
-  # The binary is npm-installed and reached through a symlink, so both the PATH
-  # entry and the resolved target are listed for socket attribution after
-  # symlink resolution, matching the claude/cursor blocks. The `.exe` suffix is
-  # upstream's naming on every platform, not a Windows artefact.
-  opencode_provider:
-    name: opencode-provider
-    endpoints:
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      # opencode's OWN model catalog (`opencode/*` in `opencode models`, e.g.
-      # opencode/big-pickle, opencode/nemotron-3-ultra-free) is served by
-      # opencode.ai, not by whatever provider the config names. Pinning one of
-      # those models with only the configured provider allowed would fail at
-      # the proxy, not at selection -- and the CLI also reaches here for
-      # autoupdate, which its config enables by default.
-      - host: opencode.ai
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-    binaries:
-      - { path: /usr/local/bin/opencode }
-      - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
-
-  # --- pi provider egress for repository-editing tasks. ---
-  # pi is multi-provider like opencode: it picks a provider per model from its
-  # own catalog, so no vendor host is implied by the CLI itself. Scoped to the
-  # NVIDIA inference endpoint, which is what this fleet's other multi-provider
-  # route already uses and what NVIDIA's own pi profile configures
-  # (horde-next-ops packages/openshell-worker/assets). Pointing pi at a
-  # different provider requires changing this block, deliberately.
-  #
-  # pi is a NODE script (bin/pi -> dist/cli.js), so node is what actually opens
-  # the socket -- both are listed, exactly as cursor_provider lists its bundled
-  # runtime. Without the node paths the proxy cannot attribute the connection
-  # and the route is denied with no obvious cause.
-  pi_provider:
-    name: pi-provider
-    endpoints:
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-    binaries:
-      - { path: /usr/local/bin/pi }
-      - { path: /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js }
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
 
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22

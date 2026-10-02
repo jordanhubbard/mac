@@ -6,7 +6,6 @@ USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm && \
     python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" && \
-    npm install -g @openai/codex && \
     npm install -g opencode-ai && \
     npm cache clean --force && \
     apt-get autoremove -y && \
@@ -14,7 +13,7 @@ RUN apt-get update && \
 
 # The image is a BOOTSTRAP, not a per-project toolchain. It ships baseline
 # Node + nvm (Node version switching), uv (Python interpreter + venv
-# provisioning), and opencode (agent fallback). The pre-push gate
+# provisioning), and opencode (the coding CLI). The pre-push gate
 # (mac-task-executor-opencode-build) resolves and provisions each project's
 # DECLARED toolchain at test time so the verdict reflects the code, not the
 # image's defaults. Do not hardcode a project's Node/Python version here.
@@ -33,13 +32,9 @@ RUN mkdir -p "${NVM_DIR}" && \
 COPY --from=ghcr.io/astral-sh/uv:0.12.12@sha256:73d2665b478d8fa2de1cf105c6841f8e9cb6b09e568fc7700440c09f8fcd7ac4 /uv /usr/local/bin/uv
 RUN uv --version
 
-COPY deploy/codex-runner/mac-task-executor-codex /usr/local/bin/mac-task-executor-codex
-COPY deploy/codex-runner/mac-task-executor-codex-review /usr/local/bin/mac-task-executor-codex-review
-COPY deploy/codex-runner/mac-task-executor-opencode-build /usr/local/bin/mac-task-executor-opencode-build
-COPY deploy/codex-runner/mac-task-executor-opencode-review /usr/local/bin/mac-task-executor-opencode-review
-RUN chmod a+rx /usr/local/bin/mac-task-executor-codex \
-               /usr/local/bin/mac-task-executor-codex-review \
-               /usr/local/bin/mac-task-executor-opencode-build \
+COPY deploy/task-runner/mac-task-executor-opencode-build /usr/local/bin/mac-task-executor-opencode-build
+COPY deploy/task-runner/mac-task-executor-opencode-review /usr/local/bin/mac-task-executor-opencode-review
+RUN chmod a+rx /usr/local/bin/mac-task-executor-opencode-build \
                /usr/local/bin/mac-task-executor-opencode-review
 
 USER mac

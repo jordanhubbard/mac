@@ -210,7 +210,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store" in script
     assert "podman load" in script
     assert (
-        "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/buildx visible through OpenShell"
+        "runtime image smoke: Bash >=5.2 plus gh/opencode/buildx visible through OpenShell"
         in script
     )
     assert (
@@ -296,8 +296,9 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert 'OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:' in script
     assert script.count('supervisor_image = "$OSH_SUPERVISOR_IMAGE"') == 1
     assert "openshell/supervisor:latest" not in script
-    assert "MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0" in script
-    assert "rotating OAuth state is not durable in throwaway sandboxes" in script
+    # No coding-CLI credential file is uploaded into task sandboxes any more.
+    assert "MAC_OPENSHELL_UPLOAD_CODEX_AUTH" not in script
+    assert ".codex/auth.json" not in script
     create_arg_lines = [
         line for line in script.splitlines() if 'echo "MAC_OPENSHELL_CREATE_ARGS=' in line
     ]
@@ -446,12 +447,8 @@ def test_openshell_image_uses_pinned_offline_assets():
     assert "docker.io/library/python:3.12" not in containerfile
     assert 'ARG NODE_VERSION="22.23.1"' in containerfile
     assert 'ARG PNPM_VERSION="11.13.1"' in containerfile
-    assert 'ARG CODEX_VERSION="0.140.0"' in containerfile
-    assert 'ARG CLAUDE_VERSION="2.1.220"' in containerfile
-    assert 'ARG CURSOR_VERSION="2026.07.23-e383d2b"' in containerfile
+    assert 'ARG OPENCODE_VERSION="1.18.18"' in containerfile
     assert '"pnpm@${PNPM_VERSION}"' in containerfile
-    assert "claude-${asset_arch}.tgz" in containerfile
-    assert "cursor-${asset_arch}.tgz" in containerfile
     assert "npm install -g pnpm" not in containerfile
     assert "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets" in containerfile
     assert 'ARG GH_VERSION="2.95.0"' in containerfile
@@ -463,35 +460,29 @@ def test_openshell_image_uses_pinned_offline_assets():
     assert "raw.githubusercontent.com" not in containerfile
 
 
-def test_runtime_image_proves_all_three_coding_clis_resolve_on_path() -> None:
-    """The reconciled advertisement/probe contract requires every coding-agent
-    CLI (``codex``, ``claude``, ``cursor-agent``) to resolve by basename through
-    the image-owned PATH. The Containerfile build MUST gate each with
-    ``command -v <basename>`` plus a pinned ``--version`` so a missing install,
-    a dangling symlink, or a non-PATH binary fails the build closed instead of
-    shipping an image the in-sandbox probe later rejects as
-    ``agent_binary_missing`` (the reported cursor-agent-not-on-PATH case)."""
+def test_runtime_image_proves_the_coding_cli_resolves_on_path() -> None:
+    """opencode is the only coding CLI. It must resolve by basename through the
+    image-owned PATH: the Containerfile gates it with ``command -v opencode``
+    plus a pinned ``--version`` so a missing install, a dangling symlink, or a
+    non-PATH binary fails the build closed instead of shipping an image the
+    in-sandbox probe later rejects as ``agent_binary_missing``. No other coding
+    CLI is installed."""
     containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
         encoding="utf-8"
     )
 
-    # Basename PATH-resolution proof for all three CLIs plus the cursor `agent`
-    # alias, so build-time catches an unlinked/host-only binary.
-    for basename in ("codex", "claude", "cursor-agent", "agent"):
-        assert f"command -v {basename}" in containerfile, basename
-
-    # Pinned version proof for all three CLIs (codex previously had none).
-    assert 'codex --version | grep -F "${CODEX_VERSION}"' in containerfile
-    assert 'claude --version | grep -F "${CLAUDE_VERSION}"' in containerfile
-    assert 'cursor-agent --version | grep -F "${CURSOR_VERSION}"' in containerfile
+    assert "command -v opencode" in containerfile
+    assert 'opencode --version | grep -F "${OPENCODE_VERSION}"' in containerfile
+    for retired in ("codex", "claude", "cursor-agent", "pi"):
+        assert f"command -v {retired} " not in containerfile + " ", retired
+    for package in ("@openai/codex", "pi-coding-agent", "claude-${asset_arch}", "cursor-"):
+        assert package not in containerfile, package
 
 
-def test_runtime_image_smoke_checks_catch_missing_cursor_agent_on_path() -> None:
-    """Every runtime-image smoke check (enforcement-mode on Docker Desktop and
-    the Linux gateway smoke) must probe all three coding CLIs with path + version
-    + a minimal non-mutating ``--version`` invocation. This is what would catch
-    a regression that drops ``cursor-agent`` from the image-owned PATH while
-    preserving the fail-closed posture for both static and fungible classes."""
+def test_runtime_image_smoke_checks_the_coding_cli_on_path() -> None:
+    """The runtime-image smoke check must probe opencode with path + pinned
+    version, so a regression that drops it from the image-owned PATH fails the
+    bootstrap rather than every task's preflight."""
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
@@ -501,17 +492,15 @@ def test_runtime_image_smoke_checks_catch_missing_cursor_agent_on_path() -> None
         for line in bootstrap.splitlines()
         if "-- /bin/bash -c" in line
         and "mac-verify-bash-contract" in line
-        and "command -v cursor-agent" in line
+        and "command -v opencode" in line
     ]
     # One runtime-image smoke block, not two: the darwin block went away
     # with the macOS Docker path (ADR 0015). Linux is unchanged.
     assert len(smoke_lines) >= 1, smoke_lines
     for line in smoke_lines:
-        for basename in ("codex", "claude", "cursor-agent"):
-            assert f"command -v {basename}" in line, (basename, line)
-        assert "codex --version" in line
-        assert "claude --version | grep -F 2.1.220" in line
-        assert "cursor-agent --version | grep -F 2026.07.23-e383d2b" in line
+        assert "opencode --version | grep -F 1.18.18" in line
+        for retired in ("codex", "claude", "cursor-agent"):
+            assert f"command -v {retired}" not in line, (retired, line)
 
 
 def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
@@ -1306,9 +1295,9 @@ def test_linux_gateway_firewall_resolves_only_the_owned_docker_bridge(tmp_path):
 def test_runtime_publication_verifier_requires_anonymous_digest_readback():
     verifier = (ROOT / "scripts" / "verify-runtime-publication.py").read_text(encoding="utf-8")
     assert "mac-openshell-runtime@sha256:" in verifier
-    assert 'claude --version | grep -F "2.1.220"' in verifier
-    assert 'cursor-agent --version | grep -F "2026.07.23-e383d2b"' in verifier
-    assert "command -v codex; command -v claude; command -v cursor-agent;" in verifier
+    assert "command -v opencode; " in verifier
+    assert 'opencode --version | grep -F "1.18.18"' in verifier
+    assert "command -v codex" not in verifier
     assert 'anonymous_env["DOCKER_CONFIG"] = config' in verifier
     assert '"pull", args.image_ref' in verifier
     assert "org.opencontainers.image.revision" in verifier
@@ -1344,9 +1333,9 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
     assert '--build-arg "NODE_VERSION=$NODE_VERSION"' in script
     assert '--build-arg "PNPM_VERSION=$PNPM_VERSION"' in script
-    assert '--build-arg "CODEX_VERSION=$CODEX_VERSION"' in script
-    assert '--build-arg "CLAUDE_VERSION=$CLAUDE_VERSION"' in script
-    assert '--build-arg "CURSOR_VERSION=$CURSOR_VERSION"' in script
+    assert "CODEX_VERSION" not in script
+    assert "CLAUDE_VERSION" not in script
+    assert "CURSOR_VERSION" not in script
     assert '--build-arg "TARGETARCH=$TARGETARCH"' in script
     assert "x86_64|amd64) TARGETARCH=amd64" in script
     assert "aarch64|arm64) TARGETARCH=arm64" in script

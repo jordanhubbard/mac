@@ -43,3 +43,12 @@ def test_the_coding_cli_may_reach_the_hub_router_from_the_image_path():
     assert block.get("endpoints"), "the router block grants no endpoints"
     paths = [entry["path"] for entry in block.get("binaries") or []]
     assert "/usr/local/bin/%s" % CODING_AGENT in paths
+
+
+def test_the_committed_bom_names_no_other_coding_cli():
+    import json
+
+    bom = json.loads((ROOT / "deploy" / "openshell" / "sandbox-bom.json").read_text("utf-8"))
+    for key in ("commands", "core_commands"):
+        assert CODING_AGENT in bom[key]
+        assert not {"claude", "codex", "cursor-agent", "pi"} & set(bom[key]), key

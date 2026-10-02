@@ -712,12 +712,10 @@ def test_contract_runner_scrubs_provider_credentials_from_route_detection(tmp_pa
     """The hermetic sweep must clear the non-MAC_-prefixed coding-agent
     provider credentials that ``coding_agent`` route detection fingerprints.
 
-    A fleet worker / codex-runner host carries live provider secrets in its
-    environment. ``coding_agent._detect_codex`` honors ``OPENAI_API_KEY`` *and*
-    ``CODEX_API_KEY``; if either leaks past the sweep the codex route's
-    ``auth_source`` (and thus its route fingerprint) shifts and hermetic
-    detection tests that pass on tokenless hosts start failing on any host with
-    a configured coding route. Prove every provider knob the runner promises to
+    A fleet worker / task-runner host carries live provider secrets in its
+    environment; if one leaks past the sweep, hermetic tests that pass on
+    tokenless hosts start failing on any host with a configured provider.
+    Prove every provider knob the runner promises to
     clear is actually ``<unset>`` by the time the pytest phase runs.
     """
     bin_dir = tmp_path / "bin"

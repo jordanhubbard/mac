@@ -155,7 +155,7 @@ Every code-executor worker (`mac-worker-python-coder-opencode` and any
 other code executor) enforces a **mandatory pre-push verification gate**
 before it pushes a branch or opens a Merge Request. The gate is
 implemented at the worker execution layer in
-`deploy/codex-runner/mac-task-executor-opencode-build` so it **cannot be
+`deploy/task-runner/mac-task-executor-opencode-build` so it **cannot be
 bypassed** by task-level instructions or per-project config, and it
 applies uniformly to **every** repo (`mac`, `ivan-plugin`,
 `hermes-agent-custom`, and any future repo).

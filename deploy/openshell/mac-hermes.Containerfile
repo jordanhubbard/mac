@@ -27,13 +27,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
 #   helper not found" otherwise). git/curl/gh: task work + git push egress.
-# codex/claude/cursor-agent/opencode/pi: the reviewed coding-agent CLIs for confined
-#   coding tasks. All three MUST resolve by basename through the image-owned
-#   PATH (the reconciled advertisement/probe contract): the build below gates
-#   each with `command -v <basename>` plus a pinned `--version` so a missing
-#   install, a dangling symlink, or a non-PATH binary fails the build closed
-#   instead of shipping an image the in-sandbox probe later rejects as
-#   agent_binary_missing.
+# opencode: MAC's coding CLI for confined coding tasks. It MUST resolve by
+#   basename through the image-owned PATH (the advertisement/probe contract):
+#   the build below gates it with `command -v opencode` plus a pinned
+#   `--version` so a missing install, a dangling symlink, or a non-PATH binary
+#   fails the build closed instead of shipping an image the in-sandbox probe
+#   later rejects as agent_binary_missing.
 # opencode: installed from npm, but two details are load-bearing. Its platform
 #   binary arrives through an optionalDependency placed by the package's
 #   postinstall, and npm >=11 blocks install scripts unless the package is
@@ -90,11 +89,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ARG GH_VERSION="2.95.0"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"
-ARG CODEX_VERSION="0.140.0"
-ARG CLAUDE_VERSION="2.1.220"
-ARG CURSOR_VERSION="2026.07.23-e383d2b"
 ARG OPENCODE_VERSION="1.18.18"
-ARG PI_VERSION="0.84.2"
 ARG BUILDX_VERSION="0.30.1"
 ARG RUST_VERSION="1.95.0"
 ARG TARGETARCH
@@ -147,32 +142,11 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && tar -xzf "/tmp/mac-openshell-build-assets/gh-${asset_arch}.tgz" -C /tmp \
     && install -m755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
     && rm -rf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
-    && npm install -g "@openai/codex@${CODEX_VERSION}" "pnpm@${PNPM_VERSION}" \
+    && npm install -g "pnpm@${PNPM_VERSION}" \
     && npm install -g --allow-scripts=opencode-ai "opencode-ai@${OPENCODE_VERSION}" \
     && ln -sfn /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode \
-    && npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" \
-    && CLAUDE_HOME="/usr/local/lib/claude-code/versions/${CLAUDE_VERSION}" \
-    && install -d -m0755 "$CLAUDE_HOME" \
-    && tar -xzf "/tmp/mac-openshell-build-assets/claude-${asset_arch}.tgz" -C "$CLAUDE_HOME" --strip-components=1 \
-    && ln -sfn "$CLAUDE_HOME/claude" /usr/local/bin/claude \
-    && CURSOR_HOME="/usr/local/lib/cursor-agent/versions/${CURSOR_VERSION}" \
-    && install -d -m0755 "$CURSOR_HOME" \
-    && tar -xzf "/tmp/mac-openshell-build-assets/cursor-${asset_arch}.tgz" -C "$CURSOR_HOME" --strip-components=1 \
-    && ln -sfn "$CURSOR_HOME/cursor-agent" /usr/local/bin/cursor-agent \
-    && ln -sfn "$CURSOR_HOME/cursor-agent" /usr/local/bin/agent \
-    && chown -R root:root /usr/local/lib/claude-code /usr/local/lib/cursor-agent \
-    && chmod -R a+rX /usr/local/lib/claude-code /usr/local/lib/cursor-agent \
-    && command -v codex \
-    && command -v claude \
-    && command -v cursor-agent \
     && command -v opencode \
-    && command -v pi \
-    && command -v agent \
-    && codex --version | grep -F "${CODEX_VERSION}" \
-    && claude --version | grep -F "${CLAUDE_VERSION}" \
-    && cursor-agent --version | grep -F "${CURSOR_VERSION}" \
     && opencode --version | grep -F "${OPENCODE_VERSION}" \
-    && pi --version | grep -F "${PI_VERSION}" \
     && test "$(pnpm --version)" = "$PNPM_VERSION" \
     && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \

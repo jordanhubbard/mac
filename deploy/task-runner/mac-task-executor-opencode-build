@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Operator-result executor that delegates the actual code work to opencode.
 #
-# Mirrors mac-task-executor-codex in shape: builds a mac.worker_evidence.v1 manifest, captures opencode's stdout + returncode, and signs the manifest via `mac-evidence sign` (defined in src/mac/evidence_cli.py). NO inline HMAC; signing invariants live in tests/test_evidence_cli.py.
+# Builds a mac.worker_evidence.v1 manifest, captures opencode's stdout + returncode, and signs the manifest via `mac-evidence sign` (defined in src/mac/evidence_cli.py). NO inline HMAC; signing invariants live in tests/test_evidence_cli.py.
 set -euo pipefail
 
 MAC_TASK_ID="${MAC_TASK_ID:-}"

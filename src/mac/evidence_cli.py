@@ -1,6 +1,6 @@
 """Tiny CLI for signing mac worker_evidence manifests.
 
-This module exists so the bash stubs under ``deploy/codex-runner``
+This module exists so the bash stubs under ``deploy/task-runner``
 do not have to re-implement ``mac.services.sign_verification_manifest``
 in a Python heredoc. The Job pod has the mac wheel installed already,
 so a real entry point keeps the canonicalisation + HMAC logic in

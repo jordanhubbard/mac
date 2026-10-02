@@ -1,6 +1,8 @@
 # ADR 0029: The coding-route search path is a fleet contract, not per-worker environment
 
-- Status: Proposed
+- Status: Withdrawn 2026-10-02. MAC runs one coding CLI, opencode, through
+  the hub's model router; provider failover lives in the router, so there is
+  no CLI route ladder. `src/mac/route_ladder.py` was deleted.
 - Date: 2026-08-22
 - Decision owner: MAC fleet owner
 - Related:
