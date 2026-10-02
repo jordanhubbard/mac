@@ -10,9 +10,15 @@ decides, from the same environment the executor runs in, *which* coding agent
 non-interactively. When none qualifies the executor fails closed so work cannot
 silently move to an unverified or retired runtime.
 
-Detection uses priority order claude -> codex -> cursor.  The first qualifying
-route wins unless a caller supplies an end-to-end verifier; verified resolution
-falls through configured routes until one actually works.
+MAC's coding CLI is opencode, driven through the hub's model router: with
+``MAC_CODING_AGENT`` unset only opencode is considered, and a worker with hub
+credentials runs it on the ``machub`` provider (:func:`opencode_router_config`)
+with a per-task inference token. ``MAC_CODING_AGENT=auto`` restores the
+selection below across the other detectors until they are removed.
+
+Under ``auto`` the route ladder or :data:`AGENT_PRIORITY` orders detection.  The
+first qualifying route wins unless a caller supplies an end-to-end verifier;
+verified resolution falls through configured routes until one actually works.
 
 * **claude**: ``claude`` on PATH *and* (``ANTHROPIC_API_KEY`` set *or*
   ``~/.claude.json`` carries a non-empty ``primary_key``).
@@ -117,6 +123,27 @@ PREFLIGHT_SENTINEL = "MAC_CODING_AGENT_SANDBOX_OK"
 PREFLIGHT_PROMPT = "Respond with exactly this text and nothing else: " + PREFLIGHT_SENTINEL
 
 _DISABLE_VALUES = {"off", "none", "hermes", "gateway", "0", "false", "no"}
+
+#: The coding CLI used when :data:`FORCE_ENV` is unset. MAC supports one coding
+#: CLI, opencode, driven through the hub's model router. ``MAC_CODING_AGENT=auto``
+#: restores ladder/priority selection across the other detectors until they are
+#: removed.
+DEFAULT_AGENT = "opencode"
+_AUTO_VALUE = "auto"
+
+#: opencode's provider id for the hub router in the generated config. Model
+#: references on the command line are ``machub/<logical model>``.
+ROUTER_PROVIDER_ID = "machub"
+#: The sandbox credential the router route authenticates with. A per-task,
+#: inference-only token (:mod:`mac.inference_tokens`), never the worker token.
+ROUTER_AUTH_ENV = "MAC_INFERENCE_TOKEN"
+#: Logical model names the generated config declares (comma separated).
+CODING_MODELS_ENV = "MAC_CODING_MODELS"
+#: The model a task runs on when it does not pin one with ``MAC_TASK_MODEL``.
+CODING_DEFAULT_MODEL_ENV = "MAC_CODING_DEFAULT_MODEL"
+DEFAULT_CODING_MODEL = "gpt-5.6-sol"
+_HUB_URL_ENVS = ("MAC_HUB_URL", "MAC_URL")
+_WORKER_TOKEN_ENVS = ("MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN")
 
 
 def _truthy(value: Optional[str]) -> bool:
@@ -282,6 +309,14 @@ def _route_fields(
             "auth_kind": auth_kind,
             "endpoint": _safe_endpoint(env.get("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"),
             "model": str(env.get("MAC_TASK_MODEL") or env.get("ANTHROPIC_MODEL") or "").strip(),
+        }
+    if agent == "opencode" and auth_source == ROUTER_AUTH_ENV:
+        return {
+            "provider": "mac-router",
+            "protocol": "openai-chat-completions",
+            "auth_kind": "bearer_env",
+            "endpoint": _safe_endpoint(router_hub_url(env) + "/v1", ""),
+            "model": coding_model(env),
         }
     if agent == "opencode":
         # opencode is a multi-provider client: the provider is chosen per model
@@ -456,10 +491,100 @@ def _detect_cursor(
     return False, binary, "", "cursor: on PATH but no supported credential configuration"
 
 
+def _env_text(env: Mapping[str, str], *names: str) -> str:
+    for name in names:
+        value = str(env.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def router_hub_url(env: Mapping[str, str]) -> str:
+    """The hub base URL the router route talks to, or ``""``."""
+    return _env_text(env, *_HUB_URL_ENVS).rstrip("/")
+
+
+def coding_model(env: Mapping[str, str]) -> str:
+    """The logical router model a task runs on.
+
+    ``MAC_TASK_MODEL`` (a per-task pin) wins, then ``MAC_CODING_DEFAULT_MODEL``,
+    then :data:`DEFAULT_CODING_MODEL`. A ``machub/`` prefix is accepted and
+    dropped so either spelling of a pin works.
+    """
+    model = _env_text(env, "MAC_TASK_MODEL", CODING_DEFAULT_MODEL_ENV) or DEFAULT_CODING_MODEL
+    prefix = ROUTER_PROVIDER_ID + "/"
+    return model[len(prefix) :] if model.startswith(prefix) else model
+
+
+def coding_models(env: Mapping[str, str]) -> List[str]:
+    """The logical models the generated opencode config declares.
+
+    ``MAC_CODING_MODELS`` (comma separated, default :data:`DEFAULT_CODING_MODEL`)
+    plus the task's own model, which opencode refuses unless it is declared.
+    """
+    raw = str(env.get(CODING_MODELS_ENV) or "").strip() or DEFAULT_CODING_MODEL
+    models: List[str] = []
+    for item in [*raw.split(","), coding_model(env)]:
+        name = item.strip()
+        if name and name not in models:
+            models.append(name)
+    return models
+
+
+def opencode_router_config(env: Mapping[str, str]) -> Dict[str, object]:
+    """opencode config with one provider, ``machub``: the hub's model router.
+
+    ``env`` is the environment the CLI will run in (for a sandbox, the
+    sandbox's view of ``MAC_HUB_URL``). The API key is an ``{env:...}``
+    reference, so the file carries no secret. Task and lease ids, when known,
+    ride along as router attribution headers; the agent is attributed from the
+    token itself.
+    """
+    hub = router_hub_url(env)
+    if not hub:
+        raise ValueError("opencode router config needs MAC_HUB_URL")
+    options: Dict[str, object] = {
+        "baseURL": hub + "/v1",
+        "apiKey": "{env:%s}" % ROUTER_AUTH_ENV,
+    }
+    headers = {
+        header: value
+        for header, value in (
+            ("X-MAC-Task-ID", _env_text(env, "MAC_TASK_ID")),
+            ("X-MAC-Lease-ID", _env_text(env, "MAC_LEASE_ID")),
+        )
+        if value
+    }
+    if headers:
+        options["headers"] = headers
+    return {
+        "$schema": "https://opencode.ai/config.json",
+        # Never reach opencode.ai for an update from inside a task.
+        "autoupdate": False,
+        "model": "%s/%s" % (ROUTER_PROVIDER_ID, coding_model(env)),
+        "provider": {
+            ROUTER_PROVIDER_ID: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "MAC hub model router",
+                "options": options,
+                "models": {name: {"tool_call": True} for name in coding_models(env)},
+            }
+        },
+    }
+
+
 def _detect_opencode(
     env: Mapping[str, str], home: Path, which: Callable[[str], Optional[str]]
 ) -> Tuple[bool, str, str, str]:
     """Return (available, binary, auth_source, reason).
+
+    The route is the hub's model router whenever this host can reach the hub
+    as a worker (a hub URL plus a worker token to mint the task's inference
+    token with) or already holds an inference token, as a sandbox does. It
+    reports ``MAC_INFERENCE_TOKEN`` as its auth source.
+
+    Without hub credentials, the legacy direct-provider configuration below
+    still applies.
 
     opencode keeps provider credentials in ``~/.local/share/opencode/auth.json``
     -- NOT in ``~/.config/opencode``, which holds only model and provider
@@ -469,6 +594,13 @@ def _detect_opencode(
     binary = _which("opencode", which)
     if not binary:
         return False, "", "", "opencode: not on PATH"
+    if router_hub_url(env) and _env_text(env, ROUTER_AUTH_ENV, *_WORKER_TOKEN_ENVS):
+        return (
+            True,
+            binary,
+            ROUTER_AUTH_ENV,
+            "opencode: routed through the hub model router (%s)" % ROUTER_PROVIDER_ID,
+        )
     if str(env.get("OPENCODE_API_KEY") or "").strip():
         return True, binary, "OPENCODE_API_KEY", "opencode: configured via OPENCODE_API_KEY"
     auth = home / ".local" / "share" / "opencode" / "auth.json"
@@ -816,13 +948,19 @@ def resolve_coding_agent(
         rationale.append("%s=%s disables coding-agent preference" % (FORCE_ENV, forced))
         return _choice("", False, "", "", rationale, env)
 
-    if forced and forced not in _DETECTORS:
+    if not forced:
+        forced = DEFAULT_AGENT
+        rationale.append("%s unset; %s is the coding CLI" % (FORCE_ENV, DEFAULT_AGENT))
+    elif forced == _AUTO_VALUE:
+        forced = ""
+    elif forced not in _DETECTORS:
         rationale.append("%s=%s is not a known agent; ignoring" % (FORCE_ENV, forced))
         forced = ""
 
     if forced in _DETECTORS:
         candidates = (forced,)
-        rationale.append("%s pins selection to %s" % (FORCE_ENV, forced))
+        if str(env.get(FORCE_ENV) or "").strip():
+            rationale.append("%s pins selection to %s" % (FORCE_ENV, forced))
     else:
         candidates = _ladder_order(env, rationale)
     excluded = frozenset(str(name).strip().lower() for name in (exclude or ()) if name)
@@ -1036,6 +1174,10 @@ def coding_agent_argv(
         return [*shlex.split(override), prompt]
 
     task_model = str(env.get("MAC_TASK_MODEL") or choice.model or "").strip()
+    if choice.agent == "opencode" and choice.provider == "mac-router":
+        # The generated config names the router provider `machub`; opencode
+        # needs the provider prefix on every model reference.
+        task_model = "%s/%s" % (ROUTER_PROVIDER_ID, coding_model({"MAC_TASK_MODEL": task_model}))
     argv = _default_argv(choice.agent, choice.binary, prompt, model=task_model)
     if choice.agent == "codex":
         # Provider config is inserted before the `exec` subcommand. Tokens are

@@ -635,7 +635,9 @@ class TestCodingAgentSelectionConsumesTheLadder:
         return _lookup
 
     def _env(self, doc, **extra):
-        env = {LADDER_ENV: json.dumps(doc), "ANTHROPIC_API_KEY": "k"}
+        # The ladder orders selection only under MAC_CODING_AGENT=auto; unset
+        # means opencode.
+        env = {LADDER_ENV: json.dumps(doc), "ANTHROPIC_API_KEY": "k", "MAC_CODING_AGENT": "auto"}
         env.update(extra)
         return env
 
@@ -696,7 +698,7 @@ class TestCodingAgentSelectionConsumesTheLadder:
         from mac.coding_agent import resolve_coding_agent
 
         choice = resolve_coding_agent(
-            env={LADDER_ENV: "{not json", "ANTHROPIC_API_KEY": "k"},
+            env={LADDER_ENV: "{not json", "ANTHROPIC_API_KEY": "k", "MAC_CODING_AGENT": "auto"},
             home=tmp_path,
             which=self._which("claude"),
         )
@@ -728,7 +730,9 @@ class TestCodingAgentSelectionConsumesTheLadder:
         from mac.coding_agent import resolve_coding_agent
 
         choice = resolve_coding_agent(
-            env={"ANTHROPIC_API_KEY": "k"}, home=tmp_path, which=self._which("claude")
+            env={"ANTHROPIC_API_KEY": "k", "MAC_CODING_AGENT": "auto"},
+            home=tmp_path,
+            which=self._which("claude"),
         )
         assert choice.agent == "claude"
         assert not any("ladder" in line for line in choice.rationale)

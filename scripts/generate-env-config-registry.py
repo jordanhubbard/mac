@@ -113,11 +113,33 @@ CONSUMER_DEFAULTS = {
     "MAC_TEST_JOBS": "2",
     "MAC_LANDING_MAX_ATTEMPTS": "8",
     "MAC_LANDING_DEADLINE_SECONDS": "86400",
+    "MAC_CODING_MODELS": "gpt-5.6-sol",
+    "MAC_CODING_DEFAULT_MODEL": "gpt-5.6-sol",
 }
 # Descriptions an operator cannot derive from the variable name. The generated
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_CODING_AGENT": (
+        "Coding CLI. Unset means opencode through the hub model router. `auto` restores "
+        "route-ladder/priority selection across the other detected CLIs; a CLI name pins "
+        "it; `off` disables coding agents (the executor fails closed)."
+    ),
+    "MAC_CODING_MODELS": (
+        "Comma-separated logical model names the generated opencode config declares under "
+        "its one provider, `machub` (the hub router at `$MAC_HUB_URL/v1`). Each must be a "
+        "model the hub's `MAC_ROUTER_PROVIDERS` aliases. The task's own model is always added."
+    ),
+    "MAC_CODING_DEFAULT_MODEL": (
+        "Logical router model opencode runs on (`--model machub/<name>`) when the task does "
+        "not pin one with `MAC_TASK_MODEL`."
+    ),
+    "MAC_INFERENCE_TOKEN": (
+        "Set by the executor inside the task sandbox, never by an operator: a per-task "
+        "token bound to the worker's agent that may call only POST /v1/chat/completions "
+        "and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. "
+        "The worker token never enters the sandbox."
+    ),
     "MAC_LANDING_MAX_ATTEMPTS": (
         "Landing attempts (publication retries, unavailable hub verifies) a task may spend "
         "between review and landing before it moves to BLOCKED with "

@@ -187,7 +187,30 @@ network_policies:
       - { path: /usr/local/bin/cursor-agent }
       - { path: /usr/local/lib/cursor-agent/versions/2026.07.23-e383d2b/node }
 
-  # --- opencode provider egress for repository-editing tasks. ---
+  # --- opencode -> the hub's model router: the coding CLI's model path. ---
+  # The executor generates an opencode config whose only provider is the hub
+  # router ($MAC_HUB_URL/v1) and hands the sandbox a per-task token that may
+  # call POST /v1/chat/completions and /v1/embeddings and nothing else. This
+  # block holds the CLI to the same two routes at the proxy, so even a
+  # misbehaving opencode cannot reach the hub's task/ledger API with it. The
+  # binaries are the same pair opencode_provider lists below.
+  opencode_router:
+    name: opencode-router
+    endpoints:
+      - host: __MAC_HUB_HOST__
+        port: __MAC_HUB_PORT__
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+    binaries:
+      - { path: /usr/local/bin/opencode }
+      - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
+
+  # --- opencode provider egress (legacy direct-provider route). ---
+  # Used only by a worker without hub credentials; with them, opencode goes
+  # through opencode_router above.
   # opencode is a multi-provider client: the provider is chosen per model in
   # ~/.config/opencode/opencode.json, so unlike claude/codex/cursor there is no
   # single vendor host implied by the CLI itself. This fleet's opencode config

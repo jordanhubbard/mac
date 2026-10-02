@@ -465,6 +465,10 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     attest_verify = agent("attest-verify-route-agent", ["python"])
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
+    from mac.inference_tokens import InferenceTokenLifecycle
+
+    ctx["inference_agent_id"] = agent("inference-route-agent", ["python"])["id"]
+    ctx["inference_token_id"] = InferenceTokenLifecycle(cp.store).mint(ctx["inference_agent_id"]).id
     report_attestation = read_only_report_repository_executor_attestation(
         runtime_image_ref=("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64),
         policy_sha256="sha256:" + "2" * 64,
@@ -1250,6 +1254,11 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {
             "agent_id": "attest_verify_agent_id"
         },
+        ("POST", "/agents/{agent_id}/inference-tokens"): {"agent_id": "inference_agent_id"},
+        ("DELETE", "/agents/{agent_id}/inference-tokens/{token_id}"): {
+            "agent_id": "inference_agent_id",
+            "token_id": "inference_token_id",
+        },
         ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
             "agent_id": "report_executor_agent_id"
         },
@@ -1770,6 +1779,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "capabilities": ["python"],
         },
         ("PUT", "/agents/{agent_id}"): {"health_status": "healthy", "resources": {"cpu": 8}},
+        ("POST", "/agents/{agent_id}/inference-tokens"): {"task_id": "", "ttl_seconds": 600},
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {
             "challenge": {
                 "schema": "mac.agent_attestation_challenge.v1",

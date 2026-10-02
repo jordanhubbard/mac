@@ -13,9 +13,19 @@ from mac.coding_agent import (
     CodingAgentChoice,
     coding_agent_argv,
     mcp_config_document,
-    resolve_coding_agent,
     supports_per_invocation_mcp,
 )
+from mac.coding_agent import resolve_coding_agent as _resolve_coding_agent
+
+
+def resolve_coding_agent(*, env=None, **kwargs):
+    """These tests cover multi-CLI selection, which ``MAC_CODING_AGENT=auto`` keeps.
+
+    Unset now means opencode (see tests/test_opencode_router.py).
+    """
+    if env is not None:
+        env = {"MAC_CODING_AGENT": "auto", **env}
+    return _resolve_coding_agent(env=env, **kwargs)
 
 
 def _which(*available):

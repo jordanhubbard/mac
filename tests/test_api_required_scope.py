@@ -10,8 +10,13 @@ def test_v1_router_requires_agent_scope_any_method():
     # Inference is an agent action: the OpenAI front door requires agent scope
     # (not the broad `write`), regardless of HTTP method, so it is never an open
     # proxy when the API is bound to a network interface.
-    assert _required_scope("POST", "/v1/chat/completions") == "agent"
-    assert _required_scope("POST", "/v1/embeddings") == "agent"
+    # Chat completions and embeddings need only `inference`, which `agent`
+    # implies; a per-task inference token carries nothing else
+    # (tests/test_inference_tokens.py).
+    assert _required_scope("POST", "/v1/chat/completions") == "inference"
+    assert _required_scope("POST", "/v1/embeddings") == "inference"
+    assert _required_scope("GET", "/v1/chat/completions") == "agent"
+    assert _required_scope("POST", "/v1/responses") == "agent"
     assert _required_scope("GET", "/v1/models") == "agent"
     assert _required_scope("GET", "/v1") == "agent"
 
