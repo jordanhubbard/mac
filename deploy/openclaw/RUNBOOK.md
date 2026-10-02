@@ -6,8 +6,8 @@ reference material and is not invoked by this path.
 
 Task execution is a separate MAC worker role. It uses an authenticated coding
 agent inside the task OpenShell sandbox and fails closed when no verified route
-exists. Reflection and ACP agent turns enter this OpenClaw sandbox through the
-host `openclaw-agent` wrapper; no path falls back to Hermes chat.
+exists. Reflection agent turns enter this OpenClaw sandbox through the host
+`openclaw-agent` wrapper; no path falls back to Hermes chat.
 
 ## Pinned runtime
 

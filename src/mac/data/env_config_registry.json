@@ -1,42 +1,6 @@
 [
   {
     "default": null,
-    "description": "Acp setting: acp agent cmd.",
-    "family": "acp",
-    "name": "MAC_ACP_AGENT_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Acp setting: acp backend cmd.",
-    "family": "acp",
-    "name": "MAC_ACP_BACKEND_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/acp/backend.py",
-      "src/mac/acp/server.py",
-      "src/mac/api.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Acp setting: acp permission mode.",
-    "family": "acp",
-    "name": "MAC_ACP_PERMISSION_MODE",
-    "retired": false,
-    "sources": [
-      "src/mac/acp/permission.py",
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: agentbus service result publish attempts.",
     "family": "core",
     "name": "MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS",
@@ -1596,32 +1560,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: executor backend.",
-    "family": "core",
-    "name": "MAC_EXECUTOR_BACKEND",
-    "retired": false,
-    "sources": [
-      "src/mac/acp/__init__.py",
-      "src/mac/acp/executor.py",
-      "src/mac/executor_sandbox.py",
-      "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: extensions.",
-    "family": "core",
-    "name": "MAC_EXTENSIONS",
-    "retired": false,
-    "sources": [
-      "src/mac/acp/__init__.py",
-      "src/mac/acp/capabilities.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Firecrawl Gateway setting: firecrawl check timeout seconds.",
     "family": "firecrawl-gateway",
     "name": "MAC_FIRECRAWL_CHECK_TIMEOUT_SECONDS",
@@ -2638,28 +2576,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: inference providers config.",
-    "family": "core",
-    "name": "MAC_INFERENCE_PROVIDERS_CONFIG",
-    "retired": false,
-    "sources": [
-      "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: inference providers dir.",
-    "family": "core",
-    "name": "MAC_INFERENCE_PROVIDERS_DIR",
-    "retired": false,
-    "sources": [
-      "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: journal agent.",
     "family": "core",
     "name": "MAC_JOURNAL_AGENT",
@@ -3482,7 +3398,6 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/run-script-cron-job.py",
-      "src/mac/acp/backend.py",
       "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py"
     ],
@@ -4462,7 +4377,6 @@
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
-      "src/mac/acp/permission.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_startup.py",
       "src/mac/openshell/default-policy.yaml",
@@ -5960,7 +5874,6 @@
     "retired": false,
     "sources": [
       "src/mac/api.py",
-      "src/mac/inference_provider.py",
       "src/mac/media_routing.py",
       "src/mac/provider_router.py",
       "src/mac/router_service.py"

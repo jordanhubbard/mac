@@ -1,4 +1,4 @@
-"""mac's A2A AgentCard builder (inbound A2A federation, ACP roadmap Phase 4).
+"""mac's A2A AgentCard builder (inbound A2A federation).
 
 The AgentCard is the A2A "business card": a small JSON document served at the
 well-known discovery path that lets an *external* A2A client discover this
@@ -45,7 +45,7 @@ __all__ = [
 
 
 #: The A2A protocol version mac's card declares. A2A versions its spec with a
-#: ``MAJOR.MINOR.PATCH`` string (unlike ACP's single integer), so this is a str.
+#: ``MAJOR.MINOR.PATCH`` string, so this is a str.
 A2A_PROTOCOL_VERSION: str = "0.3.0"
 
 #: mac's own software version, surfaced as the card's ``version``. Imported

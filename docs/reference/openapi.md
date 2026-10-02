@@ -6,7 +6,6 @@ request and response definitions.
 
 | Method | Path | Operation |
 |---|---|---|
-| `GET` | `/.well-known/acp` | Acp Manifest Route |
 | `GET` | `/.well-known/agent-card.json` | A2A Agent Card Route |
 | `GET` | `/.well-known/agent.json` | A2A Agent Card Route |
 | `POST` | `/a2a` | A2A Rpc Route |

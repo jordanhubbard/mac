@@ -117,8 +117,9 @@ The hub already speaks two standards, and both are in the tree today:
 - **A2A 0.3.0.** The hub serves `/.well-known/agent-card.json` and accepts
   `POST /a2a`; the card describes it as accepting delegated tasks and running
   them on the fleet. `src/mac/a2a/` holds the protocol, service and card.
-- **ACP.** `src/mac/acp/` holds a server, client, websocket transport, peer,
+- **ACP.** `src/mac/acp/` held a server, client, websocket transport, peer,
   permission and capability layers — the editor / coding-session standard.
+  (Removed 2026-10-02 with no live consumer; see ADR 0006. A2A remains.)
 
 So the connector question is already answered and the answer is "both, already".
 What is missing is not a protocol but a wiring: **the A2A card currently

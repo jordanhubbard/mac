@@ -1,4 +1,4 @@
-"""Inbound A2A (Agent2Agent) federation for mac (ACP roadmap Phase 4).
+"""Inbound A2A (Agent2Agent) federation for mac.
 
 A2A (https://a2a-protocol.org, Linux Foundation; absorbed IBM's "Agent
 Communication Protocol") is the open JSON-RPC 2.0 standard for **agent <->
@@ -6,8 +6,7 @@ agent** delegation. This package lets an *external* A2A agent discover mac via
 its AgentCard and delegate work to it; the work lands on mac's existing task
 ledger (no parallel store).
 
-This is the agent<->agent axis -- distinct from :mod:`mac.acp`, which is the
-host<->agent runtime seam. Layers:
+Layers:
 
 * :mod:`mac.a2a.card` -- the AgentCard discovery document (pure data).
 * :mod:`mac.a2a.protocol` -- JSON-RPC 2.0 envelope + A2A wire types

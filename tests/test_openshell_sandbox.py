@@ -63,7 +63,6 @@ _OPENSHELL_ENVS = [
     "MAC_TASK_REPO_ACCESS_MODE",
     "MAC_HERMES_PYTHON",
     "MAC_ALLOW_UNSANDBOXED_YOLO",
-    "MAC_EXECUTOR_BACKEND",
     "HERMES_YOLO_MODE",
 ]
 
@@ -1314,24 +1313,6 @@ def test_controller_approved_macos_host_report_may_run_without_openshell(
         te._read_only_report_repository_violation(task, result.mac_read_only_git_control_digest)
         == ""
     )
-
-
-def test_read_only_report_rejects_acp_backend(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAC_EXECUTOR_BACKEND", "acp")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(
-        te,
-        "_invoke_acp_agent",
-        lambda *_args, **_kwargs: pytest.fail("ACP backend was invoked"),
-    )
-    with pytest.raises(RuntimeError, match="ACP backend is not supported"):
-        te._invoke_agent(
-            FakeRunner(),
-            "inspect",
-            tmp_path / "task",
-            "tid",
-            {"task": _read_only_report_task()},
-        )
 
 
 def test_read_only_report_rejects_host_break_glass(monkeypatch, tmp_path):

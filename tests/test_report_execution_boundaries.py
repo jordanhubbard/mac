@@ -98,7 +98,6 @@ def test_native_hermes_dispatch_captures_controls_before_agent(
     executor, _ = report_boundary_env
     monkeypatch.setattr(worker.sys, "platform", "darwin")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
-    monkeypatch.setenv("MAC_EXECUTOR_BACKEND", "hermes")
     _approve(executor)
     repo, git = _inspection(tmp_path)
     task = {

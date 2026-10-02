@@ -1,6 +1,11 @@
 # ADR 0006 — Agent Client Protocol (ACP) support
 
-- Status: **Proposed**
+- Status: **Superseded** (2026-10-02). The ACP implementation (`src/mac/acp/`,
+  `/acp/ws`, `/.well-known/acp` and the `MAC_EXECUTOR_BACKEND=acp` executor
+  backend) was removed: nothing in the fleet, the deploy configuration or the
+  `ide/` workbench used it. MAC supports one coding CLI, opencode, which reaches
+  its model through the hub router's `/v1/chat/completions`. This record is
+  kept for its history.
 - Date: 2026-06-16
 - Decision owner: Jordan Hubbard
 - Update (2026-08-17): the `session/update` → **AgentBus** half of the streaming

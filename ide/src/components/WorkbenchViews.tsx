@@ -423,7 +423,7 @@ function AgentsView({
 }) {
   return (
     <main className="workbench-view">
-      <ViewHeader description="Capabilities, health, workload, and interoperability at a glance." eyebrow="A2A + ACP" title="Agent mesh" />
+      <ViewHeader description="Capabilities, health, workload, and interoperability at a glance." eyebrow="A2A" title="Agent mesh" />
       <div className="agent-grid">
         {agents.map((item) => {
           const { agent } = item;

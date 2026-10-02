@@ -5,9 +5,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 
 | Variable | Type | Default | Family | Description |
 | --- | --- | --- | --- | --- |
-| `MAC_ACP_AGENT_CMD` | str | consumer-defined | acp | Acp setting: acp agent cmd. |
-| `MAC_ACP_BACKEND_CMD` | str | consumer-defined | acp | Acp setting: acp backend cmd. |
-| `MAC_ACP_PERMISSION_MODE` | str | consumer-defined | acp | Acp setting: acp permission mode. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS` | int | consumer-defined | core | Core setting: agentbus service result publish attempts. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS` | int | consumer-defined | core | Core setting: agentbus service result publish retry seconds. |
 | `MAC_AGENTFS_URL` | str | consumer-defined | core | Core setting: agentfs url. |
@@ -139,8 +136,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_EVIDENCE_MEDIA_MAX_FILES` | str | consumer-defined | evidence | Evidence setting: evidence media max files. |
 | `MAC_EVIDENCE_MEDIA_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence media total max bytes. |
 | `MAC_EXECUTOR_AGENT_TIMEOUT` | int | consumer-defined | core | Core setting: executor agent timeout. |
-| `MAC_EXECUTOR_BACKEND` | str | consumer-defined | core | Core setting: executor backend. |
-| `MAC_EXTENSIONS` | str | consumer-defined | core | Core setting: extensions. |
 | `MAC_FIRECRAWL_CHECK_TIMEOUT_SECONDS` | int | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl check timeout seconds. |
 | `MAC_FIRECRAWL_GATEWAY_ALLOW_PRIVATE_TARGETS` | bool | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl gateway allow private targets. |
 | `MAC_FIRECRAWL_GATEWAY_MAX_BYTES` | int | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl gateway max bytes. |
@@ -223,8 +218,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_IMAGE_SOURCE_SHA_FILE` | str | consumer-defined | core | Core setting: image source sha file. |
 | `MAC_IMAGE_TAG` | str | consumer-defined | core | Core setting: image tag. |
 | `MAC_IMPACT_MAP_CHECKED` | str | consumer-defined | core | Core setting: impact map checked. |
-| `MAC_INFERENCE_PROVIDERS_CONFIG` | str | consumer-defined | core | Core setting: inference providers config. |
-| `MAC_INFERENCE_PROVIDERS_DIR` | str | consumer-defined | core | Core setting: inference providers dir. |
 | `MAC_JOURNAL_AGENT` | str | consumer-defined | core | Core setting: journal agent. |
 | `MAC_JOURNAL_BACKUP_HOOK` | str | consumer-defined | core | Core setting: journal backup hook. |
 | `MAC_JOURNAL_DATE` | str | consumer-defined | core | Core setting: journal date. |

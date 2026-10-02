@@ -1,6 +1,6 @@
 """Inbound A2A service: maps A2A JSON-RPC methods onto mac's task ledger.
 
-This is the agent<->agent server (ACP roadmap Phase 4). An *external* A2A
+This is the agent<->agent server. An *external* A2A
 client discovers mac via its AgentCard (:mod:`mac.a2a.card`) and delegates work
 by calling A2A JSON-RPC methods at ``POST /a2a``. Each method maps onto mac's
 existing task ledger via :class:`~mac.services.ControlPlane` -- there is **no
