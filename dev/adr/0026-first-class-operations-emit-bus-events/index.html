@@ -1971,8 +1971,9 @@ closes — and that lands with, or before, the emission.</p>
 <li><strong>A2A 0.3.0.</strong> The hub serves <code>/.well-known/agent-card.json</code> and accepts
   <code>POST /a2a</code>; the card describes it as accepting delegated tasks and running
   them on the fleet. <code>src/mac/a2a/</code> holds the protocol, service and card.</li>
-<li><strong>ACP.</strong> <code>src/mac/acp/</code> holds a server, client, websocket transport, peer,
-  permission and capability layers — the editor / coding-session standard.</li>
+<li><strong>ACP.</strong> <code>src/mac/acp/</code> held a server, client, websocket transport, peer,
+  permission and capability layers — the editor / coding-session standard.
+  (Removed 2026-10-02 with no live consumer; see ADR 0006. A2A remains.)</li>
 </ul>
 <p>So the connector question is already answered and the answer is "both, already".
 What is missing is not a protocol but a wiring: <strong>the A2A card currently

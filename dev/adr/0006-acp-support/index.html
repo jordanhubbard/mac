@@ -1818,7 +1818,12 @@
 
 <h1 id="adr-0006-agent-client-protocol-acp-support">ADR 0006 — Agent Client Protocol (ACP) support<a class="headerlink" href="#adr-0006-agent-client-protocol-acp-support" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: <strong>Proposed</strong></li>
+<li>Status: <strong>Superseded</strong> (2026-10-02). The ACP implementation (<code>src/mac/acp/</code>,
+  <code>/acp/ws</code>, <code>/.well-known/acp</code> and the <code>MAC_EXECUTOR_BACKEND=acp</code> executor
+  backend) was removed: nothing in the fleet, the deploy configuration or the
+  <code>ide/</code> workbench used it. MAC supports one coding CLI, opencode, which reaches
+  its model through the hub router's <code>/v1/chat/completions</code>. This record is
+  kept for its history.</li>
 <li>Date: 2026-06-16</li>
 <li>Decision owner: Jordan Hubbard</li>
 <li>Update (2026-08-17): the <code>session/update</code> → <strong>AgentBus</strong> half of the streaming
