@@ -380,3 +380,27 @@ def test_all_publishers_pin_qemu_before_buildx() -> None:
             job = job.split(f"\n  {next_job}:\n", 1)[0]
         assert job.index(qemu) < job.index(buildx)
         assert "platforms: arm64" in job
+
+
+def test_runtime_smoke_checks_only_the_shipped_coding_cli() -> None:
+    """The runtime image ships opencode as its only coding CLI.
+
+    The image dropped codex, claude and cursor-agent, but this smoke command
+    still ran `codex --version`, so publication failed on main with
+    "codex: command not found" against an image that was otherwise correct.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    argv = module._smoke_argv("openshell-runtime", "docker", "ref@sha256:" + "0" * 64, "linux/amd64")
+    command = argv[-1]
+    assert "opencode --version | grep -F '%s'" % "1.18.18" in command
+    for retired in ("codex", "claude", "cursor-agent", "pi --version"):
+        assert retired not in command
+    version = module.IMAGE_SPECS["openshell-runtime"]["build_args"].get("OPENCODE_VERSION")
+    assert version == "1.18.18"
