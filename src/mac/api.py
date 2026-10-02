@@ -134,6 +134,12 @@ class TokenPrincipal:
             return True
         if scope in {"roles", "workflow"} and "write" in self.scopes:
             return True
+        # ``inference`` is the model router's front door and nothing else. Every
+        # agent credential already reaches /v1, so ``agent`` implies it; the
+        # reverse never holds -- a per-task inference token carries ONLY this
+        # scope and so fails every other route's check.
+        if scope == "inference" and "agent" in self.scopes:
+            return True
         return False
 
     def assert_tenant(self, target_tenant_id: Optional[str]) -> None:
@@ -857,6 +863,11 @@ class AgentRegister(BaseModel):
     #: the safe one for new registrations.
     owner_human_id: Optional[str] = None
     visibility: Optional[str] = None
+
+
+class InferenceTokenMint(BaseModel):
+    task_id: str = ""
+    ttl_seconds: int = 6 * 60 * 60
 
 
 class AgentAttestationKeyVerify(BaseModel):
@@ -1865,6 +1876,10 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
     return _normalize_auth_tokens({single: TokenPrincipal(scopes=frozenset({"admin"}))})
 
 
+#: The only routes the ``inference`` scope opens, and only for POST.
+_INFERENCE_ROUTES = frozenset({"/v1/chat/completions", "/v1/embeddings"})
+
+
 def _required_scope(method: str, path: str) -> Optional[str]:
     """The token scope a request must carry. THIS is the authorization gate.
 
@@ -1891,11 +1906,21 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
+    if method == "POST" and path in _INFERENCE_ROUTES:
+        # Chat completions and embeddings are the only routes a per-task
+        # inference token (mac.inference_tokens) may call. Agent credentials
+        # carry the scope implicitly (TokenPrincipal.has_scope).
+        return "inference"
     if path == "/v1" or path.startswith("/v1/"):
         # In-mac model router (th-merge-02): LLM inference is an agent action, so
         # the OpenAI front door requires the agent scope (admin inherits it),
         # regardless of method. This keeps the router from being an open proxy
         # when the API is bound to a network interface (e.g. the hub node).
+        return "agent"
+    if re.match(r"^/agents/[^/]+/inference-tokens(/[^/]+)?$", path):
+        # A worker mints (and revokes) its own sandbox inference tokens. The
+        # handler binds the path agent to the principal; an inference token
+        # lacks ``agent`` and so cannot mint another.
         return "agent"
     if path.startswith("/repository-refs"):
         # A forced reconciliation in prune mode can delete remote branches.
@@ -3910,6 +3935,7 @@ def create_app(
     # This gives SSH enrollment immediate issuance/renewal/revocation without a
     # control-plane restart while preserving the static admin recovery token.
     from mac.client_principals import ClientPrincipalProvider
+    from mac.inference_tokens import InferenceTokenPrincipalProvider
     from mac.worker_credentials import WorkerCredentialPrincipalProvider
 
     injected_app = control_plane is not None or db_path is not None
@@ -3931,6 +3957,7 @@ def create_app(
     )
     client_registry_seen = bool(client_principals is not None and client_principals.path.exists())
     worker_principals = WorkerCredentialPrincipalProvider(cp.store)
+    inference_principals = InferenceTokenPrincipalProvider(cp.store)
     local_console_service = None
     if local_console_enabled:
         from mac.client_principals import ClientPrincipalStore
@@ -3961,6 +3988,11 @@ def create_app(
         # Static environment tokens are the recovery authority if an
         # impossible hash collision or duplicate registration occurs.
         merged = {**dynamic, **workers, **tokens}
+        if merged:
+            # Inference tokens narrow an authenticated hub. They never switch
+            # auth ON: on an open development hub the first task's mint would
+            # otherwise lock every other caller out.
+            merged = {**_normalize_auth_tokens(inference_principals.tokens()), **merged}
         if client_registry_seen and not merged:
             # A registry that becomes empty/corrupt after enrollment must not
             # turn a previously authenticated hub into open development mode.
@@ -5737,6 +5769,61 @@ def create_app(
             "agent_id": agent_id,
             "attestation_key": cp.rotate_agent_attestation_key(agent_id),
         }
+
+    def _require_own_inference_agent(principal: TokenPrincipal, agent_id: str) -> None:
+        # Only the agent itself mints its sandbox token. An unbound operator or
+        # static token is refused unless it is admin: a plain write token has no
+        # business holding inference credentials attributed to some worker.
+        if principal.agent_id:
+            principal.assert_actor(agent_id)
+        elif not principal.is_admin:
+            raise AuthorizationError(
+                "inference tokens are minted by the agent itself (or an admin)"
+            )
+
+    @app.post("/agents/{agent_id}/inference-tokens")
+    def mint_agent_inference_token(
+        agent_id: str,
+        body: InferenceTokenMint,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Mint a short-lived, inference-only token bound to this agent.
+
+        The worker hands it to the task sandbox as MAC_INFERENCE_TOKEN. It
+        reaches POST /v1/chat/completions and /v1/embeddings and nothing else,
+        so the worker's own token never has to enter the sandbox.
+        """
+        from mac.inference_tokens import InferenceTokenError, InferenceTokenLifecycle
+
+        _require_own_inference_agent(principal, agent_id)
+        try:
+            issued = InferenceTokenLifecycle(cp.store).mint(
+                agent_id,
+                ttl_seconds=body.ttl_seconds,
+                task_id=body.task_id,
+                actor=principal.client_id or principal.agent_id or "",
+            )
+        except (InferenceTokenError, ValueError) as exc:
+            raise ValidationError(str(exc)) from exc
+        return issued.response()
+
+    @app.delete("/agents/{agent_id}/inference-tokens/{token_id}")
+    def revoke_agent_inference_token(
+        agent_id: str,
+        token_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Revoke one of this agent's inference tokens (the task has ended)."""
+        from mac.inference_tokens import InferenceTokenLifecycle
+
+        _require_own_inference_agent(principal, agent_id)
+        try:
+            revoked = InferenceTokenLifecycle(cp.store).revoke(agent_id, token_id)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        if not revoked:
+            raise NotFoundError("no live inference token %s for agent %s" % (token_id, agent_id))
+        return {"id": token_id, "agent_id": agent_id, "revoked": True}
 
     @app.post("/agents/{agent_id}/attestation-key/verify")
     def verify_agent_attestation_key(

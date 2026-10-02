@@ -6090,8 +6090,12 @@ class MacWorker(
         try:
             from mac import coding_agent as _ca
             from mac.task_executor import (
+                _PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
+                _revoke_inference_token,
+                _uses_router_opencode,
                 coding_agent_sandbox_verification,
                 coding_agent_sandbox_which,
+                host_opencode_router_env,
             )
 
             # Probe the route the way tasks will actually run on this node. An
@@ -6108,13 +6112,30 @@ class MacWorker(
                         checked = dict(coding_agent_sandbox_verification(choice))
                     else:
                         argv = _ca.coding_agent_argv(choice, _ca.PREFLIGHT_PROMPT)
-                        completed = subprocess.run(
-                            argv,
-                            capture_output=True,
-                            text=True,
-                            timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
-                            check=False,
-                        )
+                        with tempfile.TemporaryDirectory(prefix="mac-route-probe-") as probe_dir:
+                            probe_env: Optional[Dict[str, str]] = None
+                            token_id = ""
+                            if _uses_router_opencode(choice):
+                                # The same path a task takes: an inference-only
+                                # token and the generated machub config.
+                                overlay, token_id = host_opencode_router_env(
+                                    Path(probe_dir),
+                                    task_id="",
+                                    ttl_seconds=_PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
+                                )
+                                probe_env = {**os.environ, **overlay}
+                            try:
+                                completed = subprocess.run(
+                                    argv,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
+                                    check=False,
+                                    env=probe_env,
+                                )
+                            finally:
+                                if token_id:
+                                    _revoke_inference_token(token_id)
                         output = (completed.stdout or "") + (completed.stderr or "")
                         verified = completed.returncode == 0 and _ca.PREFLIGHT_SENTINEL in output
                         checked = {

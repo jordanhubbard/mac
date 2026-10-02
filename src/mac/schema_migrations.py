@@ -337,6 +337,13 @@ MIGRATIONS: tuple[Migration, ...] = (
                )
         """,
     ),
+    Migration(
+        "0010_inference_tokens",
+        _load_sql(MIGRATION_PATH / "0010_inference_tokens.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.inference_tokens') IS NOT NULL
+        """,
+    ),
 )
 
 

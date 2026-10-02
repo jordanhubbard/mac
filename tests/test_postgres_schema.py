@@ -168,6 +168,7 @@ EXPECTED_TABLES = [
     "human_groups",
     "human_message_deliveries",
     "humans",
+    "inference_tokens",
     "integration_findings",
     "integration_observations",
     "leases",
@@ -480,6 +481,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0007_drop_agent_provisioning_requests",
         "0008_drop_self_upgrade_and_release_epoch_tables",
         "0009_slim_worker_credentials",
+        "0010_inference_tokens",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -508,6 +510,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0009_slim_worker_credentials": (
             "7ef6348425012dec2d5872a8d845ac07ce14b5050659b615ec5b6f73a0b1e7e8"
+        ),
+        "0010_inference_tokens": (
+            "fef5787c0a7c0f6ac8987d572760c11e463fa59d0cd95d76066a79561a6545bd"
         ),
     }
     for migration in MIGRATIONS:

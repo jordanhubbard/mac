@@ -625,9 +625,124 @@ def _openshell_environment() -> Dict[str, str]:
     # of those things as the host identity.
     for name in _HOST_ONLY_HUB_CREDENTIALS:
         values.pop(name, None)
+    # What the sandbox gets instead: this task's inference-only token, which
+    # reaches the hub's model router and nothing else (mac.inference_tokens).
+    inference_token = os.environ.get(_INFERENCE_TOKEN_ENV)
+    if inference_token:
+        values[_INFERENCE_TOKEN_ENV] = inference_token
     if read_only_repository:
         fence_read_only_repository_environment(values)
     return values
+
+
+# ---------------------------------------------------------------------------
+# Per-task inference token and the opencode router config
+# ---------------------------------------------------------------------------
+_INFERENCE_TOKEN_ENV = "MAC_INFERENCE_TOKEN"
+_OPENCODE_CONFIG_FILENAME = ".mac-opencode.json"
+#: A preflight probe is one short completion; its token lives minutes, not hours.
+_PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS = 15 * 60
+#: This executor process's task token: {"id": ..., "token": ...}. One executor
+#: process runs one task, so this is the task's token.
+_TASK_INFERENCE_TOKEN: Dict[str, str] = {}
+
+
+def _uses_router_opencode(choice: Any) -> bool:
+    return (
+        getattr(choice, "agent", "") == "opencode"
+        and getattr(choice, "provider", "") == "mac-router"
+    )
+
+
+def _mint_inference_token(*, task_id: str, ttl_seconds: int) -> Dict[str, Any]:
+    """Ask the hub, as this worker, for an inference-only token bound to it."""
+    from mac.inference_tokens import request_inference_token
+
+    base_url, worker_token = _hub_env()
+    if not base_url or not worker_token:
+        raise RuntimeError("no hub URL or worker token to mint an inference token with")
+    return request_inference_token(
+        base_url,
+        worker_token,
+        local_agent_id(),
+        task_id=task_id,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def _revoke_inference_token(token_id: str) -> None:
+    """Best effort: expiry still ends the token if the hub cannot be reached."""
+    from mac.inference_tokens import revoke_inference_token
+
+    base_url, worker_token = _hub_env()
+    if not token_id or not base_url or not worker_token:
+        return
+    try:
+        revoke_inference_token(base_url, worker_token, local_agent_id(), token_id)
+    except Exception as exc:  # noqa: BLE001 - revocation must never fail a task
+        sys.stderr.write(
+            "[executor] inference token %s not revoked (%s); it expires on its own\n"
+            % (token_id, exc.__class__.__name__)
+        )
+
+
+def _ensure_task_inference_token(task_id: str) -> None:
+    """Mint this task's inference token once and expose it to the sandbox env."""
+    from mac.inference_tokens import DEFAULT_TTL_SECONDS
+
+    if _TASK_INFERENCE_TOKEN.get("token"):
+        return
+    issued = _mint_inference_token(task_id=task_id, ttl_seconds=DEFAULT_TTL_SECONDS)
+    _TASK_INFERENCE_TOKEN.update(id=str(issued.get("id") or ""), token=str(issued["token"]))
+    os.environ[_INFERENCE_TOKEN_ENV] = _TASK_INFERENCE_TOKEN["token"]
+
+
+def revoke_task_inference_token() -> None:
+    """Revoke the task's inference token once the task has finished."""
+    token_id = _TASK_INFERENCE_TOKEN.get("id") or ""
+    _TASK_INFERENCE_TOKEN.clear()
+    os.environ.pop(_INFERENCE_TOKEN_ENV, None)
+    _revoke_inference_token(token_id)
+
+
+def host_opencode_router_env(
+    directory: Path, *, task_id: str, ttl_seconds: int
+) -> Tuple[Dict[str, str], str]:
+    """Mint a token and write the router config for opencode run on the HOST.
+
+    Returns the environment overlay (``MAC_INFERENCE_TOKEN`` and
+    ``OPENCODE_CONFIG``) and the token id for revocation. Used by the
+    host-install route probe, which has no sandbox to hand the token to.
+    """
+    issued = _mint_inference_token(task_id=task_id, ttl_seconds=ttl_seconds)
+    overlay = {_INFERENCE_TOKEN_ENV: str(issued["token"])}
+    overlay.update(
+        _write_opencode_router_config(directory, str(directory), {**os.environ, **overlay})
+    )
+    return overlay, str(issued.get("id") or "")
+
+
+def _write_opencode_router_config(
+    directory: Path, config_directory: str, env_values: Mapping[str, str]
+) -> Dict[str, str]:
+    """Write the ``machub`` opencode config and return ``OPENCODE_CONFIG`` for it.
+
+    ``directory`` is where the file is written; ``config_directory`` is the
+    same directory as the CLI will see it (the sandbox path when uploaded).
+    Nothing is written without an inference token and a hub URL. The file
+    holds no secret: the API key is an ``{env:MAC_INFERENCE_TOKEN}`` reference.
+    """
+    from . import coding_agent as _ca
+
+    if not env_values.get(_INFERENCE_TOKEN_ENV) or not _ca.router_hub_url(env_values):
+        return {}
+    path = directory / _OPENCODE_CONFIG_FILENAME
+    path.write_text(
+        json.dumps(_ca.opencode_router_config(env_values), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return {"OPENCODE_CONFIG": "%s/%s" % (config_directory.rstrip("/"), _OPENCODE_CONFIG_FILENAME)}
 
 
 _LANDLOCK_CREATE_RULESET_SYSCALL = 444
@@ -2136,6 +2251,7 @@ def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tup
         "MAC_SANDBOX_BASE_PATH": _SANDBOX_BASE_PATH,
         "PATH": _SANDBOX_BASE_PATH,
     }
+    env_values.update(_write_opencode_router_config(workspace, sandbox_workspace, env_values))
     env_file = _write_private_shell_env(workspace / ".mac-openshell-env.sh", env_values)
 
     toolchain_file = workspace / ".mac-sandbox-toolchain.sh"
@@ -3001,6 +3117,7 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
         "executor-evidence.json",
         ".mac-executor-policy.txt",
         ".mac-openshell-env.sh",
+        _OPENCODE_CONFIG_FILENAME,
         ".mac-sandbox-toolchain.sh",
         ".mac-sandbox-repository-verify.sh",
         _TRUSTED_READ_ONLY_VERIFICATION_FILE,
@@ -5336,25 +5453,47 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
             env=_coding_agent_env_for_sandbox(sandbox_choice),
         )
         bundle = _write_agent_command_bundle(private_dir, _ca.PREFLIGHT_PROMPT, probe_argv)
-        _write_private_shell_env(
-            private_dir / ".mac-openshell-env.sh",
-            {**_openshell_environment(), "HOME": _SANDBOX_HOME},
-        )
         sandbox_dir = "/sandbox/%s" % private_dir.name
+        env_values = {**_openshell_environment(), "HOME": _SANDBOX_HOME}
+        probe_token: Dict[str, Any] = {}
+        token_failure = ""
+        if _uses_router_opencode(choice):
+            # The probe proves the same path a task takes: an inference-only
+            # token through the hub router. Mint a short one just for it.
+            try:
+                probe_token = _mint_inference_token(
+                    task_id="", ttl_seconds=_PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS
+                )
+            except Exception as exc:  # noqa: BLE001 - an unminted token means "not verified"
+                token_failure = "inference token unavailable: %s" % exc.__class__.__name__
+            else:
+                env_values[_INFERENCE_TOKEN_ENV] = str(probe_token["token"])
+                env_values.update(
+                    _write_opencode_router_config(private_dir, sandbox_dir, env_values)
+                )
+        _write_private_shell_env(private_dir / ".mac-openshell-env.sh", env_values)
         try:
-            rc, out = _openshell_probe(
-                _build_sandbox_probe_argv(
-                    name,
-                    bundle.argv(sandbox_workspace=sandbox_dir),
-                    private_dir,
-                ),
-                timeout=_coding_agent_preflight_timeout(),
-            )
+            if token_failure:
+                rc, out = 1, token_failure
+            else:
+                rc, out = _openshell_probe(
+                    _build_sandbox_probe_argv(
+                        name,
+                        bundle.argv(sandbox_workspace=sandbox_dir),
+                        private_dir,
+                    ),
+                    timeout=_coding_agent_preflight_timeout(),
+                )
         finally:
             bundle.cleanup()
-            _sandbox_step(["delete", name], timeout=60.0)
+            if not token_failure:
+                _sandbox_step(["delete", name], timeout=60.0)
+            if probe_token:
+                _revoke_inference_token(str(probe_token.get("id") or ""))
     ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
     failure_class = "" if ok else _classify_coding_agent_preflight_failure(rc, out)
+    if token_failure:
+        failure_class = "inference_token_unavailable"
     result: Dict[str, object] = {
         "schema": "mac.coding_agent.verification.v1",
         "agent": choice.agent,
@@ -5548,6 +5687,22 @@ def _agent_argv(
     # host and hands its path to the agent, and that path is not known to exist
     # inside the sandbox. Enabling it there needs a check that the file is
     # visible, not an assumption. Tracked rather than guessed.
+    if _uses_router_opencode(choice):
+        # The CLI authenticates to the hub router with this task's own
+        # inference-only token; the worker token stays on the host.
+        try:
+            _ensure_task_inference_token(task_id)
+        except Exception as exc:  # noqa: BLE001 - no token means no route
+            reason = "opencode: could not mint the task's inference token (%s)" % (
+                exc.__class__.__name__
+            )
+            rationale.append(reason)
+            _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
+            return _coding_agent_required_failure_argv(reason)
+        if not confined:
+            os.environ.update(
+                _write_opencode_router_config(workspace, str(workspace), dict(os.environ))
+            )
     mcp_path = None
     if not confined:
         mcp_path = _write_mac_mcp_config(task_id=task_id)
@@ -5999,6 +6154,7 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
                 task_id=task_id,
             )
         finally:
+            revoke_task_inference_token()
             relay_observability.flush()
     return rc
 

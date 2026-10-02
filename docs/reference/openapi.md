@@ -53,6 +53,8 @@ request and response definitions.
 | `POST` | `/agents/{agent_id}/dispatch-hold/release` | Release Dispatch Hold |
 | `POST` | `/agents/{agent_id}/heartbeat` | Heartbeat Agent |
 | `GET` | `/agents/{agent_id}/identity` | Get Agent Identity |
+| `POST` | `/agents/{agent_id}/inference-tokens` | Mint Agent Inference Token |
+| `DELETE` | `/agents/{agent_id}/inference-tokens/{token_id}` | Revoke Agent Inference Token |
 | `POST` | `/agents/{agent_id}/installed-packages` | Update Agent Installed Packages |
 | `POST` | `/agents/{agent_id}/messages/deliver` | Deliver Messages |
 | `DELETE` | `/agents/{agent_id}/mood` | Clear Mood |

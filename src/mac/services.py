@@ -15580,6 +15580,11 @@ class ControlPlane:
                 "AND state IN ('pending_install', 'active')",
                 (now, now, agent_id),
             )
+            conn.execute(
+                "UPDATE inference_tokens SET revoked_at = ? "
+                "WHERE agent_id = ? AND revoked_at IS NULL",
+                (now, agent_id),
+            )
             if agent.deleted_at:
                 return
             departed = agent
