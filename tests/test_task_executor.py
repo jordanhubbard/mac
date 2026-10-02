@@ -302,27 +302,14 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     assert "mac_sandbox_toolchain_setup" in argv[-1]
 
 
-def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, monkeypatch):
-    """opencode/pi's static API-key files must reach the sandbox's HOME.
-
-    Unlike codex's ~/.codex/auth.json (a rotating OAuth refresh token,
-    deliberately excluded -- see _coding_agent_auth_is_safe_for_openshell),
-    opencode's ~/.local/share/opencode/auth.json and pi's
-    ~/.pi/agent/auth.json are static keys with no rotation risk from being
-    copied into a disposable sandbox. Without this forwarding, opencode/pi
-    are present and correctly detected on the host but every in-sandbox
-    preflight fails "route verification failed" because the sandbox process
-    never sees the credential -- reproduced live on a real fleet node.
-    """
+def test_sandbox_create_uploads_no_host_coding_credential_files(tmp_path, monkeypatch):
+    """opencode authenticates with the task's inference token, so no host
+    credential or config file (opencode's own auth.json/opencode.json) is
+    copied into the sandbox."""
     fake_home = tmp_path / "home"
     opencode_auth = fake_home / ".local" / "share" / "opencode" / "auth.json"
     opencode_auth.parent.mkdir(parents=True)
     opencode_auth.write_text('{"nvidia": {"type": "api", "key": "sk-test"}}', encoding="utf-8")
-    opencode_config = fake_home / ".config" / "opencode" / "opencode.json"
-    opencode_config.parent.mkdir(parents=True)
-    opencode_config.write_text(
-        '{"model": "nvidia-inference/switchyard/openai/gpt-5.6-sol"}', encoding="utf-8"
-    )
     monkeypatch.setattr(te.Path, "home", staticmethod(lambda: fake_home))
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
 
@@ -344,35 +331,8 @@ def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, mo
         ],
     )
 
-    assert "--upload" in argv
     uploads = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--upload"]
-    assert "%s:/tmp/.local/share/opencode/auth.json" % opencode_auth in uploads
-    assert "%s:/tmp/.config/opencode/opencode.json" % opencode_config in uploads
-    # pi's file doesn't exist in this fixture, so it must not be forwarded.
-    assert not any(".pi/agent/auth.json" in upload for upload in uploads)
-
-
-def test_openshell_create_args_drop_stale_codex_file_auth_when_env_auth_wins(
-    monkeypatch,
-):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("MAC_OPENSHELL_UPLOAD_CODEX_AUTH", "1")
-    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
-    monkeypatch.setenv(
-        "MAC_OPENSHELL_CREATE_ARGS",
-        "--from image --gpu "
-        "--upload /host/sandbox.yaml:/tmp/.hermes/config.yaml "
-        "--upload /host/.codex/auth.json:/tmp/.codex/auth.json",
-    )
-
-    argv = te._openshell_extra_create_argv()
-
-    assert argv == [
-        "--from",
-        "image",
-        "--upload",
-        "/host/sandbox.yaml:/tmp/.hermes/config.yaml",
-    ]
+    assert uploads == ["%s:%s" % (workspace, te._SANDBOX_WORKDIR)]
 
 
 def test_openshell_create_args_add_gpu_only_for_explicit_gpu_task(monkeypatch):
@@ -475,20 +435,6 @@ def test_successful_route_proof_cache_expires_before_worker_refresh(monkeypatch)
 
     assert te._coding_agent_preflight_ttl(True) == 300.0
     assert te._coding_agent_preflight_ttl(False) == 60.0
-
-
-def test_openshell_create_args_require_both_file_auth_risk_flags(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv(
-        "MAC_OPENSHELL_CREATE_ARGS",
-        "--from image --upload /host/.codex/auth.json:/tmp/.codex/auth.json",
-    )
-    monkeypatch.setenv("MAC_OPENSHELL_UPLOAD_CODEX_AUTH", "1")
-    monkeypatch.delenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", raising=False)
-    assert "/host/.codex/auth.json:/tmp/.codex/auth.json" not in (te._openshell_extra_create_argv())
-
-    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
-    assert "/host/.codex/auth.json:/tmp/.codex/auth.json" in (te._openshell_extra_create_argv())
 
 
 def test_sandbox_toolchain_setup_exports_repository_contract_env(tmp_path):
@@ -3367,7 +3313,7 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         te,
         "_agent_argv",
-        lambda prompt, workspace, *, confined, task=None, exclude=None, chosen=None: [
+        lambda prompt, workspace, *, confined, task=None, chosen=None: [
             "test-coding-agent",
             te.PROMPT_SENTINEL,
         ],
@@ -3427,19 +3373,18 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
 
 
 def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatch):
-    """When a coding-agent CLI is available + authed, _invoke_agent runs THAT
-    in the checkout without injecting the retired Hermes messaging MCP."""
+    """When opencode is available, _invoke_agent runs THAT in the checkout
+    through the private-prompt wrapper."""
     from mac import coding_agent as ca
 
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "0")  # unconfined -> no preflight gate
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
-    # Force a Claude choice deterministically (no real PATH/home probing).
     choice = ca.CodingAgentChoice(
-        agent="claude",
+        agent="opencode",
         available=True,
-        binary="/usr/local/bin/claude",
-        auth_source="ANTHROPIC_API_KEY",
+        binary="/usr/local/bin/opencode",
+        auth_source="MAC_INFERENCE_TOKEN",
     )
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
 
@@ -3456,25 +3401,9 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
     agent_argv = captured["agent_argv"]
     assert "mac.agent_command" in argv
     assert "fix the bug" not in argv
-    assert agent_argv[0] == "/usr/local/bin/claude"
-    assert "-p" in agent_argv and agent_argv[-1] == te.PROMPT_SENTINEL
-    assert "--dangerously-skip-permissions" in agent_argv
-    # An unconfined Claude Code invocation now carries mac's own ledger tools.
-    # This asserted their ABSENCE, which was only ever true because
-    # executor_sandbox set `mcp_path = None` unconditionally -- the whole
-    # injection path was built and never fed. The retired vendored-Hermes
-    # messaging MCP must still stay out; what goes in is mac.
-    assert "--mcp-config" in agent_argv
-    config_path = agent_argv[agent_argv.index("--mcp-config") + 1]
-    servers = json.loads(Path(config_path).read_text(encoding="utf-8"))["mcpServers"]
-    assert set(servers) == {"mac"}, "only mac's tools; no messaging MCP"
-    assert [servers["mac"]["command"], *servers["mac"]["args"]] == [
-        "mac",
-        "admin",
-        "mcp",
-        "serve",
-    ]
-    assert not (tmp_path / ".mac-coding-agent-mcp.json").exists()
+    assert agent_argv[:3] == ["/usr/local/bin/opencode", "run", "--auto"]
+    assert agent_argv[-1] == te.PROMPT_SENTINEL
+    assert "--mcp-config" not in agent_argv
 
 
 def test_invoke_agent_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
@@ -3515,63 +3444,26 @@ def test_invoke_agent_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
 def test_agent_argv_sandboxed_uses_coding_agent_only_when_verified(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
-    choice = ca.CodingAgentChoice(
-        agent="claude", available=True, binary="/b/claude", auth_source="ANTHROPIC_API_KEY"
-    )
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: True)
     argv = te._agent_argv("do it", tmp_path, confined=True)
-    assert argv[0] == "claude" and argv[-1] == "do it"
-    # No per-invocation MCP wiring on the sandboxed path (host paths don't resolve
-    # inside the sandbox); no host MCP config file written.
-    assert "--mcp-config" not in argv
-    assert not (tmp_path / ".mac-coding-agent-mcp.json").exists()
+    assert argv[0] == "opencode" and argv[-1] == "do it"
 
 
 def test_agent_argv_sandboxed_fails_closed_when_not_verified(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
-    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
     argv = te._agent_argv("do it", tmp_path, confined=True)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "claude not verified inside the OpenShell sandbox" in joined
+    assert "opencode not verified inside the OpenShell sandbox" in joined
 
 
-def test_agent_argv_sandboxed_falls_through_failed_claude_to_codex(tmp_path, monkeypatch):
-    from mac import coding_agent as ca
-
-    choices = [
-        ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude"),
-        ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex"),
-    ]
-    attempted = []
-
-    def resolve_for_test(*, accept=None, which=None, exclude=None):
-        assert accept is not None
-        assert which is te.coding_agent_sandbox_which
-        for candidate in choices:
-            if accept(candidate):
-                return candidate
-        return ca.CodingAgentChoice(agent="", available=False)
-
-    monkeypatch.setattr(ca, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        te,
-        "_coding_agent_sandbox_ok",
-        lambda candidate: attempted.append(candidate.agent) or candidate.agent == "codex",
-    )
-
-    argv = te._agent_argv("do it", tmp_path, confined=True)
-
-    assert attempted == ["claude", "codex"]
-    assert argv[0] == "codex"
-    assert argv[-1] == "do it"
-
-
-def test_agent_argv_confined_can_select_cursor_installed_only_in_task_image(tmp_path, monkeypatch):
+def test_agent_argv_confined_selects_opencode_from_the_task_image(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
     real_resolve = ca.resolve_coding_agent
@@ -3580,21 +3472,19 @@ def test_agent_argv_confined_can_select_cursor_installed_only_in_task_image(tmp_
     def resolve_for_test(**kwargs):
         seen["which"] = kwargs.get("which")
         return real_resolve(
-            env={
-                "MAC_CODING_AGENT": "cursor",
-                "CURSOR_API_KEY": "cursor-secret",
-            },
+            env={"MAC_HUB_URL": "http://hub.example:8789", "MAC_INFERENCE_TOKEN": "t"},
             home=tmp_path,
             **kwargs,
         )
 
     monkeypatch.setattr(ca, "resolve_coding_agent", resolve_for_test)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda candidate: True)
+    monkeypatch.setattr(te, "_ensure_task_inference_token", lambda task_id: None)
 
     argv = te._agent_argv("do it", tmp_path, confined=True)
 
     assert seen["which"] is te.coding_agent_sandbox_which
-    assert argv[0] == "cursor-agent"
+    assert argv[:3] == ["opencode", "run", "--auto"]
     assert argv[-1] == "do it"
 
 
@@ -3627,7 +3517,7 @@ def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatc
                 "runner": "coding-agent-required",
                 "rationale": [
                     "no coding agent",
-                    "no task-sandbox coding agent is configured and verified",
+                    "opencode is not configured and verified inside the task sandbox",
                 ],
             },
         )
@@ -3638,19 +3528,20 @@ def test_agent_argv_records_secret_free_route_intent_for_available_runner(tmp_pa
     from mac import coding_agent as ca
 
     choice = ca.CodingAgentChoice(
-        agent="codex",
+        agent="opencode",
         available=True,
-        binary="/b/codex",
-        auth_source="OPENAI_API_KEY",
+        binary="/b/opencode",
+        auth_source="MAC_INFERENCE_TOKEN",
         provider="mac-router",
-        protocol="responses",
+        protocol="openai-chat-completions",
         auth_kind="bearer_env",
         endpoint="http://hub.example/v1",
-        model="*",
-        rationale=["Codex is configured"],
+        model="gpt-5.6-sol",
+        rationale=["opencode is configured"],
     )
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: True)
+    monkeypatch.setattr(te, "_ensure_task_inference_token", lambda task_id: None)
     emitted = []
     monkeypatch.setattr(
         te,
@@ -3668,12 +3559,11 @@ def test_agent_argv_records_secret_free_route_intent_for_available_runner(tmp_pa
     event, detail = emitted[-1]
     assert event == "runner_selected"
     assert detail["task_id"] == "task_model_evidence"
-    assert detail["coding_agent"] == "codex"
+    assert detail["coding_agent"] == "opencode"
     assert detail["provider"] == "mac-router"
-    assert detail["protocol"] == "responses"
-    assert detail["requested_model"] == "*"
+    assert detail["protocol"] == "openai-chat-completions"
+    assert detail["requested_model"] == "gpt-5.6-sol"
     assert detail["route_fingerprint"].startswith("sha256:")
-    assert "OPENAI_API_KEY" not in repr(detail)
 
 
 def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_not_verified(
@@ -3683,14 +3573,14 @@ def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_not_verifi
 
     # The retired flag cannot restore the removed Hermes fallback.
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "0")
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
     task = {"metadata": {"execution_contract": {"type": "repository"}}}
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "codex not verified inside the OpenShell sandbox" in joined
+    assert "opencode not verified inside the OpenShell sandbox" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_no_coding_agent(
@@ -3706,7 +3596,7 @@ def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_no_coding_
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "no task-sandbox coding agent is configured and verified" in joined
+    assert "opencode is not configured and verified inside the task sandbox" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_agent(
@@ -3723,7 +3613,7 @@ def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_a
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "no task-sandbox coding agent is configured and verified" in joined
+    assert "opencode is not configured and verified inside the task sandbox" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_not_verified(
@@ -3734,7 +3624,7 @@ def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_not_verifie
 
     monkeypatch.delenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", raising=False)
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
     task = {"metadata": {"execution_contract": {"type": "repository"}}}
@@ -3760,7 +3650,7 @@ def test_coding_agent_required_failure_preserves_private_prompt_bundle_contract(
     monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
     captured = {}
@@ -3789,7 +3679,7 @@ def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_not_verifi
     from mac import coding_agent as ca
 
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
     task = {"metadata": {"execution_contract": {"type": "repository"}}}
@@ -3811,7 +3701,7 @@ def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_no_coding_
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "no task-sandbox coding agent is configured and verified" in joined
+    assert "opencode is not configured and verified inside the task sandbox" in joined
 
 
 def test_sandbox_mode_off_never_probes(monkeypatch):
@@ -3823,7 +3713,7 @@ def test_sandbox_mode_off_never_probes(monkeypatch):
         "_run_coding_agent_preflight_result",
         lambda c: (_ for _ in ()).throw(AssertionError("must not probe")),
     )
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     assert te._coding_agent_sandbox_ok(choice) is False
 
 
@@ -3832,12 +3722,12 @@ def test_sandbox_coding_route_rewrites_host_loopback_endpoint(monkeypatch):
 
     monkeypatch.setattr(te, "_openshell_host_alias", lambda: "host.openshell.internal")
     choice = ca.CodingAgentChoice(
-        agent="codex",
+        agent="opencode",
         available=True,
-        binary="/b/codex",
-        auth_source="OPENAI_API_KEY",
+        binary="/b/opencode",
+        auth_source="MAC_INFERENCE_TOKEN",
         provider="mac-router",
-        protocol="responses",
+        protocol="openai-chat-completions",
         auth_kind="bearer_env",
         endpoint="http://127.0.0.1:8001/v1",
     )
@@ -3846,32 +3736,8 @@ def test_sandbox_coding_route_rewrites_host_loopback_endpoint(monkeypatch):
 
     assert choice.endpoint == "http://127.0.0.1:8001/v1"
     assert sandbox_choice.endpoint == "http://host.openshell.internal:8001/v1"
-    assert choice.binary == "/b/codex"
-    assert sandbox_choice.binary == "codex"
-
-
-def test_sandbox_coding_route_uses_image_path_for_host_command_override(monkeypatch):
-    from mac import coding_agent as ca
-
-    monkeypatch.setenv(
-        "MAC_CODING_AGENT_CODEX_CMD",
-        "/opt/homebrew/bin/codex exec --skip-git-repo-check",
-    )
-    choice = ca.CodingAgentChoice(
-        agent="codex",
-        available=True,
-        binary="/opt/homebrew/bin/codex",
-    )
-
-    sandbox_choice = te._coding_agent_choice_for_sandbox(choice)
-    argv = ca.coding_agent_argv(
-        sandbox_choice,
-        "do it",
-        env=te._coding_agent_env_for_sandbox(sandbox_choice),
-    )
-
-    assert argv == ["codex", "exec", "--skip-git-repo-check", "do it"]
-    assert all("/opt/homebrew" not in item for item in argv)
+    assert choice.binary == "/b/opencode"
+    assert sandbox_choice.binary == "opencode"
 
 
 def test_sandbox_mode_trust_skips_probe(monkeypatch):
@@ -3883,7 +3749,7 @@ def test_sandbox_mode_trust_skips_probe(monkeypatch):
         "_run_coding_agent_preflight_result",
         lambda c: (_ for _ in ()).throw(AssertionError("must not probe")),
     )
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     assert te._coding_agent_sandbox_ok(choice) is True
 
 
@@ -3907,55 +3773,10 @@ def test_sandbox_verify_runs_probe_once_and_caches(monkeypatch):
             }
         ),
     )
-    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     assert te._coding_agent_sandbox_ok(choice) is True
     assert te._coding_agent_sandbox_ok(choice) is True  # second call served from cache
-    assert calls == ["claude"]
-
-
-def test_sandbox_verify_skips_codex_rotating_file_auth_by_default(monkeypatch):
-    from mac import coding_agent as ca
-
-    monkeypatch.delenv("MAC_CODING_AGENT_SANDBOX", raising=False)  # default = verify
-    monkeypatch.delenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", raising=False)
-    te._SANDBOX_PREFLIGHT_CACHE.clear()
-    monkeypatch.setattr(
-        te,
-        "_run_coding_agent_preflight_result",
-        lambda c: (_ for _ in ()).throw(AssertionError("must not probe")),
-    )
-    choice = ca.CodingAgentChoice(
-        agent="codex", available=True, binary="/b/codex", auth_source="~/.codex/auth.json"
-    )
-    assert te._coding_agent_sandbox_ok(choice) is False
-
-
-def test_sandbox_verify_can_opt_into_codex_file_auth_probe(monkeypatch):
-    from mac import coding_agent as ca
-
-    monkeypatch.delenv("MAC_CODING_AGENT_SANDBOX", raising=False)  # default = verify
-    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
-    te._SANDBOX_PREFLIGHT_CACHE.clear()
-    calls = []
-    monkeypatch.setattr(
-        te,
-        "_run_coding_agent_preflight_result",
-        lambda c: (
-            calls.append(c.agent)
-            or {
-                "schema": "mac.coding_agent.verification.v1",
-                "agent": c.agent,
-                "route_fingerprint": c.route_fingerprint(),
-                "verified": True,
-                "checked_at": te.utcnow(),
-            }
-        ),
-    )
-    choice = ca.CodingAgentChoice(
-        agent="codex", available=True, binary="/b/codex", auth_source="~/.codex/auth.json"
-    )
-    assert te._coding_agent_sandbox_ok(choice) is True
-    assert calls == ["codex"]
+    assert calls == ["opencode"]
 
 
 def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):
@@ -3972,18 +3793,18 @@ def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):
     monkeypatch.setattr(
         te, "_sandbox_step", lambda args, *, timeout: deleted.append(args) or (True, "")
     )
-    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/usr/bin/claude")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/usr/bin/opencode")
     report = te._run_coding_agent_preflight_result(choice)
     assert report["verified"] is True
-    assert report["binary"] == "/usr/bin/claude"
-    assert report["execution_binary"] == "claude"
+    assert report["binary"] == "/usr/bin/opencode"
+    assert report["execution_binary"] == "opencode"
     assert report["binary_status"] == "present"
     # The probe runs through private files: neither prompt nor underlying agent
     # command/credentials appear in the host's long-lived create argv.
     assert "create" in seen["argv"]
     joined = " ".join(seen["argv"])
     assert "mac.agent_command" in joined
-    assert "/usr/bin/claude" not in joined
+    assert "/usr/bin/opencode" not in joined
     assert ca.PREFLIGHT_PROMPT not in joined
     assert ca.PREFLIGHT_SENTINEL not in joined
     # The throwaway sandbox is always deleted.
@@ -3997,7 +3818,7 @@ def test_preflight_fails_without_sentinel(monkeypatch):
         te, "_openshell_probe", lambda create_argv, *, timeout: (0, "auth error: not logged in")
     )
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
-    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/usr/bin/codex")
+    choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/usr/bin/opencode")
     report = te._run_coding_agent_preflight_result(choice)
     assert report["verified"] is False
     assert report["binary_status"] == "present"

@@ -9,12 +9,10 @@ TWO PROPERTIES, and the second is the one this repository keeps failing.
    query parameter with nothing comparing them; a third surface speaking to the
    hub its own way would be that again.
 
-2. It is CONSUMED. `mcp_path` sat at None from the retirement of the vendored
-   Hermes messaging MCP until now, so mcp_config_document,
-   supports_per_invocation_mcp and the --mcp-config insertion were all built
-   and never fed. ADR-0006 records the ACP->AgentBus half being removed after a
-   census found zero streams on its topic. A server nothing launches is that
-   story told slower.
+2. It is CONSUMED. The agent plugin package (mac.harness_plugin) registers
+   server_command() with each local coding harness. ADR-0006 records the
+   ACP->AgentBus half being removed after a census found zero streams on its
+   topic; a server nothing launches is that story told slower.
 """
 
 from __future__ import annotations
@@ -219,32 +217,3 @@ def test_the_server_command_is_a_mac_subcommand():
 
     parsed = build_parser().parse_args(server_command()[1:])
     assert parsed.func.__name__ == "cmd_mcp_serve"
-
-
-def test_the_sandbox_actually_hands_this_config_to_agents():
-    """The property ADR-0006 is a warning about: built, wired, and consumed.
-
-    `mcp_path` was None unconditionally, so the whole injection path existed
-    and was never fed.
-    """
-    from mac.executor_sandbox import _write_mac_mcp_config
-
-    path = _write_mac_mcp_config(task_id="task_t")
-    assert path
-
-    document = json.loads(open(path).read())
-    server = document["mcpServers"]["mac"]
-    assert [server["command"], *server["args"]] == server_command()
-
-
-def test_a_config_write_failure_does_not_stop_the_agent(monkeypatch):
-    """Tools are an enhancement. Losing them must not lose the task."""
-    from mac import executor_sandbox
-
-    monkeypatch.setattr(
-        executor_sandbox.tempfile,
-        "mkdtemp",
-        lambda **kw: (_ for _ in ()).throw(OSError("no space")),
-    )
-
-    assert executor_sandbox._write_mac_mcp_config(task_id="task_t") is None

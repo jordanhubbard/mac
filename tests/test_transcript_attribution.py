@@ -20,12 +20,6 @@ The only truthful source is the route that actually ran. `_agent_argv` populates
 its `chosen` dict with the selected agent (`route["agent"]`), and
 `CodingAgentChoice` also knows the model -- but neither ever left that function.
 `_opts_with_route` carries both into the metadata the runner writes.
-
-The failover case is the one that matters most: when a provider refuses mid-task
-and execution moves to a different CLI, attribution must follow the agent that
-actually produced the output. Attributing a successful fallback to the provider
-that already refused is worse than no attribution -- it is wrong data that looks
-right.
 """
 
 from __future__ import annotations
@@ -78,36 +72,30 @@ def test_a_partial_route_fills_only_what_it_knows():
 
 
 def test_the_original_opts_are_not_mutated():
-    """The caller reuses opts across a failover; mutating it would attribute the
-    fallback run to the agent that already refused."""
+    """Mutating the caller's opts would leak this run's attribution into it."""
     opts = {"task": {"id": "task_1"}}
 
     executor_sandbox._opts_with_route(opts, {"agent": "claude"})
 
     assert "coding_agent" not in opts, (
-        "opts was mutated in place; after a failover the same dict is reused "
-        "and would carry the FAILED provider's name into the successful run"
+        "opts was mutated in place; the caller's dict must not carry one "
+        "run's attribution into another"
     )
 
 
 def test_every_invocation_path_attributes(monkeypatch):
-    """Source-level: all three runner call sites must go through the helper.
+    """Source-level: both runner call sites must go through the helper.
 
-    There are three ways the coding agent is invoked -- sandboxed, sandboxed
-    after a mid-task failover, and unsandboxed/break-glass. A path that skips
-    attribution produces exactly the silent hole this fixes.
+    The coding agent is invoked sandboxed or unsandboxed/break-glass. A path
+    that skips attribution produces exactly the silent hole this fixes.
     """
     import inspect
 
     source = inspect.getsource(executor_sandbox._invoke_agent)
 
-    assert source.count("_opts_with_route") == 3, (
-        "expected all three runner call sites (sandboxed, failover, "
-        "unsandboxed) to attribute; found %d" % source.count("_opts_with_route")
-    )
-    assert "_opts_with_route(opts, fallback_route)" in source, (
-        "the failover path must attribute to the FALLBACK route. Using the "
-        "original route here would credit the provider that refused."
+    assert source.count("_opts_with_route") == 2, (
+        "expected both runner call sites (sandboxed, unsandboxed) to "
+        "attribute; found %d" % source.count("_opts_with_route")
     )
 
 

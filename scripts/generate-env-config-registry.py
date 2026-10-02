@@ -36,7 +36,7 @@ SOURCE_SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".toml", ".conf", ".service"}
 FAMILIES = (
     ("MAC_SEMANTIC_RETRY_", "semantic-retry"),
     ("MAC_REPOSITORY_REF_RECONCILER_", "repository-lifecycle"),
-    ("MAC_CODING_ROUTE_", "coding-route-ladder"),
+    ("MAC_CODING_ROUTE_", "coding-route"),
     ("MAC_CODING_AGENT_", "coding-agent-auth"),
     ("MAC_CLIENT_PRINCIPALS_", "client-auth"),
     ("MAC_LOCAL_CONSOLE_", "client-auth"),
@@ -121,9 +121,9 @@ CONSUMER_DEFAULTS = {
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
     "MAC_CODING_AGENT": (
-        "Coding CLI. Unset means opencode through the hub model router. `auto` restores "
-        "route-ladder/priority selection across the other detected CLIs; a CLI name pins "
-        "it; `off` disables coding agents (the executor fails closed)."
+        "Coding CLI switch. Unset or `opencode` runs opencode through the hub model router, "
+        "MAC's only coding CLI; `off` disables the coding route (the executor fails closed). "
+        "Any other value is ignored."
     ),
     "MAC_CODING_MODELS": (
         "Comma-separated logical model names the generated opencode config declares under "
