@@ -443,7 +443,6 @@ def report_boundary_env(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     monkeypatch.delenv("MAC_OPENSHELL_KEEP", raising=False)
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX_NAME", raising=False)
-    monkeypatch.delenv("MAC_EXECUTOR_BACKEND", raising=False)
     monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from " + _RUNTIME_REF)
     # These boundary tests describe the *containerized* Linux runtime, which is
     # now the only platform that has one. Pin the platform so the suite asserts

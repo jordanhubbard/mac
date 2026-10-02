@@ -21,7 +21,7 @@ UPSTREAM_COMMIT = "d15eabbe5d2122eedc060bae8a771381e9873d1b"
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = MAX_INPUT_BYTES + 4096
 _MARKER = "<!-- mac.prompt_master.v1 -->\n"
-_KNOWN_TARGETS = {"claude", "codex", "cursor", "opencode", "pi", "acp", "api"}
+_KNOWN_TARGETS = {"claude", "codex", "cursor", "opencode", "pi", "api"}
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)\b((?:[A-Z][A-Z0-9_]*_)?(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY))"
     r"(\s*[=:]\s*)([^\s,;]+)"
@@ -74,7 +74,7 @@ def compile_prompt(
     """Validate and deterministically rewrite one final outbound prompt.
 
     Callers must invoke this after route selection and before staging prompt
-    bytes in a file, argv, ACP request, or HTTP body.
+    bytes in a file, argv, or HTTP body.
     """
 
     if not isinstance(prompt, str) or not prompt.strip():

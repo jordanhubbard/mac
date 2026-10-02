@@ -809,7 +809,7 @@ def _read_only_report_executor_attestation(
     """Describe the hardened report executor only when it is usable *now*.
 
     The hub converts this worker-side claim into a separate controller-owned
-    marker.  Keep the probe fail-closed: the legacy executor alias, ACP,
+    marker.  Keep the probe fail-closed: the legacy executor alias,
     supervisor-only confinement, retained sandboxes, unsafe create arguments,
     missing policy/binary, and unenforceable Landlock posture all remain
     ineligible for repository-bearing reports.
@@ -829,8 +829,6 @@ def _read_only_report_executor_attestation(
     if len(argv) != 1 or Path(argv[0]).name != "mac-task-executor":
         return None
     host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
-    if (os.environ.get("MAC_EXECUTOR_BACKEND") or "hermes").strip().lower() != "hermes":
-        return None
     # Environment hygiene is platform-independent and stays enforced on a host
     # install; only the container artifacts below are Linux-only.
     if _env_truthy(os.environ.get("MAC_OPENSHELL_KEEP")):

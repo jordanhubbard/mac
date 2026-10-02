@@ -5569,157 +5569,6 @@ def _agent_argv(
     )
 
 
-def _executor_backend() -> str:
-    """Which agent runtime drives a task: ``hermes`` (default) or ``acp``.
-
-    ACP (ADR 0006) is opt-in via ``MAC_EXECUTOR_BACKEND=acp`` so Hermes stays the
-    default until parity; the external agent command is ``MAC_ACP_AGENT_CMD``."""
-    return (env_str("MAC_EXECUTOR_BACKEND") or "hermes").lower()
-
-
-def _acp_agent_argv() -> List[str]:
-    """The external ACP agent command (shell-split). Required for backend=acp."""
-    import shlex
-
-    return shlex.split(env_str("MAC_ACP_AGENT_CMD"))
-
-
-def _acp_update_action_event(
-    audit_id: Any, session_id: str, params: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Map one ACP ``session/update`` notification to a mac action-event record."""
-    inner = params.get("update") or {}
-    return {
-        "task_id": audit_id,
-        "session_id": session_id or params.get("sessionId"),
-        "actor": "mac-acp",
-        "action_type": "acp.session_update",
-        "action_name": str(inner.get("sessionUpdate") or "update"),
-        "outcome": "unknown",
-        "severity": "info",
-        "attributes": {"acp_update": inner},
-    }
-
-
-def _acp_permission_handler(audit_id: Any) -> Callable[[Any], Any]:
-    """ACP ``session/request_permission`` handler (Phase 3).
-
-    Evaluates each request through :func:`mac.acp.permission.evaluate_permission`
-    instead of blanket auto-approving. The OpenShell *kernel sandbox* remains the
-    real gate — when sandboxed the decision short-circuits to allow ("sandbox-
-    enforced") and the ACP prompt is advisory. Unsandboxed, the decision consults
-    the parsed OpenShell *policy* (network lockdown denies egress; an empty
-    read_write set denies writes); with no policy it defaults to allow (Phase-1
-    parity), flippable to deny via ``MAC_ACP_PERMISSION_MODE=deny``.
-
-    On *allow* it selects the first ``allow``-kind option the agent offered (else
-    the first option); on *deny* it selects a ``reject``-kind option if one is
-    offered, else returns a CANCELLED outcome. Every decision + its reason is
-    recorded to ``/action-events`` (``attributes.permission_reason``)."""
-    from mac.acp.permission import evaluate_permission, load_openshell_policy
-    from mac.acp.protocol import PermissionOutcome, RequestPermissionResult
-
-    sandboxed = _openshell_enabled()
-    # Load the policy only when it can actually change the decision (unsandboxed
-    # under policy mode). Best-effort: a missing/unreadable policy -> None.
-    policy = None if sandboxed else load_openshell_policy()
-
-    def _handler(params: Any) -> Any:
-        options = list(getattr(params, "options", None) or [])
-        tool_call = getattr(params, "tool_call", {}) or {}
-        decision = evaluate_permission(tool_call, policy=policy, sandboxed=sandboxed)
-
-        if decision.allow:
-            chosen = next((o for o in options if str(o.kind or "").startswith("allow")), None)
-            chosen = chosen or (options[0] if options else None)
-        else:
-            # Prefer an explicit reject option when the agent offered one.
-            chosen = next((o for o in options if str(o.kind or "").startswith("reject")), None)
-
-        _hub_post(
-            "/action-events",
-            {
-                "task_id": audit_id,
-                "session_id": getattr(params, "session_id", None),
-                "actor": "mac-acp",
-                "action_type": "acp.permission",
-                "action_name": str(
-                    tool_call.get("title") or tool_call.get("toolCallId") or "tool_call"
-                ),
-                "outcome": "allowed" if decision.allow else "denied",
-                "severity": "info",
-                "attributes": {
-                    "tool_call": tool_call,
-                    "permission_reason": decision.reason,
-                    "allowed": decision.allow,
-                },
-            },
-        )
-        if chosen is not None:
-            return RequestPermissionResult(
-                outcome=PermissionOutcome.SELECTED, option_id=chosen.option_id
-            )
-        return RequestPermissionResult(outcome=PermissionOutcome.CANCELLED)
-
-    return _handler
-
-
-def _invoke_acp_agent(
-    prompt: str, workspace: Path, audit_id: Any, opts: dict, *, executor: Any = None
-) -> "subprocess.CompletedProcess":
-    """Drive an external ACP agent (ADR 0006) for one task turn.
-
-    Streams every ``session/update`` to the hub's ``/action-events`` ledger and
-    bridges ``session/request_permission`` through :func:`_acp_permission_handler`.
-    Returns a :class:`subprocess.CompletedProcess` so the downstream
-    finalizer/evidence flow is unchanged — the deterministic git finalizer
-    remains the real proof of work regardless of which agent produced it."""
-    from mac.acp import ACPExecutor
-    from mac.acp.protocol import ContentBlockType, SessionUpdateKind, StopReason
-
-    if executor is None:
-        argv = _acp_agent_argv()
-        if not argv:
-            return subprocess.CompletedProcess(
-                ["acp"], 1, "", "MAC_EXECUTOR_BACKEND=acp but MAC_ACP_AGENT_CMD is unset"
-            )
-        executor = ACPExecutor(argv, cwd=str(workspace))
-
-    prompt = _compile_outbound_prompt(prompt, "acp", opts, audit_id=audit_id)
-
-    text_chunks: List[str] = []
-
-    def _on_update(params: Dict[str, Any]) -> None:
-        inner = params.get("update") or {}
-        if inner.get("sessionUpdate") in (
-            SessionUpdateKind.AGENT_MESSAGE_CHUNK,
-            SessionUpdateKind.AGENT_THOUGHT_CHUNK,
-        ):
-            content = inner.get("content") or {}
-            if isinstance(content, dict) and content.get("type") == ContentBlockType.TEXT:
-                text_chunks.append(str(content.get("text") or ""))
-        _hub_post(
-            "/action-events",
-            _acp_update_action_event(audit_id, str(params.get("sessionId") or ""), params),
-        )
-
-    argv_label = list(getattr(executor, "_argv", ["acp"]))
-    try:
-        run = executor.run(
-            prompt,
-            on_update=_on_update,
-            on_permission=_acp_permission_handler(audit_id),
-            timeout=opts.get("timeout"),
-        )
-    except Exception as exc:  # noqa: BLE001 - a backend failure must finalize, not crash the loop
-        return subprocess.CompletedProcess(
-            argv_label, 1, "".join(text_chunks), "ACP agent run failed: %s" % exc
-        )
-    rc = 0 if run.stop_reason == StopReason.END_TURN else 1
-    stderr = "" if rc == 0 else "ACP agent stopped with reason: %s" % run.stop_reason
-    return subprocess.CompletedProcess(argv_label, rc, "".join(text_chunks), stderr)
-
-
 #: Failure classes that mean "this route cannot do the work right now, but
 #: another one can". Credit exhaustion and provider outages are properties of
 #: the SUBSCRIPTION or the SERVICE, not of the task or the sandbox: the binary
@@ -5834,8 +5683,6 @@ def _invoke_agent(
     Invariant: an approval-bypassed coding agent (``--dangerously-*``) is only
     used when the run is confined by OpenShell, so we
     never launch an *unguarded* bypass agent.
-      * backend=acp      -> drive an external ACP agent (ADR 0006); confinement
-        is the OpenShell sandbox + the permission bridge.
       * sandbox enabled  -> full OpenShell lifecycle (upload workspace, run the
         agent confined, download results, delete). Fails closed if no policy
         resolves or the kernel can't enforce Landlock.
@@ -5845,13 +5692,6 @@ def _invoke_agent(
     Returns the runner's result (carries .returncode)."""
     metadata = opts.get("task", {}).get("metadata") if isinstance(opts.get("task"), dict) else None
     read_only_repository = metadata_declares_read_only_report_repository(metadata)
-    if _executor_backend() == "acp":
-        if read_only_repository:
-            raise RuntimeError(
-                "read-only repository reports require per-task OpenShell confinement; "
-                "the ACP backend is not supported"
-            )
-        return _invoke_acp_agent(prompt, workspace, audit_id, opts)
     # `wrap` is the per-task OpenShell wrap launch model; `confined` is whether
     # OpenShell confinement is in effect by EITHER model — the per-task wrap or
     # the production supervisor (which runs this whole process inside a sandbox,

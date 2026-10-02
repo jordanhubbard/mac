@@ -44,7 +44,8 @@ and its own comment states the assumption plainly:
 
 That is a pass-through, not a policy. MAC injects
 `stream_options: {"include_usage": true}` in exactly one place —
-`src/mac/responses_adapter.py:145` — so a coding agent that streams without
+`src/mac/responses_adapter.py:145` (since removed along with the Codex-only
+`/v1/responses` route) — so a coding agent that streams without
 requesting usage produces a route MAC cannot meter. The router then records
 `input_tokens: null` and `stream_no_usage: true` and moves on. That is 8,352
 requests in a week, and they book as **$0**.

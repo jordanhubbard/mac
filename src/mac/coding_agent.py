@@ -64,9 +64,8 @@ PREFERENCE_ENV = "MAC_PREFER_CODING_AGENT"
 FORCE_ENV = "MAC_CODING_AGENT"
 
 #: Per-agent explicit command template (shlex-split). When set it is used
-#: verbatim and the prompt is appended as the trailing positional argument
-#: (mirrors ``MAC_ACP_BACKEND_CMD``), insulating the fleet from upstream CLI
-#: flag drift without a code change.
+#: verbatim and the prompt is appended as the trailing positional argument,
+#: insulating the fleet from upstream CLI flag drift without a code change.
 COMMAND_ENV = {
     "claude": "MAC_CODING_AGENT_CLAUDE_CMD",
     "codex": "MAC_CODING_AGENT_CODEX_CMD",

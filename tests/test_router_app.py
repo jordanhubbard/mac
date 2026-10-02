@@ -275,7 +275,8 @@ def test_mount_adds_routes_when_inproc_with_providers():
     proxy = ProviderProxy(_router(), _fake_forward({"primary": (200, {"ok": True})})[0])
     assert mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"}, proxy=proxy) is True
     paths = {r.path for r in app.routes}
-    assert {"/v1/chat/completions", "/v1/responses", "/v1/embeddings"} <= paths
+    assert {"/v1/chat/completions", "/v1/embeddings"} <= paths
+    assert "/v1/responses" not in paths
 
 
 def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypatch):
@@ -372,7 +373,6 @@ def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypa
     }
     assert route_keys == {
         ("POST", "/v1/chat/completions"),
-        ("POST", "/v1/responses"),
         ("POST", "/v1/embeddings"),
         ("POST", "/v1/genai/{path:path}"),
         ("POST", "/v1/audio/{path:path}"),
@@ -388,24 +388,6 @@ def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypa
     assert chat.status_code == 200
     assert chat.json()["choices"][0]["message"]["content"] == "ready"
     assert calls[-1][1] == "/chat/completions"
-    assert calls[-1][2]["model"] == "meta/llama-route-test"
-
-    responses = client.post(
-        "/v1/responses",
-        json={
-            "model": "*",
-            "instructions": "Be concise",
-            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
-        },
-    )
-    assert responses.status_code == 200
-    assert responses.json()["object"] == "response"
-    assert responses.json()["output"][0]["content"][0]["text"] == "ready"
-    assert calls[-1][1] == "/chat/completions"
-    assert calls[-1][2]["messages"] == [
-        {"role": "system", "content": "Be concise"},
-        {"role": "user", "content": "hi"},
-    ]
     assert calls[-1][2]["model"] == "meta/llama-route-test"
 
     embeddings = client.post("/v1/embeddings", json={"model": "*", "input": "hello"})

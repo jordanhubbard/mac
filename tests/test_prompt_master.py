@@ -9,7 +9,7 @@ from mac import executor_sandbox
 from mac.prompt_master import MAX_INPUT_BYTES, PromptPolicyError, compile_prompt
 
 
-@pytest.mark.parametrize("target", ["claude", "codex", "cursor", "opencode", "pi", "acp", "api"])
+@pytest.mark.parametrize("target", ["claude", "codex", "cursor", "opencode", "pi", "api"])
 def test_compiler_is_target_aware_idempotent_and_redacts_secrets(target):
     source = "Executor policy block verbatim.\nAPI_TOKEN=super-secret\nImplement the task."
     first = compile_prompt(source, target=target, model="reasoning-model")
@@ -35,7 +35,6 @@ def test_compiler_fails_closed_on_empty_and_oversized_prompts():
 def test_executor_compiles_after_route_selection_before_private_file(monkeypatch, tmp_path):
     captured = {}
 
-    monkeypatch.setattr(executor_sandbox, "_executor_backend", lambda: "cli")
     monkeypatch.setattr(executor_sandbox, "_openshell_enabled", lambda: False)
     monkeypatch.setattr(executor_sandbox, "_openshell_required_for_local_agent", lambda: False)
     monkeypatch.setattr(

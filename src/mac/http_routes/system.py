@@ -78,10 +78,4 @@ def build_system_router(
 
     controller_routes("github-ingest", services.github_ingestor)
 
-    @router.get("/.well-known/acp")
-    def acp_manifest_route() -> Dict[str, Any]:
-        from mac.acp.capabilities import acp_manifest
-
-        return acp_manifest()
-
     return router
