@@ -2001,7 +2001,7 @@ local disk is scratch, and the ledger is the truth.</p>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    subgraph Workers[&quot;Worker agents (many)&quot;]
 <a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        W1[&quot;mac-agent&lt;br/&gt;claim · lease · execute&quot;]
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        SB[&quot;OpenShell sandbox&quot;]
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        CA[&quot;coding agent CLI&lt;br/&gt;claude / codex / cursor&quot;]
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        CA[&quot;coding agent CLI&lt;br/&gt;opencode&quot;]
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    end
 <a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
 <a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    FORGE[&quot;GitHub&quot;]
@@ -2077,9 +2077,9 @@ because authority differs:</p>
   describe what remains outside that control.</li>
 <li><strong>Worker agent</strong> (<code>mac-agent</code>) — registers, heartbeats, claims one task at a
   time under a lease, executes it, submits evidence.</li>
-<li><strong>Coding agent</strong> — the CLI (Claude Code, Codex, Cursor) the worker spawns
-  <em>inside</em> a sandbox to do the actual work. It is not a mac principal; the
-  worker is.</li>
+<li><strong>Coding agent</strong> — opencode, the one CLI the worker spawns <em>inside</em> a
+  sandbox to do the actual work. It takes its model from the hub router with a
+  per-task inference token. It is not a mac principal; the worker is.</li>
 <li><strong>Reviewer</strong> — an agent or the default review workflow, producing a verdict
   that gates publication.</li>
 </ul>

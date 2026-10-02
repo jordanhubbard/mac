@@ -1912,7 +1912,9 @@
 
 <h1 id="adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment">ADR 0029: The coding-route search path is a fleet contract, not per-worker environment<a class="headerlink" href="#adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Proposed</li>
+<li>Status: Withdrawn 2026-10-02. MAC runs one coding CLI, opencode, through
+  the hub's model router; provider failover lives in the router, so there is
+  no CLI route ladder. <code>src/mac/route_ladder.py</code> was deleted.</li>
 <li>Date: 2026-08-22</li>
 <li>Decision owner: MAC fleet owner</li>
 <li>Related:</li>

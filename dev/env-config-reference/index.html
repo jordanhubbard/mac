@@ -2319,81 +2319,11 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: client profiles dir.</td>
 </tr>
 <tr>
-<td><code>MAC_CODEX_BASE_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: codex base url.</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: codex model.</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_PROVIDER</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: codex provider.</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: codex token.</td>
-</tr>
-<tr>
-<td><code>MAC_CODEX_WIRE_API</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: codex wire api.</td>
-</tr>
-<tr>
 <td><code>MAC_CODING_AGENT</code></td>
 <td>str</td>
 <td>consumer-defined</td>
 <td>core</td>
-<td>Core setting: coding agent.</td>
-</tr>
-<tr>
-<td><code>MAC_CODING_AGENT_CLAUDE_CMD</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>coding-agent-auth</td>
-<td>Coding Agent Auth setting: coding agent claude cmd.</td>
-</tr>
-<tr>
-<td><code>MAC_CODING_AGENT_CODEX_CMD</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>coding-agent-auth</td>
-<td>Coding Agent Auth setting: coding agent codex cmd.</td>
-</tr>
-<tr>
-<td><code>MAC_CODING_AGENT_CURSOR_CMD</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>coding-agent-auth</td>
-<td>Coding Agent Auth setting: coding agent cursor cmd.</td>
-</tr>
-<tr>
-<td><code>MAC_CODING_AGENT_OPENCODE_CMD</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>coding-agent-auth</td>
-<td>Coding Agent Auth setting: coding agent opencode cmd.</td>
-</tr>
-<tr>
-<td><code>MAC_CODING_AGENT_PI_CMD</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>coding-agent-auth</td>
-<td>Coding Agent Auth setting: coding agent pi cmd.</td>
+<td>Coding CLI switch. Unset or <code>opencode</code> runs opencode through the hub model router, MAC's only coding CLI; <code>off</code> disables the coding route (the executor fails closed). Any other value is ignored.</td>
 </tr>
 <tr>
 <td><code>MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS</code></td>
@@ -2431,25 +2361,25 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Coding Agent Auth setting: coding agent sandbox ok.</td>
 </tr>
 <tr>
-<td><code>MAC_CODING_ROUTE_LADDER</code></td>
+<td><code>MAC_CODING_DEFAULT_MODEL</code></td>
 <td>str</td>
-<td>consumer-defined</td>
-<td>coding-route-ladder</td>
-<td>Coding Route Ladder setting: coding route ladder.</td>
+<td>gpt-5.6-sol</td>
+<td>core</td>
+<td>Logical router model opencode runs on (<code>--model machub/&lt;name&gt;</code>) when the task does not pin one with <code>MAC_TASK_MODEL</code>.</td>
 </tr>
 <tr>
-<td><code>MAC_CODING_ROUTE_LADDER_FILE</code></td>
+<td><code>MAC_CODING_MODELS</code></td>
 <td>str</td>
-<td>consumer-defined</td>
-<td>coding-route-ladder</td>
-<td>Coding Route Ladder setting: coding route ladder file.</td>
+<td>gpt-5.6-sol</td>
+<td>core</td>
+<td>Comma-separated logical model names the generated opencode config declares under its one provider, <code>machub</code> (the hub router at <code>$MAC_HUB_URL/v1</code>). Each must be a model the hub's <code>MAC_ROUTER_PROVIDERS</code> aliases. The task's own model is always added.</td>
 </tr>
 <tr>
 <td><code>MAC_CODING_ROUTE_MAX_AGE_SECONDS</code></td>
 <td>int</td>
 <td>consumer-defined</td>
-<td>coding-route-ladder</td>
-<td>Coding Route Ladder setting: coding route max age seconds.</td>
+<td>coding-route</td>
+<td>Coding Route setting: coding route max age seconds.</td>
 </tr>
 <tr>
 <td><code>MAC_COMMAND_AUDIT_RETENTION_SECONDS</code></td>
@@ -2562,20 +2492,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: credential renew at fraction.</td>
-</tr>
-<tr>
-<td><code>MAC_CURSOR_ENDPOINT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: cursor endpoint.</td>
-</tr>
-<tr>
-<td><code>MAC_CURSOR_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: cursor model.</td>
 </tr>
 <tr>
 <td><code>MAC_DATABASE_URL</code></td>
@@ -3423,6 +3339,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: impact map checked.</td>
+</tr>
+<tr>
+<td><code>MAC_INFERENCE_TOKEN</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Set by the executor inside the task sandbox, never by an operator: a per-task token bound to the worker's agent that may call only POST /v1/chat/completions and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. The worker token never enters the sandbox.</td>
 </tr>
 <tr>
 <td><code>MAC_JOURNAL_AGENT</code></td>
@@ -4363,25 +4286,11 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Openclaw Runtime setting: openclaw workspace.</td>
 </tr>
 <tr>
-<td><code>MAC_OPENCODE_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: opencode model.</td>
-</tr>
-<tr>
 <td><code>MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME</code></td>
 <td>str</td>
 <td>consumer-defined</td>
 <td>openshell-sandbox</td>
 <td>Openshell Sandbox setting: openshell adopt published runtime.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>openshell-sandbox</td>
-<td>Openshell Sandbox setting: openshell allow codex file auth.</td>
 </tr>
 <tr>
 <td><code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK</code></td>
@@ -4629,13 +4538,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Openshell Sandbox setting: openshell task egress.</td>
 </tr>
 <tr>
-<td><code>MAC_OPENSHELL_UPLOAD_CODEX_AUTH</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>openshell-sandbox</td>
-<td>Openshell Sandbox setting: openshell upload codex auth.</td>
-</tr>
-<tr>
 <td><code>MAC_OPENSHELL_VERIFICATION_START_TIMEOUT</code></td>
 <td>int</td>
 <td>consumer-defined</td>
@@ -4767,13 +4669,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: pg pool size.</td>
-</tr>
-<tr>
-<td><code>MAC_PI_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: pi model.</td>
 </tr>
 <tr>
 <td><code>MAC_PORT</code></td>
