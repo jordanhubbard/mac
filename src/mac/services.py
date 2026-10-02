@@ -7159,7 +7159,7 @@ class ControlPlane:
         This is a glanceable, additive record of what happened on a task -- what
         the worker did, what the reviewer found/fixed, environment changes made to
         build/test -- a few lines per phase, the way a person watching the
-        claude/codex/cursor CLI would summarize it. It deliberately does NOT touch
+        coding CLI would summarize it. It deliberately does NOT touch
         evidence, history, or the verification pipeline (those remain the durable
         forensic logs); it is surfaced by ``mac task summary`` / ``task show``.
         """
@@ -23926,36 +23926,32 @@ class ControlPlane:
             )
         except ValueError:
             max_age = 1200.0
+        # opencode is the only coding CLI; an entry for any other is ignored.
+        item = ensure_json_object(clis.get("opencode"))
+        if not (item.get("configured") is True and item.get("verified") is True):
+            return False, "coding_agent_route_unverified"
+        verification = ensure_json_object(item.get("verification"))
+        checked_at = str(verification.get("checked_at") or "").strip()
+        try:
+            age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
+        except Exception:  # noqa: BLE001 - malformed proof must fail closed.
+            return False, "coding_agent_route_unverified"
+        if age < 0 or age > max_age:
+            return False, "coding_agent_route_unverified"
+        if verification.get("route_fingerprint") != item.get("route_fingerprint"):
+            return False, "coding_agent_route_unverified"
         pinned_model = self._task_pinned_coding_model(task)
-        saw_fresh_route = False
-        for raw in clis.values():
-            item = ensure_json_object(raw)
-            if not (item.get("configured") is True and item.get("verified") is True):
-                continue
-            verification = ensure_json_object(item.get("verification"))
-            checked_at = str(verification.get("checked_at") or "").strip()
-            try:
-                age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
-            except Exception:  # noqa: BLE001 - malformed proof must fail closed.
-                continue
-            if age < 0 or age > max_age:
-                continue
-            if verification.get("route_fingerprint") != item.get("route_fingerprint"):
-                continue
-            saw_fresh_route = True
-            if not pinned_model:
-                return True, "verified"
-            verified_model = str(verification.get("model") or item.get("model") or "").strip()
-            verified_models = {
-                str(value).strip()
-                for value in (verification.get("verified_models") or [])
-                if str(value).strip()
-            }
-            if verified_model == pinned_model or pinned_model in verified_models:
-                return True, "verified"
-        if pinned_model and saw_fresh_route:
-            return False, "coding_agent_model_unverified"
-        return False, "coding_agent_route_unverified"
+        if not pinned_model:
+            return True, "verified"
+        verified_model = str(verification.get("model") or item.get("model") or "").strip()
+        verified_models = {
+            str(value).strip()
+            for value in (verification.get("verified_models") or [])
+            if str(value).strip()
+        }
+        if verified_model == pinned_model or pinned_model in verified_models:
+            return True, "verified"
+        return False, "coding_agent_model_unverified"
 
     @staticmethod
     def _task_pinned_coding_model(task: Task) -> str:

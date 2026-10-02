@@ -2916,89 +2916,104 @@ def test_register_worker_reports_command_inventory_without_command_capability(
     assert heartbeat_resources["coding_clis"]["schema"] == "mac.coding_clis.v2"
 
 
-def test_worker_publishes_matching_sandbox_route_verification(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent, task_executor
+_HUB_ROUTE_ENV = {
+    "MAC_HUB_URL": "https://hub.example",
+    "MAC_WORKER_TOKEN": "secret-not-reported",
+}
 
+
+def _route_worker(tmp_path: Path, monkeypatch, name: str = "worker", resources=None):
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
     api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("worker-host")
-    agent = cp.register_agent(machine.id, "worker", resources={})
-    choice = coding_agent.CodingAgentChoice(
-        agent="codex",
-        available=True,
-        binary="/usr/local/bin/codex",
-        auth_source="MAC_CODEX_TOKEN",
-        provider="mac-router",
-        protocol="responses",
-        auth_kind="bearer_env",
-        endpoint="https://hub.example/v1",
-        model="*",
-    )
-    report = {
+    machine = cp.register_machine("%s-host" % name)
+    agent = cp.register_agent(machine.id, name, resources=resources or {})
+    for key, value in _HUB_ROUTE_ENV.items():
+        monkeypatch.setenv(key, value)
+    return MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+
+
+def _sandbox_report(candidate, *, verified: bool, failure_class: str = ""):
+    return {
+        **candidate.observable(),
         "schema": "mac.coding_agent.verification.v1",
-        "agent": "codex",
-        "provider": "mac-router",
-        "protocol": "responses",
-        "auth_kind": "bearer_env",
-        "auth_source": "MAC_CODEX_TOKEN",
-        "endpoint": "https://hub.example/v1",
-        "model": "*",
-        "route_fingerprint": choice.route_fingerprint(),
-        "verified": True,
-        "checked_at": "2026-07-08T00:00:00+00:00",
-        "returncode": 0,
-        "failure_class": "",
+        "agent": candidate.agent,
+        "binary": candidate.binary,
+        "execution_binary": candidate.binary,
+        "binary_status": "present",
+        "route_fingerprint": candidate.route_fingerprint(),
+        "verified": verified,
+        "checked_at": "2026-07-28T00:00:00+00:00",
+        "failure_class": failure_class,
     }
 
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        assert accept is not None
-        assert which is task_executor.coding_agent_sandbox_which
-        assert verify_all is True
-        if accept(choice):
-            return choice
-        return coding_agent.CodingAgentChoice(agent="", available=False)
 
-    # The sandboxed branch is what this test covers, so state its premise: a
-    # Linux node that has opted into the managed sandbox. Neither is a default.
+def test_worker_publishes_the_sandbox_verified_opencode_route(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """The task image's opencode is probed and advertised, not the host's."""
+    from mac import coding_agent, task_executor
+
+    attempted = []
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        task_executor,
-        "coding_agent_sandbox_verification",
-        lambda selected: report,
-    )
     monkeypatch.setattr(
         coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "codex": lambda *_args: (
-                True,
-                choice.binary,
-                choice.auth_source,
-                "codex: configured for test",
-            ),
-        },
+        "_service_augmented_which",
+        lambda _env, _home: lambda _name: None,
     )
-    monkeypatch.setenv("MAC_CODEX_TOKEN", "secret-not-reported")
-    monkeypatch.setenv("MAC_CODEX_BASE_URL", choice.endpoint)
-    monkeypatch.setenv("MAC_CODEX_PROVIDER", choice.provider)
 
-    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    def verify_for_test(candidate):
+        attempted.append(candidate.agent)
+        return _sandbox_report(candidate, verified=True)
+
+    monkeypatch.setattr(task_executor, "coding_agent_sandbox_verification", verify_for_test)
+    worker = _route_worker(tmp_path, monkeypatch)
     worker._probe_coding_route()
     resources = worker._maybe_command_inventory_resources()
 
-    codex = resources["coding_clis"]["clis"]["codex"]
-    assert codex["configured"] is True
-    assert codex["verified"] is True
-    assert codex["provider"] == "mac-router"
-    assert codex["protocol"] == "responses"
+    clis = resources["coding_clis"]["clis"]
+    assert attempted == ["opencode"]
+    assert set(clis) == {"opencode"}
+    opencode = clis["opencode"]
+    assert opencode["on_path"] is True
+    assert opencode["host_on_path"] is False
+    assert opencode["configured"] is True
+    assert opencode["verified"] is True
+    assert opencode["provider"] == "mac-router"
+    assert opencode["protocol"] == "openai-chat-completions"
+    assert worker._coding_route_report["agent"] == "opencode"
     assert "secret-not-reported" not in json.dumps(resources)
+
+
+def test_worker_publishes_a_failed_sandbox_probe_with_its_class(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from mac import task_executor
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setattr(
+        task_executor,
+        "coding_agent_sandbox_verification",
+        lambda candidate: _sandbox_report(
+            candidate, verified=False, failure_class="authentication_failed"
+        ),
+    )
+    worker = _route_worker(tmp_path, monkeypatch)
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    report = worker._coding_route_report
+    assert report["verified"] is False
+    assert report["agent"] == ""
+    assert report["failure_class"] == "authentication_failed"
+    opencode = resources["coding_clis"]["clis"]["opencode"]
+    assert opencode["verified"] is False
+    assert opencode["verification_status"] == "failed"
+    assert opencode["verification"]["failure_class"] == "authentication_failed"
 
 
 def test_worker_keeps_completed_coding_route_proof_visible_during_refresh(
@@ -3014,14 +3029,14 @@ def test_worker_keeps_completed_coding_route_proof_visible_during_refresh(
     worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
     completed = {
         "schema": "mac.coding_agent.verifications.v1",
-        "agent": "codex",
+        "agent": "opencode",
         "verified": True,
         "checked_at": "2026-09-22T00:00:00+00:00",
         "failure_class": "",
         "reports": {
-            "codex": {
+            "opencode": {
                 "schema": "mac.coding_agent.verification.v1",
-                "agent": "codex",
+                "agent": "opencode",
                 "verified": True,
                 "returncode": 0,
             }
@@ -3116,41 +3131,22 @@ def test_successful_route_refreshes_remain_staggered(monkeypatch):
     assert max(delays) <= 720
 
 
-def test_worker_verifies_darwin_host_route_without_openshell(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent
+def _stub_host_probe(monkeypatch, binary: str) -> list:
+    """Host-probe premises: opencode at ``binary``, a minted token, a sentinel."""
+    from mac import coding_agent, task_executor
 
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("darwin-host")
-    agent = cp.register_agent(
-        machine.id,
-        "darwin-worker",
-        resources={"openshell_required": False},
+    revoked: list = []
+    monkeypatch.setattr(
+        coding_agent,
+        "_service_augmented_which",
+        lambda _env, _home: lambda name: binary if name == "opencode" else None,
     )
-    choice = coding_agent.CodingAgentChoice(
-        agent="opencode",
-        available=True,
-        binary="/Users/test/.mac/bin/opencode",
-        auth_source="~/.local/share/opencode/auth.json",
-        provider="opencode",
-        protocol="opencode-run",
-        auth_kind="api_key_file",
+    monkeypatch.setattr(
+        task_executor,
+        "host_opencode_router_env",
+        lambda directory, **_kw: ({"MAC_INFERENCE_TOKEN": "inference"}, "tok_probe"),
     )
-
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        assert accept is not None
-        assert which is None
-        assert verify_all is True
-        return (
-            choice if accept(choice) else coding_agent.CodingAgentChoice(agent="", available=False)
-        )
-
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(task_executor, "_revoke_inference_token", revoked.append)
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -3158,33 +3154,29 @@ def test_worker_verifies_darwin_host_route_without_openshell(
             args[0], 0, coding_agent.PREFLIGHT_SENTINEL, ""
         ),
     )
-    monkeypatch.setattr(
-        coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "opencode": lambda *_args: (
-                True,
-                choice.binary,
-                choice.auth_source,
-                "opencode: configured for test",
-            ),
-        },
-    )
+    return revoked
 
-    worker = MacWorker(
-        api,
-        agent.id,
-        tmp_path,
-        lambda _t, _d: WorkerExecution(0, "ok"),
+
+def test_worker_verifies_darwin_host_route_without_openshell(
+    tmp_path: Path,
+    monkeypatch,
+):
+    binary = "/Users/test/.opencode/bin/opencode"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
+    revoked = _stub_host_probe(monkeypatch, binary)
+    worker = _route_worker(
+        tmp_path, monkeypatch, "darwin-worker", resources={"openshell_required": False}
     )
     worker._probe_coding_route()
     resources = worker._maybe_command_inventory_resources()
 
     opencode = resources["coding_clis"]["clis"]["opencode"]
     assert opencode["verified"] is True
-    assert opencode["verification"]["execution_binary"] == choice.binary
+    assert opencode["verification"]["execution_binary"] == binary
     assert worker._coding_route_report["agent"] == "opencode"
+    # The probe's inference token is revoked as soon as the probe ends.
+    assert revoked == ["tok_probe"]
 
 
 @pytest.mark.parametrize(
@@ -3206,40 +3198,10 @@ def test_worker_route_probe_stays_on_the_host_unless_the_sandbox_is_opted_into(
     platform: str,
     requested_sandbox: Optional[str],
 ):
-    from mac import coding_agent, task_executor
+    from mac import task_executor
 
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("host-install")
-    agent = cp.register_agent(
-        machine.id,
-        "host-install-worker",
-        resources={"openshell_required": False},
-    )
-    choice = coding_agent.CodingAgentChoice(
-        agent="opencode",
-        available=True,
-        binary="/Users/test/.mac/bin/opencode",
-        auth_source="~/.local/share/opencode/auth.json",
-        provider="opencode",
-        protocol="opencode-run",
-        auth_kind="api_key_file",
-    )
-
-    # The probe swallows exceptions to keep a bad route from killing the
-    # worker, so record what it reached for and assert afterwards instead of
-    # raising from inside a stub.
-    resolver_kinds: list[str] = []
+    binary = "/Users/test/.opencode/bin/opencode"
     sandbox_verifications: list[str] = []
-
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        # A `which` resolver is what selects the sandbox image inventory; the
-        # host branch resolves binaries on the host and passes None.
-        resolver_kinds.append("host" if which is None else "sandbox")
-        return (
-            choice if accept(choice) else coding_agent.CodingAgentChoice(agent="", available=False)
-        )
 
     def record_sandbox_verification(verified_choice):
         sandbox_verifications.append(verified_choice.agent)
@@ -3253,208 +3215,20 @@ def test_worker_route_probe_stays_on_the_host_unless_the_sandbox_is_opted_into(
     monkeypatch.setattr(
         task_executor, "coding_agent_sandbox_verification", record_sandbox_verification
     )
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, coding_agent.PREFLIGHT_SENTINEL, ""
-        ),
-    )
-    monkeypatch.setattr(
-        coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "opencode": lambda *_args: (
-                True,
-                choice.binary,
-                choice.auth_source,
-                "opencode: configured for test",
-            ),
-        },
-    )
-
-    worker = MacWorker(
-        api,
-        agent.id,
-        tmp_path,
-        lambda _t, _d: WorkerExecution(0, "ok"),
+    _stub_host_probe(monkeypatch, binary)
+    worker = _route_worker(
+        tmp_path, monkeypatch, "host-install-worker", resources={"openshell_required": False}
     )
     worker._probe_coding_route()
 
     assert sandbox_verifications == []
-    assert resolver_kinds == ["host"]
     report = worker._coding_route_report
     assert report["failure_class"] == ""
     assert report["verified"] is True
     assert report["agent"] == "opencode"
     verification = report["reports"]["opencode"]
     assert verification["verified"] is True
-    assert verification["execution_binary"] == choice.binary
-
-
-def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent, task_executor
-
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("worker-host")
-    agent = cp.register_agent(machine.id, "worker", resources={})
-    choices = [
-        coding_agent.CodingAgentChoice(
-            agent="claude",
-            available=True,
-            binary="/usr/local/bin/claude",
-            auth_source="ANTHROPIC_API_KEY",
-            provider="anthropic",
-            protocol="anthropic-messages",
-            auth_kind="api_key",
-            endpoint="https://api.anthropic.com",
-        ),
-        coding_agent.CodingAgentChoice(
-            agent="codex",
-            available=True,
-            binary="/usr/local/bin/codex",
-            auth_source="OPENAI_API_KEY",
-            provider="openai",
-            protocol="responses",
-            auth_kind="bearer_env",
-            endpoint="https://api.openai.com/v1",
-        ),
-    ]
-    attempted = []
-
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        assert accept is not None
-        assert which is task_executor.coding_agent_sandbox_which
-        assert verify_all is True
-        for candidate in choices:
-            if accept(candidate):
-                return candidate
-        return coding_agent.CodingAgentChoice(agent="", available=False)
-
-    def verify_for_test(candidate):
-        attempted.append(candidate.agent)
-        return {
-            **candidate.observable(),
-            "schema": "mac.coding_agent.verification.v1",
-            "agent": candidate.agent,
-            "route_fingerprint": candidate.route_fingerprint(),
-            "verified": candidate.agent == "codex",
-            "checked_at": "2026-07-16T00:00:00+00:00",
-            "failure_class": "" if candidate.agent == "codex" else "probe_failed",
-        }
-
-    # Route fall-through is exercised through the sandboxed verifier, so state
-    # its premise: a Linux node that has opted into the managed sandbox.
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        task_executor,
-        "coding_agent_sandbox_verification",
-        verify_for_test,
-    )
-    monkeypatch.setattr(
-        coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "claude": lambda *_args: (
-                True,
-                choices[0].binary,
-                choices[0].auth_source,
-                "claude: configured for test",
-            ),
-            "codex": lambda *_args: (
-                True,
-                choices[1].binary,
-                choices[1].auth_source,
-                "codex: configured for test",
-            ),
-        },
-    )
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-not-reported")
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-not-reported")
-
-    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
-    worker._probe_coding_route()
-    resources = worker._maybe_command_inventory_resources()
-
-    clis = resources["coding_clis"]["clis"]
-    assert attempted == ["claude", "codex"]
-    assert clis["claude"]["verification_status"] == "failed"
-    assert clis["claude"]["verification"]["failure_class"] == "probe_failed"
-    assert clis["codex"]["verification_status"] == "verified"
-    assert clis["codex"]["verified"] is True
-    assert worker._coding_route_report["agent"] == "codex"
-    assert worker._coding_route_report["verified"] is True
-    assert "secret-not-reported" not in json.dumps(resources)
-
-
-def test_worker_probes_and_advertises_cursor_from_task_image_not_host_path(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent, task_executor
-
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("worker-host")
-    agent = cp.register_agent(machine.id, "worker", resources={})
-    attempted = []
-
-    # Resolving the CLI from the task image rather than the host is only
-    # meaningful on a node that runs the sandbox, so state that premise.
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setenv("MAC_CODING_AGENT", "cursor")
-    monkeypatch.setenv("CURSOR_API_KEY", "secret-not-reported")
-    monkeypatch.setattr(
-        coding_agent,
-        "_service_augmented_which",
-        lambda _env, _home: lambda _name: None,
-    )
-
-    def verify_for_test(candidate):
-        attempted.append(candidate.agent)
-        return {
-            **candidate.observable(),
-            "schema": "mac.coding_agent.verification.v1",
-            "agent": candidate.agent,
-            "binary": candidate.binary,
-            "execution_binary": candidate.binary,
-            "binary_status": "present",
-            "route_fingerprint": candidate.route_fingerprint(),
-            "verified": True,
-            "checked_at": "2026-07-28T00:00:00+00:00",
-            "failure_class": "",
-        }
-
-    monkeypatch.setattr(
-        task_executor,
-        "coding_agent_sandbox_verification",
-        verify_for_test,
-    )
-
-    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
-    worker._probe_coding_route()
-    resources = worker._maybe_command_inventory_resources()
-
-    cursor = resources["coding_clis"]["clis"]["cursor"]
-    assert attempted == ["cursor"]
-    assert cursor["on_path"] is True
-    assert cursor["host_on_path"] is False
-    assert cursor["configured"] is True
-    assert cursor["verified"] is True
-    assert cursor["binary_status"] == "present"
-    assert "secret-not-reported" not in json.dumps(resources)
+    assert verification["execution_binary"] == binary
 
 
 def test_command_inventory_explicitly_probes_cargo_when_scan_truncated(

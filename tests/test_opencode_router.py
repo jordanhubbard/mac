@@ -31,15 +31,10 @@ def test_unset_coding_agent_means_opencode(tmp_path):
     env = {**_HUB_ENV, "ANTHROPIC_API_KEY": "k"}
     choice = ca.resolve_coding_agent(env=env, home=tmp_path, which=_which("claude", "opencode"))
     assert choice.agent == "opencode"
-    assert "MAC_CODING_AGENT unset; opencode is the coding CLI" in choice.rationale
+    assert choice.rationale[0].startswith("opencode: routed through the hub model router")
     # Without opencode there is no silent fall-through to another CLI.
     missing = ca.resolve_coding_agent(env=env, home=tmp_path, which=_which("claude"))
     assert missing.agent == "" and missing.available is False
-    # auto keeps the old multi-CLI selection until the other detectors go.
-    auto = ca.resolve_coding_agent(
-        env={**env, "MAC_CODING_AGENT": "auto"}, home=tmp_path, which=_which("claude")
-    )
-    assert auto.agent == "claude"
 
 
 def test_hub_credentials_select_the_router_route(tmp_path):
@@ -58,15 +53,6 @@ def test_hub_credentials_select_the_router_route(tmp_path):
         which=_which("opencode"),
     )
     assert inside.route_fingerprint() == choice.route_fingerprint()
-
-
-def test_without_hub_credentials_the_legacy_auth_file_route_remains(tmp_path):
-    auth = tmp_path / ".local" / "share" / "opencode"
-    auth.mkdir(parents=True)
-    (auth / "auth.json").write_text('{"nvidia": {"type": "api", "key": "x"}}')
-    choice = ca.resolve_coding_agent(env={}, home=tmp_path, which=_which("opencode"))
-    assert choice.auth_source == "~/.local/share/opencode/auth.json"
-    assert choice.provider == "opencode"
 
 
 @pytest.mark.parametrize(

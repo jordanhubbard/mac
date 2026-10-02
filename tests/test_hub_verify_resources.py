@@ -197,7 +197,6 @@ def test_worker_create_applies_profile_before_toolchain(monkeypatch, tmp_path, p
     else:
         monkeypatch.setenv("MAC_HUB_VERIFY_PROFILE", profile)
     monkeypatch.setattr(sandbox, "_resolve_openshell_policy", lambda: "/policy.yaml")
-    monkeypatch.setattr(sandbox, "_sandbox_credential_upload_argv", lambda: [])
     argv = sandbox._build_sandbox_create_argv(
         "profile-test",
         tmp_path,
@@ -342,7 +341,6 @@ def test_coding_route_probe_does_not_require_repository_test_storage(monkeypatch
 
     monkeypatch.setenv("MAC_HUB_VERIFY_PROFILE", "bounded-tmpfs")
     monkeypatch.setattr(sandbox, "_resolve_openshell_policy", lambda: "/policy.yaml")
-    monkeypatch.setattr(sandbox, "_sandbox_credential_upload_argv", lambda: [])
     monkeypatch.setattr(
         sandbox, "_openshell_extra_create_argv", lambda: ["--from", "approved-image"]
     )

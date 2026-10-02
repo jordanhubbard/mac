@@ -749,28 +749,21 @@ def _resources_with_command_inventory(
     merged["commands"] = _detect_command_inventory()
     if source_repo is not None:
         merged["source_state"] = _worker_source_state(source_repo)
-    # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
-    # hub — and `mac admin fleet creds status` on any workstation — can see which
-    # agents have lost or never had claude/codex/cursor credentials and need a
-    # sync from the operator's current environment.
+    # The opencode route's status (secret-free) rides the same refresh cycle so
+    # the hub can see whether this worker has a verified coding route. The
+    # wire shape keeps a per-CLI map with a single "opencode" entry.
     try:
-        from mac.coding_agent import detect_all as _detect_coding_clis
+        from mac.coding_agent import CODING_AGENT, route_status
 
-        verification_by_agent: JsonDict = {}
+        verification: JsonDict = {}
         if isinstance(coding_verification, dict):
             reports = coding_verification.get("reports")
             if isinstance(reports, dict):
-                for report in reports.values():
-                    if not isinstance(report, dict):
-                        continue
-                    checked_agent = str(report.get("agent") or "")
-                    if checked_agent:
-                        verification_by_agent[checked_agent] = report
-            else:
-                # Backward compatibility with the original single-route report.
-                checked_agent = str(coding_verification.get("agent") or "")
-                if checked_agent:
-                    verification_by_agent[checked_agent] = coding_verification
+                report = reports.get(CODING_AGENT)
+                if isinstance(report, dict):
+                    verification = report
+            elif str(coding_verification.get("agent") or "") == CODING_AGENT:
+                verification = coding_verification
         execution_which = None
         if isinstance(coding_verification, dict):
             from mac.task_executor import coding_agent_sandbox_which
@@ -779,10 +772,12 @@ def _resources_with_command_inventory(
         merged["coding_clis"] = {
             "schema": "mac.coding_clis.v2",
             "refreshed_at": _utcnow(),
-            "clis": _detect_coding_clis(
-                which=execution_which,
-                verification=verification_by_agent,
-            ),
+            "clis": {
+                CODING_AGENT: route_status(
+                    which=execution_which,
+                    verification=verification,
+                )
+            },
         }
     except Exception:  # noqa: BLE001 - status is best-effort, never blocks registration
         pass
@@ -6085,24 +6080,68 @@ class MacWorker(
             self._coding_route_probe_thread = thread
             thread.start()
 
+    @staticmethod
+    def _host_route_probe(
+        choice: Any,
+        ca: Any,
+        host_opencode_router_env: Callable[..., Any],
+        revoke_inference_token: Callable[[str], None],
+        ttl_seconds: int,
+    ) -> JsonDict:
+        """Run the preflight prompt through opencode on this host (no sandbox)."""
+        argv = ca.coding_agent_argv(choice, ca.PREFLIGHT_PROMPT)
+        with tempfile.TemporaryDirectory(prefix="mac-route-probe-") as probe_dir:
+            # The same path a task takes: an inference-only token and the
+            # generated machub config.
+            overlay, token_id = host_opencode_router_env(
+                Path(probe_dir), task_id="", ttl_seconds=ttl_seconds
+            )
+            try:
+                completed = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
+                    check=False,
+                    env={**os.environ, **overlay},
+                )
+            finally:
+                if token_id:
+                    revoke_inference_token(token_id)
+        output = (completed.stdout or "") + (completed.stderr or "")
+        verified = completed.returncode == 0 and ca.PREFLIGHT_SENTINEL in output
+        return {
+            **choice.observable(),
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": choice.agent,
+            "binary": choice.binary,
+            "execution_binary": choice.binary,
+            "binary_status": "present",
+            "route_fingerprint": choice.route_fingerprint(),
+            "verified": verified,
+            "checked_at": _utcnow(),
+            "returncode": completed.returncode,
+            "failure_class": "" if verified else "host_probe_failed",
+        }
+
     def _probe_coding_route(self) -> None:
+        """Verify the opencode route the way tasks will actually run it."""
         reports: JsonDict = {}
         try:
             from mac import coding_agent as _ca
             from mac.task_executor import (
                 _PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
                 _revoke_inference_token,
-                _uses_router_opencode,
                 coding_agent_sandbox_verification,
                 coding_agent_sandbox_which,
                 host_opencode_router_env,
             )
 
-            # Probe the route the way tasks will actually run on this node. An
-            # unset MAC_OPENSHELL_SANDBOX means off to every other reader, and a
-            # host-install platform has no managed sandbox to probe through at
-            # all (ADR 0015): its kernel cannot enforce Landlock, so a probe
-            # sandbox never starts and leaves a restarting container behind.
+            # An unset MAC_OPENSHELL_SANDBOX means off to every other reader,
+            # and a host-install platform has no managed sandbox to probe
+            # through at all (ADR 0015): its kernel cannot enforce Landlock, so
+            # a probe sandbox never starts and leaves a restarting container
+            # behind.
             host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
             sandboxed = not host_install and _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
 
@@ -6111,48 +6150,14 @@ class MacWorker(
                     if sandboxed:
                         checked = dict(coding_agent_sandbox_verification(choice))
                     else:
-                        argv = _ca.coding_agent_argv(choice, _ca.PREFLIGHT_PROMPT)
-                        with tempfile.TemporaryDirectory(prefix="mac-route-probe-") as probe_dir:
-                            probe_env: Optional[Dict[str, str]] = None
-                            token_id = ""
-                            if _uses_router_opencode(choice):
-                                # The same path a task takes: an inference-only
-                                # token and the generated machub config.
-                                overlay, token_id = host_opencode_router_env(
-                                    Path(probe_dir),
-                                    task_id="",
-                                    ttl_seconds=_PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
-                                )
-                                probe_env = {**os.environ, **overlay}
-                            try:
-                                completed = subprocess.run(
-                                    argv,
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
-                                    check=False,
-                                    env=probe_env,
-                                )
-                            finally:
-                                if token_id:
-                                    _revoke_inference_token(token_id)
-                        output = (completed.stdout or "") + (completed.stderr or "")
-                        verified = completed.returncode == 0 and _ca.PREFLIGHT_SENTINEL in output
-                        checked = {
-                            **choice.observable(),
-                            "schema": "mac.coding_agent.verification.v1",
-                            "agent": choice.agent,
-                            "binary": choice.binary,
-                            "execution_binary": choice.binary,
-                            "binary_status": "present",
-                            "route_fingerprint": choice.route_fingerprint(),
-                            "verified": verified,
-                            "checked_at": _utcnow(),
-                            "returncode": completed.returncode,
-                            "failure_class": "" if verified else "host_probe_failed",
-                        }
-                except Exception as exc:  # noqa: BLE001
-                    # Continue to the next configured route after a probe crash.
+                        checked = self._host_route_probe(
+                            choice,
+                            _ca,
+                            host_opencode_router_env,
+                            _revoke_inference_token,
+                            _PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
+                        )
+                except Exception as exc:  # noqa: BLE001 - a probe crash is "not verified"
                     checked = {
                         **choice.observable(),
                         "schema": "mac.coding_agent.verification.v1",
@@ -6170,13 +6175,14 @@ class MacWorker(
             choice = _ca.resolve_coding_agent(
                 which=coding_agent_sandbox_which if sandboxed else None,
                 accept=_verify,
-                verify_all=True,
             )
             verified = bool(choice.available)
             if verified:
                 failure_class = ""
             elif reports:
-                failure_class = "all_routes_failed"
+                failure_class = str(
+                    (reports.get(_ca.CODING_AGENT) or {}).get("failure_class") or "probe_failed"
+                )
             else:
                 failure_class = "not_configured"
             report = {

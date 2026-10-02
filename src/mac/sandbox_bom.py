@@ -39,37 +39,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-#: Sandbox binary name for each coding agent mac can route to.
-#:
-#: mac routes by basename, so this is the name the image must provide. Only
-#: cursor differs from its router key (the CLI is ``cursor-agent``).
-CODING_AGENT_SANDBOX_BINARY: Dict[str, str] = {
-    "claude": "claude",
-    "codex": "codex",
-    "cursor": "cursor-agent",
-    "opencode": "opencode",
-    "pi": "pi",
-}
-
 
 def _coding_agent_commands() -> Tuple[str, ...]:
-    """The coding-agent binaries the sandbox must carry, from the router.
+    """The coding-agent binary every sandbox must carry.
 
-    Imported lazily-ish at module load from mac.coding_agent so the two cannot
-    drift: a new agent in AGENT_PRIORITY with no entry in
-    CODING_AGENT_SANDBOX_BINARY raises here rather than quietly omitting the
-    binary from the image BOM.
+    Taken from :data:`mac.coding_agent.CODING_AGENT` so the router and the
+    image BOM cannot name different CLIs.
     """
-    from mac.coding_agent import AGENT_PRIORITY
+    from mac.coding_agent import CODING_AGENT
 
-    missing = [a for a in AGENT_PRIORITY if a not in CODING_AGENT_SANDBOX_BINARY]
-    if missing:
-        raise ValueError(
-            "coding agents with no sandbox binary name: %s -- add them to "
-            "CODING_AGENT_SANDBOX_BINARY, the Containerfile and the OpenShell "
-            "policy" % ", ".join(sorted(missing))
-        )
-    return tuple(CODING_AGENT_SANDBOX_BINARY[a] for a in AGENT_PRIORITY)
+    return (CODING_AGENT,)
 
 
 _CODING_AGENT_COMMANDS: Tuple[str, ...] = _coding_agent_commands()
@@ -85,19 +64,10 @@ BOM_SCHEMA = "mac.sandbox_bom.v1"
 MAC_CORE_COMMANDS: Tuple[str, ...] = (
     "bash",
     "ca-certificates",
-    # The coding-agent CLIs mac may route a task to. These are core for the same
-    # reason git is: the executor cannot do its own work without one, and which
-    # of them exists is not a project's business to declare.
-    #
-    # They are derived from AGENT_PRIORITY rather than typed out, so adding an
-    # agent to the router necessarily changes the BOM, which is a frozen input
-    # to the image identity -- the image must therefore be rebuilt, and
-    # bom_gaps reports the command as missing until the Containerfile installs
-    # it. opencode was added to the router on 2026-08-19 and reached three
-    # workers, a policy render and a fleet inventory before anyone noticed the
-    # sandbox image had no such binary; nothing in the pipeline could have said
-    # so, because the router's list and the image's contents were unrelated
-    # facts.
+    # The coding-agent CLI. Core for the same reason git is: the executor
+    # cannot do its own work without it, and it is not a project's business to
+    # declare. Derived from mac.coding_agent so changing the CLI necessarily
+    # changes the BOM, which is a frozen input to the image identity.
     *_CODING_AGENT_COMMANDS,
     "curl",
     "git",
@@ -170,8 +140,7 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     #   gh, mac             installed by the build
     #   pnpm                npm install -g, pinned to PNPM_VERSION
     #   lein                installed from the reviewed build assets
-    #   claude, cursor-agent  reviewed tarballs from the build assets
-    #   codex, opencode       npm install -g, pinned to their *_VERSION args
+    #   opencode            npm install -g, pinned to OPENCODE_VERSION
     "gh": (),
     "mac": (),
     "pnpm": (),

@@ -3766,7 +3766,7 @@ def test_repository_contract_project_commands_do_not_gate_dispatch(cp):
     assert cp.get_task(task.id).state == "claimed"
 
 
-def _verified_coding_route_resources(*, verified=True, model=""):
+def _verified_coding_route_resources(*, verified=True, model="", cli="opencode"):
     fingerprint = "sha256:route-proof"
     return {
         "openshell_required": True,
@@ -3777,11 +3777,11 @@ def _verified_coding_route_resources(*, verified=True, model=""):
         "coding_clis": {
             "schema": "mac.coding_clis.v2",
             "clis": {
-                "codex": {
+                cli: {
                     "configured": True,
                     "verified": verified,
                     "provider": "mac-router",
-                    "protocol": "responses",
+                    "protocol": "openai-chat-completions",
                     "model": model,
                     "route_fingerprint": fingerprint,
                     "verification": {
@@ -3805,6 +3805,26 @@ def test_repo_dispatch_requires_v2_in_sandbox_route_proof(cp, monkeypatch):
         "coder",
         capabilities=["python"],
         resources=_verified_coding_route_resources(verified=False),
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(),
+    )
+
+    assert cp.dispatch_once() is None
+    assert cp.get_task(task.id).state == "open"
+
+
+def test_repo_dispatch_ignores_a_verified_route_for_any_other_cli(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    machine = cp.register_machine("worker")
+    cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources=_verified_coding_route_resources(cli="codex"),
     )
     task = cp.create_task(
         "repo task",

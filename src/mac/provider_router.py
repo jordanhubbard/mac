@@ -189,11 +189,11 @@ class ProviderRouter:
 
         ``immediate`` opens the breaker on this one failure instead of waiting
         for ``failure_threshold``. ``cooldown_seconds`` overrides the router's
-        default dwell time for this provider until it next succeeds. Both exist
-        for the coding-route ladder (ADR 0029), where the failure *class* is
-        known: an account quota cap is proven by one response and should not be
-        re-proven for an hour, while a transient transport error should still
-        need a run of failures before it costs the route its place.
+        default dwell time for this provider until it next succeeds. Both are
+        for a caller that knows the failure *class*: an account quota cap is
+        proven by one response and should not be re-proven for an hour, while a
+        transient transport error should still need a run of failures before it
+        costs the provider its place.
         """
         with self._lock:
             st = self._status.get(name)

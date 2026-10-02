@@ -52,7 +52,6 @@ import contextlib
 import ctypes
 import hashlib
 import json
-import logging
 import os
 import re as _re
 import shlex
@@ -66,7 +65,7 @@ import time
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from mac import mac_paths
 from mac import relay_observability
@@ -334,9 +333,9 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
     # Keep the exchange itself, not just its fingerprint. The audit record below
     # stores sha256(stdout) and a byte count, which proves an output existed and
     # supports nothing else -- no summary, no knowledge base, no answering "why
-    # did the agent do that". The prompt is the LAST argv element for every
-    # supported CLI (claude -p, codex exec, cursor -p), and it never reaches the
-    # audit record because audit_safe_argv truncates anything over 512 chars.
+    # did the agent do that". The prompt is the LAST argv element of
+    # `opencode run`, and it never reaches the audit record because
+    # audit_safe_argv truncates anything over 512 chars.
     post_task_transcript(
         task_id,
         {
@@ -501,16 +500,10 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # sandboxed hermes can authenticate (the *_BASE_URL values have their host
     # loopback rewritten to the sandbox host alias in the private env file).
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
-    "OPENAI_BASE_URL,OPENAI_API_KEY,CODEX_API_KEY,"
-    "MAC_CODEX_BASE_URL,MAC_CODEX_TOKEN,MAC_CODEX_PROVIDER,MAC_CODEX_WIRE_API,MAC_CODEX_MODEL,"
-    # Coding-agent CLI credentials (see mac.coding_agent). A sandboxed coding
-    # agent authenticates safely via these env keys. File-based Codex auth is not
-    # forwarded by default because OpenShell uploads are copies: a throwaway
-    # sandbox can consume and rotate the refresh token without persisting the
-    # replacement back to the host.
-    "ANTHROPIC_API_KEY,ANTHROPIC_AUTH_TOKEN,ANTHROPIC_BASE_URL,ANTHROPIC_MODEL,"
-    "CLAUDE_CODE_OAUTH_TOKEN,CLAUDE_CODE_USE_BEDROCK,CLAUDE_CODE_USE_VERTEX,CLAUDE_CODE_USE_FOUNDRY,"
-    "CURSOR_AUTH_TOKEN,CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL,"
+    "OPENAI_BASE_URL,OPENAI_API_KEY,"
+    # The coding CLI (opencode) authenticates with the per-task
+    # MAC_INFERENCE_TOKEN written into the private environment file, not with
+    # a provider key forwarded from the host.
     # Repository credentials are separate from model-route credentials.  They
     # use the same private mode-0600 upload as the other sandbox secrets so git
     # and gh work inside the confined executor without copying host SSH keys.
@@ -2280,15 +2273,8 @@ def _task_requires_gpu(task: Any) -> bool:
 def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
     """Parse executor-owned OpenShell args and apply task-specific GPU access.
 
-    ``bootstrap-openshell.sh`` only writes the Codex OAuth upload when the
-    operator opts in, but the rendered ``MAC_OPENSHELL_CREATE_ARGS`` can outlive
-    that opt-in.  Never keep copying the rotating host auth file merely because
-    an old recipe still contains it.  File auth is retained only when both
-    explicit risk flags remain enabled *and* no environment API key is present;
-    environment auth wins the coding-agent selection and makes the file both
-    unnecessary and unsafe to copy into a throwaway sandbox. A legacy global
-    ``--gpu`` is always removed: only an explicit GPU task may add it back, and
-    only after bootstrap proved the nested OpenShell GPU path.
+    A legacy global ``--gpu`` is always removed: only an explicit GPU task may
+    add it back, and only after bootstrap proved the nested OpenShell GPU path.
     """
     extra = env_str("MAC_OPENSHELL_CREATE_ARGS")
     if not extra:
@@ -2299,11 +2285,6 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
             "MAC_OPENSHELL_CREATE_ARGS may not contain --env or --; "
             "use MAC_OPENSHELL_ENV_PASSTHROUGH for private environment transfer"
         )
-    permit_codex_file_auth = (
-        not (os.environ.get("OPENAI_API_KEY") or "").strip()
-        and env_bool("MAC_OPENSHELL_UPLOAD_CODEX_AUTH")
-        and env_bool("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH")
-    )
     filtered: List[str] = []
     index = 0
     while index < len(argv):
@@ -2313,12 +2294,6 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
             if token == "--gpu" and index < len(argv) and argv[index].isdigit():
                 index += 1
             continue
-        if token == "--upload" and index + 1 < len(argv):
-            upload = argv[index + 1]
-            _source, separator, destination = upload.rpartition(":")
-            if separator and destination == "/tmp/.codex/auth.json" and not permit_codex_file_auth:
-                index += 2
-                continue
         filtered.append(token)
         index += 1
     if require_gpu:
@@ -2328,47 +2303,6 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
             )
         filtered.append("--gpu")
     return filtered
-
-
-# Unlike codex's ~/.codex/auth.json (an OAuth *refresh* token: consuming it
-# inside a disposable sandbox can rotate it and desync the host copy, see
-# _coding_agent_auth_is_safe_for_openshell), these are static API-key files
-# (coding_agent.py's "api_key_file" auth_kind, never "oauth_file"/"oauth").
-# Copying a static key into a throwaway sandbox carries no rotation risk, so
-# -- unlike codex -- there is no env-var-present gate here: the file is the
-# only working credential path for these CLIs on this fleet.
-#
-# opencode.json is not a credential (opencode's auth.json already carries the
-# key) but its absence is just as fatal: without it opencode falls back to
-# its own built-in default model, observed live to be one the configured
-# provider has since retired ("has reached its end of life"), rather than
-# the model this fleet actually provisions in the host config.
-_SANDBOX_SAFE_CREDENTIAL_FILES: Tuple[Tuple[str, str], ...] = (
-    (".local/share/opencode/auth.json", "opencode"),
-    (".config/opencode/opencode.json", "opencode"),
-    (".pi/agent/auth.json", "pi"),
-)
-
-
-def _sandbox_credential_upload_argv() -> List[str]:
-    """``--upload`` args copying safe, non-rotating coding-agent credential
-    files from the host's HOME into the sandbox's HOME (_SANDBOX_HOME).
-
-    Only files that actually exist are forwarded, so a host without opencode/pi
-    configured emits nothing extra.
-    """
-    home = Path.home()
-    argv: List[str] = []
-    for relative, _agent in _SANDBOX_SAFE_CREDENTIAL_FILES:
-        source = home / relative
-        try:
-            if not source.is_file():
-                continue
-        except OSError:
-            continue
-        destination = "%s/%s" % (_SANDBOX_HOME, relative)
-        argv += ["--upload", "%s:%s" % (source, destination)]
-    return argv
 
 
 _MANAGED_OPENSHELL_RUNTIME_REF_RE = _re.compile(
@@ -2689,7 +2623,6 @@ def _build_sandbox_create_argv(
         _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
     )
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
-    argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sub),
@@ -5031,8 +4964,8 @@ def _record_runner_choice(
     """Make the coding-agent-vs-gateway routing decision legible (best-effort).
 
     Mirrors :func:`mac.agent_provider.record_provider_decision`: a secret-free
-    line so an operator (or the agent) can answer "why did this task run on
-    Claude / Codex / Cursor / the gateway?" rather than facing a silent choice.
+    line so an operator (or the agent) can answer "why did this task run, or
+    fail closed?" rather than facing a silent choice.
     """
     sys.stderr.write(
         "[executor] coding-agent routing: %s (%s)\n"
@@ -5062,32 +4995,6 @@ def _record_runner_choice(
         pass
 
 
-def _write_mac_mcp_config(*, task_id: str = "") -> Optional[str]:
-    """Write an MCP client config registering mac's own tool server.
-
-    Best-effort: a coding agent that cannot be handed tools must still run. A
-    failure here returns None, which is exactly the state everything was in
-    before, so the worst case is the previous behaviour rather than a lost task.
-    """
-    try:
-        from mac import coding_agent as _ca
-        from mac.mcp_server import server_command
-
-        document = _ca.mcp_config_document(server_command(), name="mac")
-        directory = Path(tempfile.mkdtemp(prefix="mac-mcp-"))
-        path = directory / "mcp.json"
-        path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
-        return str(path)
-    except Exception:  # noqa: BLE001 - tools are an enhancement, not a gate
-        logging.getLogger("mac.executor_sandbox").warning(
-            "could not write the mac MCP config for task %s; the agent will run "
-            "without ledger tools",
-            task_id or "<unknown>",
-            exc_info=True,
-        )
-        return None
-
-
 def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     msg = (
         "task execution requires an available coding agent and, when confined, "
@@ -5101,29 +5008,6 @@ def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     # contract.  Omitting it made the error path itself raise ValueError before
     # the intended exit-42 diagnostic could run, exhausting task retry budgets.
     return ["python3", "-c", code, PROMPT_SENTINEL]
-
-
-def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
-    """Whether the selected coding-agent auth can be copied into OpenShell safely.
-
-    Codex OAuth state in ``~/.codex/auth.json`` is a rotating credential. Because
-    OpenShell currently supports upload-copy semantics rather than a persistent
-    writable mount for this path, a preflight or task sandbox can consume the
-    refresh token and leave the host copy stale. Treat that auth source as
-    unavailable under OpenShell unless the operator explicitly opts into the
-    risk for a one-off debug run.
-    """
-    if (
-        getattr(choice, "agent", "") == "codex"
-        and getattr(choice, "auth_source", "") == "~/.codex/auth.json"
-        and not env_bool("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH")
-    ):
-        sys.stderr.write(
-            "[executor] coding-agent sandbox preflight (codex): skipped "
-            "(~/.codex/auth.json is rotating file auth; route unavailable)\n"
-        )
-        return False
-    return True
 
 
 # Per-process cache keyed by the full secret-free route fingerprint. A binary-only
@@ -5158,144 +5042,87 @@ def _coding_agent_preflight_ttl(verified: bool) -> float:
         return default
 
 
-def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
-    """Map a failed coding-agent preflight probe onto an actionable class.
+#: Exit statuses with a fixed meaning: the timeout wrapper's and SIGKILL's, and
+#: the shell's "not executable" / "command not found".
+_PREFLIGHT_RETURNCODE_CLASSES: Dict[int, str] = {
+    124: "timeout",
+    137: "timeout",
+    126: "agent_binary_missing",
+    127: "agent_binary_missing",
+}
 
-    The classes are ordered from most specific to most generic so a caller can
-    react without re-parsing the raw probe output. ``probe_failed`` is the
-    catch-all of last resort; every marker added here strictly narrows what
-    would otherwise collapse into it, which is what makes a failed run
-    diagnosable (see the ``rc=1, class=probe_failed`` fleet failures that
-    carried no recovery signal).
+#: Error codes carried by a structured (JSON) error line: OpenShell's egress
+#: proxy (``{"error": "policy_denied", ...}``) and OpenAI-style error bodies
+#: from the hub router (``{"error": {"code": ..., "type": ...}}``).
+_PREFLIGHT_ERROR_CODE_CLASSES: Dict[str, str] = {
+    "policy_denied": "sandbox_policy_denied",
+    "invalid_api_key": "authentication_failed",
+    "invalid_token": "authentication_failed",
+    "unauthorized": "authentication_failed",
+    "authentication_error": "authentication_failed",
+    "rate_limit_exceeded": "rate_limited",
+    "rate_limit_error": "rate_limited",
+}
+
+
+def _structured_error_class(output: str) -> str:
+    """Class of the first JSON error object in ``output``, or ``""``.
+
+    Only a line that ENDS in a complete JSON object with an ``error`` member
+    counts (OpenShell's proxy prefixes its body with ``HTTP 403``). Words in
+    free text never do: matching substrings of a transcript is how a sandbox
+    named ``mac-task-429907755059`` was once classed ``rate_limited``.
     """
-    text = (output or "").lower()
-    if returncode in {124, 137} or "timed out" in text or "timeout" in text:
-        return "timeout"
-    if "nvidia-persistenced" in text or (
-        ("oci runtime create failed" in text or "containerstartfailed" in text)
-        and ("nvidia" in text or "gpu" in text or "cdi" in text)
-    ):
-        return "sandbox_gpu_unavailable"
-    # The OpenShell sandbox itself could not be created/uploaded, so the probe
-    # never reached the coding agent. Check this before generic filesystem and
-    # provider markers: OCI mount failures commonly contain both "no such file"
-    # and a gateway status code.
-    if (
-        "sandbox create" in text
-        or "failed to create sandbox" in text
-        or "oci runtime create failed" in text
-        or "containerstartfailed" in text
-        or "error mounting" in text
-        or "sandbox entered error phase" in text
-    ):
-        return "sandbox_unavailable"
-    # The subscription behind this route has nothing left to spend. Distinct
-    # from throttling: waiting does not help, and it is not a broken route
-    # either -- the binary, endpoint and credential are all correct. The only
-    # useful response is to run somewhere else, so it gets its own class rather
-    # than being folded into rate limiting or the opaque probe_failed.
-    if (
-        "credit balance" in text
-        or "insufficient_quota" in text
-        or "insufficient credit" in text
-        or "out of credit" in text
-        or "quota exceeded" in text
-        or "usage limit" in text
-        or "billing" in text
-        and "limit" in text
-    ):
-        return "credit_exhausted"
-    # Provider throttling. A 429 (or an explicit rate-limit message) is
-    # transient: retry with backoff rather than treating the route as broken.
-    if "429" in text or "rate limit" in text or "too many requests" in text:
-        return "rate_limited"
-    # Provider-side server faults (5xx / gateway errors). Like throttling these
-    # are transient and route-independent: the endpoint, credentials, and model
-    # are all correct, the upstream just failed this call. Steer an automated
-    # retry with backoff instead of collapsing into the opaque ``probe_failed``.
-    # Checked before the generic ``404``/``not found`` protocol test below so a
-    # "502 bad gateway" is not mis-reported as an endpoint/protocol mismatch.
-    if (
-        "500" in text
-        or "502" in text
-        or "503" in text
-        or "504" in text
-        or "internal server error" in text
-        or "bad gateway" in text
-        or "service unavailable" in text
-        or "gateway timeout" in text
-    ):
-        return "provider_server_error"
-    # Coding CLIs commonly translate a deny-by-default OpenShell egress rule
-    # into a generic "proxy unreachable" message.  The process necessarily
-    # launched before it could diagnose the injected sandbox proxy, so this is
-    # both more actionable than ``probe_failed`` and proof that the binary is
-    # present.  Keep this ahead of the generic endpoint checks: the remediation
-    # is the sandbox policy/proxy path, not the provider URL or credential.
-    if "failed to reach the cursor api" in text or (
-        "proxy" in text
-        and (
-            "unreachable" in text
-            or "is reachable" in text
-            or "failed to connect" in text
-            or "connect failed" in text
-        )
-    ):
-        return "sandbox_proxy_unreachable"
-    # A raw HTTP/2/gRPC-style provider stream was allowed by DNS policy but
-    # OpenShell's TLS auto-detection still terminated it without advertising a
-    # mutually supported ALPN protocol. The route and credential were reached;
-    # the endpoint needs `tls: skip` so the no-protocol policy entry remains a
-    # byte-for-byte TCP passthrough.
-    if "no application protocol" in text or "alpn" in text or "tls alert number 120" in text:
-        return "sandbox_proxy_protocol_unsupported"
-    # OpenShell's egress proxy answered the request itself: the destination is
-    # not in the sandbox policy. The CLI launched, resolved a credential, and
-    # opened a socket, so the repair is the policy/route allow-list — never the
-    # credential. Denials are served as HTTP 403 with a policy sentinel in the
-    # body, so this must precede the generic 401/403 test below, which
-    # otherwise sends an operator to rotate a working key (live fleet evidence
-    # 2026-07-29: ``{"error":"policy_denied","detail":"POST
-    # host.openshell.internal:8789/v1/responses not permitted by policy"}``
-    # classified as ``authentication_failed``). It stays behind the proxy
-    # classes above so "HTTPS proxy CONNECT failed: 403 Forbidden" keeps its
-    # more specific ``sandbox_proxy_unreachable`` class.
-    if (
-        "policy_denied" in text
-        or "policy denied" in text
-        or "not permitted by policy" in text
-        or "denied by policy" in text
-        or "blocked by policy" in text
-        or "not allowed by policy" in text
-    ):
-        return "sandbox_policy_denied"
-    if "connection refused" in text or "failed to connect" in text:
-        return "endpoint_unreachable"
-    if (
-        "401" in text
-        or "403" in text
-        or "unauthorized" in text
-        or "forbidden" in text
-        or "provided api key is invalid" in text
-        or "api key is invalid" in text
-        or "invalid api key" in text
-        or "access token is invalid" in text
-        or "invalid access token" in text
-    ):
-        return "authentication_failed"
-    # The coding-agent CLI (or the shell wrapper) is absent from the sandbox
-    # image. This must be checked before the ``not found`` protocol test below,
-    # otherwise a missing binary is mis-reported as an endpoint mismatch and the
-    # operator repairs the wrong layer.
-    if (
-        "command not found" in text
-        or "no such file or directory" in text
-        or "executable file not found" in text
-        or ": not found" in text
-    ):
-        return "agent_binary_missing"
-    if "404" in text or "not found" in text or "unsupported" in text:
-        return "endpoint_protocol_mismatch"
+    for line in (output or "").splitlines():
+        line = line.strip()
+        start = line.find("{")
+        if start < 0 or not line.endswith("}"):
+            continue
+        try:
+            document = json.loads(line[start:])
+        except ValueError:
+            continue
+        if not isinstance(document, dict) or "error" not in document:
+            continue
+        error = document.get("error")
+        codes: List[object] = []
+        status: object = document.get("status")
+        if isinstance(error, dict):
+            codes += [error.get("code"), error.get("type")]
+            status = error.get("status", status)
+        else:
+            codes.append(error)
+        for code in codes:
+            mapped = _PREFLIGHT_ERROR_CODE_CLASSES.get(str(code or "").strip().lower())
+            if mapped:
+                return mapped
+        try:
+            status_code = int(str(status))
+        except ValueError:
+            status_code = 0
+        if status_code in {401, 403}:
+            return "authentication_failed"
+        if status_code == 429:
+            return "rate_limited"
+        if 500 <= status_code <= 599:
+            return "provider_server_error"
+    return ""
+
+
+def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
+    """Map a failed preflight probe onto a class, from exit status and structure.
+
+    Fixed exit statuses (timeout, command not found) come first, then the first
+    whole-line JSON error object. Free-text output is never searched: an exit
+    0 without the sentinel is ``sentinel_missing``, anything else
+    ``probe_failed``.
+    """
+    by_returncode = _PREFLIGHT_RETURNCODE_CLASSES.get(returncode)
+    if by_returncode:
+        return by_returncode
+    structured = _structured_error_class(output)
+    if structured:
+        return structured
     if returncode == 0:
         return "sentinel_missing"
     return "probe_failed"
@@ -5309,14 +5136,9 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
         return "missing"
     if failure_class in {
         "authentication_failed",
-        "credit_exhausted",
-        "endpoint_protocol_mismatch",
-        "endpoint_unreachable",
         "provider_server_error",
         "rate_limited",
         "sandbox_policy_denied",
-        "sandbox_proxy_protocol_unsupported",
-        "sandbox_proxy_unreachable",
         "sentinel_missing",
     }:
         # These failures are emitted only after the CLI launched far enough to
@@ -5327,9 +5149,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
     return "unverified"
 
 
-_SANDBOX_CODING_AGENT_BINARIES = frozenset(
-    {"claude", "codex", "cursor", "cursor-agent", "opencode", "pi"}
-)
+_SANDBOX_CODING_AGENT_BINARIES = frozenset({"opencode"})
 
 
 def coding_agent_sandbox_which(name: str) -> Optional[str]:
@@ -5347,9 +5167,8 @@ def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Pat
     """Build the coding-agent probe's process argv.
 
     No process-visible secrets: the prompt/command are private uploaded files
-    (see agent_argv's mac.agent_command wrapper), and any credential file this
-    probe needs is copied via _sandbox_credential_upload_argv() -- only the
-    static, non-rotating kinds (coding_agent.py's "api_key_file" auth_kind).
+    (see agent_argv's mac.agent_command wrapper), and the probe's inference
+    token travels in the private mode-0600 environment file.
     """
     if "mac.agent_command" not in agent_argv:
         raise ValueError("sandbox probe must use the private-file command wrapper")
@@ -5359,7 +5178,6 @@ def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Pat
     argv += _openshell_extra_create_argv()
     sandbox_dir = "/sandbox/%s" % private_dir.name
     argv += ["--upload", "%s:/sandbox" % private_dir]
-    argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sandbox_dir),
@@ -5378,9 +5196,9 @@ def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
     """Return a choice whose endpoint and executable resolve inside OpenShell.
 
     Coding-agent detection intentionally runs on the host, where ``which`` returns
-    an absolute host path (for example ``/opt/homebrew/bin/codex``).  Passing that
+    an absolute host path (for example ``/opt/homebrew/bin/opencode``).  Passing that
     path into a Linux sandbox bypasses the sandbox's PATH contract and fails even
-    when the image contains the CLI at ``/usr/local/bin/codex``.  Execute the
+    when the image contains the CLI at ``/usr/local/bin/opencode``.  Execute the
     detected basename through the image-owned PATH instead.  The preflight still
     proves that the corresponding binary is actually present before work routes
     to it.
@@ -5396,29 +5214,6 @@ def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
     return replace(choice, endpoint=rewritten_endpoint, binary=sandbox_binary)
 
 
-def _coding_agent_env_for_sandbox(choice: Any) -> Dict[str, str]:
-    """Normalize an explicit coding-agent command onto the sandbox PATH.
-
-    Command overrides remain useful for CLI flag drift, but their executable may
-    not be a host-only absolute path.  Other explicit arguments are preserved and
-    are validated by the same live sandbox preflight.
-    """
-    from . import coding_agent as _ca
-
-    import shlex
-
-    env = dict(os.environ)
-    key = _ca.COMMAND_ENV.get(str(getattr(choice, "agent", "") or ""))
-    raw = str(env.get(key) or "").strip() if key else ""
-    if not raw:
-        return env
-    argv = shlex.split(raw)
-    if argv:
-        argv[0] = Path(argv[0]).name
-        env[key] = shlex.join(argv)
-    return env
-
-
 def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, str]":
     """Run a one-shot ``sandbox create`` probe; return (returncode, combined output).
     Best-effort: any failure returns a non-zero code (never raises)."""
@@ -5431,6 +5226,8 @@ def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, s
             stdin=subprocess.DEVNULL,
         )
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except subprocess.TimeoutExpired as exc:
+        return 124, str(exc)
     except Exception as exc:  # noqa: BLE001 - a probe failure must mean "not ready", not a crash
         return 1, str(exc)
 
@@ -5447,11 +5244,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="mac-coding-agent-probe-") as tmp:
         private_dir = Path(tmp)
         sandbox_choice = _coding_agent_choice_for_sandbox(choice)
-        probe_argv = _ca.coding_agent_argv(
-            sandbox_choice,
-            PROMPT_SENTINEL,
-            env=_coding_agent_env_for_sandbox(sandbox_choice),
-        )
+        probe_argv = _ca.coding_agent_argv(sandbox_choice, PROMPT_SENTINEL)
         bundle = _write_agent_command_bundle(private_dir, _ca.PREFLIGHT_PROMPT, probe_argv)
         sandbox_dir = "/sandbox/%s" % private_dir.name
         env_values = {**_openshell_environment(), "HOME": _SANDBOX_HOME}
@@ -5516,10 +5309,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
         "[executor] coding-agent sandbox preflight (%s): %s\n"
         % (
             choice.agent,
-            "OK"
-            if ok
-            else "FAILED (rc=%s, class=%s) — falling back to gateway"
-            % (rc, result["failure_class"]),
+            "OK" if ok else "FAILED (rc=%s, class=%s)" % (rc, result["failure_class"]),
         )
     )
     return result
@@ -5541,15 +5331,6 @@ def coding_agent_sandbox_verification(choice: Any) -> Dict[str, object]:
             "verified": False,
             "checked_at": utcnow(),
             "failure_class": "not_configured",
-        }
-    if not _coding_agent_auth_is_safe_for_openshell(choice):
-        return {
-            **choice.observable(),
-            "schema": "mac.coding_agent.verification.v1",
-            "binary_status": "unverified",
-            "verified": False,
-            "checked_at": utcnow(),
-            "failure_class": "unsafe_rotating_file_auth",
         }
     key = choice.route_fingerprint()
     now = time.monotonic()
@@ -5583,8 +5364,6 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
         return False
     if mode in {"trust", "1", "true", "yes", "skip"}:
         return True
-    if not _coding_agent_auth_is_safe_for_openshell(choice):
-        return False
     return bool(coding_agent_sandbox_verification(choice).get("verified"))
 
 
@@ -5594,29 +5373,19 @@ def _agent_argv(
     *,
     confined: bool,
     task: Any = None,
-    exclude: Optional[Iterable[str]] = None,
     chosen: Optional[Dict[str, str]] = None,
 ) -> List[str]:
-    """Pick the agent runner: a coding-agent CLI when one is available + authed
-    (and — when OpenShell-confined — verified to actually work inside the sandbox),
-    otherwise return a deterministic fail-closed command.
+    """The opencode argv for this task, or a deterministic fail-closed command.
 
-    Coding-agent CLIs (Claude Code, Codex, Cursor) authenticate against a
-    subscription/seat rather than a metered API token, so they are preferred for
-    cost (see :mod:`mac.coding_agent`). Full mac-runtime parity on this path: the
-    CLI runs in the prepared checkout (the ``mac`` CLI + runtime context + hub
-    env give it the same hub tool surface Hermes has), receives the same
-    structured task/evidence prompt, and — where the CLI supports per-invocation
-    MCP, on the unconfined path — the messaging MCP server.
+    opencode runs on a ``machub`` model through the hub router with this task's
+    inference-only token (see :mod:`mac.coding_agent`). When OpenShell
+    confinement is in effect (``confined`` -- per-task wrap or the production
+    supervisor) the route must also pass :func:`_coding_agent_sandbox_ok` (a
+    real in-sandbox preflight by default), because a host-side ``which`` does
+    NOT prove the CLI works inside the confined sandbox.
 
-    When OpenShell confinement is in effect (``confined`` — per-task wrap or the
-    production supervisor) enablement is gated on :func:`_coding_agent_sandbox_ok`
-    (a real in-sandbox preflight by default), because a host-side ``which``/cred
-    check does NOT prove the agent works inside the confined sandbox.
-
-    The retired Hermes chat fallback is deliberately not configurable.  A
-    missing or unverified route always selects ``coding-agent-required`` so a
-    worker cannot silently execute through the runtime being removed.
+    There is no fallback runtime and no second CLI: a missing or unverified
+    route selects ``coding-agent-required``.
     """
     from . import coding_agent as _ca
 
@@ -5632,27 +5401,21 @@ def _agent_argv(
     choice = _ca.resolve_coding_agent(
         which=coding_agent_sandbox_which if confined else None,
         accept=_accept_sandbox_route if confined else None,
-        exclude=exclude,
     )
     if chosen is not None:
-        # The caller needs to know which route ran in order to exclude it if
-        # the provider refuses mid-task.
+        # The caller attributes the transcript to the route that actually ran:
+        # `task_agent_transcripts` carries `coding_agent` and `model` columns,
+        # and this is the only truthful source for either.
         chosen["agent"] = choice.agent
         chosen["fingerprint"] = choice.route_fingerprint()
-        # ...and to ATTRIBUTE the transcript. `task_agent_transcripts` has
-        # `coding_agent` and `model` columns that were empty on all 275 live
-        # rows, because the only place either value existed was here, and it
-        # never left this function. The task's own metadata is not a substitute:
-        # on the live hub, 0 of 8,154 tasks carry `coding_agent` and 11 carry
-        # `model`. The route that actually ran is the only truthful source.
         if choice.model:
             chosen["model"] = choice.model
     rationale = list(choice.rationale)
     if not choice.available:
         reason = (
-            "no task-sandbox coding agent is configured and verified"
+            "opencode is not configured and verified inside the task sandbox"
             if confined
-            else "no host coding agent is available/authenticated"
+            else "opencode is not available on this host"
         )
         rationale.append(reason)
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
@@ -5667,28 +5430,8 @@ def _agent_argv(
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
         return _coding_agent_required_failure_argv(reason)
 
-    # Human-facing delivery is owned exclusively by the OpenClaw gateway.  Do
-    # not inject the retired vendored-Hermes messaging MCP into coding agents;
-    # task-to-human messages flow through MAC's durable delivery outbox instead.
-    #
-    # What IS injected is mac's own ledger, as typed tools. `mcp_path` sat at
-    # None from the retirement of the messaging MCP until now, which meant the
-    # whole injection path -- mcp_config_document, supports_per_invocation_mcp,
-    # and the --mcp-config insertion in coding_agent_argv -- was built and
-    # never fed. ADR-0006 records the ACP->AgentBus half being removed after a
-    # census found zero streams on its topic; a wired socket with nothing in it
-    # is the same story told slower.
-    #
-    # UNCONFINED ONLY, deliberately. The previous note here said MCP wiring
-    # cannot work confined because "the host config path + host MCP-server
-    # interpreter do not reliably resolve inside the sandbox". The interpreter
-    # half no longer applies -- `mac admin mcp serve` resolves wherever the CLI
-    # does -- but the CONFIG PATH half is unverified: this writes a file on the
-    # host and hands its path to the agent, and that path is not known to exist
-    # inside the sandbox. Enabling it there needs a check that the file is
-    # visible, not an assumption. Tracked rather than guessed.
     if _uses_router_opencode(choice):
-        # The CLI authenticates to the hub router with this task's own
+        # opencode authenticates to the hub router with this task's own
         # inference-only token; the worker token stays on the host.
         try:
             _ensure_task_inference_token(task_id)
@@ -5703,9 +5446,6 @@ def _agent_argv(
             os.environ.update(
                 _write_opencode_router_config(workspace, str(workspace), dict(os.environ))
             )
-    mcp_path = None
-    if not confined:
-        mcp_path = _write_mac_mcp_config(task_id=task_id)
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
     _record_runner_choice(
@@ -5715,61 +5455,9 @@ def _agent_argv(
         route=choice.observable(),
     )
     argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
-    argv_env = _coding_agent_env_for_sandbox(argv_choice) if confined else None
-    return _ca.coding_agent_argv(
-        argv_choice,
-        prompt,
-        env=argv_env,
-        mcp_config_path=mcp_path,
-    )
+    return _ca.coding_agent_argv(argv_choice, prompt)
 
 
-#: Failure classes that mean "this route cannot do the work right now, but
-#: another one can". Credit exhaustion and provider outages are properties of
-#: the SUBSCRIPTION or the SERVICE, not of the task or the sandbox: the binary
-#: ran, reached its provider, and was refused. Retrying the same route is the
-#: one thing guaranteed not to help.
-_ROUTE_FAILOVER_CLASSES = frozenset(
-    {
-        "credit_exhausted",
-        "rate_limited",
-        "provider_server_error",
-        "authentication_failed",
-    }
-)
-
-
-def _forget_coding_agent_route(fingerprint: str) -> None:
-    """Drop a route's cached preflight proof.
-
-    A verified route is cached for five minutes. Without this, a route that
-    ran out of credits one minute after passing its preflight keeps being
-    selected for the next four -- every task in that window failing on a
-    provider that has already said no.
-    """
-
-    if not fingerprint:
-        return
-    with _SANDBOX_PREFLIGHT_CACHE_LOCK:
-        _SANDBOX_PREFLIGHT_CACHE.pop(fingerprint, None)
-
-
-def _route_failover_class(result: Any) -> str:
-    """Name the provider-level reason an agent run failed, if that is why.
-
-    Reuses the preflight classifier: the CLIs report an exhausted subscription
-    or a provider outage the same way whether they are probing or working.
-    """
-
-    returncode = int(getattr(result, "returncode", 0) or 0)
-    if returncode == 0:
-        return ""
-    text = "%s\n%s" % (
-        getattr(result, "stdout", "") or "",
-        getattr(result, "stderr", "") or "",
-    )
-    failure_class = _classify_coding_agent_preflight_failure(returncode, text)
-    return failure_class if failure_class in _ROUTE_FAILOVER_CLASSES else ""
 
 
 def _opts_with_route(opts: dict, route: Dict[str, str]) -> dict:
@@ -5785,9 +5473,7 @@ def _opts_with_route(opts: dict, route: Dict[str, str]) -> dict:
 
     The task's own metadata is not the source: 0 of 8,154 live tasks carry
     `coding_agent`, and 11 carry `model`. `route` is populated by `_agent_argv`
-    with the agent that ACTUALLY ran, including after a mid-task failover to a
-    different provider -- so it stays truthful precisely when attribution
-    matters most.
+    with the route that ACTUALLY ran.
 
     Existing keys win: an explicit value already in `opts` is not overwritten.
     """
@@ -5920,64 +5606,6 @@ def _invoke_agent(
                 audit_id,
                 _opts_with_route(opts, route),
             )
-            # Failover. A subscription that ran dry, or a provider that is
-            # down, refuses the run after the route passed its preflight --
-            # the proof was true when taken and is worthless now. Re-running
-            # the same route is the one thing certain not to work, and the
-            # task would otherwise burn an attempt on a provider that has
-            # already said no.
-            failover_class = _route_failover_class(result)
-            failed_agent = route.get("agent") or ""
-            if failover_class and failed_agent and not _manifest_is_complete(workspace):
-                _forget_coding_agent_route(route.get("fingerprint") or "")
-                sys.stderr.write(
-                    "[executor] coding-agent %s failed with %s; "
-                    "re-routing to the next configured agent\n" % (failed_agent, failover_class)
-                )
-                fallback_route: Dict[str, str] = {}
-                fallback_argv = _agent_argv(
-                    PROMPT_SENTINEL,
-                    workspace,
-                    confined=confined,
-                    task=opts.get("task"),
-                    exclude=(failed_agent,),
-                    chosen=fallback_route,
-                )
-                if fallback_route.get("agent"):
-                    bundle.cleanup()
-                    fallback_prompt = _compile_outbound_prompt(
-                        prompt,
-                        fallback_route.get("agent") or "universal",
-                        opts,
-                        audit_id=audit_id,
-                        model=fallback_route.get("model") or "",
-                        route_fingerprint=fallback_route.get("fingerprint") or "",
-                    )
-                    bundle = _write_agent_command_bundle(workspace, fallback_prompt, fallback_argv)
-                    _record_runner_choice(
-                        fallback_route["agent"],
-                        [
-                            "%s failed with %s" % (failed_agent, failover_class),
-                            "failing over to %s" % fallback_route["agent"],
-                        ],
-                        task_id=str((opts.get("task") or {}).get("id") or "")
-                        if isinstance(opts.get("task"), dict)
-                        else "",
-                    )
-                    result = _run_sandboxed(
-                        runner,
-                        bundle.argv(sandbox_workspace=sandbox_workspace),
-                        workspace,
-                        audit_id,
-                        # fallback_route, not route: after a failover the
-                        # transcript must be attributed to the agent that
-                        # ACTUALLY produced it. Attributing a successful
-                        # fallback run to the provider that already refused is
-                        # worse than no attribution -- it is wrong data that
-                        # looks right, and it would silently corrupt any
-                        # comparison between agents.
-                        _opts_with_route(opts, fallback_route),
-                    )
             return result
         result = runner(
             _unsandboxed_agent_argv(

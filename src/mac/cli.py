@@ -1512,70 +1512,6 @@ def _mask_token(token: str) -> str:
     return "%s...%s" % (token[:6], token[-4:]) if len(token) > 14 else "*" * len(token)
 
 
-def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
-    """Per-agent coding-CLI auth status from the agents' heartbeat reports.
-
-    Each worker re-probes claude/codex/cursor on its command-inventory cycle
-    and embeds the secret-free result in resources["coding_clis"], so this is
-    a pure hub read: no SSH, no secrets. Agents whose CLIs are on PATH but
-    unauthenticated are flagged NEEDS SYNC — run `mac admin fleet creds-sync` from
-    the workstation that holds the freshest logins (usually the one you're
-    on: you can only be interactive in one place, and that place has the
-    newest tokens)."""
-    from mac.cli_credentials import KNOWN_CLIS, agent_cli_status, agents_needing_sync
-
-    cp = _plane(args)
-    agents = [a.to_dict() if hasattr(a, "to_dict") else dict(a) for a in cp.list_agents()]
-    needing = agents_needing_sync(agents)
-    rows = []
-    for agent in sorted(agents, key=lambda a: str(a.get("name") or "")):
-        name = str(agent.get("name") or "")
-        status = agent_cli_status(agent.get("resources") or {})
-        if not status:
-            rows.append(
-                {
-                    "agent": name,
-                    "status": "(no coding_clis report yet — worker predates this feature or has not refreshed)",
-                }
-            )
-            continue
-        summary = {}
-        report_schema = str(
-            ((agent.get("resources") or {}).get("coding_clis") or {}).get("schema") or ""
-        )
-        is_v2 = report_schema == "mac.coding_clis.v2"
-        for cli in KNOWN_CLIS:
-            info = status.get(cli) if isinstance(status.get(cli), dict) else {}
-            if is_v2 and info.get("verified"):
-                summary[cli] = "verified (%s/%s)" % (
-                    info.get("provider") or "provider",
-                    info.get("protocol") or "protocol",
-                )
-            elif is_v2 and info.get("configured"):
-                # On PATH + credentialed but no same-environment executable
-                # proof: the sandbox cannot (yet) launch it, so it is never "ok".
-                failure = (info.get("verification") or {}).get("failure_class") or "unverified"
-                summary[cli] = "ROUTE UNAVAILABLE (%s)" % failure
-            elif not is_v2 and info.get("available"):
-                # Legacy v1 report: "available" was inventory-only. v2 workers
-                # gate "available" on the executable probe, so this branch only
-                # covers pre-v2 heartbeats.
-                summary[cli] = "ok (%s)" % (info.get("auth_source") or "authed")
-            elif info.get("on_path"):
-                summary[cli] = "NEEDS SYNC"
-            else:
-                summary[cli] = "not installed"
-        rows.append({"agent": name, **summary})
-    _print({"agents": rows, "needs_sync": needing})
-    if needing:
-        print(
-            "\nmac: %d agent(s) need coding-CLI credentials. From the workstation "
-            "with your freshest logins run:\n  mac admin fleet creds-sync --fleet <fleet>"
-            % len(needing),
-            file=sys.stderr,
-        )
-
-
 def cmd_fleet_github_ingest_status(args: argparse.Namespace) -> None:
     """Show the GitHub-issue ingestor's config + last run report (hub read)."""
     cp = _plane(args)
@@ -1634,99 +1570,6 @@ def cmd_project_ingest_disable(args: argparse.Namespace) -> None:
     metadata["github_issue_ingest"] = block
     cp.update_project(args.project, metadata=metadata, actor="human")
     _print({"project": args.project, "github_issue_ingest": block})
-
-
-def cmd_fleet_creds_sync(args: argparse.Namespace) -> None:
-    """Push this workstation's coding-CLI credentials to workers, on demand.
-
-    Source of truth is the CURRENT environment: env keys, portable credential
-    files in $HOME, or the macOS Keychain. Secrets travel only over the fleet
-    SSH routes via stdin — never argv/env/stdout and never through the hub
-    ledger — and every push is verified by re-running the worker's own
-    detector and printing its secret-free verdict."""
-    from mac.cli_credentials import (
-        KNOWN_CLIS,
-        agents_needing_sync,
-        build_sync_manifest,
-        detect_local_credentials,
-        sync_agent,
-    )
-
-    clis = [c.strip() for c in str(args.cli or "").split(",") if c.strip()]
-    for cli in clis:
-        if cli not in KNOWN_CLIS:
-            raise MACError("unknown coding CLI %r (known: %s)" % (cli, ", ".join(KNOWN_CLIS)))
-    sources = detect_local_credentials(clis)
-    portable = {cli: s for cli, s in sources.items() if s.present}
-    for cli in clis:
-        source = sources.get(cli)
-        if source and source.present:
-            print("mac: %s credentials from %s" % (cli, source.origin), file=sys.stderr)
-        else:
-            print(
-                "mac: no portable %s credentials on this workstation (log in to the "
-                "CLI here first, or set its API-key env var)" % cli,
-                file=sys.stderr,
-            )
-    if not portable:
-        raise MACError("nothing to sync: this workstation holds no portable credentials")
-
-    targets = list(args.agent or [])
-    if not targets:
-        # Lazy by default: only agents whose own reports say a CLI is present
-        # but unauthenticated. Credentials are never pushed where not needed.
-        # Hub resolution: honor an explicit authority (--db/--hub-url/global
-        # --fleet); otherwise reach the hub of the fleet being synced.
-        if not (
-            getattr(args, "db", None)
-            or getattr(args, "hub_url", None)
-            or getattr(args, "fleet", None)
-        ):
-            args.fleet = args.creds_fleet
-        cp = _plane(args)
-        agents = [a.to_dict() if hasattr(a, "to_dict") else dict(a) for a in cp.list_agents()]
-        needing = agents_needing_sync(agents, clis=list(portable))
-        targets = sorted(needing)
-        if not targets:
-            print(
-                "mac: no agent reports a needed sync (pass --agent NAME to force one)",
-                file=sys.stderr,
-            )
-            return
-        print(
-            "mac: syncing agents that reported missing auth: %s" % ", ".join(targets),
-            file=sys.stderr,
-        )
-
-    manifest = build_sync_manifest(portable)
-    if args.dry_run:
-        _print(
-            {
-                "dry_run": True,
-                "agents": targets,
-                "clis": sorted(portable),
-                "files": sorted((manifest.get("files") or {}).keys()),
-                "env_keys": sorted((manifest.get("env") or {}).keys()),
-            }
-        )
-        return
-    results = {}
-    for agent in targets:
-        try:
-            verdict = sync_agent(
-                args.creds_fleet, agent, manifest, fleets_config=args.fleets_config
-            )
-            results[agent] = {
-                cli: (
-                    "ok"
-                    if (verdict.get(cli) or {}).get("available")
-                    else str((verdict.get(cli) or {}).get("detail") or "unverified")
-                )
-                for cli in sorted(portable)
-            }
-        except Exception as exc:  # noqa: BLE001 - report per-agent, keep going
-            results[agent] = {"error": str(exc)}
-    _print({"synced": results})
 
 
 def cmd_tenant_register(args: argparse.Namespace) -> None:
@@ -8731,9 +8574,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_journal_restore, journal_restore)
 
-    # Coding-CLI credential fabric: the operator's CURRENT workstation is the
-    # source of truth for claude/codex/cursor auth; workers get it over the
-    # fleet's SSH routes, on demand.
     fleet_connect = fleet.add_parser(
         "connect",
         help="print this fleet's hub URL and bearer token together, ready to "
@@ -8745,51 +8585,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the bearer token in full instead of masking it",
     )
     _set(cmd_fleet_connect, fleet_connect)
-
-    fleet_creds_status = fleet.add_parser(
-        "creds-status",
-        help="per-agent coding-CLI (claude/codex/cursor) auth status, from the "
-        "agents' own heartbeat reports; flags who needs a credential sync",
-    )
-    # Hub selection comes from the GLOBAL --fleet/--hub-url options (a
-    # subparser --fleet default would clobber the parsed global value).
-    _set(cmd_fleet_creds_status, fleet_creds_status)
-
-    fleet_creds_sync = fleet.add_parser(
-        "creds-sync",
-        help="push THIS workstation's coding-CLI credentials to fleet workers "
-        "over their SSH routes (stdin-only transfer; verified on arrival)",
-    )
-    fleet_creds_sync.add_argument(
-        "--fleet",
-        dest="creds_fleet",
-        required=True,
-        help="fleet name (resolves SSH routes from fleets.yaml); a distinct "
-        "dest so it cannot clobber the global --fleet authority selection",
-    )
-    fleet_creds_sync.add_argument(
-        "--agent",
-        action="append",
-        default=None,
-        help="target agent name; repeatable. Default: every agent that "
-        "reported a CLI on PATH without auth (same set --needed selects)",
-    )
-    fleet_creds_sync.add_argument(
-        "--cli",
-        default="claude,codex,cursor",
-        help="comma-separated CLIs to sync (default: claude,codex,cursor)",
-    )
-    fleet_creds_sync.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
-    )
-    fleet_creds_sync.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="show what would be synced where, without moving any secret",
-    )
-    _set(cmd_fleet_creds_sync, fleet_creds_sync)
 
     # mac-ghingest: GitHub issues as an asynchronous work generator. Poll
     # opted-in repos and file idempotent mac tasks; observe/trigger it and opt

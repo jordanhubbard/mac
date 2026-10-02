@@ -21,7 +21,7 @@ UPSTREAM_COMMIT = "d15eabbe5d2122eedc060bae8a771381e9873d1b"
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = MAX_INPUT_BYTES + 4096
 _MARKER = "<!-- mac.prompt_master.v1 -->\n"
-_KNOWN_TARGETS = {"claude", "codex", "cursor", "opencode", "pi", "api"}
+_KNOWN_TARGETS = {"opencode", "api"}
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)\b((?:[A-Z][A-Z0-9_]*_)?(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY))"
     r"(\s*[=:]\s*)([^\s,;]+)"
