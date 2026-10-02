@@ -596,9 +596,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         'test "$(node --version)" = v22.23.1; '
         'test "$(pnpm --version)" = 11.13.1; '
         "gh --version | head -n1 | grep -F 'gh version 2.95.0'; "
-        "codex --version | grep -E '(^| )0\\.140\\.0$'; "
-        "claude --version | grep -F '2.1.220'; "
-        "cursor-agent --version | grep -F '2026.07.23-e383d2b'; "
+        "opencode --version | grep -F '1.18.18'; "
         "clang --version; "
         "clang --print-targets | grep -F riscv64; llvm-objcopy --version; "
         "ld.lld --version; qemu-system-riscv64 --version; "
