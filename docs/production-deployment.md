@@ -511,7 +511,7 @@ backs off, and the next tick starts a fresh attempt. Inside the lock, `ControlPl
 3. **with required checks**: opens or reuses the pull request, reads
    `required_check_verdicts` for the reviewed head, and requests the squash
    merge once they pass. Pending checks wait under the landing deadline;
-   failed checks block the task with the failing checks named;
+   failed checks send the task back to its worker to fix them (below);
 4. **without required checks**: lands only if the canonical tip is still the
    base the worker verified (it is an ancestor of the reviewed head) — through
    the pull request, or by a fast-forward `--force-with-lease` push on the
@@ -537,6 +537,23 @@ with a "Superseded" comment; a forge that refuses is logged
 send-back. Send-backs are counted in `metadata.landing.rebases` and capped at two;
 the third blocks the task (`landing_rebase_cap_exhausted`). New evidence resets
 the rest of the landing budget but not this count.
+
+**Fix failing checks.** When the pull request's required checks fail for the
+head that would land, the land step collects each failed check's name,
+conclusion, details URL and the tail of its GitHub Actions job log (up to its
+last `##[error]`, at most 150 lines, 8 KB across all checks, scrubbed of
+credentials). The SAME task goes back to OPEN with reason
+`required_checks_failed` and a `fix_failed_checks` directive in its metadata;
+the executor prompt renders it as a "Sent back to fix failing checks" section
+with the logs as an escaped, untrusted data block. The next attempt pushes from
+a fresh lease branch, so when it lands the land step moves the ORIGINAL pull
+request's head branch to the new reviewed head (`--force-with-lease`) and lands
+through that pull request: its checks re-run there, instead of the hub waiting
+on a pull request whose head never changed. A closed or merged pull request is
+not reused. Send-backs are counted in `metadata.landing.check_fixes` and capped
+at three; the fourth failure blocks the task (`landing_check_fix_cap_exhausted`)
+with the last failure summary. A failure that cannot be sent back (no pull
+request, no worker evidence) blocks at once as `landing_non_retryable`.
 
 **Never double-land.** Before merging, the land step reads the pull request's
 state. A PR already merged (by the forge, a human, or an attempt of ours that

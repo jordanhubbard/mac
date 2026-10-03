@@ -608,11 +608,20 @@ _LANDING_WAIT_FAILURE_KINDS = frozenset(
     }
 )
 # Failure kinds retrying cannot change: the repository's one test gate (its
-# required checks) failed for this exact head. The task blocks at once.
+# required checks) failed for this exact head. Re-landing the same head cannot
+# turn them green, so the land step never retries it; the default review
+# workflow sends the task back to its worker to fix the checks
+# (``_send_back_for_check_fix``) and blocks once that is no longer possible.
 _LANDING_PERMANENT_FAILURE_KINDS = frozenset({"pull_request_checks_failed"})
 # How many times one task is sent back to its worker to rebase onto a moved
 # canonical tip (or resolve a conflict with it) before it blocks.
 LANDING_MAX_REBASES = 2
+# How many times one task is sent back to its worker to fix the required
+# checks that failed on its pull request before it blocks.
+LANDING_MAX_CHECK_FIXES = 3
+# Send-back counts in ``metadata.landing``: they survive new evidence, because
+# the re-run's evidence is exactly what a send-back asks for.
+_LANDING_SEND_BACK_COUNTERS = ("rebases", "check_fixes")
 # A ValidationError normally states a fact retrying cannot change. These
 # markers say the fact was a transport fault (git fetch over a flaky network
 # raises a plain ValidationError), so it consumes the budget instead.
@@ -1288,6 +1297,51 @@ class _LandingInProgressError(ValidationError):
 
     def __init__(self, task_id: str) -> None:
         super().__init__("git publication of %s is already in progress" % task_id)
+
+
+class _LandingChecksFailedError(ValidationError):
+    """The pull request's required checks failed for the head that would land.
+
+    Still ``pull_request_checks_failed`` -- permanent for the land step, which
+    must never retry the same head -- but it carries what a worker needs to fix
+    the failure (each failed check's name, conclusion, details URL and scrubbed
+    log tail) and where the pull request lives, so the default review workflow
+    can send the SAME task back to push a fix to that pull request
+    (``_send_back_for_check_fix``).
+    """
+
+    publication_failure_kind = "pull_request_checks_failed"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failed_checks: Sequence[JsonDict] = (),
+        head_sha: str = "",
+        landing_head: str = "",
+        forge_api_url: str = "",
+        pull_request_number: int = 0,
+        pull_request_url: str = "",
+        head_branch: str = "",
+    ) -> None:
+        self.failed_checks = [dict(item) for item in failed_checks if isinstance(item, dict)]
+        self.head_sha = str(head_sha or "")
+        self.landing_head = str(landing_head or head_sha or "")
+        self.forge_api_url = str(forge_api_url or "")
+        self.pull_request_number = _nonnegative_int(pull_request_number)
+        self.pull_request_url = str(pull_request_url or "")
+        self.head_branch = str(head_branch or "")
+        super().__init__(message)
+
+    def summary(self) -> str:
+        """One line per failed check, without log tails."""
+        lines = []
+        for item in self.failed_checks:
+            line = "%s: %s" % (item.get("name") or "?", item.get("conclusion") or "failure")
+            if item.get("details_url"):
+                line += " (%s)" % item["details_url"]
+            lines.append(line)
+        return "; ".join(lines)
 
 
 class _LandingRebaseRequiredError(ValidationError):
@@ -18530,6 +18584,20 @@ class ControlPlane:
         admitted_task_updated_at = task.updated_at
 
         branch = str(source_branch or "").strip()
+        check_fix_pr = self._check_fix_pull_request(
+            task,
+            api_url=api_url,
+            canonical_branch=canonical_branch,
+            source_branch=branch,
+            commands=commands,
+            attempt=attempt,
+        )
+        if check_fix_pr is not None:
+            # A check-fix attempt lands through the pull request whose checks
+            # failed: its head branch is moved to the fixed head below, so the
+            # checks re-run on that same pull request.
+            branch = str(check_fix_pr["head"])
+            agent_pull_request = check_fix_pr
         remote_head_ref = "refs/heads/%s" % branch
         observed = git_step(
             "observe_pull_request_branch",
@@ -18734,19 +18802,48 @@ class ControlPlane:
         )
         if case == "failed":
             # The one test gate for this repository said no. Retrying the
-            # same head cannot change that, so the task blocks with the
-            # failing checks named.
-            failure = ValidationError(
+            # same head cannot change that. Collect why each check failed so
+            # the review workflow can send the task back to fix it (or block
+            # with the failure named when it cannot).
+            failed_names = tuple(str(item) for item in verdicts.get("failed") or [])
+            try:
+                failed_checks = list(
+                    _gitops.failed_check_details(api_url, landing_head, failed_names)
+                )
+            except Exception:  # noqa: BLE001 - the details are best-effort
+                failed_checks = [{"name": name, "conclusion": "failure"} for name in failed_names]
+            commands.append(
+                {
+                    "name": "failed_check_details",
+                    "attempt": attempt,
+                    "head_sha": landing_head,
+                    "checks": [
+                        {
+                            "name": item.get("name"),
+                            "conclusion": item.get("conclusion"),
+                            "details_url": item.get("details_url"),
+                            "log_tail_bytes": len(str(item.get("log_tail") or "").encode()),
+                        }
+                        for item in failed_checks
+                    ],
+                }
+            )
+            raise _LandingChecksFailedError(
                 "git publication will not merge %s: required checks failed for "
                 "reviewed head %s: %s"
                 % (
                     pr.url or ("#%d" % pr.number),
                     landing_head[:12],
-                    ", ".join(str(item) for item in verdicts.get("failed") or []),
-                )
+                    ", ".join(failed_names),
+                ),
+                failed_checks=failed_checks,
+                head_sha=head_sha,
+                landing_head=landing_head,
+                forge_api_url=api_url,
+                pull_request_number=pr.number,
+                pull_request_url=pr.url,
+                head_branch=branch,
             )
-            failure.publication_failure_kind = "pull_request_checks_failed"
-            raise failure
         if case in {"pending", "unverifiable"}:
             pending = ValidationError(
                 "git publication is waiting on the pull request's own required "
@@ -18935,6 +19032,71 @@ class ControlPlane:
             "contains_reviewed_head": bool(contains_reviewed_head),
             "attempt": attempt,
             "commands": commands,
+        }
+
+    def _check_fix_pull_request(
+        self,
+        task: Task,
+        *,
+        api_url: str,
+        canonical_branch: str,
+        source_branch: str,
+        commands: List[JsonDict],
+        attempt: int,
+    ) -> Optional[JsonDict]:
+        """The pull request a check-fix attempt must land through, if any.
+
+        A task sent back to fix failed required checks
+        (``metadata.fix_failed_checks``) pushes its fix from a fresh worker
+        lease, i.e. a NEW lease-suffixed branch. Landing that branch would wait
+        on checks nobody runs: the forge runs them for the pull request, whose
+        head branch is immutable and is still the old one -- and the agent's
+        own pull-request lookup reuses that open PR by task id. So while the
+        PR is still open, the land step moves the PR's head branch to the new
+        reviewed head (``_publish_via_pull_request`` pushes it with a lease)
+        and lands through it. A closed or merged PR is not reused.
+        """
+
+        from . import gitops as _gitops
+
+        directive = ensure_json_object(ensure_json_object(task.metadata).get("fix_failed_checks"))
+        number = _nonnegative_int(directive.get("pull_request_number"))
+        head = str(directive.get("head_branch") or "").strip()
+        if not number or not head or head == source_branch:
+            return None
+        try:
+            head = validate_git_ref(head)
+        except ValueError:
+            return None
+        observed = _gitops.pull_request_state(api_url, number)
+        reuse = bool(
+            observed.get("known")
+            and not observed.get("merged")
+            and str(observed.get("state") or "") == "open"
+            and str(observed.get("head_ref") or head) == head
+        )
+        commands.append(
+            {
+                "name": "check_fix_pull_request",
+                "attempt": attempt,
+                "number": number,
+                "head": head,
+                "source_branch": source_branch,
+                "state": str(observed.get("state") or ""),
+                "reused": reuse,
+            }
+        )
+        if not reuse:
+            return None
+        return {
+            "opened": True,
+            "number": number,
+            "url": str(directive.get("pull_request_url") or ""),
+            "base": canonical_branch,
+            "head": head,
+            "forge": str(observed.get("host") or ""),
+            "state": "open",
+            "reused_for": "fix_failed_checks",
         }
 
     @staticmethod
@@ -20138,6 +20300,20 @@ class ControlPlane:
             terminal = self._terminal_review_noop(task_id)
             if terminal is not None:
                 return terminal
+            if isinstance(exc, _LandingChecksFailedError):
+                # Red CI is the worker's to fix: send the task back with the
+                # failed checks and their logs while the budget lasts. None
+                # means it cannot go back, and it blocks below as before.
+                sent_back = self._send_back_for_check_fix(
+                    task_id,
+                    exc,
+                    review_id=review.id,
+                    evidence=evidence,
+                    target=target,
+                    actor=actor,
+                )
+                if sent_back is not None:
+                    return sent_back
             # Auto-publish failed AFTER a genuine approval — most often the
             # reviewed branch no longer merges cleanly into main (a stale branch
             # base / merge conflict). Previously this exception propagated and was
@@ -20286,10 +20462,11 @@ class ControlPlane:
         ``updated_at``, which every retry refreshes. ``retryable=False`` blocks
         at once. Returns ``None`` while budget remains, else the result of
         moving the task to BLOCKED. New executor evidence (rework) or a return
-        from BLOCKED starts a fresh budget, except that ``rebases`` (the land
-        loop's send-backs, see ``_send_back_for_rebase``) survives new
-        evidence: the rebased run's evidence is exactly what a send-back asks
-        for, so it must not reset the cap. ``blocked_as`` names a
+        from BLOCKED starts a fresh budget, except that ``rebases`` and
+        ``check_fixes`` (the land loop's send-backs, see
+        ``_send_back_for_rebase`` and ``_send_back_for_check_fix``) survive new
+        evidence: the re-run's evidence is exactly what a send-back asks for,
+        so it must not reset the cap. ``blocked_as`` names a
         non-retryable block more precisely than ``landing_non_retryable``.
         """
         task = self.get_task(task_id)
@@ -20307,7 +20484,7 @@ class ControlPlane:
         if landing.get("blocked_at"):
             landing = {}
         elif evidence_id and landing.get("evidence_id") not in (None, "", evidence_id):
-            landing = {"rebases": landing.get("rebases")} if landing.get("rebases") else {}
+            landing = {key: landing[key] for key in _LANDING_SEND_BACK_COUNTERS if landing.get(key)}
         now = utcnow()
         first_attempt_at = str(landing.get("first_attempt_at") or "") or now
         try:
@@ -20336,8 +20513,9 @@ class ControlPlane:
         }
         if landing.get("last_error"):
             record["last_error"] = landing["last_error"]
-        if landing.get("rebases"):
-            record["rebases"] = _nonnegative_int(landing.get("rebases"))
+        for counter in _LANDING_SEND_BACK_COUNTERS:
+            if landing.get(counter):
+                record[counter] = _nonnegative_int(landing.get(counter))
         if counts_attempt or not retryable:
             record["last_reason"] = reason
             record["last_attempt_at"] = now
@@ -20553,6 +20731,184 @@ class ControlPlane:
             "reason": reason,
             "canonical_tip": exc.canonical_tip,
             "rebases": rebases + 1,
+            "state": TaskState.OPEN.value,
+        }
+
+    def _send_back_for_check_fix(
+        self,
+        task_id: str,
+        exc: "_LandingChecksFailedError",
+        *,
+        review_id: str,
+        evidence: Evidence,
+        target: str,
+        actor: str,
+    ) -> Optional[JsonDict]:
+        """Send an approved task back to its worker to fix its failed checks.
+
+        The pull request's required checks -- the repository's one test gate --
+        failed for the head that would land. Re-landing that head cannot help
+        and the hub runs no tests, so the fix is the worker's: the SAME task
+        goes back to OPEN with a ``fix_failed_checks`` directive naming each
+        failed check with its conclusion, details URL and scrubbed log tail,
+        which the next attempt's prompt shows. That attempt's reviewed head is
+        then pushed onto the same pull request (``_check_fix_pull_request``),
+        so the checks re-run there and landing resumes.
+
+        Capped at ``LANDING_MAX_CHECK_FIXES`` per landing budget
+        (``metadata.landing.check_fixes``); past the cap the task blocks with
+        the last failure summary. Returns ``None`` when the task cannot be sent
+        back (no pull request to fix, or no worker evidence to build on): the
+        caller then blocks it as a plain ``pull_request_checks_failed``.
+        """
+
+        repo = ensure_json_object(
+            ensure_json_object(ensure_json_object(evidence.metadata).get("verification")).get(
+                "repo"
+            )
+        )
+        previous_head = exc.head_sha or str(repo.get("head_sha") or "")
+        if not (exc.pull_request_number and exc.head_branch and previous_head):
+            return None
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        landing = ensure_json_object(metadata.get("landing"))
+        if landing.get("blocked_at"):
+            landing = {}
+        check_fixes = _nonnegative_int(landing.get("check_fixes"))
+        summary = exc.summary() or str(exc)
+        failed_names = [str(item.get("name") or "") for item in exc.failed_checks]
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.required_checks_failed",
+            "warning",
+            {
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "target": target,
+                "pull_request_number": exc.pull_request_number,
+                "head_sha": exc.landing_head,
+                "failed_checks": failed_names[:20],
+                "check_fixes": check_fixes,
+                "max_check_fixes": LANDING_MAX_CHECK_FIXES,
+            },
+            actor,
+        )
+        if check_fixes >= LANDING_MAX_CHECK_FIXES:
+            error = "%s. Last failure: %s" % (str(exc), summary)
+            blocked = self._consume_landing_budget(
+                task_id,
+                "pull_request_checks_failed",
+                retryable=False,
+                error=error,
+                evidence_id=evidence.id,
+                actor=actor,
+                blocked_as="landing_check_fix_cap_exhausted",
+            )
+            try:
+                self.append_task_activity(
+                    task_id,
+                    "diagnosis",
+                    actor,
+                    "Problem: The pull request's required checks still fail after %d "
+                    "fix attempt(s): %s\n"
+                    "Remediation: Fix the failing checks by hand, then re-drive the "
+                    "task; it gets a fresh landing budget." % (check_fixes, summary[:400]),
+                )
+            except Exception:  # noqa: BLE001 - narrative is best-effort
+                pass
+            return {
+                "task_id": task_id,
+                "status": "publish_failed",
+                "review_id": review_id,
+                "target": target,
+                "error": error,
+                "blocked_reason": (blocked or {}).get("status", "landing_check_fix_cap_exhausted"),
+                "state": self.get_task(task_id).state,
+            }
+        now = utcnow()
+        landing.update(
+            {
+                "schema": LANDING_BUDGET_SCHEMA,
+                "check_fixes": check_fixes + 1,
+                "last_reason": "required_checks_failed",
+                "last_attempt_at": now,
+                "last_error": ("%s. %s" % (str(exc), summary))[:500],
+            }
+        )
+        landing.setdefault("first_attempt_at", now)
+        landing.pop("not_before", None)
+        metadata["landing"] = landing
+        metadata["fix_failed_checks"] = {
+            "schema": "mac.fix_failed_checks.v1",
+            "reason": "required_checks_failed",
+            "pull_request_number": exc.pull_request_number,
+            "pull_request_url": exc.pull_request_url,
+            "head_branch": exc.head_branch,
+            "reviewed_head_sha": previous_head,
+            "checked_head_sha": exc.landing_head,
+            "previous_remote_ref": str(repo.get("remote_ref") or ""),
+            "failed_checks": exc.failed_checks,
+            "check_fix": check_fixes + 1,
+            "max_check_fixes": LANDING_MAX_CHECK_FIXES,
+            "evidence_id": evidence.id,
+            "requested_at": now,
+            "instruction": (
+                "Your previous attempt was approved, but the pull request's required "
+                "checks failed. Start from previous_remote_ref (reviewed_head_sha), "
+                "fix what the failed checks below report, and finish; the hub pushes "
+                "your new head to the same pull request and lands it once its checks "
+                "pass. Do not redo the task from scratch."
+            ),
+        }
+        self._persist_task_metadata_narrow(
+            task_id, metadata, actor=actor, detail={"landing": "required_checks_failed"}
+        )
+        if task.attempt_count >= task.max_attempts:
+            # A send-back is not a failed attempt; without room for one more
+            # claim the dispatcher would exhaust the task instead of fixing it.
+            self.update_task(task_id, max_attempts=task.attempt_count + 1, actor=actor)
+        self._transition_task_internal(
+            task_id,
+            TaskState.OPEN.value,
+            actor,
+            {
+                "reason": "required_checks_failed",
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "pull_request_number": exc.pull_request_number,
+                "head_sha": exc.landing_head,
+                "failed_checks": failed_names[:20],
+                "check_fix": check_fixes + 1,
+                "max_check_fixes": LANDING_MAX_CHECK_FIXES,
+            },
+        )
+        # A project lesson names the checks only: the logs travel with the task.
+        self._record_review_outcome_lesson(
+            task_id,
+            outcome="required_checks_failed",
+            detail="required checks failed on the pull request: %s" % summary,
+        )
+        try:
+            self.append_task_activity(
+                task_id,
+                "diagnosis",
+                actor,
+                "Problem: The pull request's required checks failed: %s\n"
+                "Remediation: Sent back to the worker to fix them on the same pull "
+                "request (send-back %d of %d)."
+                % (summary[:400], check_fixes + 1, LANDING_MAX_CHECK_FIXES),
+            )
+        except Exception:  # noqa: BLE001 - narrative is best-effort
+            pass
+        return {
+            "task_id": task_id,
+            "status": "required_checks_failed",
+            "review_id": review_id,
+            "target": target,
+            "pull_request_number": exc.pull_request_number,
+            "failed_checks": failed_names,
+            "check_fixes": check_fixes + 1,
             "state": TaskState.OPEN.value,
         }
 

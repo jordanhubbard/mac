@@ -104,11 +104,21 @@ def test_required_checks_pending_waits_under_the_landing_deadline(cp, tmp_path, 
     assert _main(source) == main_head
 
 
-def test_required_checks_failed_blocks_naming_the_failing_checks(cp, tmp_path, monkeypatch):
+def test_required_checks_failed_without_a_pull_request_blocks_naming_them(
+    cp, tmp_path, monkeypatch
+):
+    """Nothing to send a fix to: the failure stays permanent and blocks."""
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
     forge.checks_failed = ("sanity",)
     install_forge(monkeypatch, forge)
+    monkeypatch.setattr(
+        gitops,
+        "open_pull_request",
+        lambda *args, **kwargs: gitops.PullRequestResult(
+            host="github", number=0, url="", state="open"
+        ),
+    )
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
 
     result = cp.advance_default_review_workflow(task.id)

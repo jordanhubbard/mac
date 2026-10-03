@@ -87,6 +87,19 @@ class FakeForge:
         self.branch_updates: list[dict] = []
         self.closed: list[dict] = []
         self.close_error = ""
+        self.failed_check_logs: dict = {}
+        self.pr_state = "open"
+
+    def failed_check_details(self, repo_url, sha, failed, **_):
+        return [
+            {
+                "name": name,
+                "conclusion": "failure",
+                "details_url": "https://github.invalid/acme/widgets/actions/runs/1/job/%d" % index,
+                "log_tail": self.failed_check_logs.get(name, ""),
+            }
+            for index, name in enumerate(failed)
+        ]
 
     # -- required checks --------------------------------------------------
     def required_check_verdicts(self, repo_url, sha, contexts, **_):
@@ -104,7 +117,7 @@ class FakeForge:
             "known": True,
             "merged": bool(self.queue_merged_sha),
             "sha": self.queue_merged_sha,
-            "state": "closed" if self.queue_merged_sha else "open",
+            "state": "closed" if self.queue_merged_sha else self.pr_state,
             "head_sha": "",
             "head_ref": self.pr_head_ref,
             "mergeable_state": self.mergeable_state,
@@ -167,7 +180,7 @@ class FakeForge:
         )
         git(checkout, "config", "user.email", "forge@example.com")
         git(checkout, "config", "user.name", "Fake Forge")
-        git(checkout, "fetch", "origin", "task/feature")
+        git(checkout, "fetch", "origin")
         git(checkout, "merge", "--squash", sha)
         git(checkout, "commit", "-m", "squashed (#%d)" % number)
         merged = git(checkout, "rev-parse", "HEAD")
@@ -189,6 +202,7 @@ def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",), strict=F
     monkeypatch.setattr(gitops, "merge_pull_request", forge.merge_pull_request)
     monkeypatch.setattr(gitops, "required_check_verdicts", forge.required_check_verdicts)
     monkeypatch.setattr(gitops, "pull_request_state", forge.pull_request_state)
+    monkeypatch.setattr(gitops, "failed_check_details", forge.failed_check_details)
 
 
 def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
