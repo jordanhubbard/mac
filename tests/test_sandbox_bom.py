@@ -330,6 +330,8 @@ def test_nanolang_test_quick_dependencies_are_mapped_committed_and_installed():
         "libglew-dev",
         "freeglut3-dev",
         "libutf8proc-dev",
+        "libsqlite3-dev",
+        "libcurl4-openssl-dev",
     }
     bom = derive_bom([_registration("nanolang", sorted(needed))])
     assert bom["unmapped_commands"] == []

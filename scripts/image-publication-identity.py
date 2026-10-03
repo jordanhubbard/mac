@@ -612,7 +612,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "echo '#include <openssl/evp.h>' | cc -fsyntax-only -x c -; "
         # nanolang's gate also runs `make test-quick`, which needs its CI's SDL,
         # GL, libuv/libevent, gforth, and PyYAML for the login shell's python3.
-        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent; "
+        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl; "
         "gforth --version; "
         "python3 -c 'import yaml'; "
         "/usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F 'v0.30.1'; "

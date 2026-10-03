@@ -463,7 +463,7 @@ def test_runtime_smoke_proves_nanolang_test_quick_dependencies_are_present() -> 
     command = argv[-1]
     assert command.startswith("set -euo pipefail;")
     assert (
-        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent;"
+        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl;"
         in command
     )
     assert "gforth --version;" in command

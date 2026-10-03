@@ -70,7 +70,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   compiles against it instead of testing a fixed /usr/include path.
 # valgrind, libsdl2{,-image,-mixer,-ttf}-dev, libncurses-dev, libreadline-dev,
 #   libevent-dev, libuv1-dev, libbullet-dev, libglfw3-dev, libglew-dev,
-#   freeglut3-dev, libutf8proc-dev, gforth: the rest of nanolang's own Linux CI
+#   freeglut3-dev, libutf8proc-dev, libsqlite3-dev, libcurl4-openssl-dev, gforth: the rest of nanolang's own Linux CI
 #   package list. nanolang's repository gate runs `make build` and then
 #   `make test-quick`, and test-quick is not header-free: test-mixer-callbacks
 #   requires `pkg-config --exists SDL2_mixer`, test-glut-init needs GLUT,
@@ -127,14 +127,14 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
     && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev libffi-dev pkg-config openjdk-17-jre-headless clang llvm lld \
-    && apt-get install -y --no-install-recommends valgrind libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libncurses-dev libreadline-dev libevent-dev libuv1-dev libbullet-dev libglfw3-dev libglew-dev freeglut3-dev libutf8proc-dev gforth \
+    && apt-get install -y --no-install-recommends valgrind libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libncurses-dev libreadline-dev libevent-dev libuv1-dev libbullet-dev libglfw3-dev libglew-dev freeglut3-dev libutf8proc-dev libsqlite3-dev libcurl4-openssl-dev gforth \
     && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \
     && pkg-config --exists libffi \
     && echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c - \
-    && pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent \
+    && pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl \
     && echo '#include <GL/freeglut.h>' | cc -fsyntax-only -x c - \
     && command -v valgrind >/dev/null \
     && gforth --version \
