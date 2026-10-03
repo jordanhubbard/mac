@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg
@@ -71,9 +72,16 @@ def test_database_isolation_preserves_same_database_lock_exclusion(databases):
 def test_reaper_preserves_live_owner_and_removes_abandoned_owned_database(databases):
     abandoned = WorkerDatabases(databases.dsn)
     name = conninfo_to_dict(abandoned.create())["dbname"]
+    owner_pid = abandoned.conn.info.backend_pid
     try:
         assert name not in databases.reap()
         abandoned.conn.close()  # Simulate controller termination, no teardown.
+        deadline = time.monotonic() + 5
+        while databases.conn.execute(
+            "SELECT 1 FROM pg_stat_activity WHERE pid=%s", (owner_pid,)
+        ).fetchone():
+            assert time.monotonic() < deadline, "controller backend did not exit"
+            time.sleep(0.01)
         assert name in databases.reap()
     finally:
         if not abandoned.conn.closed:
