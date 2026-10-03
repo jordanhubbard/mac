@@ -122,6 +122,31 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     # through `pkg-config libffi`). The sandbox never shipped it, so nanolang's
     # `make build` bootstrap could not compile at all.
     "libffi-dev": ("libffi-dev",),
+    # The rest of nanolang's Linux CI package list. Its repository gate runs
+    # `make test-quick` after `make build`, and test-quick exercises SDL audio
+    # and mixer callbacks, GLUT/GLFW/GLEW init, libuv/libevent bindings, and a
+    # diff against real gforth -- so these are gate dependencies, not optional
+    # extras (#921 judged SDL optional and the gate failed on SDL2_mixer).
+    "valgrind": ("valgrind",),
+    "gforth": ("gforth",),
+    **{
+        name: (name,)
+        for name in (
+            "libsdl2-dev",
+            "libsdl2-image-dev",
+            "libsdl2-mixer-dev",
+            "libsdl2-ttf-dev",
+            "libncurses-dev",
+            "libreadline-dev",
+            "libevent-dev",
+            "libuv1-dev",
+            "libbullet-dev",
+            "libglfw3-dev",
+            "libglew-dev",
+            "freeglut3-dev",
+            "libutf8proc-dev",
+        )
+    },
     "pkg-config": ("pkg-config",),
     "openssl": ("openssl",),
     # Base-image commands: declared by contracts, already present, no package

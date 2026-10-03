@@ -68,6 +68,24 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   directory" and nanolang could not bootstrap in the sandbox at all. Debian
 #   puts ffi.h under the multiarch include dir, so the build gate below
 #   compiles against it instead of testing a fixed /usr/include path.
+# valgrind, libsdl2{,-image,-mixer,-ttf}-dev, libncurses-dev, libreadline-dev,
+#   libevent-dev, libuv1-dev, libbullet-dev, libglfw3-dev, libglew-dev,
+#   freeglut3-dev, libutf8proc-dev, gforth: the rest of nanolang's own Linux CI
+#   package list. nanolang's repository gate runs `make build` and then
+#   `make test-quick`, and test-quick is not header-free: test-mixer-callbacks
+#   requires `pkg-config --exists SDL2_mixer`, test-glut-init needs GLUT,
+#   test-pt2-audio needs SDL audio, and test-forth-gforth-diff diffs against a
+#   real gforth. Judging SDL "optional" (#921) left the gate failing in the
+#   sandbox with "I require SDL2_mixer development headers for this integration
+#   gate." Every name exists on bookworm for amd64 and arm64.
+# PyYAML for the image's python3: nanolang's schema-generation step runs
+#   `python3` with `import yaml`. The executor runs commands in a login shell,
+#   and /etc/profile resets PATH, dropping /opt/mac-venv/bin, so that `python3`
+#   is the base image's /usr/local/bin/python3 -- not the venv (which has
+#   PyYAML) and not Debian's /usr/bin/python3 (which the apt packages above pull
+#   in as a dependency, but which sits later on PATH). Debian's python3-yaml
+#   would therefore be invisible to it. Install the same pinned, hash-locked
+#   PyYAML wheel uv.lock uses into /usr/local/bin/python3's site-packages.
 # clang/llvm/lld/qemu-system-misc: the current production executor cannot yet
 #   materialize ADR 0009 root-level overlay images.  Until that lane exists,
 #   the synchronized cut-over must carry the complete, architecture-neutral
@@ -109,12 +127,22 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
     && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev libffi-dev pkg-config openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends valgrind libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libncurses-dev libreadline-dev libevent-dev libuv1-dev libbullet-dev libglfw3-dev libglew-dev freeglut3-dev libutf8proc-dev gforth \
     && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \
     && pkg-config --exists libffi \
     && echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c - \
+    && pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent \
+    && echo '#include <GL/freeglut.h>' | cc -fsyntax-only -x c - \
+    && command -v valgrind >/dev/null \
+    && gforth --version \
+    && printf '%s\n' 'pyyaml==6.0.3 --hash=sha256:c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5 --hash=sha256:501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7' > /tmp/mac-system-pyyaml.txt \
+    && PIP_ROOT_USER_ACTION=ignore PIP_DISABLE_PIP_VERSION_CHECK=1 /usr/local/bin/python3 -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/mac-system-pyyaml.txt \
+    && rm -f /tmp/mac-system-pyyaml.txt \
+    && test "$(bash -lc 'command -v python3')" = /usr/local/bin/python3 \
+    && bash -lc "python3 -c 'import yaml'" \
     && command -v cmake >/dev/null \
     && command -v ninja >/dev/null \
     && command -v clang >/dev/null \
