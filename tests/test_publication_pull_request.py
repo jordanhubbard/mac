@@ -372,6 +372,117 @@ def test_stopping_an_admitted_publisher_fences_the_forge_mutation(cp, tmp_path, 
     assert cp.get_evidence(evidence.id).id == evidence.id
 
 
+def _expire_publication_backoff(cp, task_id):
+    """Let the next land step run now, as if every backoff had elapsed."""
+    metadata = dict(cp.get_task(task_id).metadata)
+    landing = dict(metadata.get("landing") or {})
+    landing.pop("not_before", None)
+    metadata["landing"] = landing
+    metadata.pop("publication_retry", None)
+    cp._persist_task_metadata_narrow(task_id, metadata, actor="test")
+
+
+def test_revoked_publication_authority_retries_under_the_landing_budget(cp, tmp_path, monkeypatch):
+    """Live 2026-10-03: an approved task's land step raised "git publication
+    authority changed before forge mutation; a fresh review publication
+    attempt is required". The landing budget read that bare ValidationError as
+    non-retryable, so the task went BLOCKED and then FAILED. The message asks
+    for a fresh attempt, and a fresh attempt is what the task now gets."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    review_state = cp.get_task(task.id).state
+    original_verdicts = forge.required_check_verdicts
+    touched = []
+
+    def touch_task_once(*args, **kwargs):
+        # A write to the task row between admission and the merge request:
+        # the fence sees a different ``updated_at``.
+        if not touched:
+            touched.append(1)
+            metadata = dict(cp.get_task(task.id).metadata)
+            metadata["concurrent_note"] = "written mid-publication"
+            cp._persist_task_metadata_narrow(task.id, metadata, actor="test")
+        return original_verdicts(*args, **kwargs)
+
+    monkeypatch.setattr(gitops, "required_check_verdicts", touch_task_once)
+
+    first = cp.advance_default_review_workflow(task.id)
+
+    assert first["status"] == "publish_failed"
+    assert "fresh review publication attempt" in first["error"]
+    assert "blocked_reason" not in first
+    after = cp.get_task(task.id)
+    assert after.state == review_state
+    landing = dict(after.metadata["landing"])
+    assert landing["attempts"] == 1
+    assert landing["last_reason"] == "publication_authority_revoked"
+    assert landing["not_before"]
+    assert not landing.get("blocked_at")
+    assert forge.merges == []
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
+
+    # Still backing off: the next tick does not retry yet.
+    assert cp.advance_default_review_workflow(task.id)["status"] in {
+        "publication_backoff",
+        "landing_backoff",
+    }
+
+    # Once the backoff elapses, a fresh attempt re-reads the task (new
+    # authority) and lands.
+    _expire_publication_backoff(cp, task.id)
+    second = cp.advance_default_review_workflow(task.id)
+
+    assert second["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert len(forge.merges) == 1
+
+
+def test_a_second_consumer_does_not_revoke_the_land_step_in_progress(cp, tmp_path, monkeypatch):
+    """The sweep and the event-driven consumer can both reach the land step for
+    one task. The loser used to record a ``landing_serialized`` wait on the
+    task, bumping ``updated_at`` under the winner and revoking its authority
+    fence just before the merge. The loser now writes nothing."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    admitted = threading.Event()
+    resume = threading.Event()
+    original_verdicts = forge.required_check_verdicts
+
+    def pause_after_admission(*args, **kwargs):
+        admitted.set()
+        assert resume.wait(timeout=30)
+        return original_verdicts(*args, **kwargs)
+
+    monkeypatch.setattr(gitops, "required_check_verdicts", pause_after_admission)
+    outcome = {}
+
+    def land():
+        outcome["result"] = cp.advance_default_review_workflow(task.id, actor="sweep")
+
+    lander = threading.Thread(target=land)
+    lander.start()
+    try:
+        assert admitted.wait(timeout=30)
+        before = cp.get_task(task.id)
+        loser = cp.advance_default_review_workflow(task.id, actor="event-driven-review")
+        assert loser["status"] == "landing_in_progress"
+        unchanged = cp.get_task(task.id)
+        assert unchanged.updated_at == before.updated_at
+        assert "landing" not in unchanged.metadata
+        assert "publication_retry" not in unchanged.metadata
+    finally:
+        resume.set()
+        lander.join(timeout=60)
+
+    assert not lander.is_alive()
+    assert outcome["result"]["status"] == "published"
+    assert len(forge.merges) == 1
+
+
 def test_publication_defers_while_the_pull_request_checks_are_pending(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(

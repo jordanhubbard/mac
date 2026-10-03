@@ -497,7 +497,13 @@ publication attempt takes a PostgreSQL advisory lock keyed on (repository,
 canonical branch) for the whole land step. A second land step for the same
 repository does not queue behind it; it waits a tick
 (`publication_failure_kind=landing_serialized`, charged to the landing deadline
-only). Inside the lock, `ControlPlane._publish_git_target_attempt`:
+only). A per-task advisory lock is taken first: when the sweep and the
+event-driven consumer both reach the land step for the same task, the second
+returns `landing_in_progress` and writes nothing to the task, because any task
+write would revoke the first land step's authority fence. That fence re-checks
+the task row immediately before the forge merge; if the row changed, the attempt
+raises `publication_authority_revoked`, which charges one landing attempt and
+backs off, and the next tick starts a fresh attempt. Inside the lock, `ControlPlane._publish_git_target_attempt`:
 
 1. clones the current canonical tip and fetches the reviewed head;
 2. runs `git merge-tree` (`mac.merge_queue.validate_projected_merge`, no
