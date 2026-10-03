@@ -215,6 +215,30 @@ RUN printf '%s\n' \
       'minimum-release-age=0' \
       > /etc/npmrc \
     && chmod 0644 /etc/npmrc
+# OpenShell does NOT pass image ENV to sandbox processes (verified 2026-10-03:
+# zero pnpm_config_*/npm_config_* inside a sandbox, login shell or not, and the
+# sandbox HOME is not writable for a per-user pnpm config.yaml). The ENV below
+# therefore only reaches `docker run`. What reaches the sandbox is a file on
+# PATH: replace the pnpm/pnpx symlinks with wrappers that default the same
+# pnpm_config_* values (a caller's own value still wins) and exec the real
+# entry point. The runtime smoke proves this under `env -i`.
+RUN for tool in pnpm pnpx; do \
+      rm -f "/usr/local/bin/$tool" \
+      && printf '%s\n' \
+        '#!/bin/sh' \
+        ': "${pnpm_config_network_concurrency:=2}" "${pnpm_config_child_concurrency:=2}"' \
+        ': "${pnpm_config_fetch_retries:=6}" "${pnpm_config_fetch_retry_mintimeout:=20000}"' \
+        ': "${pnpm_config_fetch_retry_maxtimeout:=120000}" "${pnpm_config_fetch_timeout:=300000}"' \
+        ': "${pnpm_config_minimum_release_age:=0}" "${pnpm_config_pm_on_fail:=ignore}"' \
+        'export pnpm_config_network_concurrency pnpm_config_child_concurrency pnpm_config_fetch_retries' \
+        'export pnpm_config_fetch_retry_mintimeout pnpm_config_fetch_retry_maxtimeout pnpm_config_fetch_timeout' \
+        'export pnpm_config_minimum_release_age pnpm_config_pm_on_fail' \
+        "exec /usr/local/lib/node_modules/pnpm/bin/$tool.mjs \"\$@\"" \
+        > "/usr/local/bin/$tool" \
+      && chmod 0755 "/usr/local/bin/$tool" || exit 1; \
+    done \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get network-concurrency)" = 2 \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get minimum-release-age)" = 0
 ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
     npm_config_network_concurrency=2 \
     npm_config_fetch_retries=6 \
