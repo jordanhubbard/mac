@@ -595,10 +595,11 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "/usr/local/bin/mac-verify-rust-contract 1.95.0; "
         'test "$(node --version)" = v22.23.1; '
         'test "$(pnpm --version)" = 11.13.1; '
-        # pnpm 11 ignores npmrc/npm_config_*; prove the proxy limits reach pnpm.
-        'test "$(pnpm config get network-concurrency)" = 2; '
-        'test "$(pnpm config get minimum-release-age)" = 0; '
-        'test "$(pnpm config get pm-on-fail)" = ignore; '
+        # pnpm 11 ignores npmrc/npm_config_*, and OpenShell drops image ENV:
+        # prove the proxy limits reach pnpm with an empty environment.
+        'test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get network-concurrency)" = 2; '
+        'test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get minimum-release-age)" = 0; '
+        'test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get pm-on-fail)" = ignore; '
         "gh --version | head -n1 | grep -F 'gh version 2.95.0'; "
         "opencode --version | grep -F '1.18.18'; "
         "clang --version; "
@@ -611,7 +612,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "echo '#include <openssl/evp.h>' | cc -fsyntax-only -x c -; "
         # nanolang's gate also runs `make test-quick`, which needs its CI's SDL,
         # GL, libuv/libevent, gforth, and PyYAML for the login shell's python3.
-        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent; "
+        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl; "
         "gforth --version; "
         "python3 -c 'import yaml'; "
         "/usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F 'v0.30.1'; "

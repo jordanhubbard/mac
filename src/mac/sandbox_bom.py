@@ -145,6 +145,11 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
             "libglew-dev",
             "freeglut3-dev",
             "libutf8proc-dev",
+            # Preinstalled on GitHub runners, so absent from nanolang's CI
+            # list, but its sqlite and curl modules (and test-vm-examples'
+            # sqlite_simple.nano) need them.
+            "libsqlite3-dev",
+            "libcurl4-openssl-dev",
         )
     },
     "pkg-config": ("pkg-config",),

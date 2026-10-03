@@ -426,8 +426,10 @@ def test_runtime_smoke_proves_nanolang_native_headers_are_present() -> None:
     )[-1]
     assert command.startswith("set -euo pipefail;")
     assert "pkg-config --exists libffi;" in command
-    assert 'test "$(pnpm config get network-concurrency)" = 2;' in command
-    assert 'test "$(pnpm config get pm-on-fail)" = ignore;' in command
+    # OpenShell drops image ENV, so the smoke must prove the limits with env -i.
+    empty = "env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "
+    assert 'test "$(' + empty + 'pnpm config get network-concurrency)" = 2;' in command
+    assert 'test "$(' + empty + 'pnpm config get pm-on-fail)" = ignore;' in command
     assert (
         "echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c -;"
         in command
@@ -461,7 +463,7 @@ def test_runtime_smoke_proves_nanolang_test_quick_dependencies_are_present() -> 
     command = argv[-1]
     assert command.startswith("set -euo pipefail;")
     assert (
-        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent;"
+        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl;"
         in command
     )
     assert "gforth --version;" in command
