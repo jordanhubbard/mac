@@ -3073,23 +3073,87 @@ _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES = {
 }
 
 
-def _validate_sandbox_download_symlinks(
+def _sandbox_download_path_in_repository(rel_path: Path, repository_roots: set[Path]) -> bool:
+    """True when ``rel_path`` is inside, or is an ancestor of, a repository root.
+
+    Entries there carry the task deliverable, so a problem with one must fail
+    the harvest closed. Everything else in the task workspace is agent scratch
+    (virtualenvs, tool downloads, caches) whose loss never loses repo work.
+    """
+
+    return any(
+        _path_is_under(rel_path, root) or _path_is_under(root, rel_path)
+        for root in repository_roots
+    )
+
+
+def _sandbox_download_special_kind(mode: int) -> str:
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    if stat.S_ISCHR(mode):
+        return "character_device"
+    if stat.S_ISBLK(mode):
+        return "block_device"
+    return "special_file"
+
+
+def _classify_sandbox_download_entries(
     download_root: Path, workspace: Path, repository_roots: set[Path]
-) -> None:
-    """Validate every symlink before the merge mutates host workspace state."""
+) -> Dict[str, List[Dict[str, str]]]:
+    """Vet every entry before the merge mutates host workspace state.
+
+    An entry the host must never materialize (a symlink whose target escapes
+    the task workspace, a FIFO/socket/device node, an unreadable directory) is
+    fatal inside a repository worktree or on a host/evidence control, and is
+    skipped and recorded anywhere else. One stray venv symlink must not discard
+    the repository changes harvested alongside it (live 2026-10-03,
+    task_b3e16b5f).
+    """
 
     download_root_resolved = download_root.resolve()
     workspace_resolved = workspace.resolve()
-    for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
+    skipped_symlinks: List[Dict[str, str]] = []
+    skipped_entries: List[Dict[str, str]] = []
+
+    def _walk_error(error: OSError) -> None:
+        failed = Path(getattr(error, "filename", "") or "")
+        rel = _relative_path_or_none(failed, download_root)
+        if rel is None or rel == Path("."):
+            raise ValueError("sandbox download could not be read: %s" % error) from None
+        if _sandbox_download_path_excluded(rel, repository_roots):
+            return
+        if _sandbox_download_path_in_repository(rel, repository_roots):
+            raise ValueError(
+                "sandbox download directory inside the repository worktree is unreadable: %s" % rel
+            ) from None
+        skipped_entries.append({"path": str(rel), "kind": "directory", "reason": "unreadable"})
+
+    for root, dirs, files in os.walk(
+        download_root, topdown=True, followlinks=False, onerror=_walk_error
+    ):
         root_path = Path(root)
         rel_root = root_path.relative_to(download_root)
         for name in [*dirs, *files]:
             src = root_path / name
-            if not src.is_symlink():
-                continue
             rel = rel_root / name
-            if _sandbox_download_path_is_host_control(rel) or (
-                len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
+            try:
+                mode = os.lstat(src).st_mode
+            except OSError as exc:
+                if _sandbox_download_path_excluded(rel, repository_roots):
+                    continue
+                if _sandbox_download_path_in_repository(rel, repository_roots):
+                    raise ValueError(
+                        "sandbox download entry inside the repository worktree is unreadable: "
+                        "%s (%s)" % (rel, exc)
+                    ) from None
+                skipped_entries.append({"path": str(rel), "kind": "unknown", "reason": str(exc)})
+                continue
+            is_link = stat.S_ISLNK(mode)
+            if is_link and (
+                _sandbox_download_path_is_host_control(rel)
+                or (len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES)
             ):
                 raise ValueError(
                     "sandbox download attempted to replace host/evidence control %s with a symlink"
@@ -3097,18 +3161,50 @@ def _validate_sandbox_download_symlinks(
                 )
             if _sandbox_download_path_excluded(rel, repository_roots):
                 continue
-            target = os.readlink(src)
-            if os.path.isabs(target):
-                raise ValueError("sandbox download symlink has an absolute target: %s" % rel)
-            try:
-                src.resolve(strict=False).relative_to(download_root_resolved)
-                (workspace / rel).parent.joinpath(target).resolve(strict=False).relative_to(
-                    workspace_resolved
-                )
-            except (OSError, RuntimeError, ValueError):
+            in_repository = _sandbox_download_path_in_repository(rel, repository_roots)
+            if is_link:
+                target = os.readlink(src)
+                problem = ""
+                if os.path.isabs(target):
+                    problem = "absolute target"
+                else:
+                    try:
+                        src.resolve(strict=False).relative_to(download_root_resolved)
+                        (workspace / rel).parent.joinpath(target).resolve(strict=False).relative_to(
+                            workspace_resolved
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        problem = "escapes the task workspace"
+                if not problem:
+                    continue
+                if in_repository:
+                    if problem == "absolute target":
+                        raise ValueError(
+                            "sandbox download symlink has an absolute target: %s -> %s"
+                            % (rel, target)
+                        )
+                    raise ValueError(
+                        "sandbox download symlink escapes the task workspace: %s -> %s"
+                        % (rel, target)
+                    )
+                skipped_symlinks.append({"path": str(rel), "target": target, "reason": problem})
+                continue
+            if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+                continue
+            kind = _sandbox_download_special_kind(mode)
+            if in_repository:
                 raise ValueError(
-                    "sandbox download symlink escapes the task workspace: %s" % rel
-                ) from None
+                    "sandbox download contains a %s inside the repository worktree: %s"
+                    % (kind, rel)
+                )
+            if len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES:
+                raise ValueError(
+                    "sandbox download attempted to replace evidence output %s with a %s"
+                    % (rel, kind)
+                )
+            skipped_entries.append({"path": str(rel), "kind": kind, "reason": "special file"})
+
+    return {"skipped_symlinks": skipped_symlinks, "skipped_entries": skipped_entries}
 
 
 def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path]) -> bool:
@@ -3171,7 +3267,9 @@ def _ensure_sandbox_destination_directory(workspace: Path, rel_path: Path) -> No
         os.close(descriptor)
 
 
-def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
+def _merge_sandbox_download_tree(
+    download_root: Path, workspace: Path
+) -> Dict[str, List[Dict[str, str]]]:
     """Merge a downloaded sandbox workspace into the host workspace.
 
     OpenShell downloads a tar archive. Extracting directly over a git worktree is
@@ -3179,10 +3277,21 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
     while the sandbox checkout may contain a ``.git`` directory. Keep host git
     metadata and container-local dependency caches out of the merge; the
     deterministic finalizer rebuilds/tests from the host worktree.
+
+    Returns the scratch entries that were skipped rather than materialized
+    (``skipped_symlinks`` / ``skipped_entries``). A skipped path is absent on
+    the host afterwards, and nothing beneath it is ever written.
     """
     workspace.mkdir(parents=True, exist_ok=True)
     repository_roots = _sandbox_repository_roots(workspace, download_root)
-    _validate_sandbox_download_symlinks(download_root, workspace, repository_roots)
+    report = _classify_sandbox_download_entries(download_root, workspace, repository_roots)
+    skipped_paths = {
+        Path(item["path"]) for item in [*report["skipped_symlinks"], *report["skipped_entries"]]
+    }
+
+    def _skipped(rel_path: Path) -> bool:
+        return any(_path_is_under(rel_path, skipped) for skipped in skipped_paths)
+
     source_files: set[Path] = set()
     source_dirs: set[Path] = {Path(".")}
     source_links: set[Path] = set()
@@ -3195,7 +3304,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         kept_dirs: List[str] = []
         for name in dirs:
             rel = rel_root / name
-            if _sandbox_download_path_excluded(rel, repository_roots):
+            if _sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel):
                 continue
             src = root_path / name
             if src.is_symlink():
@@ -3206,7 +3315,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         dirs[:] = kept_dirs
         for name in files:
             rel = rel_root / name
-            if not _sandbox_download_path_excluded(rel, repository_roots):
+            if not (_sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel)):
                 source_files.add(rel)
 
     for root, dirs, files in os.walk(workspace, topdown=False, followlinks=False):
@@ -3247,7 +3356,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         for name in dirs:
             rel = rel_root / name
             src = root_path / name
-            if _sandbox_download_path_excluded(rel, repository_roots):
+            if _sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel):
                 continue
             if src.is_symlink():
                 _ensure_sandbox_destination_directory(workspace, rel.parent)
@@ -3265,7 +3374,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         dirs[:] = kept_dirs
         for name in files:
             rel = rel_root / name
-            if _sandbox_download_path_excluded(rel, repository_roots):
+            if _sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel):
                 continue
             src = root_path / name
             _ensure_sandbox_destination_directory(workspace, rel.parent)
@@ -3278,8 +3387,23 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if src.is_symlink():
                 dst.symlink_to(os.readlink(src))
-            else:
+                continue
+            try:
                 shutil.copy2(src, dst)
+            except OSError as exc:
+                if _sandbox_download_path_in_repository(rel, repository_roots) or (
+                    len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
+                ):
+                    raise ValueError(
+                        "sandbox download could not copy protected file %s: %s" % (rel, exc)
+                    ) from None
+                with contextlib.suppress(OSError):
+                    dst.unlink()
+                report["skipped_entries"].append(
+                    {"path": str(rel), "kind": "file", "reason": "copy failed: %s" % exc}
+                )
+
+    return report
 
 
 def _read_only_verifier_extra_create_argv() -> List[str]:
@@ -4124,10 +4248,18 @@ def _sandbox_read_only_repository_violation(
     return "" if ok else (message or "read-only repository sandbox validation failed")
 
 
-def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
+def _sandbox_download(
+    name: str,
+    basename: str,
+    workspace: Path,
+    skipped: Optional[Dict[str, List[Dict[str, str]]]] = None,
+) -> bool:
     """Sync the agent's edits (+ the evidence manifest) from the kept sandbox
     back into the host workspace. Best-effort: a failure is logged, not fatal —
-    completeness is still judged by the evidence manifest on the host."""
+    completeness is still judged by the evidence manifest on the host.
+
+    Scratch entries the merge refused to materialize are added to ``skipped``
+    (``skipped_symlinks`` / ``skipped_entries``) for the salvage record."""
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     repository_roots = _sandbox_repository_roots(workspace, workspace)
     generated_paths = {
@@ -4171,10 +4303,31 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
         ok, msg = _sandbox_step(["download", name, sub, str(download_root)], timeout=300.0)
         if ok:
             try:
-                _merge_sandbox_download_tree(download_root, workspace)
+                report = _merge_sandbox_download_tree(download_root, workspace) or {}
             except Exception as exc:  # noqa: BLE001 - download sync is best-effort
                 ok = False
                 msg = "sandbox download merge failed: %s" % exc
+            else:
+                skipped_symlinks = list(report.get("skipped_symlinks") or [])
+                skipped_entries = list(report.get("skipped_entries") or [])
+                if skipped is not None:
+                    skipped.setdefault("skipped_symlinks", []).extend(skipped_symlinks)
+                    skipped.setdefault("skipped_entries", []).extend(skipped_entries)
+                if skipped_symlinks or skipped_entries:
+                    shown = [
+                        "%s -> %s" % (item["path"], item["target"]) for item in skipped_symlinks
+                    ] + ["%s (%s)" % (item["path"], item["kind"]) for item in skipped_entries]
+                    sys.stderr.write(
+                        "[executor] WARNING: sandbox download skipped %d scratch entr%s "
+                        "outside the repository worktree that cannot be materialized "
+                        "on the host: %s%s\n"
+                        % (
+                            len(shown),
+                            "y" if len(shown) == 1 else "ies",
+                            ", ".join(shown[:5]),
+                            ", ..." if len(shown) > 5 else "",
+                        )
+                    )
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox download failed: %s\n" % msg)
     return ok
@@ -4643,8 +4796,12 @@ def _run_sandboxed(
         active_error = sys.exc_info()[1]
         progress.stop()
         progress_evidence = progress.evidence()
+        harvest_skipped: Dict[str, List[Dict[str, str]]] = {
+            "skipped_symlinks": [],
+            "skipped_entries": [],
+        }
         try:
-            harvested = _sandbox_download(name, basename, workspace)
+            harvested = _sandbox_download(name, basename, workspace, harvest_skipped)
         except Exception as exc:  # noqa: BLE001 - teardown must continue to delete
             harvested = False
             sys.stderr.write("[executor] WARNING: sandbox download raised unexpectedly: %s\n" % exc)
@@ -4724,6 +4881,8 @@ def _run_sandboxed(
             "runner_completed": runner_completed,
             "harvest_attempted": True,
             "harvested": harvested,
+            "skipped_symlinks": harvest_skipped["skipped_symlinks"],
+            "skipped_entries": harvest_skipped["skipped_entries"],
             "kept": kept,
             "error": str(active_error) if active_error is not None else "",
             "progress": progress_evidence,

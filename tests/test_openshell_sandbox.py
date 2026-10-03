@@ -740,6 +740,158 @@ def test_merge_rejects_symlinked_host_and_evidence_controls(tmp_path, name):
         _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
 
 
+def _repo_workspace_with_tracked_change(tmp_path: Path):
+    workspace = tmp_path / "task-7"
+    repo = workspace / "repo-lease_abc"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text("old\n", encoding="utf-8")
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps({"repository_worktree": str(repo)}), encoding="utf-8"
+    )
+    return workspace, repo
+
+
+def _download_with_repo_change(download: Path) -> None:
+    sandbox_repo = download / "repo-lease_abc"
+    (sandbox_repo / ".github" / "workflows").mkdir(parents=True)
+    (sandbox_repo / ".github" / "workflows" / "ci.yml").write_text("new\n", encoding="utf-8")
+
+
+def test_harvest_skips_escaping_scratch_venv_symlink_and_keeps_repo_change(
+    monkeypatch, tmp_path, capsys
+):
+    # Live 2026-10-03 (task_b3e16b5f): a venv the agent built in its task
+    # workspace aborted the whole harvest and lost the repo edits beside it.
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    (workspace / "pip-audit-venv" / "bin").mkdir(parents=True)
+    (workspace / "pip-audit-venv" / "bin" / "python").write_text("stale\n", encoding="utf-8")
+    monkeypatch.setattr(te, "_merge_sandbox_download_tree", _REAL_MERGE_SANDBOX_DOWNLOAD_TREE)
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-venv")
+    monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    monkeypatch.setattr(te, "_reap_orphaned_task_sandboxes_best_effort", lambda *_: None)
+    monkeypatch.setattr(
+        te,
+        "_reconcile_task_sandboxes_from_lease_authority_best_effort",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(te, "_sandbox_delete", lambda name: True)
+
+    def step(args, *, timeout):
+        del timeout
+        if args[0] == "download":
+            download = Path(args[3])
+            _download_with_repo_change(download)
+            venv_bin = download / "pip-audit-venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            (venv_bin / "python").symlink_to("../../../../usr/bin/python3")
+            (venv_bin / "\U0001d70bthon").symlink_to("/usr/bin/python3")
+            (venv_bin / "python3").symlink_to("python")
+            (venv_bin / "activate").write_text("# venv\n", encoding="utf-8")
+        return True, ""
+
+    monkeypatch.setattr(te, "_sandbox_step", step)
+
+    te._run_sandboxed(FakeRunner(), _ARGV, workspace, "tid", {})
+
+    salvage = json.loads((workspace / "openshell-salvage.json").read_text(encoding="utf-8"))
+    assert salvage["harvested"] is True
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "new\n"
+    venv_bin = workspace / "pip-audit-venv" / "bin"
+    assert not os.path.lexists(venv_bin / "python")
+    assert not os.path.lexists(venv_bin / "\U0001d70bthon")
+    # A link that only reaches the outside through a skipped link is skipped too.
+    assert not os.path.lexists(venv_bin / "python3")
+    assert (venv_bin / "activate").read_text(encoding="utf-8") == "# venv\n"
+    skipped = {item["path"]: item for item in salvage["skipped_symlinks"]}
+    assert skipped["pip-audit-venv/bin/python"]["target"] == "../../../../usr/bin/python3"
+    assert skipped["pip-audit-venv/bin/\U0001d70bthon"]["target"] == "/usr/bin/python3"
+    assert set(skipped) == {
+        "pip-audit-venv/bin/python",
+        "pip-audit-venv/bin/\U0001d70bthon",
+        "pip-audit-venv/bin/python3",
+    }
+    assert salvage["skipped_entries"] == []
+    err = capsys.readouterr().err
+    assert err.count("sandbox download skipped") == 1
+    assert "sandbox download failed" not in err
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["../../../outside", "/etc/passwd"],
+)
+def test_merge_fails_closed_on_escaping_symlink_inside_repository(tmp_path, target):
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    download = tmp_path / "download"
+    _download_with_repo_change(download)
+    (download / "repo-lease_abc" / "tools").mkdir()
+    (download / "repo-lease_abc" / "tools" / "python").symlink_to(target)
+
+    with pytest.raises(ValueError, match="repo-lease_abc/tools/python -> %s" % target):
+        _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "old\n"
+    assert not os.path.lexists(repo / "tools" / "python")
+
+
+def test_merge_skips_scratch_directory_symlink_without_writing_through_it(tmp_path):
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    # A stale host-side copy of the escaping link must not survive either.
+    (workspace / "cache").symlink_to(outside, target_is_directory=True)
+    download = tmp_path / "download"
+    _download_with_repo_change(download)
+    (download / "cache").symlink_to("../../outside", target_is_directory=True)
+
+    report = _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+    assert report["skipped_symlinks"] == [
+        {"path": "cache", "target": "../../outside", "reason": "escapes the task workspace"}
+    ]
+    assert not os.path.lexists(workspace / "cache")
+    assert list(outside.iterdir()) == []
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "new\n"
+
+
+def test_merge_skips_scratch_fifo_but_fails_closed_on_repository_fifo(tmp_path):
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    download = tmp_path / "download"
+    _download_with_repo_change(download)
+    (download / "scratch").mkdir()
+    os.mkfifo(download / "scratch" / "pipe")
+
+    report = _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+    assert report["skipped_entries"] == [
+        {"path": "scratch/pipe", "kind": "fifo", "reason": "special file"}
+    ]
+    assert not os.path.lexists(workspace / "scratch" / "pipe")
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "new\n"
+
+    os.mkfifo(download / "repo-lease_abc" / "pipe")
+    with pytest.raises(
+        ValueError, match="fifo inside the repository worktree: repo-lease_abc/pipe"
+    ):
+        _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+
+def test_merge_fails_closed_on_escaping_symlink_above_repository_root(tmp_path):
+    workspace = tmp_path / "task-7"
+    repo = workspace / "work" / "repo"
+    repo.mkdir(parents=True)
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps({"repository_worktree": str(repo)}), encoding="utf-8"
+    )
+    download = tmp_path / "download"
+    download.mkdir()
+    (download / "work").symlink_to("/tmp", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="absolute target: work -> /tmp"):
+        _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+
 # ---------------------------------------------------------------------------
 # --yolo <-> sandbox coupling (never an unguarded YOLO agent)
 # ---------------------------------------------------------------------------
