@@ -197,6 +197,11 @@ common=(
   --capabilities "$capabilities"
   --workspace "$workspace"
   --lease-seconds "${MAC_WORKER_LEASE_SECONDS:-900}"
+  # Hard cap on one whole task attempt (coding agent + repository gate). It
+  # must cover MAC_EXECUTOR_AGENT_TIMEOUT plus MAC_WORKER_REPOSITORY_TEST_TIMEOUT;
+  # the worker's built-in 3600s default silently cut both 5400s budgets short
+  # (nanolang's attempts died at exactly 60m on 2026-10-03).
+  --timeout "${MAC_WORKER_TIMEOUT:-10800}"
   --poll-interval "${MAC_WORKER_POLL_INTERVAL:-2}"
   --attestation-key-env "$HOME/.mac/mac.env"
 )
