@@ -170,6 +170,13 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
 # by fetching metadata for every entry. Cap network concurrency, raise
 # retries/timeouts, and disable the release-age check. A world-readable global
 # config + env vars so the non-root `sandbox` user (HOME=/tmp) honors it too.
+#
+# pnpm 11 reads NEITHER /etc/npmrc nor npm_config_* for its own settings -- only
+# pnpm_config_* (or its YAML config) -- so every limit below was silently off
+# for pnpm until 2026-10-03, when an Aviation gate failed exactly as described
+# above (UND_ERR_SOCKET on 1230 supply-chain metadata fetches). The npm_config_*
+# forms stay for npm itself. pm_on_fail=ignore: the image ships one pnpm; a repo
+# whose packageManager pins another must not make pnpm download a second one.
 RUN printf '%s\n' \
       'network-concurrency=2' \
       'child-concurrency=2' \
@@ -186,7 +193,15 @@ ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
     npm_config_fetch_retry_mintimeout=20000 \
     npm_config_fetch_retry_maxtimeout=120000 \
     npm_config_fetch_timeout=300000 \
-    npm_config_minimum_release_age=0
+    npm_config_minimum_release_age=0 \
+    pnpm_config_network_concurrency=2 \
+    pnpm_config_child_concurrency=2 \
+    pnpm_config_fetch_retries=6 \
+    pnpm_config_fetch_retry_mintimeout=20000 \
+    pnpm_config_fetch_retry_maxtimeout=120000 \
+    pnpm_config_fetch_timeout=300000 \
+    pnpm_config_minimum_release_age=0 \
+    pnpm_config_pm_on_fail=ignore
 
 # Install the mac runtime into the in-image venv. The vendored Hermes lives at
 # mac/_hermes/hermes_cli, which `import hermes_cli` only finds if mac/_hermes is
