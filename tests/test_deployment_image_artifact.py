@@ -433,3 +433,36 @@ def test_runtime_smoke_proves_nanolang_native_headers_are_present() -> None:
         in command
     )
     assert "#include <openssl/evp.h>" in command
+
+
+def test_runtime_smoke_proves_nanolang_test_quick_dependencies_are_present() -> None:
+    """nanolang's gate runs `make test-quick`, not only `make build`.
+
+    test-quick requires SDL2_mixer (and SDL/GL/libuv/libevent), diffs against a
+    real gforth, and its schema step runs the login shell's `python3` with
+    `import yaml`. #921 judged these optional and the gate failed in the
+    sandbox on missing SDL2_mixer headers. The smoke runs under `/bin/bash -lc`
+    so `set -euo pipefail` is valid and `python3` resolves as the executor's
+    login shell resolves it, not to the venv's interpreter.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    argv = module._smoke_argv(
+        "openshell-runtime", "docker", "ref@sha256:" + "0" * 64, "linux/amd64"
+    )
+    assert argv[argv.index("--entrypoint") + 1] == "/bin/bash"
+    assert argv[-2] == "-lc"
+    command = argv[-1]
+    assert command.startswith("set -euo pipefail;")
+    assert (
+        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent;"
+        in command
+    )
+    assert "gforth --version;" in command
+    assert "python3 -c 'import yaml';" in command
