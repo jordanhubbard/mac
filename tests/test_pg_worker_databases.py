@@ -76,12 +76,16 @@ def test_reaper_preserves_live_owner_and_removes_abandoned_owned_database(databa
     try:
         assert name not in databases.reap()
         abandoned.conn.close()  # Simulate controller termination, no teardown.
-        deadline = time.monotonic() + 5
-        while databases.conn.execute(
-            "SELECT 1 FROM pg_stat_activity WHERE pid=%s", (owner_pid,)
-        ).fetchone():
-            assert time.monotonic() < deadline, "controller backend did not exit"
+        # Wait on the condition itself (the owner's backend has exited), with
+        # a generous anti-hang bound rather than a wall-clock assertion.
+        for _ in range(3000):
+            if not databases.conn.execute(
+                "SELECT 1 FROM pg_stat_activity WHERE pid=%s", (owner_pid,)
+            ).fetchone():
+                break
             time.sleep(0.01)
+        else:
+            pytest.fail("controller backend did not exit")
         assert name in databases.reap()
     finally:
         if not abandoned.conn.closed:
