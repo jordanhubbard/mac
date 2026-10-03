@@ -1248,6 +1248,48 @@ class _PublicationBaseMovedError(ValidationError):
         )
 
 
+class _PublicationAuthorityRevokedError(ValidationError):
+    """The task row changed between admission and the forge mutation.
+
+    The land step admits a task at the ``updated_at`` it read, and re-checks
+    that version under a row lock immediately before asking the forge to
+    merge (the final task-authority fence). A mismatch means the attempt's
+    authority is stale -- not that the task cannot land. A completed stop or
+    cancel moves the task out of review, so the next tick does not retry it;
+    any other write (a concurrent metadata update, an operator edit) leaves it
+    in review, and a fresh attempt re-reads the task and re-acquires authority.
+
+    RETRYABLE by type, not by message text: it carries a retry delay, so the
+    landing budget charges an attempt and backs off instead of classifying a
+    bare ValidationError as ``landing_non_retryable`` and blocking. Live on
+    2026-10-03 an approved task went straight to BLOCKED, then FAILED, on the
+    message "a fresh review publication attempt is required".
+    """
+
+    publication_failure_kind = "publication_authority_revoked"
+    publication_retry_after_seconds = LANDING_BACKOFF_MIN_SECONDS
+
+    def __init__(self) -> None:
+        super().__init__(
+            "git publication authority changed before forge mutation; "
+            "a fresh review publication attempt is required"
+        )
+
+
+class _LandingInProgressError(ValidationError):
+    """Another consumer is already landing this same task.
+
+    Not a failure of this task: the land step in progress owns it. The caller
+    must not record anything on the task (see ``_repository_land_lock``).
+    """
+
+    publication_failure_kind = "landing_in_progress"
+    publication_retry_after_seconds = 60
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__("git publication of %s is already in progress" % task_id)
+
+
 class _LandingRebaseRequiredError(ValidationError):
     """The reviewed head no longer lands as verified: its worker must rebase.
 
@@ -18158,7 +18200,9 @@ class ControlPlane:
         )
 
     @contextlib.contextmanager
-    def _repository_land_lock(self, clone_url: str, canonical_branch: str) -> Iterator[None]:
+    def _repository_land_lock(
+        self, clone_url: str, canonical_branch: str, task_id: str = ""
+    ) -> Iterator[None]:
         """Serialize land steps per (repository, canonical branch).
 
         A PostgreSQL transaction-scoped advisory lock, held for the whole land
@@ -18167,11 +18211,28 @@ class ControlPlane:
         second land step for the same repository does not queue behind the
         first (a land step clones and talks to the forge), it waits a tick
         under the landing deadline instead.
+
+        ``task_id`` additionally takes a per-task lock, first. The default
+        review runs from both the sweep and the event-driven consumer, so the
+        same task can reach this point twice at once. The loser used to see
+        ``landing_serialized`` and record that wait -- a metadata write to the
+        very task the winner was landing, which bumped its ``updated_at`` and
+        revoked the winner's task-authority fence just before the forge merge
+        (``_PublicationAuthorityRevokedError``). The loser now raises
+        ``_LandingInProgressError`` instead, which the review workflow turns
+        into a no-op that writes nothing.
         """
 
         repository = _canonicalize_git_url(clone_url) or str(clone_url or "")
         key = "mac.land:%s#%s" % (repository, canonical_branch)
         with self.store.transaction() as conn:
+            if task_id:
+                task_row = conn.execute(
+                    "SELECT pg_try_advisory_xact_lock(hashtext(?)) AS held",
+                    ("mac.land.task:%s" % task_id,),
+                ).fetchone()
+                if task_row is None or not task_row["held"]:
+                    raise _LandingInProgressError(task_id)
             row = conn.execute(
                 "SELECT pg_try_advisory_xact_lock(hashtext(?)) AS held", (key,)
             ).fetchone()
@@ -18313,7 +18374,7 @@ class ControlPlane:
             else ""
         )
         last_base_move: Optional[_PublicationBaseMovedError] = None
-        with self._repository_land_lock(clone_url, canonical_branch):
+        with self._repository_land_lock(clone_url, canonical_branch, task.id):
             for attempt in range(2):
                 try:
                     return self._publish_git_target_attempt(
@@ -18757,12 +18818,7 @@ class ControlPlane:
                         (task.id, task.state, admitted_task_updated_at),
                     )
                     if authority.rowcount != 1:
-                        revoked = ValidationError(
-                            "git publication authority changed before forge mutation; "
-                            "a fresh review publication attempt is required"
-                        )
-                        revoked.publication_failure_kind = "publication_authority_revoked"
-                        raise revoked
+                        raise _PublicationAuthorityRevokedError()
                     merge = _gitops.request_pull_request_merge(
                         api_url,
                         pr.number,
@@ -18773,7 +18829,7 @@ class ControlPlane:
                         commit_message=body,
                     )
         except Exception as exc:  # noqa: BLE001
-            if getattr(exc, "publication_failure_kind", "") == "publication_authority_revoked":
+            if isinstance(exc, _PublicationAuthorityRevokedError):
                 raise
             detail = _gitops._scrub_secret(str(exc))
             failure = ValidationError(
@@ -20047,6 +20103,15 @@ class ControlPlane:
                 review.reviewer_agent_id,
                 evidence_id=evidence.id,
             )
+        except _LandingInProgressError:
+            # The sweep and the event-driven consumer both reached the land
+            # step; the other one holds it. Write nothing: any task write here
+            # would revoke that land step's authority fence.
+            return {
+                "task_id": task_id,
+                "status": "landing_in_progress",
+                "review_id": review.id,
+            }
         except _LandingRebaseRequiredError as exc:
             terminal = self._terminal_review_noop(task_id)
             if terminal is not None:

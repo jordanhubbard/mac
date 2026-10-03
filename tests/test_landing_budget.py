@@ -234,3 +234,15 @@ def test_landing_failure_classification_reads_publication_hints():
     assert services._landing_failure_mode(wait) == "wait"
     assert services._landing_failure_mode(checks_failed) == "permanent"
     assert services._landing_failure_mode(serialized) == "wait"
+
+
+def test_revoked_publication_authority_is_retryable_by_type():
+    """A stale task-authority fence asks for a fresh attempt; it must charge
+    an attempt and back off, not block as ``landing_non_retryable``."""
+    revoked = services._PublicationAuthorityRevokedError()
+
+    assert isinstance(revoked, ValidationError)
+    assert "fresh review publication attempt" in str(revoked)
+    assert revoked.publication_failure_kind == "publication_authority_revoked"
+    assert revoked.publication_retry_after_seconds > 0
+    assert services._landing_failure_mode(revoked) == "retry"
