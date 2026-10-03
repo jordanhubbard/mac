@@ -426,6 +426,8 @@ def test_runtime_smoke_proves_nanolang_native_headers_are_present() -> None:
     )[-1]
     assert command.startswith("set -euo pipefail;")
     assert "pkg-config --exists libffi;" in command
+    assert 'test "$(pnpm config get network-concurrency)" = 2;' in command
+    assert 'test "$(pnpm config get pm-on-fail)" = ignore;' in command
     assert (
         "echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c -;"
         in command
