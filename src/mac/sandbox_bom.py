@@ -118,6 +118,10 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     # Libraries a build links against rather than a binary it invokes. A
     # contract may legitimately name these; nanolang's sign.c needs libcrypto.
     "libssl-dev": ("libssl-dev",),
+    # nanolang's src/interpreter_ffi.c #includes <ffi.h> and links -lffi (found
+    # through `pkg-config libffi`). The sandbox never shipped it, so nanolang's
+    # `make build` bootstrap could not compile at all.
+    "libffi-dev": ("libffi-dev",),
     "pkg-config": ("pkg-config",),
     "openssl": ("openssl",),
     # Base-image commands: declared by contracts, already present, no package

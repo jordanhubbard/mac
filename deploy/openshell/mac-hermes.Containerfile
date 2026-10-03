@@ -62,6 +62,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   <openssl/evp.h>/<sha.h>/<err.h> and the build links -lcrypto; without it
 #   `make build` fails and a coding agent will destructively stub sign.c just to
 #   compile. A real build dependency belongs in the base image.
+# libffi-dev (+ pkg-config): nanolang's src/interpreter_ffi.c #includes <ffi.h>
+#   and the build resolves it with `pkg-config --cflags/--libs libffi`. No image
+#   ever shipped it, so `make build` died with "ffi.h: No such file or
+#   directory" and nanolang could not bootstrap in the sandbox at all. Debian
+#   puts ffi.h under the multiarch include dir, so the build gate below
+#   compiles against it instead of testing a fixed /usr/include path.
 # clang/llvm/lld/qemu-system-misc: the current production executor cannot yet
 #   materialize ADR 0009 root-level overlay images.  Until that lane exists,
 #   the synchronized cut-over must carry the complete, architecture-neutral
@@ -102,11 +108,13 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev pkg-config openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev libffi-dev pkg-config openjdk-17-jre-headless clang llvm lld \
     && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \
+    && pkg-config --exists libffi \
+    && echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c - \
     && command -v cmake >/dev/null \
     && command -v ninja >/dev/null \
     && command -v clang >/dev/null \

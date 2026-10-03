@@ -601,6 +601,10 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "clang --print-targets | grep -F riscv64; llvm-objcopy --version; "
         "ld.lld --version; qemu-system-riscv64 --version; "
         "qemu-system-riscv64 -machine help | grep -F virt; python3 --version; "
+        # nanolang's bootstrap compiles against libffi and OpenSSL headers.
+        "pkg-config --exists libffi; "
+        "echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c -; "
+        "echo '#include <openssl/evp.h>' | cc -fsyntax-only -x c -; "
         "/usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F 'v0.30.1'; "
         "getent passwd sandbox; test -x /opt/mac-venv/bin/mac-git-askpass"
     )

@@ -273,3 +273,32 @@ def test_the_image_installs_it():
         / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
     assert "postgresql" in containerfile
+
+
+def test_nanolang_native_build_headers_are_mapped_committed_and_installed():
+    """nanolang's src/interpreter_ffi.c #includes <ffi.h>; sign.c needs OpenSSL.
+
+    No sandbox image ever shipped libffi, so nanolang's `make build` bootstrap
+    died with "ffi.h: No such file or directory" and the project could not be
+    built in the sandbox at all. Each link in the chain is asserted separately:
+    a contract may declare the library, the mapping must turn it into a package
+    rather than an unmapped gap, the reviewed manifest must carry it, and the
+    Containerfile's apt line (not a comment) must install it.
+    """
+    from mac.sandbox_bom import COMMAND_PACKAGES
+
+    needed = {"libffi-dev", "libssl-dev", "pkg-config"}
+    bom = derive_bom([_registration("nanolang", ["cc", "make", *sorted(needed)])])
+    assert bom["unmapped_commands"] == []
+    assert needed <= set(bom["packages"])
+    assert COMMAND_PACKAGES["libffi-dev"] == ("libffi-dev",)
+
+    committed = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert needed <= set(committed["packages"])
+    assert needed <= set(committed["contributing_projects"]["nanolang"])
+
+    image_text = CONTAINERFILE.read_text(encoding="utf-8")
+    assert needed <= installed_packages(image_text)
+    # The build fails closed if the header is not actually compilable.
+    assert "pkg-config --exists libffi" in image_text
+    assert "#include <ffi.h>" in image_text

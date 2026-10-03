@@ -404,3 +404,30 @@ def test_runtime_smoke_checks_only_the_shipped_coding_cli() -> None:
         assert retired not in command
     version = module.IMAGE_SPECS["openshell-runtime"]["build_args"].get("OPENCODE_VERSION")
     assert version == "1.18.18"
+
+
+def test_runtime_smoke_proves_nanolang_native_headers_are_present() -> None:
+    """nanolang's bootstrap failed in the sandbox on a missing <ffi.h>.
+
+    The smoke must compile against the header, not test a fixed path: Debian
+    installs ffi.h under the multiarch include directory, so
+    `test -f /usr/include/ffi.h` would fail on a correct image.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    command = module._smoke_argv(
+        "openshell-runtime", "docker", "ref@sha256:" + "0" * 64, "linux/amd64"
+    )[-1]
+    assert command.startswith("set -euo pipefail;")
+    assert "pkg-config --exists libffi;" in command
+    assert (
+        "echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c -;"
+        in command
+    )
+    assert "#include <openssl/evp.h>" in command
