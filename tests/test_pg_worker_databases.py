@@ -86,10 +86,12 @@ def test_worker_lease_protects_database_after_controller_exit(databases):
     abandoned = WorkerDatabases(databases.dsn)
     name = conninfo_to_dict(abandoned.create())["dbname"]
     with psycopg.connect(databases.dsn, autocommit=True) as worker:
-        worker.execute("SELECT pg_advisory_lock_shared(%s)", (lock_key(abandoned.run_id),))
+        key = lock_key(abandoned.run_id)
+        worker.execute("SELECT pg_advisory_lock_shared(%s)", (key,))
         abandoned.conn.close()
         assert name not in databases.reap()
-    assert name in databases.reap()
+        assert worker.execute("SELECT pg_advisory_unlock_shared(%s)", (key,)).fetchone()[0]
+        assert name in databases.reap()
 
 
 def test_reaper_does_not_drop_unmarked_or_mismatched_databases(databases):
