@@ -1528,6 +1528,179 @@ def required_check_verdicts(
     return verdict
 
 
+# ----------------------------------------------------------------------
+# Why a required check failed: what a worker needs to fix it.
+# ----------------------------------------------------------------------
+
+# Bounds on what a failed-check send-back carries into the next prompt.
+FAILED_CHECK_LOG_LINES = 150
+FAILED_CHECK_LOG_TOTAL_BYTES = 8 * 1024
+_FAILED_CHECK_MAX_CHECKS = 10
+# Only the end of a job log is kept; reading stops buffering past this.
+_FAILED_CHECK_LOG_READ_WINDOW = 256 * 1024
+# GitHub Actions prefixes each log line with an RFC 3339 timestamp.
+_ACTIONS_LOG_TIMESTAMP_RE = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?")
+# Token shapes GitHub issues. Actions masks registered secrets as ``***``
+# itself; this catches a token a test printed that was never registered.
+_GITHUB_TOKEN_TEXT_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Surface a redirect as an ``HTTPError`` instead of following it."""
+
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _read_tail(resp: Any, window: int) -> bytes:
+    buffer = b""
+    while True:
+        chunk = resp.read(64 * 1024)
+        if not chunk:
+            return buffer
+        buffer = (buffer + chunk)[-window:]
+
+
+def _fetch_actions_job_log(
+    api_base: str, owner: str, repo: str, job_id: int, headers: Dict[str, str]
+) -> str:
+    """The end of one GitHub Actions job's log, as text.
+
+    The logs endpoint answers with a redirect to a short-lived signed download
+    URL. The redirect is followed by hand so the forge credential is never sent
+    to the storage host the URL points at.
+    """
+    url = "%s/repos/%s/%s/actions/jobs/%d/logs" % (api_base, owner, repo, int(job_id))
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=30.0) as resp:
+            return _read_tail(resp, _FAILED_CHECK_LOG_READ_WINDOW).decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else ""
+        if not location:
+            raise
+    request = urllib.request.Request(location, headers={"User-Agent": "mac-gitops"})
+    with urllib.request.urlopen(request, timeout=30.0) as resp:
+        return _read_tail(resp, _FAILED_CHECK_LOG_READ_WINDOW).decode("utf-8", "replace")
+
+
+def failed_log_tail(text: str, max_lines: int = FAILED_CHECK_LOG_LINES) -> str:
+    """The failing part of a job log: up to its last error, last ``max_lines``.
+
+    Approximates ``gh run view --log-failed`` for one job: the step that failed
+    is the last one to emit ``##[error]``; everything after it is post-job
+    cleanup that says nothing about the failure.
+    """
+    lines = [_ACTIONS_LOG_TIMESTAMP_RE.sub("", line) for line in str(text or "").splitlines()]
+    last_error = max((i for i, line in enumerate(lines) if "##[error]" in line), default=-1)
+    if last_error >= 0:
+        lines = lines[: last_error + 1]
+    return "\n".join(lines[-max(1, int(max_lines)) :])
+
+
+def scrub_check_log(text: str, *secrets: Optional[str]) -> str:
+    """``_scrub_secret`` plus any GitHub-token-shaped string in CI output."""
+    return _GITHUB_TOKEN_TEXT_RE.sub("***", _scrub_secret(text, *secrets))
+
+
+def _clip_to_tail_bytes(text: str, budget: int) -> str:
+    """The end of ``text`` in at most ``budget`` UTF-8 bytes, on a line break."""
+    if budget <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= budget:
+        return text
+    clipped = encoded[-budget:].decode("utf-8", "ignore")
+    newline = clipped.find("\n")
+    return clipped[newline + 1 :] if 0 <= newline < len(clipped) - 1 else clipped
+
+
+def failed_check_details(
+    repo_url: str,
+    sha: str,
+    failed: Tuple[str, ...],
+    *,
+    max_log_lines: int = FAILED_CHECK_LOG_LINES,
+    max_total_bytes: int = FAILED_CHECK_LOG_TOTAL_BYTES,
+    github_token: Optional[str] = None,
+) -> list:
+    """Name, conclusion, details URL and a bounded log tail per failed check.
+
+    What a worker sent back to fix a red CI needs: not just that ``test``
+    failed, but how. Never raises -- a forge that cannot be read still yields
+    one entry per failed name, so the send-back states what is known. Log
+    tails share ``max_total_bytes`` and are scrubbed of credentials.
+    """
+    names = [str(name) for name in failed if str(name or "")][:_FAILED_CHECK_MAX_CHECKS]
+    details: list = [
+        {"name": name, "conclusion": "failure", "details_url": "", "log_tail": ""} for name in names
+    ]
+    if not names:
+        return details
+    try:
+        host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+            repo_url, github_token=github_token
+        )
+    except ValueError:
+        return details
+    if host_kind != "github":
+        return details
+    runs: Dict[str, Dict[str, Any]] = {}
+    statuses: Dict[str, Dict[str, Any]] = {}
+    try:
+        listed = _http_get_json(
+            "%s/repos/%s/%s/commits/%s/check-runs?per_page=100"
+            % (api_base, owner, repo, _quote(sha, safe="")),
+            headers,
+        )
+        for run in (listed or {}).get("check_runs") or []:
+            if isinstance(run, dict) and str(run.get("name") or ""):
+                runs.setdefault(str(run["name"]), run)
+    except Exception:  # noqa: BLE001 - details are best-effort
+        pass
+    try:
+        combined = _http_get_json(
+            "%s/repos/%s/%s/commits/%s/status" % (api_base, owner, repo, _quote(sha, safe="")),
+            headers,
+        )
+        for status in (combined or {}).get("statuses") or []:
+            if isinstance(status, dict) and str(status.get("context") or ""):
+                statuses.setdefault(str(status["context"]), status)
+    except Exception:  # noqa: BLE001
+        pass
+    remaining = max(0, int(max_total_bytes))
+    for item in details:
+        run = runs.get(item["name"])
+        status = statuses.get(item["name"])
+        if run is not None:
+            item["conclusion"] = str(run.get("conclusion") or run.get("status") or "failure")
+            item["details_url"] = str(run.get("details_url") or run.get("html_url") or "")
+        elif status is not None:
+            item["conclusion"] = str(status.get("state") or "failure")
+            item["details_url"] = str(status.get("target_url") or "")
+            item["description"] = scrub_check_log(str(status.get("description") or ""), token)[:300]
+        item["details_url"] = scrub_check_log(item["details_url"], token)[:500]
+        app = run.get("app") if isinstance(run, dict) else None
+        if (
+            run is None
+            or remaining <= 0
+            or not isinstance(app, dict)
+            or str(app.get("slug") or "") != "github-actions"
+        ):
+            continue
+        try:
+            raw = _fetch_actions_job_log(api_base, owner, repo, int(run.get("id") or 0), headers)
+        except Exception as exc:  # noqa: BLE001 - a missing log is reported, not fatal
+            item["log_error"] = scrub_check_log(str(exc), token)[:200]
+            continue
+        tail = _clip_to_tail_bytes(
+            scrub_check_log(failed_log_tail(raw, max_log_lines), token), remaining
+        )
+        item["log_tail"] = tail
+        remaining -= len(tail.encode("utf-8"))
+    return details
+
+
 def pull_request_state(
     repo_url: str,
     number: int,
