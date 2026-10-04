@@ -485,3 +485,92 @@ def test_job_log_redirect_does_not_forward_the_credential(monkeypatch):
     assert text == "line\n##[error]x\n"
     assert "Authorization" in seen[0]
     assert all("Authorization" not in headers for headers in seen[1:])
+
+
+_EXHAUSTED_LANDING = {
+    "schema": services.LANDING_BUDGET_SCHEMA,
+    "attempts": 2,
+    "check_fixes": services.LANDING_MAX_CHECK_FIXES,
+    "rebases": 1,
+    "first_attempt_at": "2026-10-03T00:00:00.000000+00:00",
+    "not_before": "2026-10-03T00:05:00.000000+00:00",
+    "blocked_at": "2026-10-03T01:00:00.000000+00:00",
+    "outcome": "landing_check_fix_cap_exhausted",
+    "last_reason": "pull_request_checks_failed",
+    "evidence_id": "ev_old",
+}
+_PULL_REQUEST_ROUTE = {
+    "schema": "mac.fix_failed_checks.v1",
+    "reason": "required_checks_failed",
+    "pull_request_number": 101,
+    "head_branch": "task/feature",
+    "reviewed_head_sha": "abc123",
+}
+
+
+def _blocked_at_the_check_fix_cap(cp):
+    """task_b3e16b5f: three fix rounds spent, blocked, the PR still open."""
+    task = cp.create_task("t", metadata={"publication_target": "git://main"})
+    cp._persist_task_metadata_narrow(
+        task.id,
+        {
+            **task.metadata,
+            "landing": dict(_EXHAUSTED_LANDING),
+            "fix_failed_checks": dict(_PULL_REQUEST_ROUTE),
+        },
+        actor="test",
+    )
+    with cp.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("blocked", task.id))
+    return task
+
+
+def _assert_fresh_landing_budget(cp, task_id):
+    reopened = cp.get_task(task_id)
+    assert reopened.state == TaskState.OPEN.value
+    assert "landing" not in reopened.metadata
+    # The publication route survives: the next attempt builds on the same PR.
+    assert reopened.metadata["fix_failed_checks"] == _PULL_REQUEST_ROUTE
+    event = next(
+        event for event in cp.task_history(task_id) if event.event_type == "task.transitioned"
+    )
+    assert event.detail["via"] == "operator_reopen"
+    assert event.detail["previous_landing"] == _EXHAUSTED_LANDING
+
+
+def test_operator_reopen_starts_a_fresh_landing_budget(cp):
+    task = _blocked_at_the_check_fix_cap(cp)
+
+    cp.reopen_task(task.id, "operator", "remaining finding: lint")
+
+    _assert_fresh_landing_budget(cp, task.id)
+    # The next failed-checks send-back has its full budget again.
+    with cp.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("reviewing", task.id))
+    assert cp._consume_landing_budget(task.id, "pull_request_checks_pending") is None
+    landing = _landing(cp, task.id)
+    assert landing["attempts"] == 1
+    assert not landing.get("check_fixes")
+    assert not landing.get("rebases")
+    assert "blocked_at" not in landing and "outcome" not in landing
+
+
+def test_batch_reopen_starts_a_fresh_landing_budget(cp):
+    task = _blocked_at_the_check_fix_cap(cp)
+
+    outcome = cp.task_batches.apply(
+        "id=%s" % task.id, "reopen", reason="remaining finding", apply=True
+    )
+
+    assert outcome.changed == (task.id,)
+    assert outcome.failed == ()
+    _assert_fresh_landing_budget(cp, task.id)
+
+
+def test_a_non_operator_return_to_open_keeps_the_landing_budget(cp):
+    task = _blocked_at_the_check_fix_cap(cp)
+
+    cp._transition_task_internal(task.id, TaskState.OPEN.value, "system", {"reason": "retry"})
+
+    assert cp.get_task(task.id).state == TaskState.OPEN.value
+    assert _landing(cp, task.id) == _EXHAUSTED_LANDING
