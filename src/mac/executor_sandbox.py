@@ -100,7 +100,9 @@ from mac.trusted_artifact import (
 )
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
+    openshell_create_keepalive_args,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
+    split_sandbox_create_command,
     truthy as _truthy,
     verifier_resource_profile,
     verifier_profile_create_args,
@@ -995,7 +997,9 @@ def _resolve_task_openshell_policy(task: Any) -> str:
 # worktree must be UPLOADED in and the agent's results DOWNLOADED back out — a
 # plain ``create -- argv`` would run the agent against an empty /sandbox and lose
 # its edits + evidence on teardown. The run is therefore a lifecycle:
-#   create (--upload workspace, run agent in it, KEEP) -> download -> delete.
+#   create (--upload workspace, kept alive) -> exec agent -> download -> delete.
+# Create and agent are separate steps: OpenShell 0.1 rejects --upload with a
+# command, and a create command would be the main process whose exit ends Ready.
 # ``include_workdir`` in the policy only grants Landlock access to the path; it
 # does not copy files. /sandbox is OpenShell's writable workspace root (uploads
 # and downloads must live under it).
@@ -2596,8 +2600,13 @@ def _build_sandbox_create_argv(
     extra_create_argv: Optional[List[str]] = None,
     task: Any = None,
 ) -> List[str]:
-    """``openshell sandbox create`` argv that uploads the task workspace, runs the
-    agent inside it, and KEEPS the sandbox so results can be downloaded.
+    """The task's logical ``sandbox create --upload ... -- <agent>`` argv.
+
+    It is never executed verbatim: OpenShell 0.1 rejects ``--upload`` combined
+    with a command, and a trailing command would become the main process whose
+    exit ends Ready. :func:`_sandbox_launch_argvs` splits it into a kept-alive
+    create (uploading the workspace) and a ``sandbox exec`` running the agent,
+    so the sandbox stays Ready for verification, download and delete.
 
     A policy is ALWAYS passed (explicit -> deployed -> bundled fail-closed
     default) so OpenShell can never silently apply its own image-default profile.
@@ -2668,6 +2677,42 @@ def _build_sandbox_create_argv(
     )
     argv += ["--", "/bin/bash", "-c", inner]
     return argv
+
+
+#: Bound for the create phase alone (image pull + workspace upload). The agent
+#: itself runs in the following exec under the runner's own timeout.
+_SANDBOX_CREATE_TIMEOUT_SECONDS = 900.0
+
+
+def _sandbox_launch_argvs(create_argv: List[str]) -> "tuple[List[str], List[str]]":
+    """Split a logical create+command argv into (kept-alive create, exec)."""
+    return split_sandbox_create_command(create_argv)
+
+
+def _sandbox_create_detached(
+    create_argv: List[str], *, timeout: float = _SANDBOX_CREATE_TIMEOUT_SECONDS
+) -> "subprocess.CompletedProcess[str]":
+    """Create (and upload into) a sandbox that stays Ready; never raises.
+
+    A timeout maps to 124 and a missing/unrunnable CLI to 127, mirroring what
+    the audited runner reported when create and the agent were one process.
+    """
+    try:
+        return _run_captured(create_argv, Path.cwd(), timeout)
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout or ""
+        err = exc.stderr or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        return subprocess.CompletedProcess(
+            create_argv, 124, out, err + "\n[executor] sandbox create timed out after %ss" % timeout
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(
+            create_argv, 127, "", "[executor] sandbox create could not run: %s" % exc
+        )
 
 
 def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
@@ -3956,16 +4001,29 @@ def _sandbox_run_read_only_repository_verification(
             *_sandbox_label_argv("read-only-verifier"),
             *verifier_profile_create_args(_read_only_verifier_extra_create_argv()),
             "--no-git-ignore",
-            "--no-tty",
             "--upload",
             "%s:%s" % (verifier_workspace, _SANDBOX_WORKDIR),
-            "--",
-            "/bin/bash",
-            "--noprofile",
-            "--norc",
-            sandbox_script,
+            *openshell_create_keepalive_args(_openshell_bin()),
         ]
+        # Upload on create, then exec the verifier: OpenShell 0.1 rejects an
+        # upload combined with a command. ``created`` still means "the
+        # verifier ran and exited zero", as when both were one create.
         created, create_message = _sandbox_step(create_args, timeout=timeout + 90.0)
+        if created:
+            created, create_message = _sandbox_step(
+                [
+                    "exec",
+                    "--name",
+                    verifier_name,
+                    "--no-tty",
+                    "--",
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc",
+                    sandbox_script,
+                ],
+                timeout=timeout + 90.0,
+            )
         if not created and create_message:
             sys.stderr.write(
                 "[executor] independent read-only verifier returned non-zero: %s\n"
@@ -4554,7 +4612,7 @@ def _run_sandboxed(
     runner: Callable[..., Any], agent_argv: List[str], workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
     """Run the agent through the OpenShell sandbox lifecycle: create (upload the
-    workspace + run the agent, keep) -> download results -> delete. The agent
+    workspace, kept alive) -> exec the agent -> download results -> delete. The agent
     runs confined. Harvest is attempted before teardown on every exit path,
     including runner exceptions and cancellation. Repository failures are
     deleted only after WIP is durably bundled; preservation failure retains the
@@ -4600,6 +4658,7 @@ def _run_sandboxed(
             ),
             task=task,
         )
+        launch_create_argv, launch_exec_argv = _sandbox_launch_argvs(create_argv)
     except Exception:
         for path in runtime_files:
             path.unlink(missing_ok=True)
@@ -4623,7 +4682,25 @@ def _run_sandboxed(
         progress.interval = 0.0
     progress.start()
     try:
-        result = runner(create_argv, workspace, audit_id, opts)
+        # Create (uploading the workspace) and run the agent as two steps: the
+        # sandbox must still be Ready afterwards for verification and harvest.
+        created = _sandbox_create_detached(launch_create_argv)
+        if created.returncode != 0:
+            # Same outcome the combined create used to report: the runner's
+            # result is the failed create, and teardown still runs below.
+            result = created
+            runner_completed = True
+            progress.stop()
+            emit_telemetry(
+                "sandbox_create_failed",
+                task_id=str(audit_id) if audit_id else None,
+                level="warning",
+                sandbox=name,
+                returncode=int(created.returncode),
+                detail=clip_process_text(created.stderr or created.stdout or "", 600),
+            )
+            return result
+        result = runner(launch_exec_argv, workspace, audit_id, opts)
         runner_completed = True
         if read_only_report:
             setattr(
@@ -5323,7 +5400,9 @@ def coding_agent_sandbox_which(name: str) -> Optional[str]:
 
 
 def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Path) -> List[str]:
-    """Build the coding-agent probe's process argv.
+    """Build the coding-agent probe's logical create+command argv.
+
+    :func:`_openshell_probe` runs it as a kept-alive create plus an exec.
 
     No process-visible secrets: the prompt/command are private uploaded files
     (see agent_argv's mac.agent_command wrapper), and the probe's inference
@@ -5374,21 +5453,35 @@ def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
 
 
 def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, str]":
-    """Run a one-shot ``sandbox create`` probe; return (returncode, combined output).
-    Best-effort: any failure returns a non-zero code (never raises)."""
+    """Run a probe given as one logical ``sandbox create ... -- <cmd>`` argv.
+
+    It runs as create (with uploads, kept alive) then ``sandbox exec``, because
+    OpenShell 0.1 rejects an upload combined with a command. Returns the exec's
+    returncode (or the create's, when create fails) and the combined output of
+    both steps; the caller deletes the sandbox. Best-effort: any failure
+    returns a non-zero code (never raises)."""
+    deadline = time.monotonic() + timeout
+    output = ""
     try:
-        proc = subprocess.run(
-            create_argv,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,
-        )
-        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+        for step in _sandbox_launch_argvs(create_argv):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return 124, output + "probe timed out after %ss" % timeout
+            proc = subprocess.run(
+                step,
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+                stdin=subprocess.DEVNULL,
+            )
+            output += (proc.stdout or "") + (proc.stderr or "")
+            if proc.returncode != 0:
+                return proc.returncode, output
+        return 0, output
     except subprocess.TimeoutExpired as exc:
-        return 124, str(exc)
+        return 124, output + str(exc)
     except Exception as exc:  # noqa: BLE001 - a probe failure must mean "not ready", not a crash
-        return 1, str(exc)
+        return 1, output + str(exc)
 
 
 def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:

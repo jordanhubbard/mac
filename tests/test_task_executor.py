@@ -969,7 +969,12 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
         steps.append(["runner", *argv[:3]])
         return _FakeResult(0, stdout="ok\n")
 
+    def fake_create(argv, **_kwargs):
+        steps.append(["create", *argv])
+        return te.subprocess.CompletedProcess(argv, 0, "", "")
+
     monkeypatch.setattr(te, "_sandbox_step", fake_step)
+    monkeypatch.setattr(te, "_sandbox_create_detached", fake_create)
     monkeypatch.setattr(
         te,
         "_sandbox_run_repository_verification_exec",
@@ -1024,7 +1029,11 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     )
 
     assert result.returncode == 0
-    assert steps[0][0] == "runner"
+    # The kept-alive create precedes the agent exec, so the sandbox is still
+    # Ready when verification execs into it (OpenShell 0.1 semantics).
+    assert steps[0][0] == "create" and "--upload" in steps[0] and "--" not in steps[0]
+    steps.pop(0)
+    assert steps[0] == ["runner", "openshell", "sandbox", "exec"]
     assert steps[1][:2] == ["upload", "sb"]
     verify_script = Path(steps[1][2])
     assert verify_script.name == ".mac-sandbox-repository-verify.sh"
@@ -1065,6 +1074,11 @@ def test_sandboxed_repo_task_verification_failure_changes_success_result(tmp_pat
         lambda *_args: None,
     )
     monkeypatch.setattr(te, "_sandbox_step", lambda *_args, **_kwargs: (True, ""))
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: te.subprocess.CompletedProcess(argv, 0, "", ""),
+    )
     monkeypatch.setattr(te, "_sandbox_download", lambda *_args: True)
     monkeypatch.setattr(te, "_sandbox_delete", lambda *_args: True)
     monkeypatch.setattr(
@@ -1228,6 +1242,11 @@ def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, mo
     harvested = []
     deleted = []
     telemetry = []
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: te.subprocess.CompletedProcess(argv, 0, "", ""),
+    )
     monkeypatch.setattr(te, "_sandbox_download", lambda *args: harvested.append(args) or True)
     monkeypatch.setattr(te, "_sandbox_delete", lambda name: deleted.append(name) or True)
     monkeypatch.setattr(

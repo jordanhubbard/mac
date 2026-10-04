@@ -81,6 +81,13 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
     monkeypatch.setenv("MAC_OPENSHELL_REAP_ORPHANS", "0")
     monkeypatch.setenv("MAC_OPENSHELL_RECONCILE_LEASES", "0")
+    # The kept-alive create that precedes the agent exec never reaches a real
+    # gateway; lifecycle tests that care about it install their own fake.
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
     # Hard test isolation: an accidental opt-in cannot reach the developer's
     # live OpenShell gateway. Individual tests may replace these fakes with
     # scenario-specific reports.
@@ -478,15 +485,29 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
         "emit_telemetry",
         lambda event, **detail: events.append((event, detail)) or True,
     )
+    created = []
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: (
+            created.append(list(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
     r = FakeRunner()
     workspace = tmp_path / "task-7"
     workspace.mkdir()
     te._invoke_agent(r, "do it", workspace, "tid", {})
-    # 1 audited create call (runs the agent), then generated-state cleanup,
-    # download, and delete out-of-band.
-    assert len(r.calls) == 1
-    create = r.calls[0][0]
+    # A kept-alive create uploads the workspace (OpenShell 0.1 rejects
+    # --upload with a command), then 1 audited exec runs the agent, then
+    # generated-state cleanup, download, and delete out-of-band.
+    assert len(created) == 1
+    create = created[0]
     assert create[:3] == ["openshell", "sandbox", "create"] and "--upload" in create
+    assert "--" not in create and create[-1] == "--detach"
+    assert len(r.calls) == 1
+    agent = r.calls[0][0]
+    assert agent[:6] == ["openshell", "sandbox", "exec", "--name", "sb1", "--no-tty"]
+    assert agent[agent.index("--") + 1 : agent.index("--") + 3] == ["/bin/bash", "-c"]
     assert steps[0][:3] == ["exec", "--name", "sb1"]
     assert steps[0][-3:-1] == ["/bin/sh", "-c"]
     assert ".mac-toolchain" in steps[0][-1]
@@ -509,16 +530,24 @@ def test_sandbox_create_argv_is_small_and_contains_no_prompt_or_tokens(monkeypat
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     workspace = tmp_path / "task-large"
     prompt = "private-task-prompt-" + ("x" * 25000)
+    created = []
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: (
+            created.append(list(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
     runner = FakeRunner()
 
     te._invoke_agent(runner, prompt, workspace, "tid", {})
 
-    create = runner.calls[0][0]
-    joined = " ".join(create)
-    assert "mac-super-secret-token" not in joined
-    assert "private-task-prompt" not in joined
-    assert "--env" not in create
-    assert len(joined) < 4000
+    for argv in (created[0], runner.calls[0][0]):
+        joined = " ".join(argv)
+        assert "mac-super-secret-token" not in joined
+        assert "private-task-prompt" not in joined
+        assert "--env" not in argv
+        assert len(joined) < 4000
 
 
 def test_progress_monitor_emits_state_transitions_from_sandbox_snapshot(monkeypatch, tmp_path):
@@ -1085,6 +1114,8 @@ def test_read_only_verification_uses_second_secret_free_sandbox(monkeypatch, tmp
             assert "mac.read_only_report_verifier" in verifier_script
             assert "MAC_READ_ONLY_AUTHORITATIVE_VERIFIER" in verifier_script
             return True, ""
+        if args[0] == "exec":
+            return True, ""
         if args[0] == "download":
             Path(args[3]).write_text(json.dumps(payload), encoding="utf-8")
             return True, ""
@@ -1095,7 +1126,14 @@ def test_read_only_verification_uses_second_secret_free_sandbox(monkeypatch, tmp
     monkeypatch.setattr(te, "_sandbox_step", step)
 
     assert te._sandbox_run_read_only_repository_verification("mac-task-agent", workspace, task)
-    assert [call[0] for call in calls] == ["create", "download", "delete"]
+    assert [call[0] for call in calls] == ["create", "exec", "download", "delete"]
+    # OpenShell 0.1 rejects --upload with a command: create uploads and stays
+    # alive, and the verifier script runs in the same sandbox through exec.
+    create, verify = calls[0], calls[1]
+    assert "--" not in create and create[-1] == "--detach"
+    assert verify[:4] == ["exec", "--name", create[create.index("--name") + 1], "--no-tty"]
+    assert verify[-4:-1] == ["/bin/bash", "--noprofile", "--norc"]
+    assert verify[-1].endswith("/.mac-sandbox-repository-verify.sh")
     trusted = workspace / te._TRUSTED_READ_ONLY_VERIFICATION_FILE
     assert json.loads(trusted.read_text(encoding="utf-8"))["stdout"] == ("trusted-smoke\n")
 
@@ -1624,7 +1662,7 @@ def test_landlock_precheck_passes_when_present(monkeypatch, tmp_path):
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     r = FakeRunner()
     te._invoke_agent(r, "do it", tmp_path / "t", "tid", {})
-    assert r.calls[0][0][:3] == ["openshell", "sandbox", "create"]
+    assert r.calls[0][0][:3] == ["openshell", "sandbox", "exec"]
 
 
 # --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---
