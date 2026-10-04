@@ -880,6 +880,51 @@ def _rebase_onto_tip_section(task: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _published_head_continuation_section(task: Dict[str, Any]) -> str:
+    """Tell an attempt that its worktree already holds its earlier published work.
+
+    The worker starts a task with an open pull request from that pull
+    request's head (``metadata.runtime.repository_continuation``), not from
+    the canonical branch; the hub then moves the same pull request to this
+    attempt's head. Without saying so the agent would redo -- or revert --
+    commits it does not recognise as its own.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+    record = runtime.get("repository_continuation") if isinstance(runtime, dict) else None
+    if not isinstance(record, dict):
+        return ""
+    status = str(record.get("status") or "")
+    if status not in {"continued", "rebased", "conflict"}:
+        return ""
+    pr = record.get("pull_request_url") or "#%s" % record.get("pull_request_number")
+    published = str(record.get("published_head_sha") or "")[:12] or "its head"
+    round_number = record.get("round")
+    round_text = " (round %s)" % round_number if round_number else ""
+    tip = str(record.get("canonical_tip") or "")[:12] or "the default-branch tip"
+    lines = [
+        "Continuing from your published work:",
+        "Your worktree starts from your earlier published work%s: the head of pull "
+        "request %s, branch %s, at %s." % (round_text, pr, record.get("head_branch"), published),
+        "- Those commits are yours and stay in the pull request. Build on them; do "
+        "not redo, revert or drop them.",
+    ]
+    if status == "rebased":
+        lines.append("- They were rebased onto %s, the current default-branch tip." % tip)
+    elif status == "conflict":
+        lines.append(
+            "- The default branch moved to %s and your published work conflicts with "
+            "it, so the worktree is NOT rebased. Integrate the default branch first "
+            "(rebase or merge %s), resolve the conflicts keeping both sides' intent, "
+            "then continue." % (tip, tip)
+        )
+    lines.append(
+        "- The hub pushes your new head to the same pull request, so it must keep "
+        "every earlier round's change."
+    )
+    return "\n".join(lines)
+
+
 def _superseded_send_back(directive: Dict[str, Any], other: Any) -> bool:
     """Is ``directive`` older than the ``other`` land-loop send-back?
 
@@ -1035,6 +1080,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
     integration_section = _cooperative_integration_section(task)
     if integration_section:
         parts.append(integration_section)
+    continuation_section = _published_head_continuation_section(task)
+    if continuation_section:
+        parts.append(continuation_section)
     rebase_section = _rebase_onto_tip_section(task)
     if rebase_section:
         parts.append(rebase_section)
