@@ -1269,12 +1269,15 @@ def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
     assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(seed, "rev-parse", "HEAD")
 
 
-def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
+def test_mac_worker_publishes_stale_base_on_conflicting_canonical_advance(
     tmp_path: Path,
     monkeypatch,
 ):
-    """A CONFLICTING canonical advance must still fail closed: the sync aborts
-    its rebase (work intact) and the freshness gate reports precisely."""
+    """A CONFLICTING canonical advance is never merged by the worker (the sync
+    aborts its rebase, work intact), but the tested head is still published,
+    marked stale_base, and the task reaches review: landing sends it back to
+    rebase with the conflict as context. Stranding it here (pushed=false ->
+    BLOCKED/manual repair -> FAILED) lost finished work on 2026-10-03."""
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)
@@ -1302,13 +1305,17 @@ def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
 
     result = worker.run_once()
 
-    assert result.status == "blocked"
+    assert result.status == "submitted_for_review"
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
     assert manifest["repo"]["canonical_sync"]["status"] == "conflict"
-    assert manifest["repo"]["pushed"] is False
-    assert manifest["repo"]["freshness"]["ok"] is False
-    assert "not an ancestor" in manifest["repo"]["freshness"]["error"]
-    assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]) == ""
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["freshness"]["ok"] is True
+    assert manifest["repo"]["freshness"]["state"] == "stale_base"
+    assert manifest["repo"]["files_changed"] == ["README.md"]
+    assert manifest["repo"]["base_sha"] == manifest["repo"]["freshness"]["prepared_base_sha"]
+    assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]).startswith(
+        manifest["repo"]["head_sha"]
+    )
 
 
 def test_mac_worker_publishes_after_merging_new_canonical_tip(tmp_path: Path, monkeypatch):

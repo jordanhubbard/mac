@@ -102,10 +102,127 @@ def test_guarded_push_blocks_head_that_omits_new_canonical_tip(tmp_path: Path) -
     assert result.ok is False
     assert result.remote_verified is False
     assert "not an ancestor" in result.error
+    # Refused by default, but recognised as a merely stale base, and the
+    # task's own change is still measured from its merge-base.
+    assert result.stale_base is True
+    assert result.merge_base_sha == base
+    assert result.files_changed == ("feature.py",)
     assert (
         _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change").stdout.strip() == ""
     )
     assert _git(work, "for-each-ref", "refs/mac/publication").stdout.strip() == ""
+
+
+def _advance_canonical_main(tmp_path: Path, canonical: Path) -> str:
+    advance = tmp_path / "advance-main"
+    _git(tmp_path, "clone", "--branch", "main", canonical.as_uri(), str(advance))
+    _git(advance, "config", "user.email", "test@example.invalid")
+    _git(advance, "config", "user.name", "test")
+    (advance / "canonical.py").write_text("# newer\n", encoding="utf-8")
+    _git(advance, "add", "canonical.py")
+    _git(advance, "commit", "-m", "another task landed first")
+    _git(advance, "push", "origin", "main")
+    return _git(advance, "rev-parse", "HEAD").stdout.strip()
+
+
+def test_guarded_push_publishes_stale_base_when_allowed(tmp_path: Path) -> None:
+    """Another task landed while this one ran. The tested head is published as
+    it is, marked stale_base; landing re-checks it and sends it back to rebase."""
+    _origin, canonical, work, base = _fixture(tmp_path)
+    tip = _advance_canonical_main(tmp_path, canonical)
+    head = _git(work, "rev-parse", "HEAD").stdout.strip()
+    target = resolve_canonical_publication_target(
+        worktree=work,
+        canonical_remote=canonical.as_uri(),
+        canonical_branch="main",
+        destination_branch="task/change",
+        prepared_base_sha=base,
+        isolation_key="task-stale-allowed",
+    )
+
+    result = guarded_push(target, allow_stale_base=True)
+
+    assert result.ok is True
+    assert result.remote_verified is True
+    assert result.stale_base is True
+    assert result.canonical_tip_sha == tip
+    assert result.merge_base_sha == base
+    assert result.files_changed == ("feature.py",)
+    evidence = result.evidence()
+    assert evidence["state"] == "stale_base"
+    assert evidence["ancestry_valid"] is False
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change")
+        .stdout.strip()
+        .startswith(head)
+    )
+    # The canonical branch itself is untouched.
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/main").stdout.strip().split()[0]
+        == tip
+    )
+
+
+def test_stale_base_is_never_published_onto_the_canonical_branch(tmp_path: Path) -> None:
+    _origin, canonical, work, base = _fixture(tmp_path)
+    tip = _advance_canonical_main(tmp_path, canonical)
+    target = resolve_canonical_publication_target(
+        worktree=work,
+        canonical_remote=canonical.as_uri(),
+        canonical_branch="main",
+        destination_branch="main",
+        prepared_base_sha=base,
+        isolation_key="task-stale-canonical",
+    )
+
+    result = guarded_push(target, allow_stale_base=True)
+
+    assert result.ok is False
+    assert result.remote_verified is False
+    assert "never published onto the canonical branch" in result.error
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/main").stdout.strip().split()[0]
+        == tip
+    )
+
+
+def test_rewritten_canonical_history_stays_fail_closed(tmp_path: Path) -> None:
+    """A tip that does not descend from the prepared base is not a stale base:
+    canonical history the task started from was rewritten. Never published."""
+    _origin, canonical, work, root = _fixture(tmp_path)
+    # The task was prepared on `prepared` (canonical main at the time) ...
+    _git(work, "push", canonical.as_uri(), "HEAD:refs/heads/main")
+    prepared = _git(work, "rev-parse", "HEAD").stdout.strip()
+    (work / "task.py").write_text("print('task')\n", encoding="utf-8")
+    _git(work, "add", "task.py")
+    _git(work, "commit", "-m", "task work")
+    # ... then someone force-pushed main to a history that drops it.
+    rewrite = tmp_path / "rewrite"
+    _git(tmp_path, "clone", "--branch", "main", canonical.as_uri(), str(rewrite))
+    _git(rewrite, "config", "user.email", "test@example.invalid")
+    _git(rewrite, "config", "user.name", "test")
+    _git(rewrite, "reset", "--hard", root)
+    (rewrite / "other.py").write_text("# rewritten\n", encoding="utf-8")
+    _git(rewrite, "add", "other.py")
+    _git(rewrite, "commit", "-m", "rewritten main")
+    _git(rewrite, "push", "--force", "origin", "main")
+    target = resolve_canonical_publication_target(
+        worktree=work,
+        canonical_remote=canonical.as_uri(),
+        canonical_branch="main",
+        destination_branch="task/change",
+        prepared_base_sha=prepared,
+        isolation_key="task-rewritten",
+    )
+
+    result = guarded_push(target, allow_stale_base=True)
+
+    assert result.ok is False
+    assert result.stale_base is False
+    assert "canonical history was rewritten" in result.error
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change").stdout.strip() == ""
+    )
 
 
 def test_freshness_check_requires_prepared_base_context(tmp_path: Path) -> None:

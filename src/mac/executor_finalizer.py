@@ -1307,6 +1307,139 @@ def open_task_pull_request(
     return outcome if isinstance(outcome, dict) else {"opened": False}
 
 
+@dataclass(frozen=True)
+class _StaleHeadRebase:
+    """Outcome of rebasing a verified head whose canonical tip moved on."""
+
+    head_sha: str
+    tests: Dict[str, Any]
+    canonical_sync: Dict[str, Any]
+    target: Any
+    freshness: CanonicalFreshnessResult
+    record: Dict[str, Any]
+
+
+def _rebase_stale_head_and_reverify(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    task_id: Optional[str],
+    worktree_path: Path,
+    *,
+    head_sha: str,
+    tests: Dict[str, Any],
+    canonical_sync: Dict[str, Any],
+    target: Any,
+    freshness: CanonicalFreshnessResult,
+    isolation_key: str,
+    partial_evidence_fn: Callable[..., None],
+) -> _StaleHeadRebase:
+    """Carry a verified head whose canonical tip moved on to the new tip.
+
+    Another task landed while this one's verifier ran. A clean rebase is
+    re-verified before it can replace the verified head: the evidence
+    invariant is that ``tests.executed_head_sha == repo.head_sha`` is the head
+    that is pushed and reviewed, so an unverified rebased head is never
+    published. A conflict, a failing re-run, or anything else leaves the
+    verified head in place (the caller publishes it marked ``stale_base`` and
+    landing sends it back to rebase).
+    """
+    from mac.services import verify_unpublished_repository
+
+    unchanged = _StaleHeadRebase(head_sha, tests, canonical_sync, target, freshness, {})
+    record: Dict[str, Any] = {
+        "schema": "mac.freshness_rebase.v1",
+        "verified_head_sha": head_sha,
+        "canonical_tip": freshness.canonical_tip_sha,
+    }
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "canonical_sync",
+        partial_evidence_fn=partial_evidence_fn,
+    ) as phase:
+        sync = sync_worktree_with_canonical(
+            worktree_path,
+            _repository_publication_remote(task),
+            _repository_contract_canonical_branch(task),
+            timeout=phase.remaining,
+        )
+        record["status"] = str(sync.get("status") or "")
+        if sync.get("reason"):
+            record["reason"] = str(sync.get("reason"))
+        if sync.get("status") != "rebased":
+            phase.mark_failed(str(sync.get("reason") or sync.get("status")))
+    if sync.get("status") != "rebased":
+        return replace(unchanged, record=record)
+    rebased_head = _git(
+        ["rev-parse", "HEAD"], worktree_path, timeout=_finalizer_phase_timeout("canonical_sync")
+    ).stdout.strip()
+    record["rebased_head_sha"] = rebased_head
+
+    def restore(status: str, reason: str) -> _StaleHeadRebase:
+        record["status"] = status
+        record["reason"] = clip_process_text(reason)
+        reset = _git(
+            ["reset", "--hard", head_sha],
+            worktree_path,
+            timeout=_finalizer_phase_timeout("canonical_sync"),
+        )
+        if reset.returncode != 0:
+            # HEAD stays on the unverified rebase; guarded_push then refuses
+            # it because it is not the target's verified head.
+            record["restore_error"] = clip_process_text(reset.stderr or reset.stdout)
+        return replace(unchanged, record=record)
+
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "contract_tests",
+        partial_evidence_fn=partial_evidence_fn,
+    ) as phase:
+        retest = verify_unpublished_repository(
+            worktree_path,
+            (_repository_contract_test_command(task) or "").strip(),
+            str(_repository_contract_bootstrap(task).get("command") or ""),
+            timeout_seconds=phase.remaining,
+            selection_base_sha=canonical_sync_selection_base(sync, _repository_prepared_base(task)),
+        )
+        retest_problems = verifier_test_item_problems(retest, rebased_head)
+        if retest_problems:
+            phase.mark_failed("; ".join(retest_problems))
+    if retest_problems:
+        record["retest"] = {
+            "status": retest.get("status"),
+            "returncode": retest.get("returncode"),
+            "stderr": clip_process_text(retest.get("stderr") or retest.get("stdout") or ""),
+        }
+        return restore("retest_failed", "; ".join(retest_problems))
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "publication_preflight",
+        partial_evidence_fn=partial_evidence_fn,
+    ) as phase:
+        preflight_error = ""
+        try:
+            new_target = resolve_canonical_publication_target(
+                worktree=worktree_path,
+                canonical_remote=target.canonical_remote_url,
+                canonical_branch=target.canonical_branch,
+                destination_branch=target.destination_branch,
+                prepared_base_sha=target.prepared_base_sha,
+                isolation_key=isolation_key,
+                timeout=phase.remaining,
+            )
+            new_freshness = check_canonical_freshness(new_target, timeout=phase.remaining)
+        except (OSError, ValueError) as exc:
+            phase.mark_failed(str(exc))
+            new_target = None
+            preflight_error = str(exc)
+    if new_target is None:
+        return restore("preflight_failed", preflight_error)
+    record["status"] = "rebased_and_reverified"
+    return _StaleHeadRebase(rebased_head, retest, sync, new_target, new_freshness, record)
+
+
 def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) -> None:
     """mac-jfns: deterministic repo_change evidence from REAL git state for
     tasks declaring publication_target=git://main."""
@@ -1473,6 +1606,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     prepared_base_sha = _repository_prepared_base(task)
     lease_id = _repository_lease_id(task)
     destination_branch = branch if branch != "HEAD" else ""
+    isolation_key = "%s-%s" % (str(task.get("id") or "task"), lease_id)
     publication_target = None
     with _FinalizerPhaseContext(
         task_workspace,
@@ -1489,7 +1623,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 canonical_branch=canonical_branch,
                 destination_branch=destination_branch,
                 prepared_base_sha=prepared_base_sha,
-                isolation_key="%s-%s" % (str(task.get("id") or "task"), lease_id),
+                isolation_key=isolation_key,
                 timeout=phase.remaining,
             )
             freshness = check_canonical_freshness(publication_target, timeout=phase.remaining)
@@ -1500,16 +1634,56 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 head_sha=head_sha,
                 error=str(exc),
             )
-        if not freshness.ok:
+        if not freshness.ok and not freshness.stale_base:
             phase.mark_failed(freshness.error)
-        freshness_error: Optional[str] = None if freshness.ok else freshness.error
-        base_sha = freshness.canonical_tip_sha or prepared_base_sha
-        files_changed = list(freshness.files_changed)
-        progress["base_sha"] = base_sha
-        progress["files_changed"] = files_changed
-    # Record the diff base (canonical tip) so the reviewer can compute a
-    # non-empty base..head diff. Without base_sha the review snapshot's
-    # files_changed is always [] (which the repo_change validator rejects).
+    # The canonical tip moved on while the verifier ran (another task landed).
+    # That is a stale base, not a reason to strand finished, tested work: try
+    # a clean rebase + re-verify, and otherwise publish the verified head
+    # marked stale_base below. Landing re-checks it against the tip and sends
+    # it back to rebase (_LandingRebaseRequiredError); required checks re-run
+    # on the pull request.
+    freshness_rebase: Dict[str, Any] = {}
+    if (
+        freshness.stale_base
+        and not freshness.ok
+        and publication_target is not None
+        and tests_ok
+        and publication_target.task_head_sha == tests.get("executed_head_sha")
+    ):
+        moved = _rebase_stale_head_and_reverify(
+            task_workspace,
+            task,
+            task_id,
+            worktree_path,
+            head_sha=head_sha,
+            tests=tests,
+            canonical_sync=canonical_sync,
+            target=publication_target,
+            freshness=freshness,
+            isolation_key=isolation_key,
+            partial_evidence_fn=_partial_evidence,
+        )
+        head_sha, tests, canonical_sync = moved.head_sha, moved.tests, moved.canonical_sync
+        publication_target, freshness = moved.target, moved.freshness
+        freshness_rebase = moved.record
+        tests_ok = not verifier_test_item_problems(tests, head_sha)
+        progress["head_sha"] = head_sha
+        progress["tests"] = tests
+    # A stale base is publishable (guarded_push still refuses rewritten
+    # canonical history and the canonical branch as destination).
+    freshness_error: Optional[str] = (
+        None if freshness.ok or freshness.stale_base else freshness.error
+    )
+    # The task's own change is measured from where it left canonical history
+    # (merge-base), so a moved tip never empties files_changed.
+    base_sha = freshness.merge_base_sha or freshness.canonical_tip_sha or prepared_base_sha
+    files_changed = list(freshness.files_changed)
+    progress["base_sha"] = base_sha
+    progress["files_changed"] = files_changed
+    # Record the diff base (merge-base with the canonical tip) so the reviewer
+    # can compute a non-empty base..head diff. Without base_sha the review
+    # snapshot's files_changed is always [] (which the repo_change validator
+    # rejects).
     final_status = _git(
         ["status", "--porcelain"],
         worktree_path,
@@ -1544,7 +1718,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "guarded_push",
             partial_evidence_fn=_partial_evidence,
         ) as phase:
-            publication = guarded_push(publication_target, timeout=phase.remaining)
+            publication = guarded_push(
+                publication_target, allow_stale_base=True, timeout=phase.remaining
+            )
             if not publication.ok or not publication.remote_verified:
                 phase.mark_failed(publication.error)
         push_remote_display = (
@@ -1553,8 +1729,10 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             else push_remote_display
         )
         pushed = publication.ok and publication.remote_verified
-        if publication.canonical_tip_sha:
-            base_sha = publication.canonical_tip_sha
+        if publication.merge_base_sha or publication.canonical_tip_sha:
+            base_sha = publication.merge_base_sha or publication.canonical_tip_sha
+        if publication.ok:
+            files_changed = list(publication.files_changed)
         if not publication.ok:
             freshness_error = publication.error
             freshness_ok = False
@@ -1564,6 +1742,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "status": "pass" if pushed else "fail",
             "stderr": clip_process_text(publication.push_stderr or publication.error),
         }
+        if pushed and publication.stale_base:
+            push_evidence["freshness"] = "stale_base"
+            push_evidence["canonical_tip_sha"] = publication.canonical_tip_sha
         if pushed:
             # THE AGENT OPENS ITS OWN PULL REQUEST. The branch is on the
             # remote; the request to land it onto the task's canonical branch
@@ -1639,6 +1820,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "files_changed": files_changed,
             "freshness": (publication or freshness).evidence(),
             "canonical_sync": canonical_sync,
+            **({"freshness_rebase": freshness_rebase} if freshness_rebase else {}),
             **({"pull_request": pull_request} if pull_request else {}),
         },
         "canonical_integration": canonical_integration,

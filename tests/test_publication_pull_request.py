@@ -205,7 +205,7 @@ def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",), strict=F
     monkeypatch.setattr(gitops, "failed_check_details", forge.failed_check_details)
 
 
-def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
+def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None, repo_extra=None):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     cp.create_project(
@@ -246,6 +246,7 @@ def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
                 "dirty": False,
                 "files_changed": ["feature.txt"],
                 **({"pull_request": pull_request} if pull_request else {}),
+                **(repo_extra or {}),
             },
             "tests": [verifier_test_item(task_head)],
         },
