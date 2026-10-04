@@ -108,7 +108,7 @@ def test_pre_push_uses_pristine_exact_commit_without_pushing(monkeypatch, commit
         if argv[0] == "test-openshell":
             if "create" in argv:
                 assert "--upload" not in argv
-                assert argv[-3:] == ["--no-tty", "--", "/bin/true"]
+                assert "--" not in argv and argv[-1] == "--detach"
                 return subprocess.CompletedProcess(argv, 0, "sandbox created\n", "")
             if "upload" in argv:
                 upload = argv[-2]

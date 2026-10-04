@@ -11146,8 +11146,9 @@ def test_verifier_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypat
     )
     assert rc == 0
     create = next(a for a in captured if "create" in a)
-    separator = create.index("--")
-    assert create[separator + 1 :] == ["/bin/true"]
+    # The sandbox stays Ready for the upload and exec phases: OpenShell 0.1
+    # detaches with no command (a /bin/true main process would end Ready).
+    assert "--" not in create and create[-1] == "--detach"
     bootstrap = next(a for a in captured if "exec" in a and "tar xzf repo.tgz" in a[-1])
     inner = bootstrap[-1]
     from mac.openshell_runtime import SANDBOX_BASE_PATH

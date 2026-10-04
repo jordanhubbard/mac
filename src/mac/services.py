@@ -223,6 +223,7 @@ from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH,
     VERIFIER_PROFILE_READY,
+    openshell_create_keepalive_args,
     openshell_required_for_identity,
     verifier_resource_profile,
 )
@@ -2086,12 +2087,12 @@ def run_repository_contract_test_in_openshell(
         # and libpq cannot use OpenShell's HTTP network proxy.
         for value in [*verifier_sandbox_env_pairs(), *profile_env]:
             argv += ["--env", value]
-        # `sandbox create` defaults to opening an interactive shell when no
-        # command is supplied. In a non-interactive verifier that leaves the
-        # CLI attached forever even though the sandbox has reached Ready.
-        # Run a bounded no-op initial command so create returns while the
-        # persistent sandbox remains available for upload and exec phases.
-        argv += ["--no-tty", "--", "/bin/true"]
+        # Create must return while the persistent sandbox stays Ready for the
+        # upload and exec phases. OpenShell 0.0.x attaches an interactive
+        # shell when no command is given, so it gets a bounded /bin/true; 0.1
+        # makes a trailing command the main process (whose exit ends Ready),
+        # so it gets --detach and no command.
+        argv += openshell_create_keepalive_args(openshell)
         report_preflight = ""
         if local_repository is not None:
             report_preflight = (

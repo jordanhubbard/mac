@@ -115,6 +115,20 @@ def _no_live_coding_harness(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_openshell_version_probe(monkeypatch):
+    """Tests never shape sandbox argv from the developer's installed OpenShell.
+
+    The create keep-alive tail depends on the CLI generation. Probing a real
+    ``openshell --version`` would make argv assertions machine-dependent, so the
+    probe reports "unknown" (the reviewed 0.1 shape). Tests of the probe and of
+    the 0.0.x shape opt in with monkeypatch.
+    """
+    from mac import openshell_runtime
+
+    monkeypatch.setattr(openshell_runtime, "openshell_cli_version", lambda _bin: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_live_task_repository_identity(monkeypatch):
     """Fixture repositories never inherit their caller's task checkout identity.
 

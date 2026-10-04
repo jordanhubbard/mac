@@ -595,6 +595,33 @@ usernames, hostnames, tokens, Slack team names, or local fleet identities.
   writable state. The sandboxed gateway may write its runtime cache/log paths,
   but repository publication remains the deterministic MAC finalizer's job.
 
+### OpenShell 0.1.2 migration — canary 2026-10-03
+
+The fleet pin is OpenShell 0.1.2 (reviewed-cli-assets.sh, bootstrap-openshell.sh,
+openshell_reconcile.py, cli.py). A worker canary confirmed that image ENV
+reaches sandbox processes, confinement and network policy behave, and the MAC
+policy parses unchanged. What changed for MAC:
+
+- `sandbox create --upload X -- <command>` is rejected, and a trailing create
+  command becomes the sandbox's main process: when it exits the sandbox leaves
+  Ready and every later `exec` fails. Every MAC flow therefore creates with its
+  uploads and no command, kept alive (`--detach` on 0.1; a bounded `/bin/true`
+  on 0.0.x, chosen from `openshell --version`), then runs its work with
+  `sandbox exec` and deletes the sandbox (`mac.openshell_runtime`).
+- gateway.toml is schema v2: `version = 2`, scalar `compute_driver`,
+  `image_pull_policy = "if_not_present"`, no Docker `network_name`, and no
+  `grpc_endpoint` override (supervisors are host-networked; the old
+  `host.openshell.internal` endpoint broke startup). Bootstrap runs
+  `openshell-gateway config preflight --path` before installing it, and pins
+  the gateway's `DOCKER_HOST` to `/var/run/docker.sock`.
+- The supervisor is a separate host-networked container from a pinned image
+  digest, not a static binary.
+- 0.0.x and 0.1 peers cannot mix and the gateway migrates its DB in place.
+  Bootstrap retires every sandbox, backs up both CLIs, the gateway, gateway.toml
+  and `~/.local/state/openshell/gateway/openshell.db*` under
+  `~/.mac/openshell/upgrade-backups/`, and `bootstrap-openshell.sh --rollback
+  [DIR]` restores that set.
+
 ### OpenShell 0.0.72 compatibility — validated 2026-07-04
 
 OpenShell 0.0.72 has been validated against all three MAC sandbox surfaces
@@ -626,8 +653,8 @@ is absent.
 
 If NemoClaw's OpenShell pin is disruptive, fall back to raw `openclaw` confined
 by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
-(currently 0.0.72; roll back to 0.0.62 only if a 0.0.72-specific failure is
-confirmed):
+(currently 0.1.2; roll back to 0.0.72 with `bootstrap-openshell.sh --rollback`
+only if a 0.1-specific failure is confirmed):
 
 1. Build or upload a sandbox image containing raw `openclaw`, the required MAC
    baseline tools (`git`, `gh`), and only the runtime dependencies
@@ -653,7 +680,7 @@ confirmed):
 - Define ownership for Slack app isolation, policy review, event-log retention,
   and rollback. The rollback condition should be simple: loss of sandbox
   enforcement, ambiguous Slack routing, missing evidence, or unreviewed broad
-  egress returns the host to the last validated MAC/OpenShell 0.0.72 path.
+  egress returns the host to the last validated MAC/OpenShell path.
 - Add a short pilot checklist that records only secret-free facts: credential
   source names, placeholder route identifiers, policy revision, image digest,
   smoke-test outcome, and finalizer evidence status.
