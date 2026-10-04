@@ -604,6 +604,7 @@ LANDING_BACKOFF_MAX_SECONDS = 3600
 _LANDING_WAIT_FAILURE_KINDS = frozenset(
     {
         "pull_request_checks_pending",
+        "acceptance_checks_not_reported",
         "pull_request_branch_updated",
         "landing_serialized",
     }
@@ -620,6 +621,77 @@ LANDING_MAX_REBASES = 2
 # How many times one task is sent back to its worker to fix the required
 # checks that failed on its pull request before it blocks.
 LANDING_MAX_CHECK_FIXES = 3
+# A task's own definition of done: ``metadata.acceptance_checks`` names forge
+# checks (exact GitHub check-run / status context names) that must pass on the
+# task's pull request before it lands, in addition to the repository's
+# required checks. Live 2026-10-04: task_bb7a198c said "Done when Memory
+# Sanitizers passes on your PR"; Memory Sanitizers is not a required check, so
+# PR #970 landed on the required checks alone with it red, and the task was
+# marked complete without meeting its stated acceptance.
+ACCEPTANCE_CHECKS_MAX = 20
+ACCEPTANCE_CHECK_NAME_MAX = 200
+# The wait kind for an acceptance check that has not reported for the head at
+# all. Unlike a required context, nothing guarantees it ever will (a typo, a
+# path-filtered workflow), so it waits only until the landing deadline and
+# then blocks naming it, rather than hanging or passing silently.
+ACCEPTANCE_CHECKS_NOT_REPORTED = "acceptance_checks_not_reported"
+
+
+def normalize_acceptance_checks(value: Any) -> List[str]:
+    """Validate ``metadata.acceptance_checks``: a bounded list of check names.
+
+    Names are stripped and de-duplicated in order. Anything else -- a bare
+    string, a non-string entry, an empty name, too many or too-long names --
+    is refused at the door, so the land step never has to guess.
+    """
+    if not isinstance(value, (list, tuple)):
+        raise ValidationError(
+            "metadata.acceptance_checks must be a list of check names, e.g. "
+            '["Memory Sanitizers"]; got %s' % type(value).__name__
+        )
+    if len(value) > ACCEPTANCE_CHECKS_MAX:
+        raise ValidationError(
+            "metadata.acceptance_checks may name at most %d checks; got %d"
+            % (ACCEPTANCE_CHECKS_MAX, len(value))
+        )
+    names: List[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValidationError(
+                "metadata.acceptance_checks entries must be non-empty strings; got %r" % (item,)
+            )
+        name = item.strip()
+        if len(name) > ACCEPTANCE_CHECK_NAME_MAX:
+            raise ValidationError(
+                "metadata.acceptance_checks names may be at most %d characters"
+                % ACCEPTANCE_CHECK_NAME_MAX
+            )
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def task_acceptance_checks(metadata: Any) -> Tuple[str, ...]:
+    """The task's acceptance checks, tolerant of a stored value that predates
+    validation (anything malformed reads as none)."""
+    value = ensure_json_object(metadata).get("acceptance_checks")
+    if value in (None, [], ()):
+        return ()
+    try:
+        return tuple(normalize_acceptance_checks(value))
+    except ValidationError:
+        return ()
+
+
+def _validate_acceptance_checks_metadata(metadata: Dict[str, Any]) -> None:
+    if "acceptance_checks" not in metadata:
+        return
+    if metadata["acceptance_checks"] is None:
+        metadata.pop("acceptance_checks")
+        return
+    metadata["acceptance_checks"] = normalize_acceptance_checks(metadata["acceptance_checks"])
+
+
 # Send-back counts in ``metadata.landing``: they survive new evidence, because
 # the re-run's evidence is exactly what a send-back asks for.
 _LANDING_SEND_BACK_COUNTERS = ("rebases", "check_fixes")
@@ -5306,6 +5378,7 @@ class ControlPlane:
         if bool(_workflow_run_id) != bool(_workflow_node_key):
             raise ValidationError("workflow-linked task creation requires both run id and node key")
         self._reject_reserved_break_glass_metadata(requested_metadata)
+        _validate_acceptance_checks_metadata(requested_metadata)
         if idempotency_key is not None:
             if _task_id is not None:
                 raise ValidationError(
@@ -7160,6 +7233,7 @@ class ControlPlane:
                     if key in persisted_metadata:
                         preserved_publication_metadata[key] = persisted_metadata[key]
             self._reject_reserved_break_glass_metadata(new_metadata)
+            _validate_acceptance_checks_metadata(new_metadata)
         dependency_quarantine = (
             ensure_json_object(new_metadata.get("dependency_quarantine"))
             if dependency_ids is not None
@@ -18789,17 +18863,33 @@ class ControlPlane:
                 commands=commands,
                 attempt=attempt,
             )
+        #
+        # The task's own acceptance checks (``metadata.acceptance_checks``) are
+        # gated exactly like required contexts for THIS pull request: the
+        # gate is the union. One difference: an acceptance check that has not
+        # reported for the head at all is not guaranteed to ever report, so it
+        # is its own wait kind and blocks, named, at the landing deadline.
+        acceptance_checks = task_acceptance_checks(task.metadata)
+        gate_checks = tuple(required_checks) + tuple(
+            name for name in acceptance_checks if name not in required_checks
+        )
+        not_reported: List[str] = []
         if pre_merged is not None:
             verdicts: JsonDict = {}
             case = "already_merged"
-        elif required_checks:
-            verdicts = _gitops.required_check_verdicts(
-                api_url, landing_head, tuple(required_checks)
-            )
+        elif gate_checks:
+            verdicts = _gitops.required_check_verdicts(api_url, landing_head, gate_checks)
+            not_reported = [
+                str(name)
+                for name in verdicts.get("missing") or []
+                if name in acceptance_checks and name not in required_checks
+            ]
             if verdicts.get("failed"):
                 case = "failed"
             elif not verdicts.get("known"):
                 case = "unverifiable"
+            elif not_reported:
+                case = "acceptance_not_reported"
             elif verdicts.get("pending"):
                 case = "pending"
             else:
@@ -18807,18 +18897,20 @@ class ControlPlane:
         else:
             verdicts = {}
             case = "none_configured"
-        commands.append(
-            {
-                "name": "required_check_verification",
-                "attempt": attempt,
-                "case": case,
-                "head_sha": landing_head,
-                "contexts": list(verdicts.get("contexts") or []),
-                "passed": list(verdicts.get("passed") or []),
-                "pending": list(verdicts.get("pending") or []),
-                "failed": list(verdicts.get("failed") or []),
-            }
-        )
+        verification: JsonDict = {
+            "name": "required_check_verification",
+            "attempt": attempt,
+            "case": case,
+            "head_sha": landing_head,
+            "contexts": list(verdicts.get("contexts") or []),
+            "passed": list(verdicts.get("passed") or []),
+            "pending": list(verdicts.get("pending") or []),
+            "failed": list(verdicts.get("failed") or []),
+        }
+        if acceptance_checks:
+            verification["acceptance_checks"] = list(acceptance_checks)
+            verification["not_reported"] = list(not_reported)
+        commands.append(verification)
         if case == "failed":
             # The one test gate for this repository said no. Retrying the
             # same head cannot change that. Collect why each check failed so
@@ -18831,6 +18923,11 @@ class ControlPlane:
                 )
             except Exception:  # noqa: BLE001 - the details are best-effort
                 failed_checks = [{"name": name, "conclusion": "failure"} for name in failed_names]
+            for item in failed_checks:
+                if isinstance(item, dict) and str(item.get("name") or "") not in required_checks:
+                    # Not required by the repository: the task's own
+                    # acceptance check. Named so the worker knows why it gates.
+                    item["acceptance_check"] = True
             commands.append(
                 {
                     "name": "failed_check_details",
@@ -18847,13 +18944,17 @@ class ControlPlane:
                     ],
                 }
             )
+            failed_acceptance = [name for name in failed_names if name not in required_checks]
             raise _LandingChecksFailedError(
                 "git publication will not merge %s: required checks failed for "
-                "reviewed head %s: %s"
+                "reviewed head %s: %s%s"
                 % (
                     pr.url or ("#%d" % pr.number),
                     landing_head[:12],
                     ", ".join(failed_names),
+                    " (task acceptance checks: %s)" % ", ".join(failed_acceptance)
+                    if failed_acceptance
+                    else "",
                 ),
                 failed_checks=failed_checks,
                 head_sha=head_sha,
@@ -18863,6 +18964,27 @@ class ControlPlane:
                 pull_request_url=pr.url,
                 head_branch=branch,
             )
+        if case == "acceptance_not_reported":
+            still_pending = [
+                str(item) for item in verdicts.get("pending") or [] if item not in not_reported
+            ]
+            waiting = ValidationError(
+                "git publication is waiting on the task's acceptance checks before "
+                "%s can merge into %s: %s not reported for %s%s. "
+                "metadata.acceptance_checks must name checks exactly as the forge "
+                "reports them; the task blocks if they have not reported by the "
+                "landing deadline."
+                % (
+                    pr.url or ("#%d" % pr.number),
+                    canonical_branch,
+                    ", ".join(not_reported),
+                    landing_head[:12],
+                    "; still pending: %s" % ", ".join(still_pending) if still_pending else "",
+                )
+            )
+            waiting.publication_retry_after_seconds = 600
+            waiting.publication_failure_kind = ACCEPTANCE_CHECKS_NOT_REPORTED
+            raise waiting
         if case in {"pending", "unverifiable"}:
             pending = ValidationError(
                 "git publication is waiting on the pull request's own required "
@@ -18882,7 +19004,10 @@ class ControlPlane:
             pending.publication_retry_after_seconds = 600
             pending.publication_failure_kind = "pull_request_checks_pending"
             raise pending
-        if case == "none_configured":
+        if case == "none_configured" or (case == "verified" and not required_checks):
+            # Acceptance checks alone are not the repository's test gate: with
+            # no required checks the worker's verifier still is, and it holds
+            # only while the canonical tip is the base it verified.
             if not verified_base_is_tip:
                 raise _LandingRebaseRequiredError(
                     canonical_tip=base_sha,
@@ -20523,6 +20648,10 @@ class ControlPlane:
             block_reason, exhausted_by = "landing_budget_exhausted", "attempts"
         elif elapsed >= deadline_seconds:
             block_reason, exhausted_by = "landing_budget_exhausted", "deadline"
+            if reason == ACCEPTANCE_CHECKS_NOT_REPORTED:
+                # Name it: the deadline ran out because a check the task
+                # requires never reported, not because the forge was slow.
+                block_reason = "acceptance_checks_never_reported"
         record: JsonDict = {
             "schema": LANDING_BUDGET_SCHEMA,
             "attempts": attempts,
@@ -20564,6 +20693,9 @@ class ControlPlane:
             return None
         record["blocked_at"] = now
         record["outcome"] = block_reason
+        if block_reason == "acceptance_checks_never_reported":
+            record["last_reason"] = reason
+            record["last_error"] = str(error or reason)[:500]
         metadata["landing"] = record
         self._persist_task_metadata_narrow(
             task_id, metadata, actor=actor, detail={"landing": block_reason}

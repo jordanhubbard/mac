@@ -1011,6 +1011,19 @@ def _fix_failed_checks_section(task: Dict[str, Any]) -> str:
         "Your previous attempt was approved, but the required checks on %s failed: %s."
         % (pr, names),
         "- Start from %s; keep that work, do not redo the task from scratch." % previous,
+    ]
+    acceptance = [str(item.get("name") or "?") for item in checks if item.get("acceptance_check")]
+    if acceptance:
+        lines.append(
+            "- %s %s this task's own acceptance check%s (its definition of done), "
+            "not a repository-required one; it gates landing all the same."
+            % (
+                ", ".join(acceptance),
+                "is" if len(acceptance) == 1 else "are",
+                "" if len(acceptance) == 1 else "s",
+            )
+        )
+    lines += [
         "- Find the cause in the failed checks below, fix it, and reproduce the "
         "failing check locally where you can.",
         "- Finish as usual. The hub pushes your new head to the same pull request, "
@@ -1023,7 +1036,14 @@ def _fix_failed_checks_section(task: Dict[str, Any]) -> str:
         "checks": [
             {
                 key: item.get(key)
-                for key in ("name", "conclusion", "details_url", "description", "log_tail")
+                for key in (
+                    "name",
+                    "conclusion",
+                    "acceptance_check",
+                    "details_url",
+                    "description",
+                    "log_tail",
+                )
                 if item.get(key)
             }
             for item in checks
@@ -1035,6 +1055,33 @@ def _fix_failed_checks_section(task: Dict[str, Any]) -> str:
         "<mac_failed_required_checks>\n%s\n</mac_failed_required_checks>" % encoded
     )
     return "\n".join(lines)
+
+
+def _acceptance_checks_section(task: Dict[str, Any]) -> str:
+    """Tell the agent which forge checks are this task's definition of done.
+
+    ``metadata.acceptance_checks`` names checks that must pass on the task's
+    pull request before the hub lands it, on top of the repository's required
+    checks. Without this the agent learns of them only when one fails at
+    landing. Names are task-author text, rendered JSON-escaped.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    checks = metadata.get("acceptance_checks") if isinstance(metadata, dict) else None
+    if not isinstance(checks, list):
+        return ""
+    names = [str(item).strip() for item in checks if isinstance(item, str) and item.strip()]
+    if not names:
+        return ""
+    encoded = json.dumps(names).replace("<", "\\u003c")
+    return "\n".join(
+        [
+            "Acceptance checks (this task's definition of done):",
+            "The hub lands this task only when each of these forge checks passes on "
+            "its pull request, in addition to the repository's required checks: %s" % encoded,
+            "- Make the change these checks need to pass; a failing one is sent back "
+            "to you with its log, and one that never reports blocks the task.",
+        ]
+    )
 
 
 def _coordination_section(task: Dict[str, Any]) -> str:
@@ -1103,6 +1150,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
         ),
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
+    acceptance_section = _acceptance_checks_section(task)
+    if acceptance_section:
+        parts.append(acceptance_section)
     coordination_section = _coordination_section(task)
     if coordination_section:
         parts.append(coordination_section)

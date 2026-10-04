@@ -664,6 +664,10 @@ def _render_text(value: Any) -> str:
             for k in ("assignee", "attempt_count", "max_attempts"):
                 if t.get(k) not in (None, ""):
                     lines.append("  %s: %s" % (k, t.get(k)))
+            task_metadata = t.get("metadata") if isinstance(t.get("metadata"), dict) else {}
+            acceptance = task_metadata.get("acceptance_checks")
+            if isinstance(acceptance, list) and acceptance:
+                lines.append("  acceptance_checks: %s" % ", ".join(str(c) for c in acceptance))
             for k in ("dependencies", "evidence", "reviews", "publications", "history"):
                 v = value.get(k, t.get(k))
                 if isinstance(v, list) and v:
