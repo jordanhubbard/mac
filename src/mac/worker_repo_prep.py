@@ -146,6 +146,60 @@ def _is_disk_full_error(text: str) -> bool:
     return any(marker in low for marker in _DISK_FULL_MARKERS)
 
 
+CONTINUATION_SCHEMA = "mac.repository_continuation.v1"
+
+
+def _published_head_directive(task: JsonDict) -> Optional[JsonDict]:
+    """The open pull request this task's next attempt must build on, if any.
+
+    A task sent back to fix its failed required checks
+    (``metadata.fix_failed_checks``) lands through the SAME pull request: the
+    hub moves that PR's head branch to the new attempt's head. The directive
+    outlives ``mac task reopen``, so it also names the published work a
+    reopened attempt has to keep. A later ``rebase_onto_tip`` send-back
+    supersedes it (the hub closed that pull request).
+    """
+
+    from mac.worker import _validate_git_ref  # noqa: PLC0415
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not isinstance(metadata, dict):
+        return None
+    directive = metadata.get("fix_failed_checks")
+    if not isinstance(directive, dict):
+        return None
+    rebase = metadata.get("rebase_onto_tip")
+    if isinstance(rebase, dict):
+        mine = str(directive.get("requested_at") or "")
+        theirs = str(rebase.get("requested_at") or "")
+        if mine and theirs and theirs > mine:
+            return None
+    try:
+        number = int(directive.get("pull_request_number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+    head_branch = str(directive.get("head_branch") or "").strip()
+    if number <= 0 or not head_branch:
+        return None
+    try:
+        _validate_git_ref(head_branch)
+    except ValueError:
+        return None
+    try:
+        round_number = int(directive.get("check_fix") or 0)
+    except (TypeError, ValueError):
+        round_number = 0
+    return {
+        "schema": CONTINUATION_SCHEMA,
+        "source": "fix_failed_checks",
+        "pull_request_number": number,
+        "pull_request_url": str(directive.get("pull_request_url") or ""),
+        "head_branch": head_branch,
+        "reviewed_head_sha": str(directive.get("reviewed_head_sha") or "").strip(),
+        "round": round_number,
+    }
+
+
 class RepoPrepMixin:
     """Mixin that provides repository-worktree preparation to MacWorker.
 
@@ -299,6 +353,13 @@ class RepoPrepMixin:
             )
         )
         _validate_git_ref(canonical_branch)
+        # Asked before the lock: the forge round trip must not hold every other
+        # worker preparing this repository.
+        continuation = (
+            None
+            if metadata_declares_read_only_report_repository(task.get("metadata"))
+            else self._resolve_published_head(task, canonical_remote)
+        )
 
         # Determine the per-lease fetch ref name before acquiring the lock so the
         # finally clause can reference it unconditionally.
@@ -632,6 +693,15 @@ class RepoPrepMixin:
                     "could not create repository task worktree: %s"
                     % ((add.stderr or add.stdout or "").strip() or worktree_dir)
                 )
+            if continuation is not None:
+                continuation = self._start_from_published_head(
+                    task,
+                    worktree_dir,
+                    continuation,
+                    fetch_remote=fetch_remote,
+                    canonical_tip=base_sha,
+                    lease_id=lease_id,
+                )
             context: JsonDict = {
                 "schema": "mac.repository_task_worktree.v1",
                 "checkout_policy": "task_owned_git_worktree",
@@ -649,6 +719,8 @@ class RepoPrepMixin:
                 "repository_behind": behind_count,
                 "repository_origin_remote": canonical_remote_display,
             }
+            if continuation is not None:
+                context["repository_continuation"] = continuation
             self._observe_log(
                 "worker.repository.worktree_prepared",
                 subject_type="task",
@@ -692,6 +764,133 @@ class RepoPrepMixin:
                     project=pending_bus_event["project"],
                     payload=pending_bus_event["payload"],
                 )
+
+    def _resolve_published_head(self, task: JsonDict, repo_url: str) -> Optional[JsonDict]:
+        """Decide whether this attempt continues from the task's open pull request.
+
+        Returns ``None`` when the task has no published head to continue, and
+        otherwise the continuation record: ``status == "pending"`` when the
+        pull request is still open and unmerged (the caller then fetches its
+        head), or ``"fallback_canonical"`` with the reason the attempt starts
+        from the canonical branch as before (merged, closed, retargeted or
+        unknowable pull request). Network only -- no repository is touched.
+        """
+
+        from mac import gitops  # noqa: PLC0415
+
+        candidate = _published_head_directive(task)
+        if candidate is None:
+            return None
+        try:
+            observed = gitops.pull_request_state(repo_url, candidate["pull_request_number"])
+        except Exception as exc:  # noqa: BLE001 - unknown state falls back to canonical
+            observed = {"known": False, "error": str(exc)[:300]}
+        observed = observed if isinstance(observed, dict) else {"known": False}
+        state = str(observed.get("state") or "")
+        head_ref = str(observed.get("head_ref") or "")
+        reason = ""
+        if not observed.get("known"):
+            reason = "pull request state unknown: %s" % (observed.get("error") or "no answer")
+        elif observed.get("merged"):
+            reason = "pull request merged"
+        elif state != "open":
+            reason = "pull request %s" % (state or "not open")
+        elif head_ref and head_ref != candidate["head_branch"]:
+            reason = "pull request head is %s, not %s" % (head_ref, candidate["head_branch"])
+        candidate["pull_request_state"] = state
+        candidate["pull_request_head_sha"] = str(observed.get("head_sha") or "")
+        if reason:
+            candidate.update({"status": "fallback_canonical", "reason": reason})
+        else:
+            candidate["status"] = "pending"
+        return candidate
+
+    def _start_from_published_head(
+        self,
+        task: JsonDict,
+        worktree: Path,
+        continuation: JsonDict,
+        *,
+        fetch_remote: str,
+        canonical_tip: str,
+        lease_id: str,
+    ) -> JsonDict:
+        """Move a freshly prepared task worktree onto the task's published head.
+
+        The worktree is on the task branch at the canonical tip. Fetch the open
+        pull request's head branch, reset the task branch to it, and rebase it
+        onto the tip with the finalizer's own rebase. A conflicting rebase is
+        aborted and the attempt starts from the published head un-rebased; the
+        prompt tells the agent to integrate the canonical branch. A missing
+        branch falls back to the canonical tip the worktree is already on.
+        """
+
+        from mac import gitops  # noqa: PLC0415
+        from mac.worker import (  # noqa: PLC0415
+            _redact_git_remote_auth_in_text,
+            _run_git,
+            _safe_path_component,
+        )
+
+        record = dict(continuation)
+        record["canonical_tip"] = canonical_tip
+        if record.get("status") != "pending":
+            return record
+        ref = "refs/mac/published/%s" % _safe_path_component(lease_id or "lease")
+        fetch_args = ["fetch", "--no-tags", "--no-write-fetch-head"]
+        shallow = _run_git(worktree, ["rev-parse", "--is-shallow-repository"])
+        if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+            # A depth-1 clone has no merge base with the published head.
+            fetch_args.append("--unshallow")
+        fetch_args += [fetch_remote, "+refs/heads/%s:%s" % (record["head_branch"], ref)]
+        try:
+            fetch = _run_git(worktree, fetch_args)
+            published = _run_git(worktree, ["rev-parse", "--verify", "%s^{commit}" % ref])
+            if fetch.returncode != 0 or published.returncode != 0:
+                record.update(
+                    {
+                        "status": "fallback_canonical",
+                        "reason": "published branch unavailable: %s"
+                        % _redact_git_remote_auth_in_text(
+                            (fetch.stderr or fetch.stdout or published.stderr or "").strip()
+                        )[:300],
+                    }
+                )
+                return record
+            published_sha = published.stdout.strip()
+            reset = _run_git(worktree, ["reset", "--hard", published_sha])
+            if reset.returncode != 0:
+                _run_git(worktree, ["reset", "--hard", canonical_tip])
+                record.update(
+                    {
+                        "status": "fallback_canonical",
+                        "reason": "could not check out published head: %s"
+                        % (reset.stderr or reset.stdout or "").strip()[:300],
+                    }
+                )
+                return record
+            record["published_head_sha"] = published_sha
+            on_tip = _run_git(worktree, ["merge-base", "--is-ancestor", canonical_tip, "HEAD"])
+            if on_tip.returncode == 0:
+                record["status"] = "continued"
+            else:
+                conflict = gitops.rebase_worktree_onto(worktree, canonical_tip)
+                if conflict is None:
+                    record["status"] = "rebased"
+                else:
+                    record.update({"status": "conflict", "reason": conflict})
+            head = _run_git(worktree, ["rev-parse", "HEAD"])
+            record["head_sha"] = head.stdout.strip() if head.returncode == 0 else ""
+            return record
+        finally:
+            _run_git(worktree, ["update-ref", "-d", ref])
+            self._observe_log(
+                "worker.repository.published_head_continuation",
+                level="warning" if record.get("status") == "conflict" else "info",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail=record,
+            )
 
     def _reclaim_disk_for_worktree(self, *, task_id: str, worktree_dir: Path) -> bool:
         """Free workspace disk just-in-time after a full-disk worktree failure.
@@ -962,6 +1161,16 @@ class RepoPrepMixin:
                 "could not create task branch in cloned repository: %s"
                 % ((checkout.stderr or checkout.stdout or "").strip() or branch)
             )
+        continuation = self._resolve_published_head(task, remote_url)
+        if continuation is not None:
+            continuation = self._start_from_published_head(
+                task,
+                worktree_dir,
+                continuation,
+                fetch_remote=auth_url,
+                canonical_tip=base_sha,
+                lease_id=str(lease.get("id") or ""),
+            )
         # Exactly one event per branch actually created, emitted from the call
         # site that creates it.
         self._emit_bus_event(
@@ -993,6 +1202,8 @@ class RepoPrepMixin:
             "repository_canonical_remote": remote_display,
             "repository_origin_remote": remote_display,
         }
+        if continuation is not None:
+            context["repository_continuation"] = continuation
         self._observe_log(
             "worker.repository.worktree_prepared",
             subject_type="task",

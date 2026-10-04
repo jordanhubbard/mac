@@ -835,20 +835,29 @@ def sync_worktree_with_canonical(
         return {"status": "fetch_failed", "reason": "FETCH_HEAD did not resolve to a commit"}
     if _run_git(worktree, ["merge-base", "--is-ancestor", tip, "HEAD"]).returncode == 0:
         return {"status": "fresh", "canonical_tip": tip}
+    conflict = rebase_worktree_onto(worktree, tip)
+    if conflict is not None:
+        return {"status": "conflict", "canonical_tip": tip, "reason": conflict}
+    return {"status": "rebased", "canonical_tip": tip}
+
+
+def rebase_worktree_onto(worktree: Path, tip: str) -> Optional[str]:
+    """Rebase HEAD onto ``tip``; ``None`` on success, else the conflict reason.
+
+    A conflicting rebase is aborted, so the worktree is left exactly where it
+    was. Shared by the finalizer's canonical sync and the worker continuing a
+    task from its previously published head.
+    """
     rebase = _run_git(
         worktree,
         ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet", "rebase", tip],
     )
-    if rebase.returncode != 0:
-        _run_git(worktree, ["rebase", "--abort"])
-        return {
-            "status": "conflict",
-            "canonical_tip": tip,
-            "reason": redact_git_remote_auth_in_text(
-                ((rebase.stderr or rebase.stdout) or "rebase failed").strip()
-            )[:500],
-        }
-    return {"status": "rebased", "canonical_tip": tip}
+    if rebase.returncode == 0:
+        return None
+    _run_git(worktree, ["rebase", "--abort"])
+    return redact_git_remote_auth_in_text(
+        ((rebase.stderr or rebase.stdout) or "rebase failed").strip()
+    )[:500]
 
 
 def canonical_sync_selection_base(canonical_sync: Any, fallback: str = "") -> str:
