@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # life of the file. Nothing in these contracts imports the openshell SDK: the
 # sandbox seam builds an argv naming the binary (`_openshell_bin()`), and the
 # fleet installs the reviewed CLI from a release asset
-# (deploy/openshell/bootstrap-openshell.sh, OPENSHELL_VERSION 0.0.72), not pip.
+# (deploy/openshell/bootstrap-openshell.sh, OPENSHELL_VERSION 0.1.2), not pip.
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
     nemo-relay==0.3.0 \
