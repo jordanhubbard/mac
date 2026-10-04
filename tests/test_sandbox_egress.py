@@ -345,3 +345,25 @@ def test_injection_attempt_never_reaches_the_rendered_policy():
         "mac_hub",
         "repo_declared_egress",
     }
+
+
+def test_npm_registry_accepts_encoded_slash_for_scoped_packages() -> None:
+    """pnpm fetches scoped metadata as /@scope%2Fname; OpenShell resets %2F paths
+    unless the endpoint opts in (live 2026-10-03: every dependency bump failed)."""
+    import yaml
+
+    policy = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[1] / "deploy" / "openshell" / "mac-hermes-policy.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    endpoints = [
+        endpoint
+        for block in policy["network_policies"].values()
+        for endpoint in block.get("endpoints", [])
+        if endpoint.get("host") == "registry.npmjs.org"
+    ]
+    assert endpoints, "registry.npmjs.org must stay allowlisted"
+    for endpoint in endpoints:
+        assert endpoint.get("allow_encoded_slash") is True
+        assert endpoint.get("access") == "read-only"

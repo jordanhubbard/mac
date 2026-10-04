@@ -198,6 +198,13 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: read-only
+        # pnpm/npm request scoped-package metadata as /@scope%2Fname. OpenShell's
+        # L7 proxy resets any request whose path carries %2F unless the endpoint
+        # opts in, so every install that needed fresh metadata for a scoped
+        # package (any dependency bump) failed with UND_ERR_SOCKET /
+        # ERR_PNPM_META_FETCH_FAIL (live 2026-10-03, Aviation). OpenShell's own
+        # schema documents this flag for exactly this case.
+        allow_encoded_slash: true
       # node-gyp downloads the Node headers tarball from nodejs.org to compile
       # native modules (e.g. @vscode/sqlite3's `node-gyp rebuild`). Without it the
       # build fails "403 downloading .../node-vXX-headers.tar.gz". The fetch is
