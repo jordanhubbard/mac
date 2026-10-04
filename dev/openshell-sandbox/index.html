@@ -1937,6 +1937,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#openshell-012-migration-canary-2026-10-03" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenShell 0.1.2 migration — canary 2026-10-03
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#openshell-0072-compatibility-validated-2026-07-04" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2305,6 +2316,17 @@
     <span class="md-ellipsis">
       
         OpenShell policy friction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openshell-012-migration-canary-2026-10-03" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenShell 0.1.2 migration — canary 2026-10-03
       
     </span>
   </a>
@@ -3136,6 +3158,32 @@ usernames, hostnames, tokens, Slack team names, or local fleet identities.</p>
   writable state. The sandboxed gateway may write its runtime cache/log paths,
   but repository publication remains the deterministic MAC finalizer's job.</li>
 </ul>
+<h3 id="openshell-012-migration-canary-2026-10-03">OpenShell 0.1.2 migration — canary 2026-10-03<a class="headerlink" href="#openshell-012-migration-canary-2026-10-03" title="Permanent link">&para;</a></h3>
+<p>The fleet pin is OpenShell 0.1.2 (reviewed-cli-assets.sh, bootstrap-openshell.sh,
+openshell_reconcile.py, cli.py). A worker canary confirmed that image ENV
+reaches sandbox processes, confinement and network policy behave, and the MAC
+policy parses unchanged. What changed for MAC:</p>
+<ul>
+<li><code>sandbox create --upload X -- &lt;command&gt;</code> is rejected, and a trailing create
+  command becomes the sandbox's main process: when it exits the sandbox leaves
+  Ready and every later <code>exec</code> fails. Every MAC flow therefore creates with its
+  uploads and no command, kept alive (<code>--detach</code> on 0.1; a bounded <code>/bin/true</code>
+  on 0.0.x, chosen from <code>openshell --version</code>), then runs its work with
+  <code>sandbox exec</code> and deletes the sandbox (<code>mac.openshell_runtime</code>).</li>
+<li>gateway.toml is schema v2: <code>version = 2</code>, scalar <code>compute_driver</code>,
+  <code>image_pull_policy = "if_not_present"</code>, no Docker <code>network_name</code>, and no
+  <code>grpc_endpoint</code> override (supervisors are host-networked; the old
+  <code>host.openshell.internal</code> endpoint broke startup). Bootstrap runs
+  <code>openshell-gateway config preflight --path</code> before installing it, and pins
+  the gateway's <code>DOCKER_HOST</code> to <code>/var/run/docker.sock</code>.</li>
+<li>The supervisor is a separate host-networked container from a pinned image
+  digest, not a static binary.</li>
+<li>0.0.x and 0.1 peers cannot mix and the gateway migrates its DB in place.
+  Bootstrap retires every sandbox, backs up both CLIs, the gateway, gateway.toml
+  and <code>~/.local/state/openshell/gateway/openshell.db*</code> under
+  <code>~/.mac/openshell/upgrade-backups/</code>, and <code>bootstrap-openshell.sh --rollback
+  [DIR]</code> restores that set.</li>
+</ul>
 <h3 id="openshell-0072-compatibility-validated-2026-07-04">OpenShell 0.0.72 compatibility — validated 2026-07-04<a class="headerlink" href="#openshell-0072-compatibility-validated-2026-07-04" title="Permanent link">&para;</a></h3>
 <p>OpenShell 0.0.72 has been validated against all three MAC sandbox surfaces
 (executor sandbox create, verifier tar-upload verify, gateway confinement).
@@ -3161,8 +3209,8 @@ is absent.</p>
 <h3 id="fallback-decision">Fallback decision<a class="headerlink" href="#fallback-decision" title="Permanent link">&para;</a></h3>
 <p>If NemoClaw's OpenShell pin is disruptive, fall back to raw <code>openclaw</code> confined
 by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
-(currently 0.0.72; roll back to 0.0.62 only if a 0.0.72-specific failure is
-confirmed):</p>
+(currently 0.1.2; roll back to 0.0.72 with <code>bootstrap-openshell.sh --rollback</code>
+only if a 0.1-specific failure is confirmed):</p>
 <ol>
 <li>Build or upload a sandbox image containing raw <code>openclaw</code>, the required MAC
    baseline tools (<code>git</code>, <code>gh</code>), and only the runtime dependencies
@@ -3188,7 +3236,7 @@ confirmed):</p>
 <li>Define ownership for Slack app isolation, policy review, event-log retention,
   and rollback. The rollback condition should be simple: loss of sandbox
   enforcement, ambiguous Slack routing, missing evidence, or unreviewed broad
-  egress returns the host to the last validated MAC/OpenShell 0.0.72 path.</li>
+  egress returns the host to the last validated MAC/OpenShell path.</li>
 <li>Add a short pilot checklist that records only secret-free facts: credential
   source names, placeholder route identifiers, policy revision, image digest,
   smoke-test outcome, and finalizer evidence status.</li>
