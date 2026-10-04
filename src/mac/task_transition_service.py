@@ -294,6 +294,9 @@ class TaskTransitionService:
                 "retry_excluded_agent_ids",
                 "retry_failure_fingerprint",
                 "retry_failure_kind",
+                # The last failed gate's output belongs to the attempts the
+                # reopen just reset.
+                "repository_gate_failure",
                 # A dependency_resolution record describes ONE unsatisfied
                 # prerequisite episode. Left behind across a reopen it makes
                 # _dependency_state_satisfies_join count this task as

@@ -720,6 +720,16 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
     blob = json_dumps(detail).lower() if detail else str(value or "").lower()
     if not blob.strip():
         return "legacy_transient"
+    if (
+        str(detail.get("reason") or "").strip().lower() == "repository_gate_failed"
+        and detail.get("manual_repair_required") is not True
+    ):
+        # The repository gate ran on the agent's head and failed: the work is
+        # red, not the evidence invalid. Checked before the deterministic
+        # markers, which the consequential "not pushed" problem would match.
+        # It consumes an attempt and retries with the gate output, like a
+        # failing executor run, until max_attempts.
+        return "work"
     if any(marker in blob for marker in _DETERMINISTIC_FAILURE_MARKERS):
         return "non_retryable"
     if _is_openshell_verifier_infrastructure_failure(blob):
@@ -874,6 +884,14 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
         return note(
             "Agent run timed out — the task is likely too large for one run.",
             "Raise MAC_EXECUTOR_AGENT_TIMEOUT for heavier work and/or split into child tasks (add_child_tasks / decompose-on-failure). Pre-bake slow toolchains into the sandbox image so setup doesn't consume the budget.",
+        )
+    if reason == "repository_gate_failed":
+        return note(
+            "The repository test gate ran on the agent's change and failed (%s)."
+            % (problems_text or error or "tests failed"),
+            "Ordinary work failure: the task retries with the failing gate output in "
+            "the next attempt's prompt until max_attempts. If every attempt fails the "
+            "same tests, read the gate output in `mac task show` and fix or split the task.",
         )
     if (
         reason == "verification_contract_failed"
@@ -22855,7 +22873,10 @@ class ControlPlane:
                 now=now,
             )
             return reopened, None
-        repeated_failure = same_failure_count >= 2
+        # A failed repository gate carries the same problem text every time
+        # the gate is red, whatever the agent changed; each attempt is new work
+        # against the gate output, so only max_attempts bounds it.
+        repeated_failure = same_failure_count >= 2 and retry_kind != "work"
         exhausted = task.attempt_count >= task.max_attempts
         must_stop = bool(
             non_retryable or retry_kind == "non_retryable" or repeated_failure or exhausted
@@ -22903,8 +22924,36 @@ class ControlPlane:
             return None, None
         detail = {
             **base_detail,
-            "reason": "one bounded cross-worker retry after transient failure",
+            "reason": (
+                "retry after the repository test gate failed"
+                if retry_kind == "work"
+                else "one bounded cross-worker retry after transient failure"
+            ),
         }
+        gate_failure = ensure_json_object(latest_detail.get("repository_gate_failure"))
+        if retry_kind == "work" and gate_failure:
+            # The next attempt's prompt renders this (executor_prompt
+            # _repository_gate_failure_section): which tests failed and how.
+            gate_metadata = ensure_json_object(self.get_task(task.id).metadata)
+            gate_metadata["repository_gate_failure"] = {
+                "name": str(gate_failure.get("name") or "")[:200],
+                "command": str(gate_failure.get("command") or "")[:500],
+                "returncode": gate_failure.get("returncode"),
+                "head_sha": str(gate_failure.get("head_sha") or "")[:64],
+                "failing_lines": [
+                    str(line)[:300]
+                    for line in _metadata_string_list(gate_failure.get("failing_lines"))
+                ][-30:],
+                "output_tail": str(gate_failure.get("output_tail") or "")[-4000:],
+                "failed_attempt": int(task.attempt_count or 0),
+                "max_attempts": int(task.max_attempts or 0),
+                "recorded_at": now,
+            }
+            self.store.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(gate_metadata), now, task.id),
+            )
+            task = self.get_task(task.id)
         self._record_retry_worker_exclusion(
             task,
             agent_id=prior_agent_id,

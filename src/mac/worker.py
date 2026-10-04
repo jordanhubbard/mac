@@ -97,6 +97,7 @@ from mac.repository_contract import (
 )
 from mac.repository_access_env import read_only_repository_content_digest
 from mac.persistence_redaction import redact_for_persistence
+from mac.evidence_validators import repository_gate_failure
 from mac.semantic_acceptance import evaluate_acceptance
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
@@ -1988,23 +1989,43 @@ class MacWorker(
                             "problems": submission_problems,
                         },
                     )
+                    blocked_detail: JsonDict = {
+                        "reason": "verification_contract_failed",
+                        "manual_repair_required": True,
+                        "evidence_id": evidence.get("id"),
+                        "problems": submission_problems,
+                        # Without this the ledger records only
+                        # "transition supplied no stdout, stderr,
+                        # output, log, or tail field" and the failure
+                        # is undiagnosable after the fact.
+                        "output_tail": _executor_output_tail(execution),
+                    }
+                    # The repository gate ran on this head and failed: the
+                    # agent's change is red, which is ordinary retryable work
+                    # (like executor_failed), not tampered evidence. Live
+                    # 2026-10-03/04 (Aviation task_6c9f4ab2, nanolang
+                    # task_2739cdd5 and task_44cc86fa) each went BLOCKED with
+                    # manual repair on attempt 1 of 3 for one failing test.
+                    gate_failure = repository_gate_failure(
+                        ensure_json_object(
+                            ensure_json_object(evidence.get("metadata")).get("verification")
+                        ),
+                        submission_problems,
+                    )
+                    if gate_failure is not None:
+                        blocked_detail.update(
+                            reason="repository_gate_failed",
+                            failure="repository_gate_failed",
+                            manual_repair_required=False,
+                            repository_gate_failure=gate_failure,
+                        )
                     blocked_task = self.client.post(
                         "/tasks/%s/transition" % quote(task_id, safe=""),
                         {
                             "target_state": "blocked",
                             "actor": self.agent_id,
                             "lease_id": lease_id,
-                            "detail": {
-                                "reason": "verification_contract_failed",
-                                "manual_repair_required": True,
-                                "evidence_id": evidence.get("id"),
-                                "problems": submission_problems,
-                                # Without this the ledger records only
-                                # "transition supplied no stdout, stderr,
-                                # output, log, or tail field" and the failure
-                                # is undiagnosable after the fact.
-                                "output_tail": _executor_output_tail(execution),
-                            },
+                            "detail": blocked_detail,
                         },
                     )
                     return WorkerRunResult(
