@@ -1619,15 +1619,31 @@ def required_check_verdicts(
     passed: list[str] = []
     pending: list[str] = []
     failed: list[str] = []
+    missing: list[str] = []
     for context in contexts:
-        outcome = latest.get(context, "")
+        outcome = latest.get(context)
         if outcome == "success":
             passed.append(context)
         elif outcome in _CHECK_FAILED_CONCLUSIONS or outcome == "failure":
             failed.append(context)
         else:
             pending.append(context)
-    verdict.update({"known": True, "passed": passed, "pending": pending, "failed": failed})
+            if outcome is None:
+                # Not reported at all for this head (no status, no check
+                # run) -- as opposed to reported and still running. A
+                # required context is guaranteed to report; a task's own
+                # acceptance check is not, so callers may need the
+                # distinction.
+                missing.append(context)
+    verdict.update(
+        {
+            "known": True,
+            "passed": passed,
+            "pending": pending,
+            "failed": failed,
+            "missing": missing,
+        }
+    )
     return verdict
 
 
