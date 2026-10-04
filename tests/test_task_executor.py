@@ -2750,10 +2750,14 @@ def test_git_finalizer_auto_rebases_clean_canonical_advance(tmp_path, monkeypatc
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
-def test_git_finalizer_blocks_conflicting_canonical_advance(tmp_path, monkeypatch):
-    """Canonical advanced with a CONFLICTING edit -> the sync aborts its rebase
-    and the freshness gate still fails closed (no auto-merge of conflicts)."""
+def test_git_finalizer_publishes_conflicting_canonical_advance_as_stale_base(tmp_path, monkeypatch):
+    """Canonical advanced with a CONFLICTING edit. The finalizer never merges
+    conflicts itself, but it no longer strands the tested work either (live
+    2026-10-03: task_2739cdd5 failed with pushed=false, files_changed=[]): the
+    verified head is published as-is, marked stale_base, and landing sends the
+    task back to rebase with the conflict as context."""
     origin, canonical, work, main_sha = _setup_two_repo_worktree(tmp_path)
+    task_head = _git(work, "rev-parse", "HEAD").stdout.strip()
     advance_dir = tmp_path / "advance"
     _git(tmp_path, "clone", canonical.as_uri(), str(advance_dir))
     _git(advance_dir, "config", "user.email", "t@t")
@@ -2763,6 +2767,7 @@ def test_git_finalizer_blocks_conflicting_canonical_advance(tmp_path, monkeypatc
     _git(advance_dir, "add", "-A")
     _git(advance_dir, "commit", "-m", "conflicting canonical advance")
     _git(advance_dir, "push", "origin", "main")
+    canonical_tip = _git(advance_dir, "rev-parse", "HEAD").stdout.strip()
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -2784,16 +2789,158 @@ def test_git_finalizer_blocks_conflicting_canonical_advance(tmp_path, monkeypatc
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert manifest["repo"]["canonical_sync"]["status"] == "conflict"
-    assert manifest["repo"]["pushed"] is False, "conflicting task HEAD must not be pushed"
-    assert manifest["push"]["status"] == "skipped"
-    assert manifest["push"]["reason"] == "canonical freshness check failed"
-    assert "freshness_error" in manifest
+    repo = manifest["repo"]
+    assert repo["canonical_sync"]["status"] == "conflict"
+    assert repo["freshness_rebase"]["status"] == "conflict"
+    # The verified head, un-rebased, is what was published and reviewed.
+    assert repo["head_sha"] == task_head
+    assert manifest["tests"][0]["executed_head_sha"] == task_head
+    assert repo["pushed"] is True
+    assert repo["freshness"]["state"] == "stale_base"
+    assert repo["freshness"]["canonical_tip_sha"] == canonical_tip
+    assert manifest["push"]["status"] == "pass"
+    assert manifest["push"]["freshness"] == "stale_base"
+    # Honest evidence: the task's own change, from where it left main.
+    assert repo["files_changed"] == ["README.md"]
+    assert repo["base_sha"] == main_sha
+    assert "freshness_error" not in manifest
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
     assert (
-        "ancestor" in manifest["freshness_error"].lower()
-        or "rebase" in manifest["freshness_error"].lower()
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/feature")
+        .stdout.strip()
+        .startswith(task_head)
     )
-    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
+    assert _git(tmp_path, "ls-remote", str(canonical), "refs/heads/main").stdout.split()[0] == (
+        canonical_tip
+    )
+
+
+def _advancing_test_command(tmp_path, canonical, *, fail_after_advance: bool) -> str:
+    """A contract test that lands a peer commit on canonical the first time it
+    runs -- another task merging while this one's verifier ran. Optionally the
+    re-run then fails (the rebased tree does not pass)."""
+    peer = tmp_path / "peer"
+    _git(tmp_path, "clone", "--branch", "main", canonical.as_uri(), str(peer))
+    _git(peer, "config", "user.email", "peer@example.invalid")
+    _git(peer, "config", "user.name", "peer")
+    marker = tmp_path / "advanced.marker"
+    script = tmp_path / "advance-during-test.sh"
+    script.write_text(
+        "\n".join(
+            [
+                "set -e",
+                "if [ -f '%s' ]; then exit %d; fi" % (marker, 1 if fail_after_advance else 0),
+                "touch '%s'" % marker,
+                "cd '%s'" % peer,
+                "echo peer > peer.txt",
+                "git add peer.txt",
+                "git commit -q -m 'peer landed while the verifier ran'",
+                "git push -q origin HEAD:refs/heads/main",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return "sh %s" % script
+
+
+def test_git_finalizer_rebases_and_reverifies_when_main_moves_during_tests(tmp_path, monkeypatch):
+    """Main moved while the verifier ran: a clean rebase is re-verified and the
+    rebased head is published. The pushed head is the verified head."""
+    origin, canonical, work, main_sha = _setup_two_repo_worktree(tmp_path)
+    task_head = _git(work, "rev-parse", "HEAD").stdout.strip()
+    command = _advancing_test_command(tmp_path, canonical, fail_after_advance=False)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _prepare_finalizer_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-moved-during-tests",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": command},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    repo = manifest["repo"]
+    new_tip = _git(tmp_path, "ls-remote", str(canonical), "refs/heads/main").stdout.split()[0]
+    assert new_tip != main_sha
+    assert repo["freshness_rebase"]["status"] == "rebased_and_reverified"
+    assert repo["freshness_rebase"]["verified_head_sha"] == task_head
+    assert repo["head_sha"] == repo["freshness_rebase"]["rebased_head_sha"] != task_head
+    assert _git(work, "merge-base", "--is-ancestor", new_tip, repo["head_sha"]).returncode == 0
+    # The re-run verified exactly the head that was pushed.
+    assert manifest["tests"][0]["executed_head_sha"] == repo["head_sha"]
+    assert manifest["tests"][0]["status"] == "pass"
+    # Landing's verified base is the tip the re-run tested on.
+    assert repo["canonical_sync"]["status"] == "rebased"
+    assert repo["canonical_sync"]["canonical_tip"] == new_tip
+    assert repo["pushed"] is True
+    assert repo["freshness"]["state"] == "current"
+    assert "freshness" not in manifest["push"]
+    assert repo["files_changed"] == ["README.md"]
+    assert repo["base_sha"] == new_tip
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/feature")
+        .stdout.strip()
+        .startswith(repo["head_sha"])
+    )
+
+
+def test_git_finalizer_keeps_verified_head_when_rebased_retest_fails(tmp_path, monkeypatch):
+    """The rebase was clean but the rebased tree fails its gate: the unverified
+    rebase is never published. The verified head goes out marked stale_base,
+    with the failed re-run recorded for the send-back."""
+    origin, canonical, work, main_sha = _setup_two_repo_worktree(tmp_path)
+    task_head = _git(work, "rev-parse", "HEAD").stdout.strip()
+    command = _advancing_test_command(tmp_path, canonical, fail_after_advance=True)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _prepare_finalizer_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-retest-fails",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": command},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    repo = manifest["repo"]
+    assert repo["freshness_rebase"]["status"] == "retest_failed"
+    assert repo["freshness_rebase"]["retest"]["status"] == "fail"
+    assert _git(work, "rev-parse", "HEAD").stdout.strip() == task_head
+    assert repo["head_sha"] == task_head
+    assert manifest["tests"][0]["executed_head_sha"] == task_head
+    assert manifest["tests"][0]["status"] == "pass"
+    assert repo["pushed"] is True
+    assert manifest["push"]["freshness"] == "stale_base"
+    assert repo["files_changed"] == ["README.md"]
+    assert repo["base_sha"] == main_sha
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/feature")
+        .stdout.strip()
+        .startswith(task_head)
+    )
 
 
 def test_git_finalizer_passes_rebased_task_head(tmp_path, monkeypatch):

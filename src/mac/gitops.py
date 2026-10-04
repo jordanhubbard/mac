@@ -132,6 +132,14 @@ class CanonicalFreshnessResult:
     push_stdout: str = ""
     push_stderr: str = ""
     remote_verified: bool = False
+    # The canonical tip moved forward past the base the task built on (it is
+    # not an ancestor of task HEAD, but it descends from the prepared base, so
+    # nothing the task started from was rewritten). Set whether or not the
+    # caller allowed publishing such a head; ``ok`` says which.
+    stale_base: bool = False
+    # merge-base(canonical tip, task HEAD): the base the task's own change is
+    # measured against. Equals the tip when the head is current.
+    merge_base_sha: str = ""
 
     def evidence(self) -> dict[str, object]:
         target = self.target
@@ -141,9 +149,11 @@ class CanonicalFreshnessResult:
             "canonical_branch": target.canonical_branch if target else "",
             "prepared_base_sha": target.prepared_base_sha if target else "",
             "canonical_tip_sha": self.canonical_tip_sha,
+            "merge_base_sha": self.merge_base_sha,
             "task_head_sha": self.head_sha or (target.task_head_sha if target else ""),
             "isolated_ref": target.isolated_ref if target else "",
-            "ancestry_valid": self.ok,
+            "ancestry_valid": self.ok and not self.stale_base,
+            "state": "stale_base" if self.stale_base else ("current" if self.ok else "invalid"),
             "error": self.error,
         }
 
@@ -551,10 +561,109 @@ def _isolated_publication_ref(common_key: str) -> str:
     return "refs/mac/publication/%s-%s" % (safe, nonce)
 
 
+def _classify_canonical_freshness(
+    target: CanonicalPublicationTarget,
+    head_sha: str,
+    canonical_tip: str,
+    *,
+    allow_stale_base: bool,
+) -> CanonicalFreshnessResult:
+    """Judge task HEAD against the fetched canonical tip.
+
+    Three outcomes. CURRENT: the tip is an ancestor of HEAD. STALE BASE: the
+    tip moved forward from the prepared base after the task built on it --
+    another task landed first. That is not a safety problem: landing checks the
+    head against the then-current tip and sends the task back to rebase
+    (``_LandingRebaseRequiredError``), and required checks re-run on the pull
+    request. It is publishable when the caller allows it, never onto the
+    canonical branch itself. INVALID: the tip does not descend from the
+    prepared base (canonical history was rewritten under the task), so the
+    task's view of canonical history cannot be trusted; that stays fail-closed.
+
+    ``files_changed`` is always the task's own change, ``merge-base..HEAD``,
+    whether or not the head is publishable, so evidence stays honest.
+    """
+    worktree = target.worktree
+    merge_base = _run_git(worktree, ["merge-base", canonical_tip, head_sha])
+    merge_base_sha = merge_base.stdout.strip()
+    if merge_base.returncode != 0 or not _GIT_SHA_RE.fullmatch(merge_base_sha):
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            error="task HEAD %s shares no history with canonical tip %s"
+            % (head_sha[:12], canonical_tip[:12]),
+        )
+    diff = _run_git(worktree, ["diff", "--name-only", "%s..%s" % (merge_base_sha, head_sha)])
+    if diff.returncode != 0:
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            error="could not compute canonical diff: %s" % _git_failure(diff, "non-zero exit"),
+        )
+    files_changed = tuple(line for line in diff.stdout.splitlines() if line.strip())
+    if merge_base_sha == canonical_tip:
+        return CanonicalFreshnessResult(
+            True,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            files_changed=files_changed,
+        )
+    stale_error = (
+        "canonical tip %s is not an ancestor of task HEAD %s; rebase or merge %s before publication"
+        % (canonical_tip[:12], head_sha[:12], target.canonical_branch)
+    )
+    moved_forward = (
+        _run_git(
+            worktree, ["merge-base", "--is-ancestor", target.prepared_base_sha, canonical_tip]
+        ).returncode
+        == 0
+    )
+    if not moved_forward:
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            files_changed=files_changed,
+            error="%s (canonical history was rewritten: prepared base %s is not an "
+            "ancestor of the canonical tip)" % (stale_error, target.prepared_base_sha[:12]),
+        )
+    if target.destination_branch == target.canonical_branch:
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            files_changed=files_changed,
+            stale_base=True,
+            error="%s (a stale head is never published onto the canonical branch)" % stale_error,
+        )
+    return CanonicalFreshnessResult(
+        allow_stale_base,
+        target,
+        head_sha=head_sha,
+        canonical_tip_sha=canonical_tip,
+        merge_base_sha=merge_base_sha,
+        files_changed=files_changed,
+        stale_base=True,
+        error="" if allow_stale_base else stale_error,
+    )
+
+
 def _canonical_freshness_locked(
     target: CanonicalPublicationTarget,
     *,
     push: bool,
+    allow_stale_base: bool = False,
 ) -> CanonicalFreshnessResult:
     worktree = target.worktree
     head = _run_git(worktree, ["rev-parse", "--verify", "HEAD^{commit}"])
@@ -620,42 +729,9 @@ def _canonical_freshness_locked(
                 % _git_failure(resolve, "invalid SHA"),
             )
         else:
-            ancestor = _run_git(worktree, ["merge-base", "--is-ancestor", canonical_tip, head_sha])
-            if ancestor.returncode != 0:
-                result = CanonicalFreshnessResult(
-                    False,
-                    target,
-                    head_sha=head_sha,
-                    canonical_tip_sha=canonical_tip,
-                    error=(
-                        "canonical tip %s is not an ancestor of task HEAD %s; "
-                        "rebase or merge %s before publication"
-                    )
-                    % (canonical_tip[:12], head_sha[:12], target.canonical_branch),
-                )
-            else:
-                diff = _run_git(
-                    worktree, ["diff", "--name-only", "%s..%s" % (canonical_tip, head_sha)]
-                )
-                if diff.returncode != 0:
-                    result = CanonicalFreshnessResult(
-                        False,
-                        target,
-                        head_sha=head_sha,
-                        canonical_tip_sha=canonical_tip,
-                        error="could not compute canonical diff: %s"
-                        % _git_failure(diff, "non-zero exit"),
-                    )
-                else:
-                    result = CanonicalFreshnessResult(
-                        True,
-                        target,
-                        head_sha=head_sha,
-                        canonical_tip_sha=canonical_tip,
-                        files_changed=tuple(
-                            line for line in diff.stdout.splitlines() if line.strip()
-                        ),
-                    )
+            result = _classify_canonical_freshness(
+                target, head_sha, canonical_tip, allow_stale_base=allow_stale_base
+            )
 
     cleanup = _run_git(worktree, ["update-ref", "-d", fetch_ref])
     if cleanup.returncode != 0:
@@ -665,6 +741,8 @@ def _canonical_freshness_locked(
             head_sha=head_sha,
             canonical_tip_sha=(result.canonical_tip_sha if result else ""),
             files_changed=(result.files_changed if result else ()),
+            stale_base=(result.stale_base if result else False),
+            merge_base_sha=(result.merge_base_sha if result else ""),
             error="could not clean isolated canonical fetch ref %s: %s"
             % (fetch_ref, _git_failure(cleanup, "non-zero exit")),
         )
@@ -681,6 +759,8 @@ def _canonical_freshness_locked(
             head_sha=result.head_sha,
             canonical_tip_sha=result.canonical_tip_sha,
             files_changed=result.files_changed,
+            stale_base=result.stale_base,
+            merge_base_sha=result.merge_base_sha,
             error="git push to %s failed: %s"
             % (target.remote_display, _git_failure(pushed, "non-zero exit")),
             push_returncode=int(pushed.returncode),
@@ -696,6 +776,8 @@ def _canonical_freshness_locked(
             head_sha=result.head_sha,
             canonical_tip_sha=result.canonical_tip_sha,
             files_changed=result.files_changed,
+            stale_base=result.stale_base,
+            merge_base_sha=result.merge_base_sha,
             error="push completed but remote branch verification failed for %s" % destination_ref,
             push_returncode=0,
             push_stdout=redact_git_remote_auth_in_text(pushed.stdout or ""),
@@ -707,6 +789,8 @@ def _canonical_freshness_locked(
         head_sha=result.head_sha,
         canonical_tip_sha=result.canonical_tip_sha,
         files_changed=result.files_changed,
+        stale_base=result.stale_base,
+        merge_base_sha=result.merge_base_sha,
         push_returncode=0,
         push_stdout=redact_git_remote_auth_in_text(pushed.stdout or ""),
         push_stderr=redact_git_remote_auth_in_text(pushed.stderr or ""),
@@ -797,22 +881,30 @@ def check_canonical_freshness(
 def guarded_push(
     target: CanonicalPublicationTarget,
     *,
+    allow_stale_base: bool = False,
     timeout: Optional[float] = None,
 ) -> CanonicalFreshnessResult:
     """Re-fetch canonical state and push only when task HEAD contains it.
+
+    With *allow_stale_base* a head whose base the canonical tip has merely
+    moved past (another task landed first) is published too, marked
+    ``stale_base``: landing re-checks it against the tip and sends it back to
+    rebase. Rewritten canonical history and the canonical branch itself as
+    destination stay refused (see ``_classify_canonical_freshness``).
 
     Validation, canonical fetch, ancestry checking, temporary-ref cleanup,
     publication, and remote verification all happen under the repository's
     shared git-common-dir lock. The authenticated URL checked here is the exact
     URL passed to both ``git push`` and ``git ls-remote``.
     """
-    return _canonical_publication_operation(target, push=True)
+    return _canonical_publication_operation(target, push=True, allow_stale_base=allow_stale_base)
 
 
 def _canonical_publication_operation(
     target: CanonicalPublicationTarget,
     *,
     push: bool,
+    allow_stale_base: bool = False,
 ) -> CanonicalFreshnessResult:
     try:
         lock = target.lock_path.open("a+", encoding="utf-8")
@@ -851,7 +943,7 @@ def _canonical_publication_operation(
                 head_sha=target.task_head_sha,
                 error="could not acquire publication lock: %s" % exc,
             )
-        result = _canonical_freshness_locked(target, push=push)
+        result = _canonical_freshness_locked(target, push=push, allow_stale_base=allow_stale_base)
         try:
             fcntl.flock(lock, fcntl.LOCK_UN)
         except OSError as exc:
@@ -861,6 +953,8 @@ def _canonical_publication_operation(
                 head_sha=result.head_sha,
                 canonical_tip_sha=result.canonical_tip_sha,
                 files_changed=result.files_changed,
+                stale_base=result.stale_base,
+                merge_base_sha=result.merge_base_sha,
                 error="could not release publication lock: %s" % exc,
             )
         return result

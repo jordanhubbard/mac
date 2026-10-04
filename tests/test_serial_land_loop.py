@@ -204,6 +204,41 @@ def test_a_conflict_sends_the_task_back_to_rebase(cp, tmp_path, monkeypatch):
     assert _landing(cp, task.id)["rebases"] == 1
 
 
+def test_a_stale_base_publication_reaches_review_and_is_sent_back(cp, tmp_path, monkeypatch):
+    """The worker published its tested head although main had moved under it
+    with a conflicting change (``freshness.state == "stale_base"``). That
+    evidence reaches review like any other, and landing -- not the worker --
+    sends the SAME task back to rebase, naming the conflict."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge, checks=())
+    moved = _advance_main(remote, tmp_path, path="feature.txt", content="conflicting\n")
+    task, evidence, reviewer = drive_to_approval(
+        cp,
+        source,
+        task_head,
+        repo_extra={
+            "base_sha": main_head,
+            "canonical_sync": {"status": "conflict", "canonical_tip": moved},
+            "freshness": {"ok": True, "state": "stale_base", "canonical_tip_sha": moved},
+        },
+    )
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "rebase_required"
+    assert result["reason"] == "conflict"
+    assert forge.merges == []
+    assert _main(source) == moved
+    sent_back = cp.get_task(task.id)
+    assert sent_back.state == TaskState.OPEN.value
+    directive = sent_back.metadata["rebase_onto_tip"]
+    assert directive["conflicted_files"] == ["feature.txt"]
+    assert directive["reviewed_head_sha"] == task_head
+    assert directive["canonical_tip"] == moved
+
+
 def test_the_rebase_cap_blocks_the_task(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")

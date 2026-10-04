@@ -4773,15 +4773,22 @@ class MacWorker(
             if publication_target is not None:
                 if not self._assignment_is_current(task_id, lease_id):
                     raise RuntimeError("assignment no longer current after repository verification")
-                publication = guarded_push(publication_target)
+                # A canonical tip that moved on while the gate ran is a stale
+                # base, not a reason to strand tested work: publish it marked
+                # stale_base and let landing send it back to rebase.
+                publication = guarded_push(publication_target, allow_stale_base=True)
                 display = (
                     publication.target.remote_display
                     if publication.target is not None
                     else repo["push_remote"]
                 )
                 repo["push_remote"] = display
-                if publication.canonical_tip_sha:
-                    repo["base_sha"] = publication.canonical_tip_sha
+                if publication.merge_base_sha or publication.canonical_tip_sha:
+                    repo["base_sha"] = publication.merge_base_sha or publication.canonical_tip_sha
+                if publication.ok and publication.files_changed:
+                    # The task's own change, measured from its merge-base.
+                    files_changed = list(publication.files_changed)
+                    repo["files_changed"] = files_changed
                 repo["freshness"] = publication.evidence()
                 push_item = _process_check_item(
                     "guarded git push",
