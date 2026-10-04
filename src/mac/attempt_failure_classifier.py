@@ -176,6 +176,9 @@ _OUTPUT_KEYS = frozenset(
         "log_tail",
         "logs",
         "output_tail_unavailable_reason",
+        # A failed repository gate's test names and output (worker.py): its
+        # test names say "timeout" or "network" as often as any log does.
+        "repository_gate_failure",
     }
 )
 

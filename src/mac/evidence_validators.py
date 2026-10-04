@@ -19,8 +19,9 @@ from mac.fleet_learning import (
     classify_repository_access_failure,
     resolve_git_remote_access,
 )
-from mac.gitops import redact_git_remote_auth_in_text
+from mac.gitops import redact_git_remote_auth_in_text, scrub_check_log
 from mac.models import EVIDENCE_KINDS, JsonDict, ValidationError, ensure_json_object
+from mac.persistence_redaction import redact_for_persistence
 
 
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -118,6 +119,125 @@ def verifier_tests_problems(
         "repo_change evidence requires a repository verifier test result for "
         "repo.head_sha; none qualifies (%s)" % " | ".join(reasons[:3])
     ]
+
+
+# Bounds on the gate output a failed repository gate carries into a retry.
+GATE_FAILURE_MAX_LINES = 60
+GATE_FAILURE_MAX_CHARS = 4000
+_GATE_FAILURE_MAX_FAILING_LINES = 30
+_GATE_FAILING_LINE_RE = re.compile(
+    r"^(?:FAILED|FAIL|ERROR)\b|^E\s|\bAssertionError\b|\bassert(?:ion)?\b.*(?:==|!=|failed)"
+    r"|\b(?:FAIL|FAILED|failed)\s*[:\-]|\bError:|\bnot ok\b|^make(?:\[\d+\])?: \*\*\*",
+)
+# Problems that are the CONSEQUENCE of a repository gate that ran and failed:
+# the finalizer refuses to push a red head, so the evidence is unpushed and has
+# no passing test. Anything else stays a structural evidence problem.
+_GATE_CONSEQUENCE_PROBLEMS = (
+    "repo evidence requires pushed=true with remote_ref, or pr_url",
+    "repo code evidence requires at least one passing test/check",
+)
+_VERIFIER_TESTS_PROBLEM_PREFIX = (
+    "repo_change evidence requires a repository verifier test result for repo.head_sha; "
+    "none qualifies"
+)
+
+
+def _scrub_gate_output(text: str) -> str:
+    return scrub_check_log(str(redact_for_persistence(str(text or "").replace("\x00", ""))))
+
+
+def _ran_and_failed_gate_item(item: Any, head_sha: str) -> bool:
+    """The verifier ran the contract gate on *head_sha* and it exited non-zero."""
+    if not isinstance(item, dict):
+        return False
+    returncode = item.get("returncode")
+    executed_head = str(item.get("executed_head_sha") or "").strip().lower()
+    return (
+        str(item.get("status") or "").strip().lower() == "fail"
+        and isinstance(returncode, int)
+        and not isinstance(returncode, bool)
+        and returncode != 0
+        and not item.get("skipped")
+        and str(item.get("execution_environment") or "").strip() in VERIFIER_EXECUTION_ENVIRONMENTS
+        and bool(executed_head)
+        and executed_head == str(head_sha or "").strip().lower()
+        and bool(_FULL_GIT_SHA_RE.match(str(item.get("executed_tree_sha") or "").strip().lower()))
+    )
+
+
+def repository_gate_failure(manifest: Any, problems: List[str]) -> Optional[JsonDict]:
+    """What a retry needs when the repository gate RAN and FAILED, else None.
+
+    A submission is an ordinary work failure -- retryable, like a failing
+    executor run -- only when the verifier's own record shows it ran the
+    contract gate on the exact ``repo.head_sha`` and the gate exited non-zero,
+    and every problem is that failure or its consequence (the head was not
+    pushed, nothing passed). Structurally invalid evidence -- a missing or
+    malformed manifest, a wrong head, a gate that never ran, a scope or policy
+    problem -- returns None and keeps its manual repair.
+
+    The result carries a bounded, secret-scrubbed tail of the gate output and
+    the lines that name failing tests and assertions, for the next attempt.
+    """
+    if not isinstance(manifest, dict) or not problems:
+        return None
+    repo = manifest.get("repo")
+    head_sha = str(repo.get("head_sha") or "").strip() if isinstance(repo, dict) else ""
+    if not GIT_SHA_RE.match(head_sha):
+        return None
+    tests = manifest.get("tests")
+    if isinstance(tests, dict):
+        tests = [tests]
+    if not isinstance(tests, list):
+        return None
+    failed = next((item for item in tests if _ran_and_failed_gate_item(item, head_sha)), None)
+    if failed is None:
+        return None
+    saw_gate_problem = False
+    for problem in problems:
+        text = str(problem or "")
+        if text.startswith(_VERIFIER_TESTS_PROBLEM_PREFIX):
+            saw_gate_problem = True
+        elif text not in _GATE_CONSEQUENCE_PROBLEMS:
+            return None
+    if not saw_gate_problem:
+        return None
+    output = "\n".join(
+        part
+        for part in (
+            str(failed.get("stdout") or ""),
+            str(failed.get("stderr") or ""),
+        )
+        if part.strip()
+    )
+    if not output.strip():
+        output = "\n".join(
+            part
+            for part in (str(failed.get("output_head") or ""), str(failed.get("output_tail") or ""))
+            if part.strip()
+        )
+    lines = _scrub_gate_output(output).splitlines()
+    failing: List[str] = []
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped and _GATE_FAILING_LINE_RE.search(stripped) and stripped not in failing:
+            failing.append(stripped[:300])
+    failing = failing[-_GATE_FAILURE_MAX_FAILING_LINES:]
+    tail = "\n".join(lines[-GATE_FAILURE_MAX_LINES:])
+    if len(tail) > GATE_FAILURE_MAX_CHARS:
+        tail = tail[-GATE_FAILURE_MAX_CHARS:]
+        newline = tail.find("\n")
+        if 0 <= newline < len(tail) - 1:
+            tail = tail[newline + 1 :]
+    return {
+        "schema": "mac.repository_gate_failure.v1",
+        "name": str(failed.get("name") or "repository contract test"),
+        "command": _scrub_gate_output(str(failed.get("command") or ""))[:500],
+        "returncode": failed.get("returncode"),
+        "head_sha": head_sha,
+        "failing_lines": failing,
+        "output_tail": tail,
+    }
 
 
 def normalize_manifest_tests(raw: Mapping[str, Any]) -> Mapping[str, Any]:
