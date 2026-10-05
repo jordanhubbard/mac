@@ -223,8 +223,10 @@ from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH,
     VERIFIER_PROFILE_READY,
+    assert_exec_argv_single_line,
     openshell_create_keepalive_args,
     openshell_required_for_identity,
+    single_line_shell_script,
     verifier_resource_profile,
 )
 from mac.openshell_service import OpenShellService
@@ -2222,7 +2224,9 @@ def run_repository_contract_test_in_openshell(
                     + identity_preflight
                     + command
                 )
-                return subprocess.run(
+                # Repository-declared bootstrap/test commands may span lines;
+                # OpenShell's exec RPC rejects newline-bearing arguments.
+                exec_argv = assert_exec_argv_single_line(
                     [
                         openshell,
                         "sandbox",
@@ -2237,8 +2241,11 @@ def run_repository_contract_test_in_openshell(
                         "--",
                         "/bin/bash",
                         "-c",
-                        shell_command,
-                    ],
+                        single_line_shell_script(shell_command),
+                    ]
+                )
+                return subprocess.run(
+                    exec_argv,
                     capture_output=True,
                     text=True,
                     timeout=bounded_timeout(timeout),

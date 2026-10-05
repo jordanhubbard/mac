@@ -211,7 +211,9 @@ def test_worker_create_applies_profile_before_toolchain(monkeypatch, tmp_path, p
             json.loads(argv[argv.index("--driver-config-json") + 1])["docker"]["mounts"][0]["type"]
             == "tmpfs"
         )
-        command = argv[-1]
+        from tests.test_openshell_exec_single_line import decode_shell_argument
+
+        command = decode_shell_argument(argv[-1])
         assert command.index(". ./.mac-openshell-env.sh") < command.index(READY)
         assert command.index(READY) < command.index(". ./.mac-sandbox-toolchain.sh")
     else:

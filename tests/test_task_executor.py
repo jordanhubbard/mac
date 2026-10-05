@@ -299,7 +299,9 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     assert "MAC_TASK_REPO_BRANCH=mac/test" in private_env
     assert str(repo) not in " ".join(argv)
     assert "MAC_TASK_REPO_BRANCH=mac/test" not in " ".join(argv)
-    assert "mac_sandbox_toolchain_setup" in argv[-1]
+    from tests.test_openshell_exec_single_line import decode_shell_argument
+
+    assert "mac_sandbox_toolchain_setup" in decode_shell_argument(argv[-1])
 
 
 def test_sandbox_create_uploads_no_host_coding_credential_files(tmp_path, monkeypatch):
@@ -3968,7 +3970,9 @@ def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):
     # The probe runs through private files: neither prompt nor underlying agent
     # command/credentials appear in the host's long-lived create argv.
     assert "create" in seen["argv"]
-    joined = " ".join(seen["argv"])
+    from tests.test_openshell_exec_single_line import decode_shell_argument
+
+    joined = " ".join([*seen["argv"], decode_shell_argument(seen["argv"][-1])])
     assert "mac.agent_command" in joined
     assert "/usr/bin/opencode" not in joined
     assert ca.PREFLIGHT_PROMPT not in joined

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shlex
@@ -259,6 +260,48 @@ def openshell_cli_version(openshell_bin: str) -> Optional[tuple[int, ...]]:
     return version
 
 
+class OpenShellExecArgvError(ValueError):
+    """An ``openshell sandbox exec`` argv OpenShell's exec RPC would reject."""
+
+
+def assert_exec_argv_single_line(argv: Iterable[str]) -> list[str]:
+    """Fail at build time if any ``sandbox exec`` argument spans lines.
+
+    OpenShell's exec RPC rejects every command argument containing a newline
+    or carriage return ("command argument N contains newline or carriage
+    return characters"). Live on 0.0.72 that failed every task at the
+    coding-agent preflight after work moved from ``create -- <cmd>`` to
+    create-then-exec, while unit tests that mock OpenShell passed. Checking
+    here turns the same mistake into an immediate internal error instead.
+    """
+    argv = [str(token) for token in argv]
+    for index, token in enumerate(argv):
+        if "\n" in token or "\r" in token:
+            raise OpenShellExecArgvError(
+                "internal error: openshell sandbox exec argument %d contains a "
+                "newline or carriage return, which OpenShell rejects; encode "
+                "multi-line scripts with single_line_shell_script()" % index
+            )
+    return argv
+
+
+def single_line_shell_script(script: str) -> str:
+    """Return a one-line ``bash -c`` body that runs the multi-line ``script``.
+
+    The script travels base64-encoded and is decoded by the image's own
+    coreutils, then evaluated in the same shell, so exit status, ``exec``,
+    and output are unchanged. A decode failure exits 126 instead of
+    evaluating an empty script as success. Single-line input is unchanged.
+    """
+    if "\n" not in script and "\r" not in script:
+        return script
+    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    return (
+        '__mac_script="$(printf %%s %s | /usr/bin/base64 -d)" || exit 126; '
+        'eval "$__mac_script"' % encoded
+    )
+
+
 def openshell_create_keepalive_args(openshell_bin: str) -> list[str]:
     """Trailing ``sandbox create`` args that leave a kept sandbox Ready for exec.
 
@@ -309,4 +352,4 @@ def split_sandbox_create_command(
         "--",
         *command,
     ]
-    return create, exec_argv
+    return create, assert_exec_argv_single_line(exec_argv)

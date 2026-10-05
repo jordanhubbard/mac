@@ -178,7 +178,9 @@ def _inner(out):
     """The non-login `/bin/bash -c <inner>` after the `--` separator."""
     i = out.index("--")
     assert out[i + 1 : i + 3] == ["/bin/bash", "-c"]
-    return out[i + 3]
+    from tests.test_openshell_exec_single_line import decode_shell_argument
+
+    return decode_shell_argument(out[i + 3])
 
 
 @pytest.fixture(scope="module")

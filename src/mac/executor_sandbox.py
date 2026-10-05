@@ -100,8 +100,10 @@ from mac.trusted_artifact import (
 )
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
+    assert_exec_argv_single_line,
     openshell_create_keepalive_args,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
+    single_line_shell_script,
     split_sandbox_create_command,
     truthy as _truthy,
     verifier_resource_profile,
@@ -2675,7 +2677,8 @@ def _build_sandbox_create_argv(
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "/bin/bash", "-c", inner]
+    # One line: OpenShell's exec RPC rejects newline-bearing arguments.
+    argv += ["--", "/bin/bash", "-c", single_line_shell_script(inner)]
     return argv
 
 
@@ -2717,7 +2720,11 @@ def _sandbox_create_detached(
 
 def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
     """Run an openshell lifecycle step (download/delete) out-of-band of the
-    audited agent run. Best-effort: returns (ok, message), never raises."""
+    audited agent run. Best-effort: returns (ok, message); it raises only
+    :class:`OpenShellExecArgvError` for an exec argv OpenShell would reject,
+    which is a programming error rather than a runtime failure."""
+    if args and args[0] == "exec":
+        assert_exec_argv_single_line(args)
     try:
         proc = _run_captured(
             [_openshell_bin(), "sandbox", *args],
@@ -2782,6 +2789,7 @@ def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 120
         "/bin/cat",
         _SANDBOX_VERIFICATION_FILE,
     ]
+    assert_exec_argv_single_line(argv)
     try:
         proc = subprocess.run(
             argv,
@@ -2888,6 +2896,7 @@ def _sandbox_run_repository_verification_exec(
         "/bin/bash",
         sandbox_script,
     ]
+    assert_exec_argv_single_line(argv)
     started_at = time.monotonic()
     start_deadline = started_at + start_timeout
     total_deadline = started_at + timeout + 90.0
@@ -4446,7 +4455,7 @@ def _sandbox_progress_snapshot(
             "--",
             "/bin/bash",
             "-c",
-            script,
+            single_line_shell_script(script),
         ],
         timeout=30.0,
     )
@@ -5426,7 +5435,8 @@ def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Pat
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "/bin/bash", "-lc", inner]
+    # One line: OpenShell's exec RPC rejects newline-bearing arguments.
+    argv += ["--", "/bin/bash", "-lc", single_line_shell_script(inner)]
     return argv
 
 
