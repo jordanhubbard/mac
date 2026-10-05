@@ -275,7 +275,7 @@ one that should guide any action.
 > 2026-07-28 (`084c43cf`). The follow-up dead-code task (task_251b3796) then
 > deleted ten of its twelve never-wired modules with their tests
 > (`changeset_adoption`, `evidence_reuse_verifier`, `harness_reflex`,
-> `hermes_home_audit`, `openclaw_checkpoint_gc`, `openclaw_delivery_continuity`,
+> `hermes_home_audit`, a gateway checkpoint GC, a gateway delivery-continuity module,
 > `openshell_static_runtime_refresh`, `remote_session`, `reported_version`,
 > `skill_auto_repair`) and kept the two survivors — `predispatch_conflict` and
 > `investigation_artifacts` — each with a dated owner and a concrete wiring plan.
@@ -285,7 +285,7 @@ one that should guide any action.
 
 Nine modules are imported by no `src/mac` module and are reachable, on a static import graph,
 only from their own test files: `dream_scanner.py`, `predispatch_conflict.py`,
-`investigation_artifacts.py`, `openclaw_checkpoint_gc.py`, `hgx_provision.py`,
+`investigation_artifacts.py`, a gateway checkpoint-GC module, `hgx_provision.py`,
 `skill_auto_repair.py`, `project_inception.py`, `harness_reflex.py`,
 `evidence_reuse_verifier.py`. The initial hypothesis was that these were accretion residue to
 remove. **Checking each against the reference graph and git history overturned that:**
@@ -298,7 +298,7 @@ remove. **Checking each against the reference graph and git history overturned t
   `dream_repair_tasks.py:22`, and via the test-impact map (`scripts/resolve-impacted-tests.py`).
   They are part of the documented design surface, not stray files.
 - **The remaining four are recent, deliberate additions, tested-first, integration pending:**
-  `openclaw_checkpoint_gc.py` landed in the **current HEAD commit (2026-07-24)**,
+  the gateway checkpoint-GC module landed in the **current HEAD commit (2026-07-24)**,
   `hgx_provision.py` (2026-07-23), `predispatch_conflict.py` (2026-07-16),
   `skill_auto_repair.py` (2026-07-12). Deleting these would undo work committed this week.
 

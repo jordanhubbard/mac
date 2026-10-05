@@ -564,41 +564,7 @@ Set `MAC_CODING_AGENT_SANDBOX=trust` only after validating the image+policy out
 of band; it skips the per-task proof. `python -m mac.coding_agent` prints the
 (secret-free) host-side routing decision for the current environment.
 
-## NemoClaw single-host pilot observations
-
-Status: pilot observations recorded 2026-07-04. These notes are intentionally
-fleet-generic: use role names, placeholder workspace/channel identifiers, and
-redacted credential sources in downstream runbooks; do not record real
-usernames, hostnames, tokens, Slack team names, or local fleet identities.
-
-### Slack multi-account behavior
-
-- Treat each Slack Socket Mode app token as single-owner for the pilot. Running
-  Hermes and NemoClaw against the same app token can create competing event
-  consumers, duplicate replies, or ambiguous thread ownership.
-- A single Hermes gateway can use the existing multi-account file shape for
-  multiple workspaces; that does not coordinate an additional external
-  NemoClaw gateway. If both gateways must be live, give each gateway its own
-  Slack app credentials and make the intended workspace/channel binding
-  explicit.
-- Home-channel fan-out remains per connected workspace. Pilot notes should name
-  routes with placeholders such as `<workspace-id>/<channel-id>` and should
-  avoid storing raw tokens or workspace-local display names.
-
-### OpenShell policy friction
-
-- MAC's default OpenShell posture is deny-by-default egress plus explicit
-  filesystem allow-lists. NemoClaw adds non-MAC traffic patterns, including
-  Slack Web API calls, Socket Mode WebSocket egress, provider endpoints, and any
-  package or model download endpoints used at startup. Those must be policy
-  entries, not interactive approvals.
-- The policy iteration loop is the main operational cost: every denied
-  endpoint or missing writable path should become a small, reviewed policy
-  change followed by an off-policy-denial smoke test. Do not loosen the policy
-  to broad internet or broad home-directory access just to make the pilot pass.
-- Keep MAC-owned evidence, task worktrees, and finalization outside NemoClaw's
-  writable state. The sandboxed gateway may write its runtime cache/log paths,
-  but repository publication remains the deterministic MAC finalizer's job.
+## OpenShell version notes
 
 ### OpenShell 0.1.2 migration — canary 2026-10-03
 
@@ -646,49 +612,10 @@ Key behavior changes in 0.0.72 relative to 0.0.62:
 - `policy get --base` CLI subcommand (informational; MAC uses per-sandbox
   `--policy` injection, not base-policy inheritance — no change).
 
-See docs/security/openshell-0.0.72-compatibility-review.mdx for the full
-pass/fail surface results, behavior-change table, and recommendation narrative.
-
 The 0.0.62 podman-driver mismatch workaround (`mirror_image_for_openshell_runtime`)
 is retained in bootstrap-openshell.sh as belt-and-suspenders; the upstream
 mismatch is resolved in 0.0.72 but the mirror step is harmless when Podman
 is absent.
-
-### Fallback decision
-
-If NemoClaw's OpenShell pin is disruptive, fall back to raw `openclaw` confined
-by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
-(currently 0.1.2; roll back to 0.0.72 with `bootstrap-openshell.sh --rollback`
-only if a 0.1-specific failure is confirmed):
-
-1. Build or upload a sandbox image containing raw `openclaw`, the required MAC
-   baseline tools (`git`, `gh`), and only the runtime dependencies
-   needed by the pilot.
-2. Start from `deploy/openshell/mac-hermes-policy.yaml`, then add explicit
-   Slack, model-provider, hub/gateway, Git host, and package-index egress rules
-   required by raw `openclaw`. Keep filesystem writes scoped to the task
-   workspace and gateway runtime cache/log directories.
-3. Use separate Slack app credentials from any Hermes gateway that remains
-   online. Route pilot traffic through placeholder-documented
-   `<workspace-id>/<channel-id>` bindings.
-4. Verify with `openshell gateway list`, an `openshell sandbox create` smoke
-   test, one Slack receive/send loop, one intentional off-policy denial, and a
-   normal MAC repository task whose evidence is finalized by MAC.
-5. Treat this as a temporary compatibility bridge. Promote NemoClaw only after
-   its OpenShell version, policy shape, and event stream pass the same MAC
-   smoke tests.
-
-### Operational gaps
-
-- Add a version matrix covering NemoClaw, raw `openclaw`, OpenShell, Docker
-  Engine/Moby, the sandbox image digest, and the active MAC policy revision.
-- Define ownership for Slack app isolation, policy review, event-log retention,
-  and rollback. The rollback condition should be simple: loss of sandbox
-  enforcement, ambiguous Slack routing, missing evidence, or unreviewed broad
-  egress returns the host to the last validated MAC/OpenShell path.
-- Add a short pilot checklist that records only secret-free facts: credential
-  source names, placeholder route identifiers, policy revision, image digest,
-  smoke-test outcome, and finalizer evidence status.
 
 ## Follow-up
 

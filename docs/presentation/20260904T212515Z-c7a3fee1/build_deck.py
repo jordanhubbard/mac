@@ -86,7 +86,7 @@ def onboarding_slide() -> None:
     frame = text_box(slide, Inches(0.85), Inches(0.45), Inches(11.6), Inches(1.35))
     line(
         frame,
-        "OpenShell/OpenClaw onboarding no longer fails on healthy nodes",
+        "OpenShell onboarding no longer fails on healthy nodes",
         33,
         INK,
         bold=True,

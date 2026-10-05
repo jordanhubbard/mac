@@ -109,8 +109,7 @@ concrete defect signal:
 - The repo *does* contain a real Slack surface:
   `src/mac/_hermes/gateway/platforms/slack.py` (3334 lines),
   `src/mac/_hermes/hermes_cli/slack_cli.py`, `scripts/mac-fetch-slack-secrets.py`,
-  `scripts/slack-vault-loader.py`, plus `deploy/hermes/multi-slack-mvp.patch`
-  and `deploy/nemoclaw/slack-account.example.json`.
+  `scripts/slack-vault-loader.py`, plus `deploy/hermes/multi-slack-mvp.patch`.
 - Slack-surface tests all pass: `tests/test_slack_secrets_fetcher.py`,
   `tests/test_slack_thread_participant_triggers.py`,
   `tests/test_hermes_config_surface_slack_tokens.py` → **11 passed**.

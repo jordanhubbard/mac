@@ -16,7 +16,7 @@ documents, the added release audit, and the open contribution disposition.
 | 1 | Version 1.5.0 and immutable source identity | `src/mac/__init__.py`; candidate commit above |
 | 2 | Projects, tasks, dependencies, leases, evidence and separate result boundaries | `src/mac/models.py`, `src/mac/task_lifecycle.py`, `src/mac/task_outcomes.py`, `tests/test_task_outcomes.py` |
 | 3 | Preserve selected Hermes profile and verify its upstream service | `deploy/fleet-node-install.sh`; merged PR #804 and #836; `docs/investigations/hermes-deployment-readiness.md` |
-| 3 | Remove retired OpenClaw worker-health probes | merged PR #815; `src/mac/worker.py` |
+| 3 | Remove retired chat-gateway worker-health probes | merged PR #815; `src/mac/worker.py` |
 | 3 | Independent managed Python 3.14.7 crash observer | `deploy/fleet-node-install.sh`; merged PR #838; `tests/test_crash_observer.py` |
 | 4 | Owned PostgreSQL databases isolate pytest workers and preserve concurrent-run leases | `tests/pg_worker_databases.py`, `tests/conftest.py`; merged PR #835 |
 | 5 | No nightly test schedules; full candidate contract, fault, container and documentation checks | `.github/workflows/ci.yml`, `.github/workflows/docs.yml`, `tests/test_deployment_image_artifact.py` |

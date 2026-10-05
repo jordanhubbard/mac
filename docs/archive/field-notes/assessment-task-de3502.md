@@ -45,22 +45,20 @@ outputs are present and executable).
 | `src/mac/fleet_node_install.py` | 264 |
 | `src/mac/fleet_setup.py` | 756 |
 | `src/mac/fleet_ssh.py` | 434 |
-| `src/mac/openclaw_fleet_rollout.py` | 209 |
 
 ### 2. Each module has a behavior suite
 
-The fleet subsystem ships 15 dedicated test modules:
+The fleet subsystem ships 14 dedicated test modules:
 `test_fleet_creds.py`, `test_fleet_deploy_edges.py`, `test_fleet_env.py`,
 `test_fleet_learning.py`, `test_fleet_move.py`, `test_fleet_node_install.py`,
 `test_fleet_samples.py`, `test_fleet_setup.py`, `test_fleet_setup_edges.py`,
 `test_fleet_skills.py`, `test_fleet_snapshot.py`, `test_fleet_ssh.py`,
-`test_fleet_tasks_tool.py`, `test_fleet_tool.py`, and
-`test_openclaw_fleet_rollout.py`.
+`test_fleet_tasks_tool.py`, and `test_fleet_tool.py`.
 
 ### 3. The fleet suite is green
 
 Command:
-`.venv/bin/python -m pytest tests/test_fleet_*.py tests/test_openclaw_fleet_rollout.py -q`
+`.venv/bin/python -m pytest tests/test_fleet_*.py -q`
 
 | Metric | Value |
 |--------|-------|

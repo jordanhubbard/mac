@@ -35,7 +35,7 @@ The last direct interpreter inventory, around 08:00 UTC, still showed drift:
 | Hermes Python | 3.11.14 | 3.11.14 | 3.11.16 |
 
 This inventory is a baseline, not deployment acceptance. The active Hermes
-home was `~/.hermes`; some configuration still named the legacy OpenClaw path.
+home was `~/.hermes`; some configuration still named a legacy gateway path.
 Do not delete a legacy directory merely because of its name: verify active
 references, memory stores, schedules, tools, and restart persistence first.
 
@@ -90,7 +90,7 @@ or remove old durable records by itself.
 ## Historical incident and decisions to preserve
 
 The [September 3 incident record](https://github.com/jordanhubbard/mac/blob/8bddc13aba05dd154310c830b399288593c50627/docs/problems.md)
-contains the original observations and attempted recoveries. Its OpenClaw
+contains the original observations and attempted recoveries. Its gateway
 recreation steps, degraded-worker table, runtime revision, and HGX expansion
 recipe are historical, not current instructions.
 

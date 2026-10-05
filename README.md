@@ -3,14 +3,13 @@
 Multi-agent coordinator control plane.
 
 `mac` is a clean-room control plane for fleets of AI agents. It is designed to
-sit underneath a human-facing agent runtime such as OpenClaw under OpenShell, NemoClaw Hermes, or a compatible system.
+sit underneath Hermes, the human-facing agent runtime.
 
 The human-facing runtime owns conversation, personality, adaptive memory,
 skills, and messaging gateways. `mac` owns durable operational truth: tasks,
 leases, routing, reviews, evidence, secrets, runtime manifests, and audit
-trails. The fleet registry selects the human-channel runtime; the committed fleet
-default is Hermes (`gateway_impl: hermes`). OpenClaw is another deployment
-option. Internal agents may share a stable public identity.
+trails. Hermes is the only human interface and chat gateway
+(`gateway_impl: hermes`). Internal agents may share a stable public identity.
 
 The goal is to let a user talk to an agent with a real
 personality and memory, then let that agent create durable work that a broader
@@ -42,14 +41,6 @@ integration or protocol influence is not mistaken for copied source:
   security foundation:** MAC's agent process trees, filesystem/network policy,
   sandbox lifecycle, and normalized action-event collection integrate with
   OpenShell rather than reimplementing its isolation layer.
-- **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) — reference
-  integration:** NemoClaw remains compatibility and design reference material;
-  it is not the implementation behind MAC's `openclaw` deployment mode.
-- **[OpenClaw](https://github.com/openclaw/openclaw) — conversational gateway
-  runtime option:** MAC can deploy a pinned stock OpenClaw image inside a MAC-authored
-  OpenShell policy for always-on chat channels while MAC remains the durable
-  task and fleet control plane. See
-  [OpenClaw public identities](docs/openclaw-identities.md).
 - **[OpenCode](https://github.com/anomalyco/opencode) — coding executor and
   reviewer:** OpenCode is MAC's only coding CLI. It runs inside MAC's sandbox
   and evidence gates and takes its model from the hub router; MAC also ships
@@ -169,7 +160,6 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
 | [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.5.0 deck](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx), each pinned to the commit it describes |
 | [v1.5.0 capabilities (`c7be3a5a`)](docs/presentation/20260914T203809Z-c7be3a5a/README.md) | current release deck: upfront validation, PostgreSQL test isolation, Hermes readiness and task outcomes — [public PPTX](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx) |
-| [v1.4.0 capabilities (`a787bff1`)](docs/presentation/20260906T051311Z-a787bff1/README.md) | historical release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) |
 
 Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name
@@ -858,7 +848,6 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
 - [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md)
 - [Fleet Operational Learning](docs/fleet-operational-learning.md)
-- [OpenClaw public identities](docs/openclaw-identities.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
 - [Scaling Plan](docs/archive/field-notes/scaling-plan.md) (historical)
