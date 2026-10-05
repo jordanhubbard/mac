@@ -634,16 +634,6 @@ def test_finalizer_progress_write_is_durable(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_human_interface_profile_write_is_durable(tmp_path, monkeypatch):
-    from mac import human_interface_profile
-
-    spy = _FsyncSpy(monkeypatch)
-    target = tmp_path / "profile" / "SOUL.md"
-    human_interface_profile._atomic_write(target, "soul\n")
-    assert target.read_text(encoding="utf-8") == "soul\n"
-    assert spy.files >= 1 and spy.directories >= 1
-
-
 def test_hermes_config_surface_writes_are_durable(tmp_path, monkeypatch):
     from mac import hermes_config_surface
 

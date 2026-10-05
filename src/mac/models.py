@@ -1877,7 +1877,7 @@ class GatewayIdentityLease:
 
 @dataclass
 class HumanMessageDelivery:
-    """Durable, idempotent request for a public OpenClaw delivery."""
+    """Durable, idempotent request for a public human-facing delivery."""
 
     id: str
     identity_id: str

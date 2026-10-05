@@ -1,10 +1,10 @@
-"""Runtime-neutral public identities and durable OpenClaw delivery.
+"""Runtime-neutral public identities and durable human message delivery.
 
 Internal fleet agents are intentionally not public chat identities.  A small,
 stable set of logical identities (for example ``mac-hive``) owns provider
 accounts and represents any number of workers.  Provider credentials never
 appear in this service: accounts store vault *references* only, while a fenced
-gateway lease selects the one OpenClaw sandbox allowed to consume an account.
+gateway lease selects the one gateway allowed to consume an account.
 """
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ class CommunicationService:
         identity = self.get_identity(identity_id)
         channel_value = _clean_name(channel, "channel")
         if channel_value not in CHANNELS:
-            raise ValidationError("unsupported OpenClaw channel: %s" % channel)
+            raise ValidationError("unsupported communication channel: %s" % channel)
         account_value = _clean_name(account_id or "default", "account id")
         row = self.store.query_one(
             "SELECT id FROM communication_accounts WHERE identity_id = ? AND channel = ? AND account_id = ?",

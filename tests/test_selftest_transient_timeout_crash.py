@@ -52,13 +52,12 @@ def _run_self_test_with_probe_error(tmp_path, monkeypatch, probe_error):
 
     home = tmp_path / "home"
     mac_home = home / ".mac"
-    (mac_home / "openclaw" / "managed").mkdir(parents=True, exist_ok=True)
+    mac_home.mkdir(parents=True, exist_ok=True)
     (mac_home / "bin").mkdir(parents=True, exist_ok=True)
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
     report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
 
-    # A fully-configured pure worker: identity present, gateway impl is not
-    # openclaw (so OpenClaw checks pass and never interfere), and both mandatory
+    # A fully-configured pure worker: identity present, no chat gateway, and both mandatory
     # shared services are required and have URLs — the only failure comes from the
     # probe error injected below.
     env = {
@@ -89,12 +88,12 @@ def _run_self_test_with_probe_error(tmp_path, monkeypatch, probe_error):
         raise probe_error
 
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
-    # A pure worker (impl != openclaw) never invokes openclaw-agent, but guard it.
+    # A pure worker never spawns a subprocess here; guard it.
     monkeypatch.setattr(
         subprocess,
         "run",
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("openclaw-agent must not run for a pure worker")
+            AssertionError("a pure worker must not spawn a subprocess")
         ),
     )
 

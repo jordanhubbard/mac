@@ -23,28 +23,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: agentfs url.",
-    "family": "core",
-    "name": "MAC_AGENTFS_URL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: agentfs write token.",
-    "family": "core",
-    "name": "MAC_AGENTFS_WRITE_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Agent setting: agent attestation key.",
     "family": "agent",
     "name": "MAC_AGENT_ATTESTATION_KEY",
@@ -195,7 +173,6 @@
     "retired": false,
     "sources": [
       "deploy/mac-crash-observer.py",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac-agent-journal.service",
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac-openshell-supervisor.service",
@@ -240,7 +217,6 @@
     "name": "MAC_AGENT_NAME",
     "retired": false,
     "sources": [
-      "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py",
       "scripts/run-contract-tests.sh",
       "src/mac/journal.py",
@@ -368,8 +344,6 @@
     "name": "MAC_API_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac.service",
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
@@ -424,7 +398,6 @@
     "name": "MAC_API_URL",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/cli.py",
       "src/mac/dispatch.py",
       "src/mac/gitops.py",
@@ -646,7 +619,7 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "src/mac/worker.py"
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -860,72 +833,6 @@
     "sources": [
       "src/mac/prompt_master.py",
       "src/mac/router_app.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: continuity bus chunk scan.",
-    "family": "core",
-    "name": "MAC_CONTINUITY_BUS_CHUNK_SCAN",
-    "retired": false,
-    "sources": [
-      "src/mac/openclaw_continuity.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: continuity bus stream scan.",
-    "family": "core",
-    "name": "MAC_CONTINUITY_BUS_STREAM_SCAN",
-    "retired": false,
-    "sources": [
-      "src/mac/openclaw_continuity.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: continuity max items.",
-    "family": "core",
-    "name": "MAC_CONTINUITY_MAX_ITEMS",
-    "retired": false,
-    "sources": [
-      "src/mac/openclaw_continuity.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: continuity max low value memories.",
-    "family": "core",
-    "name": "MAC_CONTINUITY_MAX_LOW_VALUE_MEMORIES",
-    "retired": false,
-    "sources": [
-      "src/mac/openclaw_continuity.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: continuity min score.",
-    "family": "core",
-    "name": "MAC_CONTINUITY_MIN_SCORE",
-    "retired": false,
-    "sources": [
-      "src/mac/openclaw_continuity.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: continuity token budget.",
-    "family": "core",
-    "name": "MAC_CONTINUITY_TOKEN_BUDGET",
-    "retired": false,
-    "sources": [
-      "src/mac/openclaw_continuity.py"
     ],
     "type": "str"
   },
@@ -1158,17 +1065,6 @@
     "retired": false,
     "sources": [
       "src/mac/hermes_config_surface.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy generation.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GENERATION",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -1593,7 +1489,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/api.py",
       "src/mac/fleet_env.py",
       "src/mac/worker.py"
@@ -1680,18 +1575,6 @@
   },
   {
     "default": null,
-    "description": "Hermes Runtime setting: hermes agent bin.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_AGENT_BIN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hermes Runtime setting: hermes agent dir.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_AGENT_DIR",
@@ -1715,6 +1598,17 @@
   },
   {
     "default": null,
+    "description": "Hermes Runtime setting: hermes bin.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_BIN",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_reflect.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Hermes Runtime setting: hermes dry run.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_DRY_RUN",
@@ -1723,17 +1617,6 @@
       "deploy/hermes/install-hermes-gateway.sh"
     ],
     "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Hermes Runtime setting: hermes existing port.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_EXISTING_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh"
-    ],
-    "type": "int"
   },
   {
     "default": null,
@@ -1753,9 +1636,6 @@
     "name": "MAC_HERMES_GATEWAY_API_KEY",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/config.yaml",
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
@@ -1771,8 +1651,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
@@ -1788,8 +1666,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
       "src/mac/hermes_startup.py",
       "src/mac/router_app.py"
@@ -1804,7 +1680,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/nemoclaw/docker-compose.yaml",
       "src/mac/agent_provider.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
@@ -1852,8 +1727,6 @@
     "name": "MAC_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/worker.py"
@@ -1868,18 +1741,6 @@
     "retired": false,
     "sources": [
       "src/mac/hermes_startup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hermes Runtime setting: hermes message bin.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_MESSAGE_BIN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py"
     ],
     "type": "str"
   },
@@ -1928,9 +1789,6 @@
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-fleet-context-service.sh",
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "src/mac/cli.py",
       "src/mac/hermes_release.py",
       "src/mac/hermes_runtime.py",
@@ -1945,24 +1803,10 @@
     "name": "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
     "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Hermes Runtime setting: hermes scripts dir.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_SCRIPTS_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -1994,7 +1838,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/sync-hermes-home-channels.py",
       "src/mac/hermes_startup.py"
     ],
@@ -2051,12 +1894,6 @@
       "deploy/install-tailscale.sh",
       "deploy/install-webdav-server.sh",
       "deploy/mac-crash-observer.py",
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/relocate-script-job-home.py",
-      "deploy/openclaw/run-script-cron-job.py",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
       "src/mac/hermes_runtime.py",
@@ -2275,7 +2112,6 @@
     "retired": false,
     "sources": [
       "deploy/mac-crash-observer.py",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "deploy/systemd/mac-fleet-context.service",
@@ -2643,8 +2479,7 @@
     "name": "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/lib/launchd-lifecycle.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "int"
   },
@@ -2661,7 +2496,6 @@
       "deploy/install-qdrant-service.sh",
       "deploy/install-webdav-server.sh",
       "deploy/lib/launchd-lifecycle.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/install-certifier-gateway-tunnel.sh"
     ],
     "type": "str"
@@ -3003,17 +2837,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: legacy hermes home.",
-    "family": "core",
-    "name": "MAC_LEGACY_HERMES_HOME",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Client Auth setting: local console enabled.",
     "family": "client-auth",
     "name": "MAC_LOCAL_CONSOLE_ENABLED",
@@ -3160,119 +2983,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: nemoclaw agent id.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "deploy/systemd/mac-nemoclaw-gateway.service"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw fleet name.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_FLEET_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw gateway port.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_GATEWAY_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw home channel.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_HOME_CHANNEL",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw hub url.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_HUB_URL",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw instance id.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_INSTANCE_ID",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "deploy/systemd/mac-nemoclaw-gateway.service"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw slack app token.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_SLACK_APP_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "deploy/systemd/mac-nemoclaw-gateway.service"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw slack bot token.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_SLACK_BOT_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "deploy/systemd/mac-nemoclaw-gateway.service"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nemoclaw slack workspace.",
-    "family": "core",
-    "name": "MAC_NEMOCLAW_SLACK_WORKSPACE",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / public addresses and binds loopback plus the Tailscale IPv4 instead. Not a host firewall by itself; it is the listen-address policy that makes the overlay the only worker path. Unset means no mesh bind policy (container/dev).",
     "family": "core",
     "name": "MAC_NETWORK_PROVIDER",
@@ -3345,735 +3055,6 @@
   },
   {
     "default": null,
-    "description": "Openclaw Runtime setting: openclaw agent bin.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_AGENT_BIN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/run-script-cron-job.py",
-      "src/mac/worker_directable.py",
-      "src/mac/worker_reflect.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw agent id.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/curiosity-sidecar.py",
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw agent timeout seconds.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_AGENT_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw bootstrap token.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_BOOTSTRAP_TOKEN",
-    "retired": false,
-    "sources": [
-      "scripts/provision-openclaw-personality.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw build context.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_BUILD_CONTEXT",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw canary ok.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_CANARY_OK",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw channels.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_CHANNELS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw containerfile.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_CONTAINERFILE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw continuity migrator.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_CONTINUITY_MIGRATOR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw control url.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_CONTROL_URL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw credentials file.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_CREDENTIALS_FILE",
-    "retired": false,
-    "sources": [
-      "scripts/mac-fetch-openclaw-secrets.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw docker bin.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_DOCKER_BIN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw dry run.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_DRY_RUN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw embedding model.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_EMBEDDING_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw finalize hermes state.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_FINALIZE_HERMES_STATE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw finalize nemoclaw state.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw finalize openclaw state.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw finalize supervisor.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_FINALIZE_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw fleet name.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_FLEET_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw gateway host.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_GATEWAY_HOST",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw gateway port.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_GATEWAY_PORT",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw home channel.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_HOME_CHANNEL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw host automation journal sha256.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw host dir.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_HOST_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/relocate-script-job-home.py",
-      "deploy/openclaw/run-script-cron-job.py",
-      "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw image.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw image revision.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_IMAGE_REVISION",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw instance id.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_INSTANCE_ID",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw kslug skill src.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_KSLUG_SKILL_SRC",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw legacy scripts dir.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_LEGACY_SCRIPTS_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/run-script-cron-job.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw legacy slack home channels file.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw live canary.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_LIVE_CANARY",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw message bin.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_MESSAGE_BIN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/run-script-cron-job.py",
-      "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw mirror model.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_MIRROR_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw model.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw peer turn timeout ms.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_PEER_TURN_TIMEOUT_MS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw plugin timeout ms.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_PLUGIN_TIMEOUT_MS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw policy template.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_POLICY_TEMPLATE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw public identity.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_PUBLIC_IDENTITY",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw representation mode.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_REPRESENTATION_MODE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw represented by.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_REPRESENTED_BY",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw require host automation journal.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw router api key.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_ROUTER_API_KEY",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw router url.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_ROUTER_URL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw sandbox.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SANDBOX",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openshell/reviewed-cli.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw sandbox delete timeout seconds.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw sandbox name.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SANDBOX_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw script job output dir.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py",
-      "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw script job relocator src.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw script job scripts dir.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/relocate-script-job-home.py",
-      "deploy/openclaw/run-script-cron-job.py",
-      "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw script runner src.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SCRIPT_RUNNER_SRC",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw skip image.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SKIP_IMAGE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw slack account id.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SLACK_ACCOUNT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py",
-      "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/human_interface_profile.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw slack account ids.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SLACK_ACCOUNT_IDS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "scripts/mac-fetch-openclaw-secrets.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw slack app token.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SLACK_APP_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw slack bot token.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SLACK_BOT_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw slack home channels file.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw subprocess timeout seconds.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw supervisor.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_SUPERVISOR",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw telegram account id.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/human_interface_profile.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw telegram bot token.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "scripts/mac-fetch-openclaw-secrets.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw telegram canary target.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_TELEGRAM_CANARY_TARGET",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "scripts/mac-fetch-openclaw-secrets.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw verify startup interval.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw verify startup timeout.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw workspace.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_WORKSPACE",
-    "retired": false,
-    "sources": [
-      "deploy/openclaw/curiosity-sidecar.py",
-      "deploy/openclaw/install-openclaw-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Openshell Sandbox setting: openshell adopt published runtime.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME",
@@ -4101,7 +3082,6 @@
     "name": "MAC_OPENSHELL_BIN",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/install-certifier-gateway-tunnel.sh",
       "src/mac/cli.py",
@@ -4211,7 +3191,6 @@
     "name": "MAC_OPENSHELL_GATEWAY_ENDPOINT",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -4304,8 +3283,6 @@
     "name": "MAC_OPENSHELL_POLICY",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/executor_sandbox.py",
@@ -4425,8 +3402,6 @@
     "name": "MAC_OPENSHELL_REQUIRED",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/docker-compose.yaml",
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/systemd/mac-openshell-supervisor.service",
       "src/mac/openshell_runtime.py",
       "src/mac/openshell_supervisor.py",
@@ -4524,17 +3499,6 @@
       "src/mac/executor_sandbox.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: opensh expected openclaw sandbox.",
-    "family": "core",
-    "name": "MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX",
-    "retired": false,
-    "sources": [
-      "deploy/openshell/bootstrap-openshell.sh"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -6009,7 +4973,6 @@
     "name": "MAC_SECRET_VAULT_TOKEN",
     "retired": false,
     "sources": [
-      "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py"
     ],
     "type": "str"
@@ -6021,7 +4984,6 @@
     "name": "MAC_SECRET_VAULT_URL",
     "retired": false,
     "sources": [
-      "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py"
     ],
     "type": "str"
@@ -6086,17 +5048,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: service nofile limit.",
-    "family": "core",
-    "name": "MAC_SERVICE_NOFILE_LIMIT",
-    "retired": false,
-    "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: service role ops.",
     "family": "core",
     "name": "MAC_SERVICE_ROLE_OPS",
@@ -6133,17 +5084,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: skip telegram verify.",
-    "family": "core",
-    "name": "MAC_SKIP_TELEGRAM_VERIFY",
-    "retired": false,
-    "sources": [
-      "scripts/mac-fetch-openclaw-secrets.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: slow request seconds.",
     "family": "core",
     "name": "MAC_SLOW_REQUEST_SECONDS",
@@ -6171,9 +5111,6 @@
     "name": "MAC_SRC",
     "retired": false,
     "sources": [
-      "deploy/nemoclaw/install-nemoclaw-gateway.sh",
-      "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/build-runtime-image.sh",
       "src/mac/worker.py"
@@ -7334,17 +6271,6 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker delivery drain seconds.",
-    "family": "worker",
-    "name": "MAC_WORKER_DELIVERY_DRAIN_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/worker.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Worker setting: worker deploy barrier file.",
     "family": "worker",
     "name": "MAC_WORKER_DEPLOY_BARRIER_FILE",
@@ -7395,7 +6321,6 @@
     "name": "MAC_WORKER_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/worker.py"

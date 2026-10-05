@@ -1,7 +1,7 @@
 """Honest, structured turn-outcome and provenance semantics for AgentBus.
 
 Incident task_60be7f29: AgentBus *delivery* succeeded while the underlying
-peer turn had actually failed — an embedded turn hit its OpenClaw turn limit
+peer turn had actually failed — an embedded turn hit its runtime turn limit
 and returned "LLM request failed / timed out", a real find-tool failure was
 embedded in the reply, and an output-length stop truncated the answer. Every
 one of those was published as ``peer.reply.v1`` with ``status: "ok"`` and then
@@ -9,9 +9,8 @@ mirrored to Slack as a model-written summary that read like success. Callers
 had no structured way to tell "the bus delivered" from "the peer turn
 succeeded", or a late asynchronous reply from a lost one.
 
-This module is the single, dependency-free source of truth both the directable
-worker (Python) and the OpenClaw mac-continuity plugin (JS mirrors these exact
-names/rules) use to answer three separate questions honestly:
+This module is the single, dependency-free source of truth the directable
+worker and the hub use to answer three separate questions honestly:
 
   1. TurnOutcome — what actually happened inside the peer's one-shot turn
      (ordinary completion vs. turn-limit timeout, output-limit truncation,

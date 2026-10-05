@@ -765,35 +765,6 @@ class InteractionTaskCreate(TaskCreate):
     actor: str = "hermes"
 
 
-class OpenClawDirectExecutionBegin(BaseModel):
-    """Begin a direct human-driven OpenClaw Slack code execution.
-
-    A direct, hub-authenticated human request may begin the requested code
-    change immediately. The human does not have to file a task first, and the
-    persona does not have to reply with a newly filed task before acting. When
-    the request is deferred/delegated/follow-up, a visible MAC task is filed
-    instead of executing inline.
-    """
-
-    human_id: str
-    authenticated: bool = True
-    directive_text: str = ""
-    slack_workspace_id: str
-    slack_channel_id: str
-    slack_thread_ts: str
-    slack_message_ts: str = ""
-    repository_id: str
-    repository_name: str = ""
-    base_sha: str
-    agent_id: Optional[str] = None
-    deferred: bool = False
-    delegated: bool = False
-    autonomous_followup: bool = False
-    requested_followup: bool = False
-    requested_capabilities: Optional[List[str]] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
 class PersonaRuntimeProofCreate(BaseModel):
     hermes_startup: Dict[str, Any] = Field(default_factory=dict)
 
@@ -2929,7 +2900,6 @@ def _dashboard_ide_resource_facts(value: Any) -> Dict[str, Any]:
         for key in (
             "hardware",
             "coding_clis",
-            "openclaw_runtime",
             "chat_gateway",
             "representation",
         )
@@ -4832,70 +4802,6 @@ def create_app(
             ),
             **data,
         ).to_dict()
-
-    @app.post("/persona-instances/{instance_id}/openclaw-executions")
-    def begin_openclaw_execution(
-        instance_id: str,
-        body: OpenClawDirectExecutionBegin,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Any:
-        from mac.openclaw_direct_execution import (
-            Capability,
-            HumanDirective,
-            MissingCapabilityError,
-            RepositoryTarget,
-            SlackProvenance,
-        )
-
-        instance = cp.get_persona_instance(instance_id)
-        principal.assert_tenant(instance.tenant_id)
-        requested = None
-        if body.requested_capabilities is not None:
-            try:
-                requested = [Capability(c) for c in body.requested_capabilities]
-            except ValueError as exc:
-                return JSONResponse(status_code=400, content={"detail": str(exc)})
-        try:
-            execution = cp.openclaw_direct_execution.begin_conversation_execution(
-                persona_instance_id=instance_id,
-                directive=HumanDirective(
-                    human_id=body.human_id,
-                    authenticated=body.authenticated,
-                    text=body.directive_text,
-                ),
-                slack=SlackProvenance(
-                    workspace_id=body.slack_workspace_id,
-                    channel_id=body.slack_channel_id,
-                    thread_ts=body.slack_thread_ts,
-                    message_ts=body.slack_message_ts,
-                ),
-                repository=RepositoryTarget(
-                    repository_id=body.repository_id,
-                    repository_name=body.repository_name,
-                    base_sha=body.base_sha,
-                ),
-                agent_id=body.agent_id,
-                requested_capabilities=requested,
-                deferred=body.deferred,
-                delegated=body.delegated,
-                autonomous_followup=body.autonomous_followup,
-                requested_followup=body.requested_followup,
-                metadata=body.metadata,
-            )
-        except MissingCapabilityError as exc:
-            # Fail closed: report the missing capability accurately with a 409,
-            # never a fabricated success.
-            return JSONResponse(status_code=409, content={"detail": exc.to_dict()})
-        return execution.to_dict()
-
-    @app.get("/openclaw-executions/{execution_id}")
-    def get_openclaw_execution(
-        execution_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        execution = cp.openclaw_direct_execution.get_execution(execution_id)
-        principal.assert_tenant(execution.tenant_id)
-        return execution.to_dict()
 
     @app.post("/platform-bindings")
     def register_platform_binding(
@@ -7350,7 +7256,7 @@ def create_app(
             notification_id=body.notification_id,
         )
 
-    # Runtime-neutral public identities and OpenClaw delivery ------------
+    # Runtime-neutral public identities and human message delivery -------
 
     @app.post("/communication/identities")
     def configure_communication_identity(
@@ -8392,84 +8298,13 @@ def create_app(
     def forget_memory(key: str, project: Optional[str] = Query(default=None)) -> Dict[str, Any]:
         return cp.forget_memory(key, project=project)
 
-    @app.get("/v1/agents/{agent_id}/continuity")
-    def get_openclaw_continuity_context(
-        agent_id: str,
-        q: str = Query(default="", max_length=8000),
-        limit: int = Query(default=5, ge=0, le=20),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Return the bound agent's dynamic mood and recent peer conversation.
-
-        This endpoint is the narrow runtime bridge used by MAC's OpenClaw
-        plugin.  It lives below ``/v1`` so an ordinary bound agent token can
-        read its own context without receiving fleet-wide ``read`` scope.
-
-        The vector memory tier was removed on 2026-09-30, so ``memories`` no
-        longer carries vector recall; it carries only bounded AgentBus history.
-        """
-        if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError("agent token cannot read a peer agent's continuity context")
-        cp.get_agent(agent_id)
-        mood = cp.get_current_mood(agent_id)
-        from mac.openclaw_continuity import ContinuityMetrics, recall_continuity
-
-        memories: List[Dict[str, Any]] = []
-        metrics = ContinuityMetrics()
-        if q.strip() and limit:
-            # Bounded AgentBus recall lets a prior peer conversation resurface
-            # labelled with its source and score. No vector recall: the memory
-            # tier it read from was removed.
-            memories, metrics = recall_continuity(
-                agent_id=agent_id,
-                query=q,
-                limit=limit,
-                agentbus=getattr(cp, "agentbus", None),
-            )
-        from mac.mood_policy import render_mood_overlay
-
-        mood_dict = mood.to_dict() if mood is not None else None
-        # The learning read-bridge failing silently is how a dead loop went
-        # unnoticed for weeks — every serve is now an observable event.  Query
-        # contents are never logged; only counts and the source mix are.
-        cp.record_log(
-            "continuity.context_served",
-            subject_type="agent",
-            subject_id=agent_id,
-            detail={
-                "memory_count": len(memories),
-                "query_length": len(q.strip()),
-                "has_mood": mood_dict is not None,
-                **metrics.to_dict(),
-            },
-        )
-        cp.record_metric(
-            "continuity.selected_results",
-            float(metrics.selected),
-            unit="items",
-            subject_type="agent",
-            subject_id=agent_id,
-            detail=metrics.to_dict(),
-        )
-        return {
-            "schema": "mac.openclaw_continuity_context.v1",
-            "agent_id": agent_id,
-            "mood": mood_dict,
-            "mood_prompt": render_mood_overlay(
-                str((mood_dict or {}).get("mode") or ""),
-                reason=(mood_dict or {}).get("reason"),
-            ),
-            "memories": memories,
-            "recall_metrics": metrics.to_dict(),
-        }
-
     @app.post("/v1/agents/{agent_id}/mood")
-    def set_openclaw_agent_mood(
+    def set_bound_agent_mood(
         agent_id: str,
         body: MoodSet,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        """Allow a bound OpenClaw runtime to self-report only its own mood."""
+        """Allow a bound agent runtime to self-report only its own mood."""
         if principal.agent_id and principal.agent_id != agent_id:
             raise AuthorizationError("agent token cannot set a peer agent's mood")
         values = _data(body)
@@ -8477,12 +8312,12 @@ def create_app(
         return cp.set_mood(agent_id, **values).to_dict()
 
     @app.delete("/v1/agents/{agent_id}/mood")
-    def clear_openclaw_agent_mood(
+    def clear_bound_agent_mood(
         agent_id: str,
         body: MoodClear,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Optional[Dict[str, Any]]:
-        """Allow a bound OpenClaw runtime to clear only its own mood."""
+        """Allow a bound agent runtime to clear only its own mood."""
         if principal.agent_id and principal.agent_id != agent_id:
             raise AuthorizationError("agent token cannot clear a peer agent's mood")
         values = _data(body)
@@ -8776,7 +8611,7 @@ def create_app(
         """Let a bound runtime write a durable learning about ITSELF.
 
         This is the conversational write path Hermes' background review used
-        to provide: without it, nothing an OpenClaw agent learns in chat can
+        to provide: without it, nothing an agent learns in chat can
         outlive the session. Records land in ``memory_records`` as
         ``agent_learning*`` rows (``created_by = agent_id``).
 

@@ -16,10 +16,9 @@ from mac.services import ControlPlane
 @pytest.mark.parametrize(
     "configured,expected",
     [
-        ("python,openclaw,custom", "python,hermes,custom"),
-        ("python,hermes,openclaw,custom", "python,hermes,custom"),
+        ("python,hermes,python,custom", "python,hermes,custom"),
         ("python,custom", "python,custom"),
-        ("api,testing,docs,openclaw", "api,testing,docs,hermes"),
+        (" api, testing ,docs", "api,testing,docs"),
     ],
 )
 def test_capability_projection_preserves_custom_and_useful_capabilities(configured, expected):
@@ -46,23 +45,14 @@ def test_default_keeps_all_nonruntime_capabilities():
         "firecrawl",
     }
     assert set(deploy_env.normalize_worker_capabilities("").split(",")) == expected
-    assert (
-        set(
-            deploy_env.normalize_worker_capabilities(
-                ",".join("openclaw" if item == "hermes" else item for item in expected)
-            ).split(",")
-        )
-        == expected
-    )
 
 
-def _resources(implementation="openclaw"):
+def _resources(implementation="hermes"):
     return {
         "hardware": {"os": "linux", "cpu_count": 4},
         "media_routes": [{"model": "existing-model"}],
         "representation": {"identity": "worker", "human_facing": True},
         "custom": {"tool": "preserved"},
-        "openclaw_runtime": {"ready": True},
         "chat_gateway": {"implementation": implementation, "verified": True},
         "gateway_ownership": {"owner": implementation, "exclusive": True},
     }
@@ -96,13 +86,12 @@ def registry(monkeypatch):
     return cp, MacApiClient("http://mac.test", transport=transport)
 
 
-@pytest.mark.parametrize("implementation", ["hermes", "none"])
-def test_real_registration_withdraws_stale_gateway_without_losing_identity(
-    registry, monkeypatch, tmp_path, implementation
+def test_real_registration_withdraws_gateway_without_losing_identity(
+    registry, monkeypatch, tmp_path
 ):
     cp, api = registry
-    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", implementation)
-    home = tmp_path / ".mac" / "openclaw"
+    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "none")
+    home = tmp_path / ".hermes"
     home.mkdir(parents=True)
     memory = home / "MEMORY.md"
     memory.write_text("active Hermes memory\n")
@@ -114,11 +103,11 @@ def test_real_registration_withdraws_stale_gateway_without_losing_identity(
         hostname="host",
         agent_name="worker",
         resources=resources,
-        capabilities=["python", "openclaw", "api", "testing", "custom"],
+        capabilities=["python", "hermes", "api", "testing", "custom"],
     )
     stored = cp.get_agent(registered["id"])
     assert set(stored.capabilities) == {"python", "hermes", "api", "testing", "custom"}
-    assert not {"openclaw_runtime", "chat_gateway", "gateway_ownership"} & stored.resources.keys()
+    assert not {"chat_gateway", "gateway_ownership"} & stored.resources.keys()
     for key in ("hardware", "media_routes", "representation", "custom"):
         assert stored.resources[key] == original[key]
     assert resources == original
@@ -137,7 +126,6 @@ def test_registration_keeps_current_gateway_only_on_conversational_worker(
     )
     stored = cp.get_agent(registered["id"])
     assert stored.capabilities == []
-    assert "openclaw_runtime" not in stored.resources
     for key in ("chat_gateway", "gateway_ownership"):
         if implementation == "hermes":
             assert stored.resources[key] == resources[key]
@@ -153,7 +141,7 @@ def test_heartbeat_withdraws_stale_gateway_only_after_reading_complete_resources
     machine = cp.register_machine("host")
     agent = cp.register_agent(machine.id, "worker", resources=_resources())
     current = worker.MacWorker(api, agent.id, tmp_path, lambda *_: worker.WorkerExecution(0, "ok"))
-    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "hermes")
+    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "none")
     monkeypatch.setattr(current, "_maybe_start_coding_route_probe", lambda: None)
     monkeypatch.setattr(current, "_maybe_command_inventory_resources", lambda: None)
     before = deepcopy(cp.get_agent(agent.id).resources)
@@ -166,6 +154,6 @@ def test_heartbeat_withdraws_stale_gateway_only_after_reading_complete_resources
     if read_fails:
         assert after == before
     else:
-        assert not {"openclaw_runtime", "chat_gateway", "gateway_ownership"} & after.keys()
+        assert not {"chat_gateway", "gateway_ownership"} & after.keys()
         for key in ("hardware", "media_routes", "representation", "custom"):
             assert after[key] == before[key]

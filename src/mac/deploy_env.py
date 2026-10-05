@@ -24,12 +24,38 @@ DEFAULT_WORKER_CAPABILITIES = (
 )
 
 
+#: The removed chat-gateway runtime. Hermes is the only human interface, so a
+#: configuration that still names this runtime is refused with an error rather
+#: than silently treated as Hermes.
+RETIRED_HUMAN_INTERFACE = "openclaw"
+
+
+def reject_retired_human_interface(value: str, setting: str) -> None:
+    """Raise ``ValueError`` when *setting* still names the removed runtime."""
+    if str(value or "").strip().lower() == RETIRED_HUMAN_INTERFACE:
+        raise ValueError(
+            "%s=%s is no longer supported: that runtime was removed from MAC and "
+            "Hermes is the only human interface. Use 'hermes' instead."
+            % (setting, RETIRED_HUMAN_INTERFACE)
+        )
+
+
+def chat_gateway_implementation(env: Optional[Mapping[str, str]] = None) -> str:
+    """The configured ``MAC_CHAT_GATEWAY_IMPL`` (lower-cased; ``""`` when unset)."""
+    source = os.environ if env is None else env
+    value = str(source.get("MAC_CHAT_GATEWAY_IMPL") or "").strip().lower()
+    reject_retired_human_interface(value, "MAC_CHAT_GATEWAY_IMPL")
+    return value
+
+
 def normalize_worker_capabilities(value: str) -> str:
-    """Retire the old runtime name while preserving useful capabilities."""
+    """De-duplicate worker capabilities, defaulting when none are configured."""
     items = [item.strip() for item in str(value or "").split(",") if item.strip()]
     if not items:
         return DEFAULT_WORKER_CAPABILITIES
-    return ",".join(dict.fromkeys("hermes" if item == "openclaw" else item for item in items))
+    for item in items:
+        reject_retired_human_interface(item, "worker capability")
+    return ",".join(dict.fromkeys(items))
 
 
 def _raw_env_assignment(line: str) -> Optional[tuple[str, str]]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from mac import deploy_env
 
 
@@ -31,6 +33,32 @@ def test_update_env_file_merges_without_dropping_existing_keys(tmp_path) -> None
     assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_worker_capabilities_retire_openclaw_and_default_when_empty() -> None:
+def test_worker_capabilities_dedupe_and_default_when_empty() -> None:
     assert deploy_env.normalize_worker_capabilities("") == deploy_env.DEFAULT_WORKER_CAPABILITIES
-    assert deploy_env.normalize_worker_capabilities("ops, openclaw,hermes,ops") == "ops,hermes"
+    assert deploy_env.normalize_worker_capabilities("ops, hermes,ops") == "ops,hermes"
+
+
+def test_worker_capabilities_reject_the_retired_human_interface() -> None:
+    retired = deploy_env.RETIRED_HUMAN_INTERFACE
+    with pytest.raises(ValueError, match="Hermes is the only human interface"):
+        deploy_env.normalize_worker_capabilities("ops,%s" % retired.upper())
+
+
+def test_chat_gateway_implementation_rejects_the_retired_runtime() -> None:
+    retired = deploy_env.RETIRED_HUMAN_INTERFACE
+    with pytest.raises(ValueError, match="MAC_CHAT_GATEWAY_IMPL"):
+        deploy_env.chat_gateway_implementation({"MAC_CHAT_GATEWAY_IMPL": " %s " % retired})
+    assert deploy_env.chat_gateway_implementation({"MAC_CHAT_GATEWAY_IMPL": " Hermes "}) == "hermes"
+    assert deploy_env.chat_gateway_implementation({}) == ""
+
+
+def test_fleet_registry_rejects_a_retired_runtime_defaults_block() -> None:
+    from mac.hermes_config_surface import _fleet_hermes_defaults
+    from mac.models import ValidationError
+
+    retired = deploy_env.RETIRED_HUMAN_INTERFACE
+    with pytest.raises(ValidationError, match="defaults.hermes"):
+        _fleet_hermes_defaults({"defaults": {retired: {"env": {"A": "1"}}}})
+    assert _fleet_hermes_defaults({"defaults": {"hermes": {"env": {"A": "1"}}}}) == {
+        "env": {"A": "1"}
+    }

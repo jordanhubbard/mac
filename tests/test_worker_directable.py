@@ -254,3 +254,34 @@ def test_flag_on_group_peer_stream_is_skipped(monkeypatch, tmp_path: Path) -> No
 
     assert _peer_replies(client) == []
     assert turns == []
+
+
+def test_directable_turn_runs_hermes_oneshot_and_classifies_plain_stdout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from mac.agentbus_outcomes import TURN_COMPLETED, TURN_ERROR
+
+    worker = _worker(tmp_path, _Client([], {}))
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(argv, 0, stdout="peer reply\n", stderr="")
+
+    monkeypatch.setenv("MAC_HERMES_BIN", "/opt/hermes/bin/hermes")
+    monkeypatch.setattr("mac.worker_directable.subprocess.run", fake_run)
+    text, outcome = worker._run_directable_turn("do the thing", stream_id="s1", sender="peer")
+    assert (text, outcome) == ("peer reply", TURN_COMPLETED)
+    assert seen["argv"] == ["/opt/hermes/bin/hermes", "--oneshot", "do the thing"]
+    assert seen["env"]["MAC_AGENT_ID"] == worker.agent_id
+
+    monkeypatch.setattr(
+        "mac.worker_directable.subprocess.run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 2, stdout="", stderr="boom"),
+    )
+    text, outcome = worker._run_directable_turn("again")
+    assert outcome == TURN_ERROR
+    assert "returncode 2" in text and "boom" in text

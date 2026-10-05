@@ -212,12 +212,10 @@ class TestRunReflectQuery:
         response = inst._run_reflect_query("Who are you?")
         assert response == "I am ready."
 
-    def test_runtime_query_passed_to_openclaw_in_openshell(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_runtime_query_passed_to_hermes_oneshot(self, tmp_path: Path, monkeypatch) -> None:
         inst = _instance(tmp_path)
         captured: Dict[str, Any] = {}
-        agent_bin = tmp_path / "openclaw-agent"
+        agent_bin = tmp_path / "hermes"
 
         def _capture_run(argv, *, env, timeout, **kw):
             captured["argv"] = argv
@@ -227,7 +225,7 @@ class TestRunReflectQuery:
                 args=argv, returncode=0, stdout="runtime answer", stderr=""
             )
 
-        monkeypatch.setenv("MAC_OPENCLAW_AGENT_BIN", str(agent_bin))
+        monkeypatch.setenv("MAC_HERMES_BIN", str(agent_bin))
         monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "12.5")
         monkeypatch.setattr(worker.subprocess, "run", _capture_run)
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
@@ -236,32 +234,17 @@ class TestRunReflectQuery:
 
         assert response == "runtime answer"
         argv = captured["argv"]
-        assert argv[:4] == [str(agent_bin), "--agent", "main", "--message"]
-        runtime_query = argv[4]
+        assert argv[:2] == [str(agent_bin), "--oneshot"]
+        assert len(argv) == 3
+        runtime_query = argv[2]
         assert "Requester query:\nWhat task are you running?" in runtime_query
-        assert "OpenClaw workspace context" in runtime_query
+        assert "Hermes context" in runtime_query
         assert "host or command inventory" in runtime_query
         assert "300 words" in runtime_query
-        assert argv[5:] == ["--session-id", "mac-reflect-agent_test", "--json"]
         env = captured["env"]
         assert env["MAC_AGENT_ID"] == "agent_test"
         assert env["MAC_WORKER_AGENT_ID"] == "agent_test"
         assert captured["timeout"] == 12.5
-
-    def test_extracts_text_from_openclaw_json(self, tmp_path: Path, monkeypatch) -> None:
-        inst = _instance(tmp_path)
-        monkeypatch.setattr(
-            worker.subprocess,
-            "run",
-            lambda *a, **kw: subprocess.CompletedProcess(
-                args=a[0],
-                returncode=0,
-                stdout='{"payloads":[{"text":"OpenClaw answer"}]}',
-                stderr="",
-            ),
-        )
-        monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
-        assert inst._run_reflect_query("Who?") == "OpenClaw answer"
 
     def test_nonzero_returncode_returns_error_text(self, tmp_path: Path, monkeypatch) -> None:
         inst = _instance(tmp_path)
@@ -284,7 +267,7 @@ class TestRunReflectQuery:
 
         def _timeout_run(*a, **kw):
             captured.update(kw)
-            raise subprocess.TimeoutExpired(cmd="openclaw-agent", timeout=120)
+            raise subprocess.TimeoutExpired(cmd="hermes", timeout=120)
 
         monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "7")
         monkeypatch.setattr(worker.subprocess, "run", _timeout_run)
@@ -300,7 +283,7 @@ class TestRunReflectQuery:
         observations = []
 
         def _bad_run(*a, **kw):
-            raise FileNotFoundError("openclaw-agent not found")
+            raise FileNotFoundError("hermes not found")
 
         monkeypatch.setattr(worker.subprocess, "run", _bad_run)
         monkeypatch.setattr(inst, "_observe_log", lambda name, **kw: observations.append(name))
@@ -308,22 +291,6 @@ class TestRunReflectQuery:
         response = inst._run_reflect_query("Q?", stream_id="s2")
         assert "reflect query failed" in response
         assert "worker.agentbus.reflect.error" in observations
-
-    def test_stream_id_is_sanitized_for_openclaw_session(self, tmp_path: Path, monkeypatch) -> None:
-        inst = _instance(tmp_path)
-        captured_argv = []
-
-        def _capture_run(argv, *, env, **kw):
-            captured_argv.extend(argv)
-            return subprocess.CompletedProcess(args=argv, returncode=0, stdout="ok", stderr="")
-
-        monkeypatch.setattr(worker.subprocess, "run", _capture_run)
-        monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
-
-        inst._run_reflect_query("Q?", stream_id="stream/with spaces")
-        assert captured_argv[captured_argv.index("--session-id") + 1] == (
-            "mac-reflect-stream-with-spaces"
-        )
 
 
 # ---------------------------------------------------------------------------

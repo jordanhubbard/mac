@@ -1,17 +1,14 @@
-"""Fleet-scoped OpenClaw configuration inspection and application.
+"""Fleet-scoped Hermes configuration inspection and application.
 
-The dashboard should not invent a second OpenClaw settings model.  This module
-builds its inspector from the vendored OpenClaw runtime's own supported surfaces:
+The dashboard should not invent a second Hermes settings model.  This module
+builds its inspector from the Hermes runtime's own supported surfaces:
 ``config.yaml`` defaults, ``.env`` declarations, plugin manifests, and skill
 frontmatter.  Writes land in the home-scoped fleet registry as desired state and
-can also be applied to the current node's OpenClaw home.
+can also be applied to the current node's Hermes home.
 
-Terminology note: OpenClaw is the fleet's chat-gateway runtime. The public
-schema strings (``SCHEMA`` / ``PAYLOAD_SCHEMA``) and the fleet registry
-``defaults.hermes`` config key are retained as-is for backward compatibility
-with the persisted ``fleets.yaml`` wire format, the deploy payload contract, and
-existing callers; reads accept the OpenClaw-named ``openclaw`` block first and
-fall back to the legacy ``hermes`` key.
+Hermes is the fleet's only chat gateway and human interface. Desired state lives
+under the fleet registry's ``defaults.hermes`` key; a registry that still
+carries a block for the removed runtime is refused with an error.
 """
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
 
-from mac.deploy_env import parse_env_text, render_env
+from mac.deploy_env import RETIRED_HUMAN_INTERFACE, parse_env_text, render_env
 from mac.models import ValidationError, utcnow
 
 SCHEMA = "mac.hermes_config_surface.v1"
@@ -257,8 +254,8 @@ def _write_env(path: Path, values: Mapping[str, str]) -> None:
 def _hermes_config_module() -> Any:
     """The vendored hermes_cli config module, which no longer ships.
 
-    The Hermes snapshot was removed on 2026-08-17: the runtime was measured
-    inactive (openclaw is the live gateway) and the tree was twice the size of
+    The Hermes snapshot was removed on 2026-08-17: the vendored tree was
+    unused by the live gateway and twice the size of
     mac's own code. Both callers already guard this with try/except and fall
     back to empty, so the surface degrades to "no Hermes-declared env vars and
     no Hermes config defaults" rather than failing.
@@ -524,12 +521,14 @@ def _find_or_create_fleet_entry(
 
 def _fleet_hermes_defaults(entry: Mapping[str, Any]) -> Dict[str, Any]:
     defaults = entry.get("defaults") if isinstance(entry.get("defaults"), dict) else {}
-    # Prefer the OpenClaw-named block; fall back to the legacy ``hermes`` key so
-    # existing fleet registries keep loading (backward-compatible READ only).
-    openclaw = defaults.get("openclaw") if isinstance(defaults.get("openclaw"), dict) else None
-    if openclaw is None:
-        openclaw = defaults.get("hermes") if isinstance(defaults.get("hermes"), dict) else {}
-    return deepcopy(openclaw)
+    if RETIRED_HUMAN_INTERFACE in defaults:
+        raise ValidationError(
+            "fleet defaults.%s is no longer supported: that runtime was removed "
+            "from MAC and Hermes is the only human interface. Move these settings "
+            "to defaults.hermes." % RETIRED_HUMAN_INTERFACE
+        )
+    hermes = defaults.get("hermes") if isinstance(defaults.get("hermes"), dict) else {}
+    return deepcopy(hermes)
 
 
 def hermes_payload_from_defaults(hermes: Mapping[str, Any]) -> Dict[str, Any]:
