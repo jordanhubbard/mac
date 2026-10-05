@@ -178,7 +178,6 @@ EXPECTED_TABLES = [
     "mood_overlays",
     "notifier_channels",
     "observability_events",
-    "openclaw_conversation_executions",
     "openshell_agent_status",
     "openshell_policies",
     "openshell_policy_assignments",
@@ -484,6 +483,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0009_slim_worker_credentials",
         "0010_inference_tokens",
         "0011_task_messages",
+        "0012_drop_conversation_execution_ledger",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -518,6 +518,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0011_task_messages": (
             "1a94bf85e74d55ef23056c0fb8fbdf2eb8faf96cf5bdedbe2f28cecc81e08309"
+        ),
+        "0012_drop_conversation_execution_ledger": (
+            "e2511c41e8b87ff941816cdd0f0416d1d9f22f2eecc2ddd5067558d9f27b48eb"
         ),
     }
     for migration in MIGRATIONS:
