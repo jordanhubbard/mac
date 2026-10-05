@@ -53,6 +53,8 @@ def test_gateway_routes_validate_and_persist_crawl_jobs(monkeypatch):
 
 
 def test_html_parsers_search_scrape_and_link_normalization(monkeypatch):
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     search_html = """
     <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa"> Example A </a>
     <div class="result__snippet"> A useful result </div>
@@ -77,6 +79,52 @@ def test_html_parsers_search_scrape_and_link_normalization(monkeypatch):
     assert document["html"] == page
     assert document["links"] == ["https://example.com/relative"]
     assert "markdown" in gateway.scrape_url("https://example.com/base", {"unsupported"})
+
+
+def test_brave_search_parses_results_and_skips_malformed_items(monkeypatch):
+    seen = {}
+
+    def fake_fetch_json(request):
+        seen["headers"] = {key.lower(): value for key, value in request.header_items()}
+        return {
+            "web": {
+                "results": [
+                    {"title": "Missing URL", "description": "ignored"},
+                    {
+                        "url": "https://example.com/a",
+                        "title": " <b>A</b> ",
+                        "description": " <em>desc</em> &amp; more ",
+                    },
+                    "not-a-dict",
+                    {"url": "https://example.com/b"},
+                ]
+            }
+        }
+
+    monkeypatch.setattr(gateway, "_fetch_json", fake_fetch_json)
+
+    results = gateway._search_brave("example", 5, "key")
+
+    assert results == [
+        {"url": "https://example.com/a", "title": "A", "description": "desc & more"},
+        {"url": "https://example.com/b", "title": "https://example.com/b", "description": ""},
+    ]
+    assert seen["headers"]["x-subscription-token"] == "key"
+
+
+def test_brave_search_rejects_unexpected_payload_shape(monkeypatch):
+    monkeypatch.setattr(gateway, "_fetch_json", lambda _request: {"web": {"results": {}}})
+    assert gateway._search_brave("example", 5, "key") == []
+
+
+def test_fetch_json_rejects_invalid_json(monkeypatch):
+    monkeypatch.setattr(
+        gateway,
+        "_fetch_bytes",
+        lambda _request: (b"<html>not json</html>", "utf-8"),
+    )
+    with pytest.raises(HTTPException, match="invalid JSON"):
+        gateway._fetch_json(gateway.urllib.request.Request("https://example.com"))
 
 
 def test_crawl_follows_same_host_and_ignores_failed_pages(monkeypatch):
@@ -202,6 +250,7 @@ def test_public_url_validation_and_helpers(monkeypatch):
         ["/a#fragment", "/a#other", "mailto:user@example.com", "https://other.example/b"],
     ) == ["https://example.com/a", "https://other.example/b"]
     assert gateway._clean_text(" A &amp;   B ") == "A & B"
+    assert gateway._strip_html(" <b>A</b> &amp; <i>B</i> ") == "A & B"
 
 
 def test_firecrawl_main_runs_uvicorn(monkeypatch):
