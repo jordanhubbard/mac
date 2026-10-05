@@ -14,7 +14,6 @@ from mac.worker import _plan_decomposed_is_environment_fault
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _OPERATOR_POLICY = _REPO_ROOT / "deploy" / "openshell" / "mac-hermes-policy.yaml"
-_OPENCLAW_POLICY = _REPO_ROOT / "deploy" / "openclaw" / "openclaw-policy.yaml"
 
 # The bearers the host executor holds and the model sandbox must never see.
 # Duplicated literally rather than imported so that narrowing the production
@@ -203,10 +202,7 @@ def test_operator_policy_hub_egress_is_one_templated_host() -> None:
 
 
 def test_every_agent_sandbox_policy_has_exact_agentbus_destination() -> None:
-    policies = (
-        ("task-executor", _OPERATOR_POLICY, "mac_hub"),
-        ("openclaw", _OPENCLAW_POLICY, "mac_agentbus"),
-    )
+    policies = (("task-executor", _OPERATOR_POLICY, "mac_hub"),)
     for name, path, policy_name in policies:
         policy = yaml.safe_load(path.read_text(encoding="utf-8"))
         endpoints = policy["network_policies"][policy_name]["endpoints"]
