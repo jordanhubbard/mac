@@ -54,6 +54,21 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _utf8_locale() -> str:
+    """A UTF-8 locale this host has.
+
+    Homebrew postgresql@17 refuses pg_ctl start when it inherits an unset or
+    invalid LC_ALL ("postmaster became multithreaded during startup"), which
+    is the live macOS failure this test exercises. Debian/OpenShell ship
+    C.utf8; macOS ships en_US.UTF-8.
+    """
+    available = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split()
+    for candidate in ("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"):
+        if candidate in available:
+            return candidate
+    return "C.UTF-8"
+
+
 pytestmark = pytest.mark.skipif(
     _pg_bin() is None,
     reason="no PostgreSQL server binaries; the binary-start path is unreachable here",
@@ -98,6 +113,8 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
     tmp_path = short_tmp
     datadir = tmp_path / "pgdata"
     port = _free_port()
+    locale_name = _utf8_locale()
+    locale_env = {"LC_ALL": locale_name, "LANG": locale_name}
 
     initdb = subprocess.run(
         [
@@ -110,6 +127,7 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, **locale_env},
     )
     assert initdb.returncode == 0, initdb.stderr
 
@@ -130,6 +148,7 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, **locale_env},
     )
     assert started.returncode == 0, started.stderr + (tmp_path / "pg.log").read_text()
 
@@ -146,6 +165,7 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
         shim.chmod(0o755)
     env = {
         **os.environ,
+        **locale_env,
         "PATH": "%s:%s:/usr/bin:/bin" % (shims, pg_bin),
         "MAC_TEST_PG_DATADIR": str(datadir),
         "MAC_TEST_PG_PORT": str(port),
