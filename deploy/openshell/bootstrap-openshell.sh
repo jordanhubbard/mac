@@ -953,8 +953,9 @@ for item in value:
             "hubverify": r"mac-hubverify-[A-Za-z0-9._-]+",
             "hv": r"mac-hv-[A-Za-z0-9._-]+",
             "codingcap": r"mac-codingcap-[A-Za-z0-9._-]+",
-            "runtime-smoke": r"mac-runtime-smoke-[A-Za-z0-9._-]+",
-            "security-probe": r"mac-security-probe-[A-Za-z0-9._-]+",
+            "runtime-smoke": r"mac-(?:runtime-smoke|rs)-[A-Za-z0-9._-]+",
+            "gpu-smoke": r"mac-(?:gpu-smoke|gs)-[A-Za-z0-9._-]+",
+            "security-probe": r"mac-(?:security-probe|sp)-[A-Za-z0-9._-]+",
         }
         pattern = disposable_patterns.get(kind)
         if pattern is None or re.fullmatch(pattern, name) is None:
@@ -1079,7 +1080,7 @@ retire_managed_sandboxes_via_docker() {
     # the API path: only the historical disposable families already reviewed
     # by mac.openshell_sandbox_gc are eligible, and only after every container
     # is stopped. Any future family fails closed until explicitly reviewed.
-    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
+    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|rs|gpu-smoke|gs|security-probe|sp)-[A-Za-z0-9._-]+$ ]]; then
       action=disposable
     elif [ -n "$expected_openclaw" ] && [ "$sandbox_name" = "$expected_openclaw" ]; then
       action=openclaw
@@ -1648,7 +1649,9 @@ CDIPRUNE
 gpu_runtime_available=0
 validate_openshell_runtime_image() {
   [ "$DO_ENABLE" = 1 ] || return 0
-  smoke_name="mac-runtime-smoke-$$"
+  # OpenShell rejects sandbox names over 19 characters; a 7-character prefix
+  # plus a PID (at most 7 digits on Linux) stays within it.
+  smoke_name="mac-rs-$$"
   smoke_log="$OSH_DIR/runtime-image-smoke.log"
   rm -f "$smoke_log"
   if openshell_local_gateway "$BIN/openshell" sandbox create \
@@ -1674,7 +1677,7 @@ validate_openshell_runtime_image() {
   fi
   if [ "$OSH_GPU" = yes ]; then
     prune_unmountable_cdi_entries
-    gpu_smoke_name="mac-gpu-smoke-$$"
+    gpu_smoke_name="mac-gs-$$"
     gpu_smoke_log="$OSH_DIR/runtime-gpu-smoke.log"
     rm -f "$gpu_smoke_log"
     if openshell_local_gateway "$BIN/openshell" sandbox create \
@@ -1696,7 +1699,7 @@ validate_openshell_runtime_image() {
     fi
     openshell_local_gateway "$BIN/openshell" sandbox delete "$gpu_smoke_name" >/dev/null 2>&1 || true
   fi
-  run_live_confinement_probe "$BIN/openshell" "mac-security-probe-$$" \
+  run_live_confinement_probe "$BIN/openshell" "mac-sp-$$" \
     "$OSH_DIR/live-confinement-probe.log"
 }
 

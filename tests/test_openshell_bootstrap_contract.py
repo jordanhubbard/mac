@@ -1107,7 +1107,7 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     assert "openshell.ai/managed-by=openshell" in inventory_writer
     assert "openshell.ai/sandbox-name" in direct
     assert (
-        "^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+        "^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|rs|gpu-smoke|gs|security-probe|sp)-[A-Za-z0-9._-]+$"
         in direct
     )
     assert 'sandbox_name" = "$expected_openclaw' in direct
@@ -1727,3 +1727,50 @@ def test_rollback_without_a_backup_fails_before_touching_the_gateway(tmp_path):
     assert rollback.returncode != 0
     assert "no OpenShell upgrade backup" in rollback.stderr
     assert not (tmp_path / "calls").exists()
+
+
+def test_smoke_sandbox_names_fit_openshell_name_limit():
+    # OpenShell rejects sandbox names over 19 characters. The bootstrap's smoke
+    # names end in the shell PID, which reaches 7 digits on Linux (pid_max is
+    # at most 4194304), so check the longest name the bootstrap can produce.
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    for variable in ("smoke_name", "gpu_smoke_name"):
+        line = next(
+            line.strip()
+            for line in bootstrap.splitlines()
+            if line.strip().startswith('%s="' % variable)
+        )
+        template = line.split("=", 1)[1].strip('"')
+        assert template.endswith("$$"), line
+        assert len(template.replace("$$", "4194304")) <= 19, line
+    probe = next(
+        line.strip()
+        for line in bootstrap.splitlines()
+        if line.strip().startswith("run_live_confinement_probe ")
+    )
+    template = probe.split()[2].strip('"')
+    assert template.endswith("$$"), probe
+    assert len(template.replace("$$", "4194304")) <= 19, probe
+
+
+def test_upgrade_retires_short_named_smoke_sandboxes(tmp_path):
+    for name, kind in (
+        ("mac-rs-4194304", "runtime-smoke"),
+        ("mac-gs-4194304", "gpu-smoke"),
+        ("mac-sp-4194304", "security-probe"),
+    ):
+        smoke = {
+            "name": name,
+            "phase": "Ready",
+            "labels": {
+                "mac.owner": "mac",
+                "mac.kind": kind,
+                "mac.keep": "false",
+                "mac.pid": "99999999",
+            },
+        }
+        result = _run_api_retirement_planner(tmp_path, [smoke])
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "disposable\t%s" % name
