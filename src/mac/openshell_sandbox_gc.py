@@ -22,9 +22,69 @@ MANAGED_NAME_RE = re.compile(
     r"^mac-(?:task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
 )
 
+#: OpenShell 0.0.x bounds ``sandbox list`` with ``--limit``; 0.1.2 removed the
+#: flag ("unexpected argument '--limit' found"), which made every sandbox
+#: GC/reconcile sweep fail on that release. A rejection of that one flag means
+#: the CLI lists unbounded sandboxes instead, so retry without it -- but never
+#: mask any other listing failure.
+_LIMIT_FLAG_REJECTED_RE = re.compile(
+    r"--limit.{0,80}(unexpected|unrecognized|unknown|wasn't expected|not expected)"
+    r"|(unexpected|unrecognized|unknown|wasn't expected|not expected).{0,80}--limit",
+    re.IGNORECASE,
+)
+
 
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sandbox_list_rejects_limit(detail: str) -> bool:
+    """Whether a failed ``sandbox list`` reports the removed ``--limit`` flag."""
+    return bool(_LIMIT_FLAG_REJECTED_RE.search(str(detail or "")))
+
+
+def run_sandbox_list(
+    openshell_bin: str,
+    *,
+    limit: int = 1000,
+    run: Optional[Callable[..., Any]] = None,
+    timeout: float = 60.0,
+) -> Any:
+    """Run ``openshell sandbox list --output json`` across CLI generations.
+
+    Tries the bounded listing first so a chatty gateway cannot return an
+    unbounded page on releases that support ``--limit``. When the CLI rejects
+    that now-removed flag, retry once without it. Any other nonzero result is
+    returned unchanged so callers surface the real gateway failure.
+    """
+    runner = run or subprocess.run
+    listed = runner(
+        [
+            openshell_bin,
+            "sandbox",
+            "list",
+            "--limit",
+            str(limit),
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if listed.returncode == 0:
+        return listed
+    detail = (listed.stderr or listed.stdout or "").strip()
+    if not _sandbox_list_rejects_limit(detail):
+        return listed
+    return runner(
+        [openshell_bin, "sandbox", "list", "--output", "json"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
 
 
 def _created_at(value: Any) -> Optional[datetime]:
@@ -264,21 +324,7 @@ def reconcile_stale_sandboxes(
 ) -> Dict[str, Any]:
     """List and optionally delete stale MAC-owned OpenShell sandboxes."""
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -495,21 +541,7 @@ def reap_orphaned_task_sandboxes(
     secret-free: it records only names, phases, ownership signals, and reasons.
     """
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -734,21 +766,7 @@ def reconcile_task_sandboxes_from_lease_authority(
     evidence is secret-free.
     """
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -1006,21 +1024,7 @@ def reconcile_leftover_task_sandboxes(
     after deletion is a no-op. Returned evidence is secret-free.
     """
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -1246,21 +1250,7 @@ def reconcile_task_sandbox_lifecycle(
     if clean_trigger not in LIFECYCLE_TRIGGERS:
         raise ValueError("unsupported lifecycle trigger: %s" % trigger)
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
