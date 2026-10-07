@@ -19,7 +19,7 @@ DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
 #: sandbox is given.
 DEFAULT_ERROR_GRACE_SECONDS = 15 * 60
 MANAGED_NAME_RE = re.compile(
-    r"^mac-(?:task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+    r"^mac-(?:task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
 )
 
 
@@ -355,7 +355,11 @@ def reconcile_stale_sandboxes(
 # acceptance: a sandbox that cannot prove full, valid MAC ownership plus a dead
 # recorded PID is never reaped by this path.
 
-MANAGED_KINDS = frozenset({"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"})
+#: ``hubverify`` is retained so sandboxes created before the 19-character
+#: rename to ``mac-hv-`` are still collected.
+MANAGED_KINDS = frozenset(
+    {"task", "hubverify", "hv", "codingcap", "runtime-smoke", "security-probe"}
+)
 
 _FALSEY_KEEP = {"0", "false", "no", "off"}
 

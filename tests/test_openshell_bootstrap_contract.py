@@ -1105,7 +1105,8 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     assert "openshell.ai/managed-by=openshell" in inventory_writer
     assert "openshell.ai/sandbox-name" in direct
     assert (
-        "^mac-(task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$" in direct
+        "^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+        in direct
     )
     assert 'sandbox_name" = "$expected_openclaw' in direct
     checkpoint = direct.index("checkpoint_openclaw_with_docker")
