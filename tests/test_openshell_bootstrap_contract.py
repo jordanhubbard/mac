@@ -1179,7 +1179,7 @@ def test_complete_openshell_bootstrap_clears_default_and_configured_dispatch_hol
     assert not override.exists()
 
 
-def test_runtime_source_revision_uses_archive_marker_and_rejects_disagreement(
+def test_runtime_source_revision_prefers_checkout_head_over_stale_marker(
     tmp_path,
 ):
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
@@ -1223,6 +1223,8 @@ def test_runtime_source_revision_uses_archive_marker_and_rejects_disagreement(
     assert archive.returncode == 0, archive.stderr
     assert archive.stdout.strip() == "a" * 40
 
+    # The durable marker lost its writer, so a stale value must not refuse an
+    # upgrade: the deployed checkout HEAD is authoritative.
     mismatch = subprocess.run(
         ["/bin/bash", "-c", helper + "\nresolve_deployed_source_revision\n"],
         check=False,
@@ -1230,8 +1232,37 @@ def test_runtime_source_revision_uses_archive_marker_and_rejects_disagreement(
         text=True,
         env={**base_env, "FAKE_GIT_REVISION": "b" * 40},
     )
-    assert mismatch.returncode != 0
-    assert "does not match durable source revision marker" in mismatch.stderr
+    assert mismatch.returncode == 0, mismatch.stderr
+    assert mismatch.stdout.strip() == "b" * 40
+
+
+def test_source_identity_is_proven_before_any_binary_is_replaced():
+    """A stale source identity must fail before the node is touched.
+
+    The deployed-source marker lost its writer, so a mismatch used to strand a
+    node after the CLIs and gateway had already been replaced. The revision is
+    now resolved exactly once, up front, and reused for the image build.
+    """
+    bootstrap = _bootstrap_text()
+
+    precondition = bootstrap.index(
+        'DEPLOYED_SOURCE_REVISION="$(resolve_deployed_source_revision)"'
+    )
+    assert bootstrap.count("$(resolve_deployed_source_revision)") == 1
+
+    later_steps = (
+        "\nretire_managed_sandboxes_before_upgrade || exit $?",
+        "\nstop_gateway_fail_closed\n",
+        "\ninstall_openshell_cli_static\n",
+        "\ninstall_openshell_gateway\n",
+        "\n  build_runtime_image\n",
+    )
+    for later in later_steps:
+        assert precondition < bootstrap.index(later), later
+
+    builder = bootstrap.split("build_runtime_image() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'image_source_sha="$DEPLOYED_SOURCE_REVISION"' in builder
+    assert "resolve_deployed_source_revision" not in builder
 
 
 def test_linux_gateway_firewall_resolves_only_the_owned_docker_bridge(tmp_path):
