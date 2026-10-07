@@ -108,6 +108,7 @@ request and response definitions.
 | `GET` | `/crash-reports` | List Crash Reports |
 | `GET` | `/crash-reports/{report_id}` | Get Crash Report |
 | `POST` | `/crash-reports/{report_id}/resolve` | Resolve Crash Report |
+| `GET` | `/dashboard/board` | Dashboard Board |
 | `GET` | `/dashboard/observe` | Dashboard Observe |
 | `GET` | `/dashboard/observe/projects/{project}/graph` | Dashboard Observe Project Graph |
 | `GET` | `/dashboard/observe/tasks/{task_id}` | Dashboard Observe Task |

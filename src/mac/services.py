@@ -11062,6 +11062,65 @@ class ControlPlane:
             self._resume_task_answered_on_board(board, message)
         return message.to_dict()
 
+    def list_recent_board(
+        self, *, after: int = 0, limit: int = 200, include_activity: bool = False
+    ) -> JsonDict:
+        """The board across all tasks, for the console's conversation view.
+
+        Messages after ``after`` (oldest first; on a first read, the newest
+        ``limit``), each with its task's title, project and state, plus every
+        agent question nobody has answered yet.
+        """
+        from mac.task_board import TaskMessage
+
+        try:
+            after = int(after or 0)
+            limit = max(1, min(int(limit or 200), 500))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("after and limit must be integers") from exc
+        activity = "" if include_activity else " AND m.kind <> 'activity'"
+        select = (
+            "SELECT m.*, t.title AS task_title, t.project AS task_project, t.state AS task_state "
+            "FROM task_messages m JOIN tasks t ON t.id = m.task_id"
+        )
+        if int(after or 0) > 0:
+            rows = self.store.query_all(
+                select + " WHERE m.id > ?" + activity + " ORDER BY m.id ASC LIMIT ?",
+                (int(after), limit),
+            )
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        select + " WHERE 1 = 1" + activity + " ORDER BY m.id DESC LIMIT ?",
+                        (limit,),
+                    )
+                )
+            )
+        open_rows = self.store.query_all(
+            select
+            + " WHERE m.kind = 'question' AND m.author_kind = 'agent'"
+            " AND t.state NOT IN ('completed', 'failed', 'cancelled')"
+            " AND NOT EXISTS (SELECT 1 FROM task_messages a WHERE a.reply_to = m.id"
+            " AND a.kind = 'answer') ORDER BY m.id ASC LIMIT 100",
+        )
+
+        def _with_task(row: Any) -> JsonDict:
+            return {
+                **TaskMessage.from_row(row).to_dict(),
+                "task_title": row["task_title"],
+                "task_project": row["task_project"],
+                "task_state": row["task_state"],
+            }
+
+        messages = [_with_task(row) for row in rows]
+        return {
+            "schema": "mac.task_board_feed.v1",
+            "messages": messages,
+            "open_questions": [_with_task(row) for row in open_rows],
+            "cursor": messages[-1]["id"] if messages else int(after or 0),
+        }
+
     def _notify_task_question(self, message: Any) -> None:
         """Send an agent's question to people through the notification outbox.
 
