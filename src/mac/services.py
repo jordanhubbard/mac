@@ -11039,19 +11039,157 @@ class ControlPlane:
         """Append one message to a task's board (see :mod:`mac.task_board`)."""
         from mac.task_board import TaskBoard
 
-        return (
-            TaskBoard(self.store)
-            .post(
-                task_id,
-                author_kind=author_kind,
-                author=author,
-                kind=kind,
-                body=body,
-                reply_to=reply_to,
-                metadata=metadata,
-            )
-            .to_dict()
+        board = TaskBoard(self.store)
+        message = board.post(
+            task_id,
+            author_kind=author_kind,
+            author=author,
+            kind=kind,
+            body=body,
+            reply_to=reply_to,
+            metadata=metadata,
         )
+        if (
+            message.kind == "question"
+            and message.author_kind == "agent"
+            and not (message.metadata or {}).get("blocking")
+        ):
+            # A blocking question is announced when the task parks on it: the
+            # NEEDS_INPUT transition emits its own ``task.question``. Sending
+            # one here too would notify people twice for one question.
+            self._notify_task_question(message)
+        elif message.kind == "answer" and message.reply_to is not None:
+            self._resume_task_answered_on_board(board, message)
+        return message.to_dict()
+
+    def _notify_task_question(self, message: Any) -> None:
+        """Send an agent's question to people through the notification outbox.
+
+        The notifier routes ``task.question`` to whichever Slack, Telegram or
+        Hermes channels subscribe to it. A notification failure never refuses
+        the question: it is on the board either way.
+        """
+        try:
+            task = self.get_task(message.task_id)
+            detail = dict(message.metadata or {})
+            lines = [message.body]
+            if detail.get("options"):
+                lines.append("Options: %s" % ", ".join(str(o) for o in detail["options"]))
+            if detail.get("default") is not None:
+                lines.append("If nobody answers%s, the agent will assume: %s" % (
+                    " by %s" % detail["expires_at"] if detail.get("expires_at") else "",
+                    detail["default"],
+                ))
+            lines.append(
+                "Answer: mac task say %s --answer %s \"...\"" % (message.task_id, message.id)
+            )
+            self.record_notification(
+                "task.question",
+                "Question on: %s" % task.title,
+                "\n".join(lines),
+                subject_type="task",
+                subject_id=message.task_id,
+                metadata={
+                    "task_message_id": message.id,
+                    "blocking": False,
+                    "project": task.project,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.record_log(
+                "task_board.question_notification_failed",
+                layer="control_plane",
+                level="warning",
+                detail={"task_id": message.task_id, "error": str(exc)[:500]},
+            )
+
+    def _resume_task_answered_on_board(self, board: Any, answer: Any) -> None:
+        """An answer to the question a task is parked on returns it to the queue."""
+        try:
+            question = board.get(int(answer.reply_to))
+        except NotFoundError:
+            return
+        if question.kind != "question":
+            return
+        task = self.get_task(answer.task_id)
+        if task.state != TaskState.NEEDS_INPUT.value:
+            return
+        parked_on = ensure_json_object(ensure_json_object(task.metadata).get("needs_input"))
+        board_id = parked_on.get("board_message_id")
+        if board_id is not None and int(board_id) != int(question.id):
+            return
+        self.answer_task_input(
+            answer.task_id, answer.body, answer.author or "human", disposition="resume"
+        )
+
+    def expire_task_questions(self, *, now: Optional[str] = None) -> JsonDict:
+        """Apply the default of every expired, unanswered agent question.
+
+        An agent may ask with ``--default`` and ``--expires``. When the time
+        passes with no answer, the hub answers with the default itself, which
+        resumes a task parked on that question. A question past its time with
+        no default is announced once as overdue and stays open.
+        """
+        from mac.task_board import TaskBoard
+
+        try:
+            instant = parse_time(now or utcnow())
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("now must be an ISO-8601 time") from exc
+        rows = self.store.query_all(
+            """
+            SELECT q.* FROM task_messages q
+            WHERE q.kind = 'question' AND q.author_kind = 'agent'
+              AND NOT EXISTS (
+                  SELECT 1 FROM task_messages a
+                  WHERE a.reply_to = q.id AND a.kind = 'answer'
+              )
+            ORDER BY q.id
+            LIMIT 500
+            """,
+        )
+        board = TaskBoard(self.store)
+        applied: List[int] = []
+        overdue: List[int] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata"] or "{}")
+                expires_at = parse_time(str(metadata.get("expires_at") or ""))
+            except Exception:  # noqa: BLE001 - no usable deadline: never expires
+                continue
+            if expires_at > instant:
+                continue
+            question_id = int(row["id"])
+            if metadata.get("default") is not None:
+                self.post_task_message(
+                    str(row["task_id"]),
+                    author_kind="hub",
+                    author="hub",
+                    kind="answer",
+                    body="No answer by %s; proceeding with the default: %s"
+                    % (metadata["expires_at"], metadata["default"]),
+                    reply_to=question_id,
+                    metadata={"default_applied": True},
+                )
+                applied.append(question_id)
+                continue
+            already = self.store.query_one(
+                "SELECT 1 FROM task_messages WHERE task_id = ? AND author_kind = 'hub' "
+                "AND kind = 'message' AND reply_to = ?",
+                (str(row["task_id"]), question_id),
+            )
+            if already is None:
+                board.post(
+                    str(row["task_id"]),
+                    author_kind="hub",
+                    author="hub",
+                    kind="message",
+                    body="Question #%d is overdue and has no default; it stays open." % question_id,
+                    reply_to=question_id,
+                    metadata={"overdue": True},
+                )
+                overdue.append(question_id)
+        return {"schema": "mac.task_question_expiry.v1", "defaults_applied": applied, "overdue": overdue}
 
     def list_task_messages(
         self,
@@ -17093,6 +17231,15 @@ class ControlPlane:
         except Exception as exc:  # noqa: BLE001 - diagnostics must never stop the tick.
             self.record_log(
                 "task_flow.tick_failed",
+                layer="control_plane",
+                level="warning",
+                detail={"error": str(exc)[:500]},
+            )
+        try:
+            self.expire_task_questions()
+        except Exception as exc:  # noqa: BLE001 - question expiry must not stop dispatch
+            self.record_log(
+                "task_board.question_expiry_failed",
                 layer="control_plane",
                 level="warning",
                 detail={"error": str(exc)[:500]},

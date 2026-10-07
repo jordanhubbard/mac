@@ -1883,6 +1883,22 @@ class MacWorker(
                     "assignment no longer current after executor completed",
                     execution=execution,
                 )
+            parked = _blocking_question_marker(task_dir)
+            if parked is not None:
+                # The agent stopped on a question only a person can answer.
+                # That is not a failure and not finished work: park the task
+                # (NEEDS_INPUT keeps it out of every sweeper) until the answer
+                # arrives on the board, which returns it to the queue.
+                parked_task = self.client.post(
+                    "/tasks/%s/transition" % quote(task_id, safe=""),
+                    {
+                        "target_state": "needs_input",
+                        "actor": self.agent_id,
+                        "lease_id": lease_id,
+                        "detail": parked,
+                    },
+                )
+                return WorkerRunResult(status="needs_input", task=parked_task, lease=lease)
             recorded_execution, late_exit_acceptance = _salvage_accepted_late_exit(
                 task,
                 task_dir,
@@ -7777,6 +7793,21 @@ def _repository_context_head_is_pushed(worktree: Path, repo: JsonDict) -> bool:
         if remote_head.returncode == 0 and remote_head.stdout.strip() == head_sha:
             return True
     return False
+
+
+#: Written by the executor (host side, never downloaded from the sandbox) when
+#: the agent's run ended on an unanswered blocking question.
+NEEDS_INPUT_MARKER = "needs-input.json"
+
+
+def _blocking_question_marker(task_dir: Path) -> Optional[JsonDict]:
+    try:
+        marker = json.loads((task_dir / NEEDS_INPUT_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(marker, dict) or not marker.get("questions"):
+        return None
+    return marker
 
 
 #: Submission problems that only restate what the host finalizer did or did

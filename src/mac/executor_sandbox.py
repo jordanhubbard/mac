@@ -3204,6 +3204,7 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
         _TRUSTED_READ_ONLY_VERIFICATION_FILE,
         "worker-result.json",
         "review-result.json",
+        _NEEDS_INPUT_MARKER,
         "stdout.txt",
         "stderr.txt",
     }:
@@ -6383,6 +6384,28 @@ def _open_blocking_question(messages: List[Dict[str, Any]]) -> Optional[Dict[str
     return None
 
 
+_NEEDS_INPUT_MARKER = "needs-input.json"
+
+
+def _write_needs_input_marker(workspace: Path, question: Mapping[str, Any]) -> None:
+    """Tell the worker to park the task on this question (see worker)."""
+    metadata = question.get("metadata") if isinstance(question.get("metadata"), dict) else {}
+    item: Dict[str, Any] = {"question": str(question.get("body") or "")[:2000]}
+    if metadata.get("options"):
+        item["options"] = list(metadata["options"])[:12]
+    marker = {
+        "questions": [item],
+        "why": "the agent asked on the task board (message #%s) and cannot continue without "
+        "an answer; reply with `mac task say <task> --answer %s \"...\"`"
+        % (question.get("id"), question.get("id")),
+        "board_message_id": question.get("id"),
+    }
+    try:
+        (workspace / _NEEDS_INPUT_MARKER).write_text(json.dumps(marker, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        sys.stderr.write("[executor] could not record the blocking question: %s\n" % exc)
+
+
 def _latest_agent_handoff(messages: List[Dict[str, Any]]) -> str:
     for message in reversed(messages):
         if message.get("author_kind") == "agent" and message.get("kind") in ("done", "status"):
@@ -6461,8 +6484,10 @@ def _continue_claude_session(
         return result
     for round_number in range(1, _continuation_rounds() + 1):
         messages = _board_messages(task_id)
-        if _open_blocking_question(messages) is not None:
+        question = _open_blocking_question(messages)
+        if question is not None:
             emit_telemetry("continuation_waiting_on_question", task_id=task_id, round=round_number)
+            _write_needs_input_marker(workspace, question)
             return result
         gate_failure = getattr(result, "mac_repository_verification_failure", None)
         if isinstance(gate_failure, dict):
