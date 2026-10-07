@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from mac.openshell_sandbox_gc import (
     _process_identity,
     reconcile_stale_sandboxes,
+    run_sandbox_list,
     stale_sandbox_candidates,
 )
 
@@ -505,3 +506,69 @@ def test_the_short_hub_verifier_family_is_fully_managed():
             pid_is_alive=lambda _pid: False,
         )
         assert record["reap"] is True, record
+
+
+# --- OpenShell 0.1.2 removed ``sandbox list --limit`` ------------------------
+
+
+def test_sandbox_list_retries_without_limit_when_the_flag_was_removed():
+    """0.1.2 rejects ``--limit``; a bounded listing must degrade to an
+    unbounded one rather than failing every GC/reconcile sweep."""
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        if "--limit" in argv:
+            return SimpleNamespace(
+                returncode=2,
+                stdout="",
+                stderr="error: unexpected argument '--limit' found",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([_sandbox("mac-task-old")]),
+            stderr="",
+        )
+
+    listed = run_sandbox_list("openshell", run=fake_run)
+
+    assert listed.returncode == 0
+    assert calls[0][3:5] == ["--limit", "1000"]
+    assert "--limit" not in calls[-1]
+    assert len(calls) == 2
+
+
+def test_sandbox_list_does_not_retry_unrelated_listing_failures():
+    """A real gateway failure must surface unchanged, never be retried as if
+    the CLI had changed."""
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=1, stdout="", stderr="gateway unreachable")
+
+    listed = run_sandbox_list("openshell", run=fake_run)
+
+    assert listed.returncode == 1
+    assert len(calls) == 1
+
+
+def test_reap_orphaned_task_sandboxes_survives_limit_flag_removal(monkeypatch):
+    rows = [_orphan("mac-task-dead", pid="10")]
+
+    def fake_run(argv, **_kwargs):
+        if "--limit" in argv:
+            return SimpleNamespace(
+                returncode=2,
+                stdout="",
+                stderr="error: unexpected argument '--limit' found",
+            )
+        if argv[2] == "list":
+            return SimpleNamespace(returncode=0, stdout=json.dumps(rows), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("mac.openshell_sandbox_gc.subprocess.run", fake_run)
+
+    report = reap_orphaned_task_sandboxes(apply=True, pid_is_alive=lambda _p: False)
+
+    assert report["deleted"] == ["mac-task-dead"]
