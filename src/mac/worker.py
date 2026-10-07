@@ -2022,6 +2022,18 @@ class MacWorker(
                             manual_repair_required=False,
                             repository_gate_failure=gate_failure,
                         )
+                    elif _only_harness_finalization_problems(submission_problems):
+                        # Every problem restates a decision the harness made
+                        # (it did not push, or recorded no verifier result),
+                        # not a defect in the agent's change. On 2026-10-04
+                        # nanolang task_44cc86fa was failed twice this way after
+                        # the agent implemented and tested the change; such a
+                        # block retries, it does not end the task.
+                        blocked_detail.update(
+                            reason="harness_finalization_incomplete",
+                            failure="harness_finalization_incomplete",
+                            manual_repair_required=False,
+                        )
                     blocked_task = self.client.post(
                         "/tasks/%s/transition" % quote(task_id, safe=""),
                         {
@@ -7765,6 +7777,34 @@ def _repository_context_head_is_pushed(worktree: Path, repo: JsonDict) -> bool:
         if remote_head.returncode == 0 and remote_head.stdout.strip() == head_sha:
             return True
     return False
+
+
+#: Submission problems that only restate what the host finalizer did or did
+#: not do. The agent cannot push or record the verifier's result: both are the
+#: harness's own steps (executor_finalizer), so their absence is not the work's.
+_HARNESS_FINALIZATION_PROBLEMS = (
+    "repo evidence requires pushed=true with remote_ref, or pr_url",
+    "repo_change evidence requires a repository verifier test result for repo.head_sha",
+    "repo code evidence requires at least one passing test/check",
+)
+
+
+def _is_harness_finalization_problem(problem: str) -> bool:
+    if not any(problem.startswith(prefix) for prefix in _HARNESS_FINALIZATION_PROBLEMS):
+        return False
+    if problem.startswith(_HARNESS_FINALIZATION_PROBLEMS[1]):
+        # Only a verifier result that is ABSENT (never recorded, or recorded
+        # without a status) is the harness's gap. A result for another commit
+        # is evidence about the wrong head and stays a contract failure.
+        if "verification.tests is empty" in problem:
+            return True
+        return "status is None" in problem and "is not repo.head_sha" not in problem
+    return True
+
+
+def _only_harness_finalization_problems(problems: Any) -> bool:
+    items = [str(problem or "") for problem in (problems or [])]
+    return bool(items) and all(_is_harness_finalization_problem(item) for item in items)
 
 
 def _repository_context_audit_metadata(context: JsonDict) -> JsonDict:

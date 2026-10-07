@@ -5732,8 +5732,9 @@ def _agent_argv(
     confined: bool,
     task: Any = None,
     chosen: Optional[Dict[str, str]] = None,
+    resume_session: str = "",
 ) -> List[str]:
-    """The opencode argv for this task, or a deterministic fail-closed command.
+    """The coding CLI argv for this task, or a deterministic fail-closed command.
 
     opencode runs on a ``machub`` model through the hub router with this task's
     inference-only token (see :mod:`mac.coding_agent`). When OpenShell
@@ -5816,6 +5817,8 @@ def _agent_argv(
     )
     argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
     if choice.agent == _ca.CLAUDE_AGENT:
+        if resume_session:
+            return _ca.coding_agent_argv(argv_choice, prompt, resume=resume_session)
         # Name the session so its transcript can be found, and resumed, later.
         session_id = str(uuid.uuid4())
         agent_dir = workspace / _ca.CLAUDE_AGENT_DIR
@@ -5944,12 +5947,14 @@ def _invoke_agent(
         )
     confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
     route: Dict[str, str] = {}
+    resume = str(opts.get("resume_session") or "")
     agent_argv = _agent_argv(
         PROMPT_SENTINEL,
         workspace,
         confined=confined,
         task=opts.get("task"),
         chosen=route,
+        **({"resume_session": resume} if resume else {}),
     )
     compiled_prompt = _compile_outbound_prompt(
         prompt,
@@ -6305,6 +6310,222 @@ def _write_repository_verification_failure_manifest(
     )
 
 
+# ---------------------------------------------------------------------------
+# Continuation: finish the work in the same Claude Code session
+# ---------------------------------------------------------------------------
+#: How many times one attempt may hand the agent its gate failure or the
+#: judge's next steps and resume the same session before the attempt ends.
+_CONTINUATION_ROUNDS_ENV = "MAC_CLAUDE_CONTINUATION_ROUNDS"
+_DEFAULT_CONTINUATION_ROUNDS = 3
+#: The judge's last verdict for this executor's task. Held in memory, never
+#: in the workspace: the agent can write the workspace, and the verdict must
+#: be the host's own observation when it is signed into the evidence.
+_LAST_JUDGE_VERDICT: Dict[str, Any] = {}
+
+
+def _continuation_rounds() -> int:
+    try:
+        return max(0, int(env_str(_CONTINUATION_ROUNDS_ENV) or _DEFAULT_CONTINUATION_ROUNDS))
+    except ValueError:
+        return _DEFAULT_CONTINUATION_ROUNDS
+
+
+def _task_board_call(task_id: str, method: str, body: Optional[Dict[str, Any]] = None) -> Any:
+    """The task board as this worker (which owns the task), or None."""
+    base_url, token = _hub_env()
+    if not base_url or not token or not task_id:
+        return None
+    from urllib.parse import quote
+
+    url = "%s/tasks/%s/messages" % (base_url.rstrip("/"), quote(task_id, safe=""))
+    if method == "GET":
+        url += "?after=0&limit=500"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        method=method,
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def _board_messages(task_id: str) -> List[Dict[str, Any]]:
+    try:
+        page = _task_board_call(task_id, "GET") or {}
+    except Exception as exc:  # noqa: BLE001 - the board is advisory to the loop
+        sys.stderr.write("[executor] task board unreadable: %s\n" % exc.__class__.__name__)
+        return []
+    return [m for m in page.get("messages") or [] if isinstance(m, dict)]
+
+
+def _post_board_as_hub(task_id: str, kind: str, body: str, **metadata: Any) -> None:
+    try:
+        _task_board_call(
+            task_id,
+            "POST",
+            {"kind": kind, "body": body, "author_kind": "hub", "metadata": metadata},
+        )
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("[executor] could not post %s to the board: %s\n" % (kind, exc))
+
+
+def _open_blocking_question(messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The agent's latest blocking question, if nobody has answered it yet."""
+    answered = {m.get("reply_to") for m in messages if m.get("kind") == "answer"}
+    for message in reversed(messages):
+        if (
+            message.get("kind") == "question"
+            and (message.get("metadata") or {}).get("blocking")
+            and message.get("id") not in answered
+        ):
+            return message
+    return None
+
+
+def _latest_agent_handoff(messages: List[Dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("author_kind") == "agent" and message.get("kind") in ("done", "status"):
+            return str(message.get("body") or "")
+    return ""
+
+
+def _owner_direction(messages: List[Dict[str, Any]]) -> str:
+    return "\n".join(
+        "- %s" % m.get("body")
+        for m in messages
+        if m.get("author_kind") == "human" and m.get("kind") in ("directive", "answer")
+    )
+
+
+def _repository_context(workspace: Path) -> Tuple[Optional[Path], str]:
+    try:
+        context = json.loads((workspace / "repository-worktree.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None, ""
+    if not isinstance(context, dict) or not context.get("repository_worktree"):
+        return None, ""
+    return Path(str(context["repository_worktree"])), str(context.get("repository_base_sha") or "")
+
+
+def _judge_task_change(task: Any, workspace: Path, messages: List[Dict[str, Any]]) -> Any:
+    from . import task_judge
+
+    worktree, base_sha = _repository_context(workspace)
+    change = task_judge.collect_change(worktree, base_sha) if worktree is not None else ""
+    base_url, token = _hub_env()
+    if not base_url or not token:
+        return task_judge.Verdict("unavailable", "no hub to reach a judge model through")
+    return task_judge.judge(
+        task if isinstance(task, dict) else {},
+        change,
+        task_judge.hub_completion(base_url, token),
+        model=env_str(task_judge.JUDGE_MODEL_ENV) or task_judge.DEFAULT_JUDGE_MODEL,
+        agent_summary=_latest_agent_handoff(messages),
+        gate_summary="passed",
+        board_direction=_owner_direction(messages),
+    )
+
+
+_CONTINUE_FOOTER = (
+    "\n\nContinue in this session; your earlier work is all still here. When it is "
+    "done, post `.mac-agent/board done \"...\"` again and stop."
+)
+
+
+def _continue_claude_session(
+    runner: Callable[..., Any],
+    task: Any,
+    workspace: Path,
+    task_id: str,
+    result: Any,
+    opts: Dict[str, Any],
+) -> Any:
+    """Hand gate failures and judge verdicts back to the same session.
+
+    A repository test failure, or a ``not_met`` verdict, is not the end of
+    the attempt: the agent resumes the session it worked in with the failure
+    output or the judge's next steps, and keeps going. The attempt ends when
+    the judge says ``met`` (or cannot run), when the agent is waiting on a
+    blocking question, or after ``MAC_CLAUDE_CONTINUATION_ROUNDS`` rounds.
+    """
+    from . import coding_agent as _ca
+
+    if _ca.selected_agent() != _ca.CLAUDE_AGENT:
+        return result
+    try:
+        session_id = (workspace / _ca.CLAUDE_AGENT_DIR / "session-id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return result
+    if not session_id:
+        return result
+    for round_number in range(1, _continuation_rounds() + 1):
+        messages = _board_messages(task_id)
+        if _open_blocking_question(messages) is not None:
+            emit_telemetry("continuation_waiting_on_question", task_id=task_id, round=round_number)
+            return result
+        gate_failure = getattr(result, "mac_repository_verification_failure", None)
+        if isinstance(gate_failure, dict):
+            if gate_failure.get("failure_class") != "repository_test_failed":
+                # The verifier itself broke; that is not the agent's to fix.
+                return result
+            feedback = (
+                "The repository's own test gate failed on your change:\n%s\n\nFix the change so "
+                "the gate passes." % str(gate_failure.get("detail") or "")[-6000:]
+            )
+            _post_board_as_hub(task_id, "verdict", "repository gate failed; sent back to the agent", gate="failed")
+        else:
+            verdict = _judge_task_change(task, workspace, messages)
+            _LAST_JUDGE_VERDICT.clear()
+            _LAST_JUDGE_VERDICT.update({**verdict.to_dict(), "round": round_number})
+            emit_telemetry("judge_verdict", task_id=task_id, round=round_number, verdict=verdict.verdict)
+            if verdict.verdict == "unavailable":
+                _post_board_as_hub(task_id, "verdict", "judge unavailable: %s" % verdict.reason, verdict="unavailable")
+                return result
+            _post_board_as_hub(
+                task_id,
+                "verdict",
+                "%s: %s%s"
+                % (
+                    verdict.verdict,
+                    verdict.reason,
+                    ("\nNext: " + verdict.next_steps) if verdict.next_steps and not verdict.met else "",
+                ),
+                verdict=verdict.verdict,
+                model=verdict.model,
+            )
+            if verdict.met:
+                return result
+            feedback = (
+                "An independent judge reviewed your change against the task and found it not "
+                "yet done.\nWhy: %s\nDo this next: %s" % (verdict.reason, verdict.next_steps)
+            )
+        emit_telemetry("continuation_resumed", task_id=task_id, round=round_number)
+        result = _invoke_agent(
+            runner,
+            feedback + _CONTINUE_FOOTER,
+            workspace,
+            task_id or None,
+            {**opts, "resume_session": session_id},
+        )
+    return result
+
+
+def _record_judge_verdict_in_evidence(workspace: Path) -> None:
+    """Put the judge's verdict into the evidence manifest the worker signs."""
+    if not _LAST_JUDGE_VERDICT:
+        return
+    path = workspace / "mac-evidence.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(manifest, dict):
+        return
+    manifest["judge"] = dict(_LAST_JUDGE_VERDICT)
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _run_executor(
     *,
     runner: Callable[..., Any],
@@ -6434,6 +6655,21 @@ def _run_executor(
             "task": task,
         },
     )
+    _task_metadata = task.get("metadata") if isinstance(task, dict) else None
+    if (
+        not _is_planning
+        and break_glass_authorization is None
+        and not metadata_declares_read_only_report_repository(_task_metadata)
+        and not metadata_declares_report_deliverable(_task_metadata)
+    ):
+        result = _continue_claude_session(
+            runner,
+            task,
+            task_workspace,
+            str(task_id or ""),
+            result,
+            {"execution_kind": "task", "timeout": _agent_timeout(), "task": task},
+        )
     emit_telemetry(
         "agent_completed",
         task_id=task_id,
@@ -6597,6 +6833,7 @@ def _run_executor(
             sys.stderr.write("auto-decompose failed: %s\n" % exc)
 
     write_fallback_evidence_manifest(task_workspace, task, result, None)
+    _record_judge_verdict_in_evidence(task_workspace)
 
     # loop-01 resilience: if the run was bounded/failed (e.g. a wedged TokenHub
     # trailing turn) but the agent or a deterministic finalizer already wrote a

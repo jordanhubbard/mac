@@ -187,6 +187,7 @@ def _reviewing_canary(
     *,
     max_attempts: int = 3,
     metadata_extra: dict | None = None,
+    judge: dict | None = None,
 ) -> tuple[ControlPlane, object, object, object, dict]:
     cp = ControlPlane.in_memory()
     executor_machine = cp.register_machine("acceptance-executor-host")
@@ -206,6 +207,8 @@ def _reviewing_canary(
     _, lease = cp.claim_task(task.id, executor.id)
     cp.start_task(task.id, executor.id, lease_id=lease.id)
     executor_manifest = _manifest(result)
+    if judge is not None:
+        executor_manifest["judge"] = judge
     executor_manifest["signed_by"] = executor.id
     executor_manifest["signature"] = sign_verification_manifest(
         cp._agent_attestation_key(executor.id), executor_manifest
@@ -275,6 +278,25 @@ def test_worker_evidence_verdict_records_fail_closed_typed_rejection() -> None:
         "returncode": 1,
         "status": "fail",
     }
+
+
+def test_an_independent_judges_not_met_rejects_otherwise_passing_work() -> None:
+    judge = {"verdict": "not_met", "reason": "requirement 2 has no test", "next": "add the test"}
+    cp, task, reviewer, review, evidence = _reviewing_canary(judge=judge)
+    verdict = cp._record_worker_evidence_verdict(cp.get_task(task.id), review, evidence, "test")
+    manifest = verdict.metadata["verification"]
+    assert manifest["verdict"] == "rejected"
+    assert manifest["judge"] == judge
+    assert "independent judge: not met: requirement 2 has no test; next: add the test" in manifest["summary"]
+
+
+def test_a_met_judge_is_recorded_on_the_approval() -> None:
+    judge = {"verdict": "met", "reason": "both requirements done", "next": ""}
+    cp, task, reviewer, review, evidence = _reviewing_canary(judge=judge)
+    verdict = cp._record_worker_evidence_verdict(cp.get_task(task.id), review, evidence, "test")
+    manifest = verdict.metadata["verification"]
+    assert manifest["verdict"] == "approved"
+    assert manifest["judge"]["verdict"] == "met"
 
 
 def _submit_deterministic_rejection(

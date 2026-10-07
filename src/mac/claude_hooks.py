@@ -228,16 +228,48 @@ reasonable, and keep working on everything the question does not block. When the
 work is finished, post `done` (or `no-change`) and then stop."""
 
 
+#: What a new session is told about earlier work on the task. Old nudges and
+#: activity lines are noise; direction, answers, verdicts and what earlier
+#: attempts reported are not.
+HISTORY_KINDS = ("message", "answer", "directive", "verdict", "status", "done", "question")
+MAX_HISTORY_MESSAGES = 40
+
+
+def format_history(messages: List[Dict[str, Any]]) -> str:
+    kept = [m for m in messages if m.get("kind") in HISTORY_KINDS][-MAX_HISTORY_MESSAGES:]
+    lines = []
+    for m in kept:
+        who = "you (earlier)" if m.get("author_kind") == "agent" else (m.get("author") or m.get("author_kind"))
+        lines.append("#%s %s %s: %s" % (m.get("id"), who, m.get("kind"), m.get("body")))
+    return "\n".join(lines)
+
+
 def hook_session_start(payload: Dict[str, Any], hub: Optional[Hub]) -> None:
     state = load_state()
+    fresh = "cursor" not in state
     state.setdefault("started_at", _now())
     state.setdefault("last_post_at", _now())
     parts = [BOARD_GUIDE]
     if hub is not None:
         try:
-            earlier = _new_for_agent(hub, state)
-            if earlier:
-                parts.append("Already on the board for this task:\n" + format_messages(earlier))
+            if fresh:
+                # A new attempt: tell it what happened before. Earlier attempts'
+                # work may be gone, but what people said and what the judge
+                # found are not, and the agent should start from them.
+                page = hub.read(0)
+                messages = page.get("messages") or []
+                if messages:
+                    state["cursor"] = int(messages[-1]["id"])
+                history = format_history(messages)
+                if history:
+                    parts.append(
+                        "Earlier on this task (direction from the owner wins over the task text; "
+                        "a judge's 'not_met' says what was still missing):\n" + history
+                    )
+            else:
+                new = _new_for_agent(hub, state)
+                if new:
+                    parts.append(format_messages(new))
         except Exception as exc:  # noqa: BLE001
             _log_error("session-start", exc)
     save_state(state)

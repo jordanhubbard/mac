@@ -58,6 +58,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier status command timeout seconds. |
 | `MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier tunnel health timeout seconds. |
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
+| `MAC_CLAUDE_CONTINUATION_ROUNDS` | str | consumer-defined | core | Core setting: claude continuation rounds. |
 | `MAC_CLAUDE_MAX_TURNS` | str | consumer-defined | core | Core setting: claude max turns. |
 | `MAC_CLAUDE_MODEL` | str | consumer-defined | core | Core setting: claude model. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
@@ -218,6 +219,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_DIR` | str | consumer-defined | core | Core setting: journal dir. |
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
+| `MAC_JUDGE_MODEL` | str | consumer-defined | core | Core setting: judge model. |
 | `MAC_LANDING_DEADLINE_SECONDS` | int | 86400 | core | Wall-clock deadline, from the first landing attempt, for every review/landing wait (reviewer, hub verify, publication target/evidence, checks pending, release barrier). Past it the task moves to BLOCKED with `landing_budget_exhausted`. |
 | `MAC_LANDING_MAX_ATTEMPTS` | int | 8 | core | Landing attempts (publication retries, unavailable hub verifies) a task may spend between review and landing before it moves to BLOCKED with `landing_budget_exhausted`. Attempts back off from 5 to 60 minutes. |
 | `MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd artifact timeout seconds. |
