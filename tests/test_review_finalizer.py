@@ -233,4 +233,68 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
     assert _git_review(review_repo, "status", "--porcelain") == ""
 
 
+def test_review_verdict_finalizer_rejects_uncovered_requirements(tmp_path, monkeypatch) -> None:
+    """A semantic approval cannot cover enumerated requirements the evidence
+    never mapped: the finalizer rejects and names the gap."""
+    from mac import executor_finalizer
+
+    review_repo = _init_review_checkout(tmp_path)
+    exec_head = _git_review(review_repo, "rev-parse", "HEAD")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "review_verdict",
+                "verdict": "approved",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "executor-evidence.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "verification": {
+                        "repo": {"head_sha": exec_head, "files_changed": ["shipped.py"]}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("MAC_ATTESTATION_KEY", "test-attestation-key")
+    monkeypatch.setenv("MAC_WORKER_AGENT_ID", "agent-reviewer")
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
+    monkeypatch.setattr(executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None)
+
+    task = {
+        "id": "task-review",
+        "owner_agent_id": "agent-reviewer",
+        "description": "Three fixes: (1) alpha, (2) beta, (3) gamma.",
+        "metadata": {
+            "execution_contract": {
+                "repository_contract": {"test": {"command": "test -f shipped.py"}}
+            }
+        },
+    }
+    review_context = {"executor_evidence_id": "ev-exec", "review_id": "rv-1"}
+
+    review_finalizer.run_deterministic_review_verdict(workspace, task, review_context)
+
+    manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["verdict"] == "rejected"
+    assert manifest["requirement_coverage"]["status"] == "fail"
+    assert [item["id"] for item in manifest["requirement_coverage"]["unaddressed"]] == [
+        "1",
+        "2",
+        "3",
+    ]
+    assert "requirements not addressed" in manifest["feedback"]
+
+
 pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

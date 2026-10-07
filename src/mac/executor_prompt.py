@@ -95,6 +95,7 @@ from mac.openshell_runtime import (
     truthy as _truthy,
 )
 from mac.repository_contract import resolve_task_repository_branch
+from mac.requirement_coverage import parse_task_requirements
 from mac.env_config import (
     env_bool,
     env_str,
@@ -1084,6 +1085,34 @@ def _acceptance_checks_section(task: Dict[str, Any]) -> str:
     )
 
 
+def _requirement_coverage_section(task: Dict[str, Any]) -> str:
+    """Tell the agent how enumerated requirements are reviewed.
+
+    The review now maps every numbered requirement and every Acceptance-section
+    item to the change or a check. The agent has to publish that mapping in its
+    evidence so the hub can tell a complete change from a partial one; without a
+    mapping the review sends the task back naming the unaddressed items.
+    """
+    description = task.get("description") if isinstance(task, dict) else ""
+    requirements = parse_task_requirements(description)
+    if not requirements:
+        return ""
+    encoded = json.dumps(requirements).replace("<", "\\u003c")
+    return "\n".join(
+        [
+            "Task requirements (each one is part of this task's definition of done):",
+            "Your verification manifest must include a `requirements` list with one "
+            "entry per requirement, mapping it to the work you actually did: "
+            '`{"id": "1", "addressed": true, "evidence": ["path/or/check"]}`. Mark '
+            "`addressed` false and cite nothing for anything you could not do. The "
+            "hub review does not approve a change that covers only some of them; it "
+            "sends the task back naming every unaddressed item. A requirement that "
+            "needs a live rollout you cannot perform is unaddressed, not passed.",
+            "Requirements: %s" % encoded,
+        ]
+    )
+
+
 def _coordination_section(task: Dict[str, Any]) -> str:
     """Tell the executor it is one of several agents, and how to say so.
 
@@ -1153,6 +1182,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
     acceptance_section = _acceptance_checks_section(task)
     if acceptance_section:
         parts.append(acceptance_section)
+    requirements_section = _requirement_coverage_section(task)
+    if requirements_section:
+        parts.append(requirements_section)
     coordination_section = _coordination_section(task)
     if coordination_section:
         parts.append(coordination_section)
@@ -1236,6 +1268,25 @@ def build_review_prompt(
         "sentences, no code or diff), wrapped EXACTLY in these two marker lines:\n"
         "%s\n<your recap here>\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END),
     ]
+    requirements = parse_task_requirements(task.get("description"))
+    if requirements:
+        encoded = json.dumps(requirements).replace("<", "\\u003c")
+        parts.insert(
+            -1,
+            "\n".join(
+                [
+                    "This task enumerates requirements; each is part of its definition "
+                    "of done. Include a `requirements` list in your verdict manifest "
+                    "with one entry per item: "
+                    '`{"id": "1", "addressed": true, "evidence": ["path/or/check"]}`. '
+                    "Verify each against the diff or evidence. Do not approve while any "
+                    "item is unmapped or unaddressed; mark it `addressed` false and name "
+                    "it so the task is sent back. An acceptance that needs a live "
+                    "rollout the worker cannot perform is unaddressed, not passed.",
+                    "Requirements: %s" % encoded,
+                ]
+            ),
+        )
     lessons_section = _lessons_section(lessons or [])
     if lessons_section:
         # Append recalled lessons near the end, before the final summary

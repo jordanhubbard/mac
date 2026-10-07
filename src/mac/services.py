@@ -74,6 +74,10 @@ from mac.repository_contract import (
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
+from mac.requirement_coverage import (
+    STATUS_NOT_REQUIRED as REQUIREMENT_COVERAGE_NOT_REQUIRED,
+    evaluate_requirement_coverage,
+)
 from mac.semantic_acceptance import acceptance_result_problems, evaluate_acceptance
 from mac.task_dependencies import (
     dependency_cycle_path,
@@ -20138,13 +20142,27 @@ class ControlPlane:
                     },
                     actor,
                 )
+        verdict_manifest = ensure_json_object(
+            ensure_json_object(verdict_evidence.metadata).get("verification")
+        )
+        coverage = ensure_json_object(verdict_manifest.get("requirement_coverage"))
+        coverage_failed = coverage.get("required") is True and coverage.get("status") == "fail"
         if self._verdict_value(verdict_evidence) == "rejected":
+            decision = (
+                ReviewStatus.CHANGES_REQUESTED.value
+                if coverage_failed
+                else ReviewStatus.REJECTED.value
+            )
             try:
                 review = self.submit_review(
                     review.id,
-                    ReviewStatus.REJECTED.value,
+                    decision,
                     review.reviewer_agent_id,
-                    reason="reviewer rejected via signed verdict evidence",
+                    reason=(
+                        "reviewer requested changes: task requirements not addressed"
+                        if coverage_failed
+                        else "reviewer rejected via signed verdict evidence"
+                    ),
                     evidence_id=verdict_evidence.id,
                 )
             except ValidationError:
@@ -20154,11 +20172,15 @@ class ControlPlane:
                 # write. If the review already landed in the state we were
                 # about to write, this is a duplicate, not a failure.
                 review = self.reviews.get_review(review.id)
-                if review.status != ReviewStatus.REJECTED.value:
+                if review.status != decision:
                     raise
             self._record_default_review_observation(
                 task_id,
-                "workflow.default_review.rejected",
+                (
+                    "workflow.default_review.changes_requested"
+                    if coverage_failed
+                    else "workflow.default_review.rejected"
+                ),
                 "warning",
                 {
                     "review_id": review.id,
@@ -20167,15 +20189,19 @@ class ControlPlane:
                 },
                 actor,
             )
-            # Distill the rejection into a durable, project-scoped lesson so
-            # the next execution run on this project recalls it.
-            self._record_project_failure_lesson(
-                task_id,
-                evidence_type="review_verdict",
-                error_signature="review_rejected",
-                signals={"review_rejected": True},
-                evidence_id=verdict_evidence.id,
-            )
+            if not coverage_failed:
+                # Distill the rejection into a durable, project-scoped lesson so
+                # the next execution run on this project recalls it. A coverage
+                # send-back names exactly which requirements remain, so the
+                # task-local feedback is the useful record; it is not a
+                # project-level failure lesson.
+                self._record_project_failure_lesson(
+                    task_id,
+                    evidence_type="review_verdict",
+                    error_signature="review_rejected",
+                    signals={"review_rejected": True},
+                    evidence_id=verdict_evidence.id,
+                )
             return review
         try:
             review = self.submit_review(
@@ -25487,10 +25513,31 @@ class ControlPlane:
         repo = ensure_json_object(executor_manifest.get("repo"))
         acceptance = evaluate_acceptance(task.metadata, executor_manifest)
         acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
-        verdict = "approved" if acceptance_pass else "rejected"
+        coverage = evaluate_requirement_coverage(
+            getattr(task, "description", None), executor_manifest
+        )
+        coverage_pass = coverage.get("status") in {"pass", REQUIREMENT_COVERAGE_NOT_REQUIRED}
+        approved = acceptance_pass and coverage_pass
+        verdict = "approved" if approved else "rejected"
         digest = str(executor_manifest.get("worktree_digest") or "").strip()
         if not digest.startswith("sha256:"):
             digest = "sha256:%s" % hashlib.sha256(executor_evidence.id.encode()).hexdigest()
+        if approved:
+            summary = "worker evidence validated; structural and task acceptance contracts passed"
+            feedback = ""
+        elif not acceptance_pass:
+            summary = "task semantic acceptance failed: %s" % "; ".join(
+                str(problem) for problem in acceptance.get("problems", [])
+            )
+            feedback = summary
+        else:
+            # Enumerated requirements are the task's definition of done. When
+            # any is unmapped or unaddressed the hub-reviewer must not approve;
+            # it names them so the next attempt can finish the work.
+            summary = "task requirements not addressed: %s" % "; ".join(
+                str(problem) for problem in coverage.get("problems", [])
+            )
+            feedback = summary
         manifest: Dict[str, Any] = {
             "schema": VERIFICATION_SCHEMA,
             "status": "complete",
@@ -25506,22 +25553,23 @@ class ControlPlane:
                 "family": "deterministic",
                 "provider": "hub",
             },
-            "summary": (
-                "worker evidence validated; structural and task acceptance contracts passed"
-                if acceptance_pass
-                else "task semantic acceptance failed: %s"
-                % "; ".join(str(problem) for problem in acceptance.get("problems", []))
-            ),
+            "summary": summary,
             "review_status": {
                 "structural": "pass",
                 "semantic": "pass" if acceptance_pass else "fail",
             },
             "acceptance": acceptance,
+            "requirement_coverage": coverage,
             "checks": [
                 {
                     "name": "executor_evidence_contract",
                     "returncode": 0,
                     "status": "pass",
+                },
+                {
+                    "name": "requirement_coverage",
+                    "returncode": 0 if coverage_pass else 1,
+                    "status": "pass" if coverage_pass else "fail",
                 },
                 {
                     "name": "task_acceptance",
@@ -25531,6 +25579,8 @@ class ControlPlane:
             ],
             "signed_by": review.reviewer_agent_id,
         }
+        if feedback:
+            manifest["feedback"] = feedback
         if repo:
             manifest["repo"] = repo
         manifest["signature"] = sign_verification_manifest(key, manifest)
@@ -25542,17 +25592,25 @@ class ControlPlane:
             review.reviewer_agent_id,
             metadata={"returncode": 0, "verification": manifest},
         )
-        if not acceptance_pass:
+        if not approved:
             self._record_default_review_observation(
                 task.id,
-                "workflow.default_review.semantic_acceptance_failed",
+                (
+                    "workflow.default_review.semantic_acceptance_failed"
+                    if not acceptance_pass
+                    else "workflow.default_review.requirement_coverage_failed"
+                ),
                 "warning",
                 {
                     "review_id": review.id,
                     "reviewer_agent_id": review.reviewer_agent_id,
                     "executor_evidence_id": executor_evidence.id,
                     "verdict_evidence_id": evidence.id,
-                    "reason": "semantic_acceptance_failed",
+                    "reason": (
+                        "semantic_acceptance_failed"
+                        if not acceptance_pass
+                        else "requirement_coverage_failed"
+                    ),
                 },
                 actor,
             )
