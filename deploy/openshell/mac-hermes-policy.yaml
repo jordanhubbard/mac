@@ -131,6 +131,23 @@ network_policies:
       - { path: /usr/local/bin/opencode }
       - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
 
+  # Claude Code (MAC_CODING_AGENT=claude) speaks the Anthropic Messages API;
+  # the hub relays it to its Anthropic provider (mac.anthropic_passthrough).
+  # Listed like opencode: the PATH symlink and its resolved target.
+  claude_router:
+    name: claude-router
+    endpoints:
+      - host: __MAC_HUB_HOST__
+        port: __MAC_HUB_PORT__
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/messages" }
+          - allow: { method: POST, path: "/v1/messages/count_tokens" }
+    binaries:
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe }
+
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22
   # to your git host rather than this REST block.

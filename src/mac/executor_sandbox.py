@@ -63,6 +63,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -645,10 +646,99 @@ _TASK_INFERENCE_TOKEN: Dict[str, str] = {}
 
 
 def _uses_router_opencode(choice: Any) -> bool:
-    return (
-        getattr(choice, "agent", "") == "opencode"
-        and getattr(choice, "provider", "") == "mac-router"
+    """Whether the route authenticates to the hub router with a task token.
+
+    Both coding CLIs do: opencode through /v1/chat/completions and Claude
+    Code through /v1/messages. (The name predates Claude Code.)
+    """
+    return getattr(choice, "agent", "") in ("opencode", "claude") and (
+        getattr(choice, "provider", "") == "mac-router"
     )
+
+
+#: The image's Python, which the sandbox policy lets reach the hub. Claude
+#: Code's hooks run under it.
+_SANDBOX_AGENT_PYTHON = "/opt/mac-venv/bin/python"
+
+
+def _write_claude_agent_files(
+    directory: Path, config_directory: str, env_values: Mapping[str, str], *, python: str
+) -> Dict[str, str]:
+    """Write Claude Code's settings, hooks and board command; return its env.
+
+    Everything goes under ``.mac-agent/`` in the task workspace, which sits
+    outside the repository, so none of it can be committed. The hook script is
+    a copy of :mod:`mac.claude_hooks` (standard library only), so the hooks are
+    this MAC version's even inside an older sandbox image. Claude Code's own
+    state (``CLAUDE_CONFIG_DIR``, including the session transcript) lives
+    there too, so it comes back with the workspace and a later run can resume
+    the session. Nothing is written without an inference token and a hub URL.
+    """
+    from . import coding_agent as _ca
+
+    token = str(env_values.get(_INFERENCE_TOKEN_ENV) or "")
+    hub = _ca.router_hub_url(env_values)
+    if not token or not hub:
+        return {}
+    agent_dir = directory / _ca.CLAUDE_AGENT_DIR
+    (agent_dir / "state").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "claude").mkdir(parents=True, exist_ok=True)
+    hooks_source = Path(__file__).resolve().parent / "claude_hooks.py"
+    (agent_dir / "claude_hooks.py").write_text(hooks_source.read_text(encoding="utf-8"), encoding="utf-8")
+    board = agent_dir / "board"
+    board.write_text(
+        "#!/bin/sh\n"
+        'exec "${MAC_AGENT_PYTHON:-python3}" "$(dirname "$0")/claude_hooks.py" board "$@"\n',
+        encoding="utf-8",
+    )
+    board.chmod(0o755)
+
+    def _hook(event: str) -> Dict[str, Any]:
+        return {
+            "type": "command",
+            "command": '"$MAC_AGENT_PYTHON" "$MAC_AGENT_DIR/claude_hooks.py" %s' % event,
+            "timeout": 30,
+        }
+
+    settings = {
+        "hooks": {
+            "SessionStart": [{"hooks": [_hook("session-start")]}],
+            "PostToolUse": [{"matcher": "*", "hooks": [_hook("post-tool")]}],
+            "Stop": [{"hooks": [_hook("stop")]}],
+        }
+    }
+    settings_path = directory / _ca.CLAUDE_SETTINGS_FILE
+    settings_path.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    settings_path.chmod(0o600)
+    sandbox_agent_dir = "%s/%s" % (config_directory.rstrip("/"), _ca.CLAUDE_AGENT_DIR)
+    overlay = {
+        # Claude Code appends /v1/messages itself.
+        "ANTHROPIC_BASE_URL": hub,
+        "ANTHROPIC_AUTH_TOKEN": token,
+        "CLAUDE_CONFIG_DIR": sandbox_agent_dir + "/claude",
+        "MAC_AGENT_DIR": sandbox_agent_dir,
+        "MAC_AGENT_STATE_DIR": sandbox_agent_dir + "/state",
+        "MAC_AGENT_PYTHON": python,
+        "DISABLE_AUTOUPDATER": "1",
+        "DISABLE_TELEMETRY": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    }
+    task_id = str(env_values.get("MAC_TASK_ID") or "").strip()
+    if task_id:
+        overlay["ANTHROPIC_CUSTOM_HEADERS"] = "X-MAC-Task-ID: %s" % task_id
+    return overlay
+
+
+def _write_coding_agent_config(
+    directory: Path, config_directory: str, env_values: Mapping[str, str], *, python: str
+) -> Dict[str, str]:
+    """Write the selected coding CLI's router config; return its env overlay."""
+    from . import coding_agent as _ca
+
+    if _ca.selected_agent() == _ca.CLAUDE_AGENT:
+        return _write_claude_agent_files(directory, config_directory, env_values, python=python)
+    return _write_opencode_router_config(directory, config_directory, env_values)
 
 
 def _mint_inference_token(*, task_id: str, ttl_seconds: int) -> Dict[str, Any]:
@@ -2250,7 +2340,11 @@ def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tup
         "MAC_SANDBOX_BASE_PATH": _SANDBOX_BASE_PATH,
         "PATH": _SANDBOX_BASE_PATH,
     }
-    env_values.update(_write_opencode_router_config(workspace, sandbox_workspace, env_values))
+    env_values.update(
+        _write_coding_agent_config(
+            workspace, sandbox_workspace, env_values, python=_SANDBOX_AGENT_PYTHON
+        )
+    )
     env_file = _write_private_shell_env(workspace / ".mac-openshell-env.sh", env_values)
 
     toolchain_file = workspace / ".mac-sandbox-toolchain.sh"
@@ -5394,7 +5488,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
     return "unverified"
 
 
-_SANDBOX_CODING_AGENT_BINARIES = frozenset({"opencode"})
+_SANDBOX_CODING_AGENT_BINARIES = frozenset({"opencode", "claude"})
 
 
 def coding_agent_sandbox_which(name: str) -> Optional[str]:
@@ -5524,7 +5618,9 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
             else:
                 env_values[_INFERENCE_TOKEN_ENV] = str(probe_token["token"])
                 env_values.update(
-                    _write_opencode_router_config(private_dir, sandbox_dir, env_values)
+                    _write_coding_agent_config(
+                        private_dir, sandbox_dir, env_values, python=_SANDBOX_AGENT_PYTHON
+                    )
                 )
         _write_private_shell_env(private_dir / ".mac-openshell-env.sh", env_values)
         try:
@@ -5706,7 +5802,9 @@ def _agent_argv(
             return _coding_agent_required_failure_argv(reason)
         if not confined:
             os.environ.update(
-                _write_opencode_router_config(workspace, str(workspace), dict(os.environ))
+                _write_coding_agent_config(
+                    workspace, str(workspace), dict(os.environ), python=sys.executable
+                )
             )
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
@@ -5717,6 +5815,13 @@ def _agent_argv(
         route=choice.observable(),
     )
     argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
+    if choice.agent == _ca.CLAUDE_AGENT:
+        # Name the session so its transcript can be found, and resumed, later.
+        session_id = str(uuid.uuid4())
+        agent_dir = workspace / _ca.CLAUDE_AGENT_DIR
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "session-id").write_text(session_id + "\n", encoding="utf-8")
+        return _ca.coding_agent_argv(argv_choice, prompt, session_id=session_id)
     return _ca.coding_agent_argv(argv_choice, prompt)
 
 

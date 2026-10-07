@@ -41,6 +41,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   every platform (upstream naming, not a Windows artefact) and npm does not
 #   create the PATH symlink for it, so the build links it by hand and then
 #   gates on `command -v opencode`.
+# claude: Claude Code, MAC's second coding CLI (MAC_CODING_AGENT=claude). Same
+#   npm shape as opencode: a native "bin/claude.exe" from a per-platform
+#   optionalDependency, an install script that must be allowed by name, no
+#   PATH symlink from npm, and a pinned `--version` gate. It reaches the hub's
+#   /v1/messages front door with the task's inference token and nothing else.
 # bash >=5.2: the explicit task-runtime shell contract.  Do not rely on the
 # base image carrying Bash transitively; executor and verification commands
 # invoke /bin/bash and deployment fails if its version/features are unsuitable.
@@ -114,6 +119,7 @@ ARG GH_VERSION="2.95.0"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"
 ARG OPENCODE_VERSION="1.18.18"
+ARG CLAUDE_CODE_VERSION="2.1.292"
 ARG BUILDX_VERSION="0.30.1"
 ARG RUST_VERSION="1.95.0"
 ARG TARGETARCH
@@ -183,6 +189,10 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && ln -sfn /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode \
     && command -v opencode \
     && opencode --version | grep -F "${OPENCODE_VERSION}" \
+    && npm install -g --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && ln -sfn /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude \
+    && command -v claude \
+    && DISABLE_AUTOUPDATER=1 claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
     && test "$(pnpm --version)" = "$PNPM_VERSION" \
     && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \

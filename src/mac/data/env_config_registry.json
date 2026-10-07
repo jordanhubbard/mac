@@ -67,6 +67,17 @@
   },
   {
     "default": null,
+    "description": "Agent setting: agent dir.",
+    "family": "agent",
+    "name": "MAC_AGENT_DIR",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Agent setting: agent gen audio base url.",
     "family": "agent",
     "name": "MAC_AGENT_GEN_AUDIO_BASE_URL",
@@ -239,6 +250,17 @@
   },
   {
     "default": null,
+    "description": "Agent setting: agent python.",
+    "family": "agent",
+    "name": "MAC_AGENT_PYTHON",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Agent setting: agent quarantine threshold.",
     "family": "agent",
     "name": "MAC_AGENT_QUARANTINE_THRESHOLD",
@@ -280,6 +302,18 @@
       "src/mac/services.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Agent setting: agent state dir.",
+    "family": "agent",
+    "name": "MAC_AGENT_STATE_DIR",
+    "retired": false,
+    "sources": [
+      "src/mac/claude_hooks.py",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -618,6 +652,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: claude max turns.",
+    "family": "core",
+    "name": "MAC_CLAUDE_MAX_TURNS",
+    "retired": false,
+    "sources": [
+      "src/mac/coding_agent.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: claude model.",
+    "family": "core",
+    "name": "MAC_CLAUDE_MODEL",
+    "retired": false,
+    "sources": [
+      "src/mac/coding_agent.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: client credentials dir.",
     "family": "core",
     "name": "MAC_CLIENT_CREDENTIALS_DIR",
@@ -679,6 +735,7 @@
     "name": "MAC_CODING_AGENT",
     "retired": false,
     "sources": [
+      "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/coding_agent.py"
     ],
     "type": "str"
@@ -2212,6 +2269,7 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "deploy/systemd/mac-fleet-context.service",
+      "src/mac/claude_hooks.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
@@ -2441,6 +2499,7 @@
     "retired": false,
     "sources": [
       "src/mac/api.py",
+      "src/mac/claude_hooks.py",
       "src/mac/coding_agent.py",
       "src/mac/executor_sandbox.py",
       "src/mac/inference_tokens.py"
@@ -6324,6 +6383,7 @@
     "name": "MAC_TASK_ID",
     "retired": false,
     "sources": [
+      "src/mac/claude_hooks.py",
       "src/mac/coding_agent.py",
       "src/mac/executor_sandbox.py",
       "src/mac/prompt_master.py",
@@ -6952,6 +7012,7 @@
     "retired": false,
     "sources": [
       "deploy/mac-crash-observer.py",
+      "src/mac/claude_hooks.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/dispatch.py",

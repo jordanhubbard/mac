@@ -462,19 +462,21 @@ def test_openshell_image_uses_pinned_offline_assets():
 
 
 def test_runtime_image_proves_the_coding_cli_resolves_on_path() -> None:
-    """opencode is the only coding CLI. It must resolve by basename through the
-    image-owned PATH: the Containerfile gates it with ``command -v opencode``
-    plus a pinned ``--version`` so a missing install, a dangling symlink, or a
-    non-PATH binary fails the build closed instead of shipping an image the
-    in-sandbox probe later rejects as ``agent_binary_missing``. No other coding
-    CLI is installed."""
+    """opencode and Claude Code are the coding CLIs. Each must resolve by
+    basename through the image-owned PATH: the Containerfile gates each with
+    ``command -v`` plus a pinned ``--version`` so a missing install, a dangling
+    symlink, or a non-PATH binary fails the build closed instead of shipping an
+    image the in-sandbox probe later rejects as ``agent_binary_missing``. No
+    other coding CLI is installed."""
     containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
         encoding="utf-8"
     )
 
     assert "command -v opencode" in containerfile
     assert 'opencode --version | grep -F "${OPENCODE_VERSION}"' in containerfile
-    for retired in ("codex", "claude", "cursor-agent", "pi"):
+    assert "command -v claude" in containerfile
+    assert 'claude --version | grep -F "${CLAUDE_CODE_VERSION}"' in containerfile
+    for retired in ("codex", "cursor-agent", "pi"):
         assert f"command -v {retired} " not in containerfile + " ", retired
     for package in ("@openai/codex", "pi-coding-agent", "claude-${asset_arch}", "cursor-"):
         assert package not in containerfile, package

@@ -73,6 +73,7 @@ IMAGE_SPECS = {
         "build_args": {
             "BUILDX_VERSION": "0.30.1",
             "OPENCODE_VERSION": "1.18.18",
+            "CLAUDE_CODE_VERSION": "2.1.292",
             "GH_VERSION": "2.95.0",
             "NODE_VERSION": "22.23.1",
             "PNPM_VERSION": "11.13.1",
