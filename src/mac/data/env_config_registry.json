@@ -652,6 +652,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: claude continuation rounds.",
+    "family": "core",
+    "name": "MAC_CLAUDE_CONTINUATION_ROUNDS",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: claude max turns.",
     "family": "core",
     "name": "MAC_CLAUDE_MAX_TURNS",
@@ -2579,6 +2590,17 @@
     "sources": [
       "deploy/install-agent-journal-service.sh",
       "src/mac/journal.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: judge model.",
+    "family": "core",
+    "name": "MAC_JUDGE_MODEL",
+    "retired": false,
+    "sources": [
+      "src/mac/task_judge.py"
     ],
     "type": "str"
   },

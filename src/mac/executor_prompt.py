@@ -1152,6 +1152,27 @@ def _coordination_section(task: Dict[str, Any]) -> str:
     )
 
 
+def _review_feedback_section(task: Dict[str, Any]) -> str:
+    """Why the last attempt's work was not accepted, so this one starts there.
+
+    The review (including the independent judge's verdict) is recorded on the
+    task as ``metadata.review_feedback``. Without this section a retry began
+    from nothing and could only rediscover what was already known to be wrong.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    block = metadata.get("review_feedback") if isinstance(metadata, dict) else None
+    latest = block.get("latest") if isinstance(block, dict) else None
+    if not isinstance(latest, dict):
+        return ""
+    summary = str(latest.get("summary") or "").strip()
+    if not summary:
+        return ""
+    return (
+        "A previous attempt at this task was reviewed and not accepted. Start from what "
+        "the review found, not from scratch:\n%s" % summary[:4000]
+    )
+
+
 def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None) -> str:
     """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
@@ -1185,6 +1206,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
     requirements_section = _requirement_coverage_section(task)
     if requirements_section:
         parts.append(requirements_section)
+    review_section = _review_feedback_section(task)
+    if review_section:
+        parts.append(review_section)
     coordination_section = _coordination_section(task)
     if coordination_section:
         parts.append(coordination_section)

@@ -809,6 +809,12 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
         # It consumes an attempt and retries with the gate output, like a
         # failing executor run, until max_attempts.
         return "work"
+    if str(detail.get("reason") or "").strip().lower() == "harness_finalization_incomplete":
+        # The harness did not push or did not record its verifier result; the
+        # agent's work is not at fault (worker._only_harness_finalization_problems).
+        # Checked before the deterministic markers, whose "repo evidence
+        # requires" text the problems repeat.
+        return "infrastructure_transient"
     if any(marker in blob for marker in _DETERMINISTIC_FAILURE_MARKERS):
         return "non_retryable"
     if _is_openshell_verifier_infrastructure_failure(blob):
@@ -25599,6 +25605,19 @@ class ControlPlane:
         )
         repo = ensure_json_object(executor_manifest.get("repo"))
         acceptance = evaluate_acceptance(task.metadata, executor_manifest)
+        # The independent judge (mac.task_judge) read the change against the
+        # task. Its "not_met" is a semantic failure in its own right, and its
+        # next steps become the feedback the next attempt starts from.
+        judge = ensure_json_object(executor_manifest.get("judge"))
+        if judge.get("verdict") == "not_met":
+            judge_problem = "independent judge: not met: %s" % (judge.get("reason") or "")
+            if judge.get("next"):
+                judge_problem += "; next: %s" % judge["next"]
+            acceptance = {
+                **acceptance,
+                "status": "fail",
+                "problems": [*list(acceptance.get("problems") or []), judge_problem],
+            }
         acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
         coverage = evaluate_requirement_coverage(
             getattr(task, "description", None), executor_manifest
@@ -25670,6 +25689,8 @@ class ControlPlane:
             manifest["feedback"] = feedback
         if repo:
             manifest["repo"] = repo
+        if judge:
+            manifest["judge"] = judge
         manifest["signature"] = sign_verification_manifest(key, manifest)
         evidence = self.add_evidence(
             task.id,
