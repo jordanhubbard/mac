@@ -469,3 +469,39 @@ def test_a_working_sandbox_still_gets_the_full_stale_window():
     candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: True)
 
     assert candidates == []
+
+
+def test_the_short_hub_verifier_family_is_fully_managed():
+    """The 30-char ``mac-hubverify-<16 hex>`` name was shortened to
+    ``mac-hv-<10 hex>`` (17 chars) for OpenShell 0.1.2. Both the name regex and
+    the kind set must accept the new family, and must keep accepting the old
+    one so pre-rename sandboxes are still collected.
+    """
+    from mac.openshell_sandbox_gc import (
+        MANAGED_KINDS,
+        MANAGED_NAME_RE,
+        classify_orphan_task_sandbox,
+    )
+
+    assert MANAGED_NAME_RE.fullmatch("mac-hv-0123456789")
+    assert MANAGED_NAME_RE.fullmatch("mac-hubverify-1059c4c10c254")
+    assert "hv" in MANAGED_KINDS
+    assert "hubverify" in MANAGED_KINDS
+
+    for name, kind in (
+        ("mac-hv-0123456789", "hv"),
+        ("mac-hubverify-1059c4c10c254", "hubverify"),
+    ):
+        record = classify_orphan_task_sandbox(
+            _sandbox(
+                name,
+                labels={
+                    "mac.owner": "mac",
+                    "mac.kind": kind,
+                    "mac.keep": "false",
+                    "mac.pid": "424242",
+                },
+            ),
+            pid_is_alive=lambda _pid: False,
+        )
+        assert record["reap"] is True, record

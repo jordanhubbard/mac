@@ -1911,6 +1911,25 @@ from mac.agent_health import (  # noqa: E402
 )
 
 
+#: OpenShell 0.1.2 rejects sandbox names over 19 characters. The historic hub
+#: verifier name ``mac-hubverify-<16 hex>`` is 30 characters, so it only ever
+#: created on the legacy 0.0.x verifier gateway. ``mac-hv-`` plus 10 hex is 17
+#: characters and keeps 40 bits of per-invocation uniqueness.
+_HUB_VERIFY_SANDBOX_NAME_PREFIX = "mac-hv-"
+_HUB_VERIFY_SANDBOX_NAME_MAX_LENGTH = 19
+
+
+def _hub_verify_sandbox_name() -> str:
+    """A unique OpenShell sandbox name that fits the 0.1.2 length limit."""
+
+    import uuid
+
+    name = _HUB_VERIFY_SANDBOX_NAME_PREFIX + uuid.uuid4().hex[:10]
+    if len(name) > _HUB_VERIFY_SANDBOX_NAME_MAX_LENGTH:
+        raise RuntimeError("hub verifier sandbox name exceeds the OpenShell length limit")
+    return name
+
+
 def run_repository_contract_test_in_openshell(
     remote_url: str,
     branch: str,
@@ -2015,14 +2034,12 @@ def run_repository_contract_test_in_openshell(
             logging.getLogger(__name__).warning(
                 "OpenShell sandbox GC failed before hub verification: %s", exc
             )
-    import uuid as _uuid
-
     tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
     # Unique per invocation: the review sweep may re-tick while a verify is
     # still running, and a head_sha-derived name collides ("already
     # exists"). The in-flight guard in the caller also prevents overlap,
     # but a unique name is the belt-and-suspenders.
-    name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
+    name = _hub_verify_sandbox_name()
     try:
         clone_args = (
             ["git", "clone", "--no-local", "--no-checkout", "--", auth_url, str(tmp / "repo")]
@@ -2145,7 +2162,7 @@ def run_repository_contract_test_in_openshell(
             "--label",
             "mac.owner=mac",
             "--label",
-            "mac.kind=hubverify",
+            "mac.kind=hv",
             "--label",
             "mac.pid=%d" % os.getpid(),
             "--label",

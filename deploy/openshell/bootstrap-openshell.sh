@@ -951,6 +951,7 @@ for item in value:
         disposable_patterns = {
             "task": r"mac-task-[A-Za-z0-9._-]+",
             "hubverify": r"mac-hubverify-[A-Za-z0-9._-]+",
+            "hv": r"mac-hv-[A-Za-z0-9._-]+",
             "codingcap": r"mac-codingcap-[A-Za-z0-9._-]+",
             "runtime-smoke": r"mac-runtime-smoke-[A-Za-z0-9._-]+",
             "security-probe": r"mac-security-probe-[A-Za-z0-9._-]+",
@@ -1078,7 +1079,7 @@ retire_managed_sandboxes_via_docker() {
     # the API path: only the historical disposable families already reviewed
     # by mac.openshell_sandbox_gc are eligible, and only after every container
     # is stopped. Any future family fails closed until explicitly reviewed.
-    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
+    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
       action=disposable
     elif [ -n "$expected_openclaw" ] && [ "$sandbox_name" = "$expected_openclaw" ]; then
       action=openclaw
