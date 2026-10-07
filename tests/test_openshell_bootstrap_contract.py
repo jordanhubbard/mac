@@ -1774,3 +1774,22 @@ def test_upgrade_retires_short_named_smoke_sandboxes(tmp_path):
         result = _run_api_retirement_planner(tmp_path, [smoke])
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "disposable\t%s" % name
+
+
+def test_env_recipe_only_removes_variables_it_rewrites():
+    # The env recipe deletes its own lines from mac.env and appends fresh ones.
+    # A variable it deletes but never writes back is lost on every bootstrap;
+    # MAC_HERMES_PYTHON (owned by the Hermes installer) was dropped this way.
+    import re
+
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    recipe = bootstrap.split("# --- 11. env recipe in mac.env", 1)[1]
+    sed_line = next(line for line in recipe.splitlines() if line.startswith("sed -i '/^# OpenShell"))
+    deleted = set(re.findall(r"/\^([A-Z_]+)=/d", sed_line))
+    written = set(re.findall(r'echo "([A-Z_]+)=', recipe)) | set(
+        re.findall(r'&& echo "([A-Z_]+)=', recipe)
+    )
+    assert deleted, sed_line
+    assert deleted <= written, sorted(deleted - written)
