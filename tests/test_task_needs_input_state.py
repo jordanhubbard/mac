@@ -228,3 +228,68 @@ def test_disposition_is_required_and_validated(cp):
             replaced_by="task_whatever",
         )
     assert cp.get_task(task.id).state == TaskState.NEEDS_INPUT.value
+
+
+# --- a parked question reaches a subscribed notifier channel ----------------
+
+
+def test_a_parked_question_reaches_a_channel_subscribed_to_task_question(cp):
+    """The question must leave the outbox, or parking is a silent stall.
+
+    A channel that subscribes to ``task.question`` is an explicit request to be
+    told when a person is needed, so parking a task has to produce a routable
+    ``task.question`` notification carrying the question and how to answer it.
+    """
+    tenant = cp.register_tenant("ops")
+    persona = cp.register_persona(
+        tenant.id,
+        "Rocky",
+        soul_ref="hermes://ops/rocky/SOUL.md",
+        memory_scope="hermes://ops/rocky/memory",
+    )
+    hermes = cp.register_hermes_instance(
+        tenant.id,
+        "rocky",
+        persona_id=persona.id,
+        home_ref="hermes://ops/rocky",
+    )
+    binding = cp.register_platform_binding(
+        tenant.id,
+        hermes.id,
+        "slack",
+        "T123/C456",
+        display_name="#mac-home",
+    )
+    machine = cp.register_machine("host")
+    agent = cp.register_agent(
+        machine.id,
+        "worker",
+        capabilities=["python"],
+        hermes_instance_id=hermes.id,
+    )
+    cp.configure_notifier_channel(
+        "question-slack",
+        "slack",
+        event_types=["task.question"],
+        target={"platform_binding_id": binding.id},
+    )
+
+    task = cp.create_task("ambiguous work", required_capabilities=["python"])
+    _park(cp, task, questions=("which database?", "which region?"))
+
+    pending = [
+        notification
+        for notification in cp.list_notifications(status="pending")
+        if notification.event_type == "task.question"
+    ]
+    assert len(pending) == 1
+    assert "which database?" in pending[0].body
+    assert "which region?" in pending[0].body
+    assert "mac task answer %s" % task.id in pending[0].body
+
+    result = cp.deliver_pending_notifications()
+    assert result["delivered"] >= 1
+    messages = cp.list_messages(agent.id)
+    assert any(
+        message.payload["notification"]["event_type"] == "task.question" for message in messages
+    )

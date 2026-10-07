@@ -22159,6 +22159,41 @@ class ControlPlane:
                 "channels": ["dashboard", "hermes"],
                 "metadata": metadata,
             }
+        if event_type == "task.transitioned" and to_state == TaskState.NEEDS_INPUT.value:
+            # Parking a task on a human question is the one transition an
+            # operator must see: the work stops until a person answers. Emit it
+            # as `task.question` -- the event type notifier channels subscribe
+            # to -- and carry the answer instructions in the body so the alert
+            # is actionable wherever it lands. The `hermes` hint lets both an
+            # explicit subscription and the auto-discovery fallback deliver it.
+            lines: List[str] = []
+            questions = detail.get("questions") or []
+            for index, item in enumerate(questions, start=1):
+                question = ensure_json_object(item)
+                text = str(question.get("question") or "").strip()
+                if not text:
+                    continue
+                prefix = "%d. " % index if len(questions) > 1 else ""
+                lines.append("%s%s" % (prefix, text))
+                why = str(question.get("why") or "").strip()
+                if why:
+                    lines.append("   why: %s" % why)
+                options = [
+                    str(opt).strip() for opt in (question.get("options") or []) if str(opt).strip()
+                ]
+                if options:
+                    lines.append("   options: %s" % ", ".join(options))
+            why = str(detail.get("why") or "").strip()
+            if why:
+                lines.append("why: %s" % why)
+            lines.append('Answer with: mac task answer %s --answer "..."' % task_id)
+            return {
+                "event_type": "task.question",
+                "title": "Answer needed: %s" % task_title,
+                "body": "\n".join(lines),
+                "channels": ["dashboard", "hermes"],
+                "metadata": metadata,
+            }
         if event_type == "task.transitioned" and to_state in {
             TaskState.RUNNING.value,
             TaskState.WAITING.value,
