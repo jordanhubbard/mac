@@ -1348,6 +1348,12 @@ def mount_router(
         agent_table_provider=media_agent_table_provider,
     ):
         mounted = True
+    # Claude Code's Anthropic-shaped front door, served by the configured
+    # Anthropic provider (mac.anthropic_passthrough).
+    from mac.anthropic_passthrough import mount_anthropic_messages
+
+    if mount_anthropic_messages(app, env=env, secret_resolver=secret_resolver):
+        mounted = True
     proxy = proxy or build_proxy_from_env(
         env, secret_resolver=secret_resolver, route_observer=route_observer
     )

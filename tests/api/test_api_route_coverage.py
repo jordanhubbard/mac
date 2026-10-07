@@ -1667,6 +1667,11 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "operator",
             "answer": "route coverage answer",
         },
+        ("POST", "/tasks/{task_id}/messages"): {
+            "kind": "directive",
+            "body": "route coverage directive",
+            "author": "operator",
+        },
         ("POST", "/tasks/{task_id}/force-complete"): {
             "actor": "operator",
             "reason": "route coverage force-complete",

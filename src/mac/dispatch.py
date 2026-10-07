@@ -57,7 +57,7 @@ import urllib.request
 from pathlib import Path
 
 from mac import mac_paths
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 from urllib.parse import quote, urlencode
 
 from mac.fleet_env import resolve as resolve_env_var
@@ -739,6 +739,37 @@ class RemoteDispatch:
     ) -> _Dictish:
         body = _drop_none({"questions": list(questions or []), "actor": actor, "why": why or None})
         return _Dictish(self._post("/tasks/%s/ask" % quote(task_id, safe=""), body))
+
+    def post_task_message(
+        self,
+        task_id: str,
+        *,
+        author_kind: str,
+        author: str,
+        kind: str,
+        body: str,
+        reply_to: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        # The hub decides author_kind and author from the token; they are
+        # accepted here only so local and remote dispatch share a signature.
+        payload = _drop_none(
+            {"kind": kind, "body": body, "reply_to": reply_to, "metadata": metadata, "author": author}
+        )
+        return self._post("/tasks/%s/messages" % quote(task_id, safe=""), payload)
+
+    def list_task_messages(
+        self,
+        task_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> Any:
+        params: Dict[str, Any] = {"after": int(after or 0), "limit": int(limit)}
+        if kinds:
+            params["kinds"] = ",".join(kinds)
+        return self._get("/tasks/%s/messages" % quote(task_id, safe=""), **params)
 
     def answer_task_input(
         self,

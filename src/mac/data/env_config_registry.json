@@ -5514,6 +5514,28 @@
   },
   {
     "default": null,
+    "description": "Router setting: router anthropic provider.",
+    "family": "router",
+    "name": "MAC_ROUTER_ANTHROPIC_PROVIDER",
+    "retired": false,
+    "sources": [
+      "src/mac/anthropic_passthrough.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Router setting: router anthropic timeout seconds.",
+    "family": "router",
+    "name": "MAC_ROUTER_ANTHROPIC_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/anthropic_passthrough.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Router setting: router audio key.",
     "family": "router",
     "name": "MAC_ROUTER_AUDIO_KEY",

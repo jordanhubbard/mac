@@ -11015,6 +11015,55 @@ class ControlPlane:
             drain_outbox=drain_outbox,
         )
 
+    def post_task_message(
+        self,
+        task_id: str,
+        *,
+        author_kind: str,
+        author: str,
+        kind: str,
+        body: str,
+        reply_to: Optional[int] = None,
+        metadata: Optional[JsonDict] = None,
+    ) -> JsonDict:
+        """Append one message to a task's board (see :mod:`mac.task_board`)."""
+        from mac.task_board import TaskBoard
+
+        return (
+            TaskBoard(self.store)
+            .post(
+                task_id,
+                author_kind=author_kind,
+                author=author,
+                kind=kind,
+                body=body,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+            .to_dict()
+        )
+
+    def list_task_messages(
+        self,
+        task_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> JsonDict:
+        """A task's board after cursor ``after``, oldest first."""
+        from mac.task_board import TaskBoard
+
+        self.get_task(task_id)
+        messages = TaskBoard(self.store).list(
+            task_id, after=after, limit=limit, kinds=list(kinds or [])
+        )
+        return {
+            "task_id": task_id,
+            "messages": [message.to_dict() for message in messages],
+            "cursor": messages[-1].id if messages else int(after or 0),
+        }
+
     #: Answering a parked question is a judgement, not automatically a
     #: release. "resume" returns the task to the dispatch pool; any
     #: CANCELLATION_DISPOSITION closes it using the vocabulary the rest of the

@@ -245,6 +245,7 @@ def test_lifecycle_stores_only_the_hash_and_refuses_unknown_agents() -> None:
         "agent_id": "agent_alpha",
         "principal_kind": "inference",
         "credential_fingerprint": row["token_fingerprint"],
+        "task_id": "task-x",
     }
     with pytest.raises(InferenceTokenError, match="registered agent"):
         lifecycle.mint("agent_missing")
