@@ -277,16 +277,18 @@ def test_lease_reconcile_best_effort_swallows_errors(monkeypatch) -> None:
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
 
 
-def test_coding_agent_sandbox_which_declares_opencode_only() -> None:
+def test_coding_agent_sandbox_which_declares_the_two_coding_clis() -> None:
     """coding_agent_sandbox_which is a DECLARED inventory of the task image.
 
-    It must name the coding CLI the router selects, or routing rejects opencode
-    as "not on PATH" before any real in-sandbox preflight runs, and nothing
-    else, because the image installs nothing else.
+    It must name the coding CLIs the router can select (opencode, and Claude
+    Code with MAC_CODING_AGENT=claude), or routing rejects them as "not on
+    PATH" before any real in-sandbox preflight runs, and nothing else,
+    because the image installs nothing else.
     """
     sandbox = importlib.import_module("mac.executor_sandbox")
     coding_agent = importlib.import_module("mac.coding_agent")
 
     assert sandbox.coding_agent_sandbox_which(coding_agent.CODING_AGENT) == "opencode"
-    for name in ("claude", "codex", "cursor-agent", "pi", "not-a-real-cli"):
+    assert sandbox.coding_agent_sandbox_which(coding_agent.CLAUDE_AGENT) == "claude"
+    for name in ("codex", "cursor-agent", "pi", "not-a-real-cli"):
         assert sandbox.coding_agent_sandbox_which(name) is None

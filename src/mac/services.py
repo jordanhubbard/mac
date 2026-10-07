@@ -24663,8 +24663,11 @@ class ControlPlane:
             )
         except ValueError:
             max_age = 1200.0
-        # opencode is the only coding CLI; an entry for any other is ignored.
+        # A worker reports the one coding CLI it runs: opencode, or Claude
+        # Code (MAC_CODING_AGENT=claude). An entry for any other is ignored.
         item = ensure_json_object(clis.get("opencode"))
+        if not item:
+            item = ensure_json_object(clis.get("claude"))
         if not (item.get("configured") is True and item.get("verified") is True):
             return False, "coding_agent_route_unverified"
         verification = ensure_json_object(item.get("verification"))

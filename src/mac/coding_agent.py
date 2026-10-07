@@ -1,6 +1,11 @@
-"""MAC's coding CLI: opencode, driven through the hub's model router.
+"""MAC's coding CLIs: opencode or Claude Code, driven through the hub's router.
 
-MAC runs exactly one coding CLI. opencode gets its model from the hub's
+opencode is the default. ``MAC_CODING_AGENT=claude`` selects Claude Code,
+which gets its model through the hub's Anthropic-shaped front door
+(``/v1/messages``, :mod:`mac.anthropic_passthrough`) with the same per-task
+inference token, and runs with MAC's board hooks (:mod:`mac.claude_hooks`).
+
+opencode gets its model from the hub's
 OpenAI-compatible router through a generated config whose only provider is
 ``machub`` (:func:`opencode_router_config`), and it authenticates with a
 per-task, inference-only token (:mod:`mac.inference_tokens`). Provider choice
@@ -39,16 +44,25 @@ __all__ = [
     "FORCE_ENV",
 ]
 
-#: The coding CLI. There is no other.
+#: The default coding CLI.
 CODING_AGENT = "opencode"
+#: Claude Code, selected with ``MAC_CODING_AGENT=claude``.
+CLAUDE_AGENT = "claude"
+SUPPORTED_AGENTS = (CODING_AGENT, CLAUDE_AGENT)
+#: The Anthropic model Claude Code runs on unless a task pins a Claude model.
+CLAUDE_MODEL_ENV = "MAC_CLAUDE_MODEL"
+DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
+#: Upper bound on Claude Code's agentic turns in one run.
+CLAUDE_MAX_TURNS_ENV = "MAC_CLAUDE_MAX_TURNS"
+DEFAULT_CLAUDE_MAX_TURNS = 400
 
 #: Master on/off for the coding route. Default ON. Falsy means no coding agent
 #: is eligible and the executor fails closed.
 PREFERENCE_ENV = "MAC_PREFER_CODING_AGENT"
 
-#: ``opencode`` (or unset) selects opencode; a disable value (``off``, ``none``,
-#: ``0`` ...) turns the coding route off so the executor fails closed. Any other
-#: value is ignored with a rationale line: MAC has no other coding CLI.
+#: ``opencode`` (or unset) selects opencode and ``claude`` selects Claude Code;
+#: a disable value (``off``, ``none``, ``0`` ...) turns the coding route off so
+#: the executor fails closed. Any other value is ignored with a rationale line.
 FORCE_ENV = "MAC_CODING_AGENT"
 
 #: Sentinel the coding agent must echo back for the preflight to pass. A correct
@@ -168,6 +182,36 @@ def _env_text(env: Mapping[str, str], *names: str) -> str:
     return ""
 
 
+def selected_agent(env: Optional[Mapping[str, str]] = None) -> str:
+    """The coding CLI this host runs: ``claude`` when chosen, else opencode."""
+    env = os.environ if env is None else env
+    forced = str(env.get(FORCE_ENV) or "").strip().lower()
+    return CLAUDE_AGENT if forced == CLAUDE_AGENT else CODING_AGENT
+
+
+def claude_model(env: Mapping[str, str]) -> str:
+    """The Anthropic model Claude Code runs on.
+
+    A task pin wins when it names a Claude model (``MAC_TASK_MODEL``, with or
+    without the ``machub/`` or ``azure/anthropic/`` prefixes the router knows);
+    a pin for another family is ignored, since Claude Code cannot run it.
+    """
+    pinned = _env_text(env, "MAC_TASK_MODEL")
+    for prefix in (ROUTER_PROVIDER_ID + "/",):
+        if pinned.startswith(prefix):
+            pinned = pinned[len(prefix) :]
+    if pinned and "claude" in pinned.lower():
+        return pinned
+    return _env_text(env, CLAUDE_MODEL_ENV) or DEFAULT_CLAUDE_MODEL
+
+
+def claude_max_turns(env: Mapping[str, str]) -> int:
+    try:
+        return max(1, int(_env_text(env, CLAUDE_MAX_TURNS_ENV) or DEFAULT_CLAUDE_MAX_TURNS))
+    except ValueError:
+        return DEFAULT_CLAUDE_MAX_TURNS
+
+
 def router_hub_url(env: Mapping[str, str]) -> str:
     """The hub base URL the router route talks to, or ``""``."""
     return _env_text(env, *_HUB_URL_ENVS).rstrip("/")
@@ -242,8 +286,16 @@ def opencode_router_config(env: Mapping[str, str]) -> Dict[str, object]:
     }
 
 
-def _route_fields(env: Mapping[str, str]) -> Dict[str, str]:
+def _route_fields(env: Mapping[str, str], agent: str = CODING_AGENT) -> Dict[str, str]:
     """The router route's identity: provider, protocol, auth and endpoint."""
+    if agent == CLAUDE_AGENT:
+        return {
+            "provider": "mac-router",
+            "protocol": "anthropic-messages",
+            "auth_kind": "bearer_env",
+            "endpoint": _safe_endpoint(router_hub_url(env) + "/v1/messages", ""),
+            "model": claude_model(env),
+        }
     return {
         "provider": "mac-router",
         "protocol": "openai-chat-completions",
@@ -259,16 +311,17 @@ def _choice(
     auth_source: str,
     rationale: List[str],
     env: Mapping[str, str],
+    agent: str = CODING_AGENT,
 ) -> CodingAgentChoice:
     if not available and not binary:
         return CodingAgentChoice(agent="", available=False, rationale=rationale)
     return CodingAgentChoice(
-        agent=CODING_AGENT,
+        agent=agent,
         available=available,
         binary=binary,
         auth_source=auth_source,
         rationale=rationale,
-        **_route_fields(env),
+        **_route_fields(env, agent),
     )
 
 
@@ -299,6 +352,35 @@ def _detect_opencode(
         ROUTER_AUTH_ENV,
         "opencode: routed through the hub model router (%s)" % ROUTER_PROVIDER_ID,
     )
+
+
+def _detect_claude(
+    env: Mapping[str, str], which: Callable[[str], Optional[str]]
+) -> Tuple[bool, str, str, str]:
+    """Return (available, binary, auth_source, reason) for Claude Code.
+
+    Same requirements as opencode: the binary, the hub URL, and a token to
+    reach the hub's /v1/messages with.
+    """
+    binary = _which(CLAUDE_AGENT, which)
+    if not binary:
+        return False, "", "", "claude: not on PATH"
+    if not router_hub_url(env):
+        return False, binary, "", "claude: no hub URL (MAC_HUB_URL) to route through"
+    if not _env_text(env, ROUTER_AUTH_ENV, *_WORKER_TOKEN_ENVS):
+        return (
+            False,
+            binary,
+            "",
+            "claude: no inference token or worker token to authenticate to the hub router",
+        )
+    return True, binary, ROUTER_AUTH_ENV, "claude: routed through the hub's /v1/messages"
+
+
+def _detect(
+    agent: str, env: Mapping[str, str], which: Callable[[str], Optional[str]]
+) -> Tuple[bool, str, str, str]:
+    return (_detect_claude if agent == CLAUDE_AGENT else _detect_opencode)(env, which)
 
 
 def _service_augmented_which(env: Mapping[str, str], home: Path) -> Callable[[str], Optional[str]]:
@@ -362,21 +444,24 @@ def route_status(
     host_which = _service_augmented_which(env, home) if host_which is None else host_which
     if which is None:
         which = host_which
-    host_configured, host_binary, host_source, host_detail = _detect_opencode(env, host_which)
-    configured, binary, source, detail = _detect_opencode(env, which)
+    agent = selected_agent(env)
+    host_configured, host_binary, host_source, host_detail = _detect(agent, env, host_which)
+    configured, binary, source, detail = _detect(agent, env, which)
     checked = dict(verification or {})
     reported_binary = str(checked.get("binary") or "").strip()
     if reported_binary:
         # A same-environment report is authoritative for the executable it
         # actually attempted, even when this host cannot resolve that path.
-        reported = _detect_opencode(
-            env, lambda command: reported_binary if command == CODING_AGENT else None
+        reported = _detect(
+            agent, env, lambda command: reported_binary if command == agent else None
         )
-        reported_choice = _choice(reported[0], reported[1], reported[2], [reported[3]], env)
+        reported_choice = _choice(
+            reported[0], reported[1], reported[2], [reported[3]], env, agent
+        )
         if checked.get("route_fingerprint") == reported_choice.route_fingerprint():
             configured, binary, source, detail = reported
 
-    choice = _choice(configured, binary, source, [detail], env)
+    choice = _choice(configured, binary, source, [detail], env, agent)
     route = choice.observable()
     matches = bool(
         checked.get("route_fingerprint")
@@ -453,28 +538,29 @@ def resolve_coding_agent(
     if forced in _DISABLE_VALUES:
         rationale.append("%s=%s disables the coding route" % (FORCE_ENV, forced))
         return _choice(False, "", "", rationale, env)
-    if forced and forced != CODING_AGENT:
+    if forced and forced not in SUPPORTED_AGENTS:
         rationale.append(
-            "%s=%s is not supported; MAC's only coding CLI is %s"
-            % (FORCE_ENV, forced, CODING_AGENT)
+            "%s=%s is not supported; MAC's coding CLIs are %s"
+            % (FORCE_ENV, forced, ", ".join(SUPPORTED_AGENTS))
         )
+    agent = selected_agent(env)
 
-    available, binary, auth_source, reason = _detect_opencode(env, which)
+    available, binary, auth_source, reason = _detect(agent, env, which)
     rationale.append(reason)
     if not available:
         rationale.append("no coding route available; executor will fail closed")
         return _choice(False, "", "", rationale, env)
-    choice = _choice(True, binary, auth_source, rationale, env)
+    choice = _choice(True, binary, auth_source, rationale, env, agent)
     if accept is None:
         return choice
     try:
         accepted = bool(accept(choice))
     except Exception as exc:  # noqa: BLE001 - a verifier crash means "not verified"
-        rationale.append("opencode: verifier raised %s" % exc.__class__.__name__)
+        rationale.append("%s: verifier raised %s" % (agent, exc.__class__.__name__))
         accepted = False
     if accepted:
         return choice
-    rationale.append("opencode: route verification failed; executor will fail closed")
+    rationale.append("%s: route verification failed; executor will fail closed" % agent)
     return _choice(False, "", "", rationale, env)
 
 
@@ -495,16 +581,75 @@ def opencode_argv(binary: str, prompt: str, *, model: str = "") -> List[str]:
     return [*argv, prompt]
 
 
+#: Where the executor writes Claude Code's settings and hooks, relative to the
+#: task workspace (the agent's working directory).
+CLAUDE_AGENT_DIR = ".mac-agent"
+CLAUDE_SETTINGS_FILE = CLAUDE_AGENT_DIR + "/settings.json"
+
+
+def claude_argv(
+    binary: str,
+    prompt: str,
+    *,
+    model: str,
+    max_turns: int,
+    session_id: str = "",
+    resume: str = "",
+    settings: str = CLAUDE_SETTINGS_FILE,
+) -> List[str]:
+    """Headless Claude Code with MAC's settings and hooks only.
+
+    ``--setting-sources ""`` keeps a repository's own ``.claude`` settings and
+    hooks from loading: the task repository is untrusted input. Permission
+    prompts are bypassed because nobody can answer one in a task run;
+    confinement is the executor's OpenShell gate, as with opencode's
+    ``--auto``. ``session_id`` names a new session; ``resume`` continues an
+    earlier one (the executor keeps sessions under the workspace).
+    """
+    argv = [
+        binary,
+        "-p",
+        "--settings",
+        settings,
+        "--setting-sources",
+        "",
+        "--permission-mode",
+        "bypassPermissions",
+        "--model",
+        model,
+        "--max-turns",
+        str(int(max_turns)),
+        "--output-format",
+        "text",
+    ]
+    if resume:
+        argv += ["--resume", resume]
+    elif session_id:
+        argv += ["--session-id", session_id]
+    return [*argv, prompt]
+
+
 def coding_agent_argv(
     choice: CodingAgentChoice,
     prompt: str,
     *,
     env: Optional[Mapping[str, str]] = None,
+    session_id: str = "",
+    resume: str = "",
 ) -> List[str]:
-    """Build the argv to run ``prompt`` through opencode on a ``machub`` model."""
-    if not choice.available or choice.agent != CODING_AGENT:
-        raise ValueError("coding_agent_argv called without an available opencode choice")
+    """Build the argv to run ``prompt`` through the chosen coding CLI."""
+    if not choice.available or choice.agent not in SUPPORTED_AGENTS:
+        raise ValueError("coding_agent_argv called without an available coding route")
     env = os.environ if env is None else env
+    if choice.agent == CLAUDE_AGENT:
+        return claude_argv(
+            choice.binary,
+            prompt,
+            model=claude_model(env),
+            max_turns=claude_max_turns(env),
+            session_id=session_id,
+            resume=resume,
+        )
     task_model = str(env.get("MAC_TASK_MODEL") or choice.model or "").strip()
     # The generated config names the router provider `machub`; opencode needs
     # the provider prefix on every model reference.

@@ -11,6 +11,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENTFS_WRITE_TOKEN` | str | consumer-defined | core | Core setting: agentfs write token. |
 | `MAC_AGENT_ATTESTATION_KEY` | str | consumer-defined | agent | Agent setting: agent attestation key. |
 | `MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS` | int | consumer-defined | agent | Agent setting: agent command exit grace seconds. |
+| `MAC_AGENT_DIR` | str | consumer-defined | agent | Agent setting: agent dir. |
 | `MAC_AGENT_GEN_AUDIO_BASE_URL` | str | consumer-defined | agent | Agent setting: agent gen audio base url. |
 | `MAC_AGENT_GEN_AUDIO_MODELS` | str | consumer-defined | agent | Agent setting: agent gen audio models. |
 | `MAC_AGENT_GEN_AUDIO_PORT` | int | consumer-defined | agent | Agent setting: agent gen audio port. |
@@ -24,10 +25,12 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENT_ID` | str | consumer-defined | agent | Agent setting: agent id. |
 | `MAC_AGENT_MEDIA_ROUTES` | str | consumer-defined | agent | Agent setting: agent media routes. |
 | `MAC_AGENT_NAME` | str | consumer-defined | agent | Agent setting: agent name. |
+| `MAC_AGENT_PYTHON` | str | consumer-defined | agent | Agent setting: agent python. |
 | `MAC_AGENT_QUARANTINE_THRESHOLD` | int | consumer-defined | agent | Agent setting: agent quarantine threshold. |
 | `MAC_AGENT_RECONCILE_RUNTIME_DEPS` | bool | consumer-defined | agent | Agent setting: agent reconcile runtime deps. |
 | `MAC_AGENT_SERVICE_NAME` | str | consumer-defined | agent | Agent setting: agent service name. |
 | `MAC_AGENT_STALE_AFTER_SECONDS` | int | consumer-defined | agent | Agent setting: agent stale after seconds. |
+| `MAC_AGENT_STATE_DIR` | str | consumer-defined | agent | Agent setting: agent state dir. |
 | `MAC_AGENT_ZOMBIE_STREAM_AGE_SECONDS` | int | consumer-defined | agent | Agent setting: agent zombie stream age seconds. |
 | `MAC_ALLOW_UNSANDBOXED_YOLO` | bool | consumer-defined | core | Core setting: allow unsandboxed yolo. |
 | `MAC_API_ALLOW_OPEN` | bool | consumer-defined | api-auth | Api Auth setting: api allow open. |
@@ -55,6 +58,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier status command timeout seconds. |
 | `MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier tunnel health timeout seconds. |
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
+| `MAC_CLAUDE_MAX_TURNS` | str | consumer-defined | core | Core setting: claude max turns. |
+| `MAC_CLAUDE_MODEL` | str | consumer-defined | core | Core setting: claude model. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
 | `MAC_CLIENT_CREDENTIAL_TTL_SECONDS` | int | consumer-defined | core | Core setting: client credential ttl seconds. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |

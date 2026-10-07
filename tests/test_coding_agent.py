@@ -141,7 +141,7 @@ def test_force_opencode_is_the_default(tmp_path):
     assert choice.agent == "opencode"
 
 
-@pytest.mark.parametrize("value", ["claude", "codex", "auto"])
+@pytest.mark.parametrize("value", ["codex", "auto"])
 def test_any_other_pin_is_ignored_and_said_so(tmp_path, value):
     env = {**_HUB, "MAC_CODING_AGENT": value}
     choice = resolve_coding_agent(env=env, home=tmp_path, which=_which("opencode", value))
@@ -195,8 +195,44 @@ def test_argv_requires_an_available_opencode_choice():
         coding_agent_argv(ca.CodingAgentChoice(agent="", available=False), "p", env={})
     with pytest.raises(ValueError):
         coding_agent_argv(
-            ca.CodingAgentChoice(agent="claude", available=True, binary="claude"), "p", env={}
+            ca.CodingAgentChoice(agent="cursor", available=True, binary="cursor"), "p", env={}
         )
+
+
+def test_claude_is_selected_by_name_and_routes_through_messages(tmp_path):
+    env = {**_HUB, "MAC_CODING_AGENT": "claude"}
+    choice = resolve_coding_agent(env=env, home=tmp_path, which=_which("opencode", "claude"))
+    assert (choice.agent, choice.available) == ("claude", True)
+    assert choice.protocol == "anthropic-messages"
+    assert choice.endpoint.endswith("/v1/messages")
+    assert choice.model == ca.DEFAULT_CLAUDE_MODEL
+    # Without the binary there is no route, and nothing falls back to opencode.
+    missing = resolve_coding_agent(env=env, home=tmp_path, which=_which("opencode"))
+    assert missing.available is False
+    assert any("claude: not on PATH" in line for line in missing.rationale)
+
+
+def test_claude_model_honours_only_claude_pins():
+    assert ca.claude_model({"MAC_TASK_MODEL": "gpt-5.6-sol"}) == ca.DEFAULT_CLAUDE_MODEL
+    assert ca.claude_model({"MAC_TASK_MODEL": "machub/claude-sonnet-4-6"}) == "claude-sonnet-4-6"
+    assert ca.claude_model({"MAC_CLAUDE_MODEL": "claude-haiku-4-5-20251001"}) == (
+        "claude-haiku-4-5-20251001"
+    )
+
+
+def test_claude_argv_loads_only_mac_settings_and_takes_the_prompt_last():
+    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/usr/local/bin/claude")
+    argv = coding_agent_argv(choice, "PROMPT", env={"MAC_CLAUDE_MAX_TURNS": "50"}, session_id="s-1")
+    assert argv[:2] == ["/usr/local/bin/claude", "-p"]
+    assert argv[argv.index("--settings") + 1] == ca.CLAUDE_SETTINGS_FILE
+    # A repository's own .claude settings and hooks never load.
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert argv[argv.index("--max-turns") + 1] == "50"
+    assert argv[argv.index("--session-id") + 1] == "s-1"
+    assert argv[-1] == "PROMPT"
+    resumed = coding_agent_argv(choice, "NEXT", env={}, session_id="s-1", resume="s-1")
+    assert resumed[resumed.index("--resume") + 1] == "s-1"
+    assert "--session-id" not in resumed
 
 
 # --------------------------------------------------------------------------- #

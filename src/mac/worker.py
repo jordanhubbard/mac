@@ -750,11 +750,14 @@ def _resources_with_command_inventory(
     merged["commands"] = _detect_command_inventory()
     if source_repo is not None:
         merged["source_state"] = _worker_source_state(source_repo)
-    # The opencode route's status (secret-free) rides the same refresh cycle so
+    # The coding route's status (secret-free) rides the same refresh cycle so
     # the hub can see whether this worker has a verified coding route. The
-    # wire shape keeps a per-CLI map with a single "opencode" entry.
+    # wire shape keeps a per-CLI map with one entry: the CLI this worker runs
+    # (opencode, or claude when MAC_CODING_AGENT=claude).
     try:
-        from mac.coding_agent import CODING_AGENT, route_status
+        from mac.coding_agent import route_status, selected_agent
+
+        CODING_AGENT = selected_agent()
 
         verification: JsonDict = {}
         if isinstance(coding_verification, dict):
@@ -6209,7 +6212,8 @@ class MacWorker(
                 failure_class = ""
             elif reports:
                 failure_class = str(
-                    (reports.get(_ca.CODING_AGENT) or {}).get("failure_class") or "probe_failed"
+                    (reports.get(_ca.selected_agent()) or {}).get("failure_class")
+                    or "probe_failed"
                 )
             else:
                 failure_class = "not_configured"
