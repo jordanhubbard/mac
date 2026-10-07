@@ -216,7 +216,7 @@ with MAC. You will see new messages from them after your tool calls, prefixed \
 
   .mac-agent/board status "what you are doing, what you found, what is next"
   .mac-agent/board ask "a question only a person can answer" [--default "what you will \
-assume"] [--options "a,b"]
+assume" --expires MINUTES] [--options "a,b"] [--blocking]
   .mac-agent/board done "what you changed, and how you checked it"
   .mac-agent/board no-change "why nothing needed to change, and how you checked"
   .mac-agent/board say "anything else"
@@ -364,6 +364,13 @@ def board_main(argv: List[str], hub: Optional[Hub]) -> int:
     ask.add_argument("--default", default=None, help="what you will assume if nobody answers")
     ask.add_argument("--options", default=None, help="comma-separated choices")
     ask.add_argument(
+        "--expires",
+        type=int,
+        default=None,
+        metavar="MINUTES",
+        help="with --default: apply the default if nobody answers within this many minutes",
+    )
+    ask.add_argument(
         "--blocking",
         action="store_true",
         help="nothing else can proceed until this is answered (you will stop after asking)",
@@ -386,6 +393,10 @@ def board_main(argv: List[str], hub: Optional[Hub]) -> int:
                 metadata["default"] = args.default
             if args.options:
                 metadata["options"] = [o.strip() for o in args.options.split(",") if o.strip()]
+            if args.expires:
+                metadata["expires_at"] = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(_now() + 60 * int(args.expires))
+                )
             posted = hub.post("question", args.text, **metadata)
             if args.blocking:
                 state["asked_blocking"] = True
