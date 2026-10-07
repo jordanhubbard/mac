@@ -231,11 +231,11 @@ resolve_deployed_source_revision(){
     echo "invalid durable deployed-source revision marker" >&2
     return 1
   fi
-  if [ -n "$git_revision" ] && [ -n "$marker_revision" ] \
-      && [ "$git_revision" != "$marker_revision" ]; then
-    echo "deployed Git checkout does not match durable source revision marker" >&2
-    return 1
-  fi
+  # The deployed checkout HEAD is authoritative. The durable marker lost its
+  # writer when the fleet setup tooling was deleted (447f37ca), so a leftover
+  # value can lag the checkout; refusing here would strand a node after its
+  # binaries were already replaced. Keep the marker only as the archive fallback
+  # for sources with no Git metadata.
   revision="${git_revision:-$marker_revision}"
   if [ -z "$revision" ]; then
     echo "cannot verify runtime image: deployed source revision is unavailable" >&2
@@ -249,7 +249,11 @@ build_runtime_image() {
   local image_source_sha image_source_sha_file runtime_digest runtime_config
   local image_revision image_input_sha runtime_ref_file runtime_ref_tmp builder
   local runtime_input_file runtime_input_tmp runtime_build_file runtime_build_tmp
-  image_source_sha="$(resolve_deployed_source_revision)" || return 1
+  image_source_sha="$DEPLOYED_SOURCE_REVISION"
+  [ -n "$image_source_sha" ] || {
+    echo "ERROR: deployed source revision was not resolved before the image build" >&2
+    return 1
+  }
   image_source_sha_file="$OSH_DIR/image-source-sha"
   runtime_ref_file="$OSH_DIR/runtime-image-ref"
   runtime_input_file="$OSH_DIR/runtime-input-sha256"
@@ -1514,6 +1518,11 @@ if [ "$DO_ROLLBACK" = 1 ]; then
   rollback_openshell_install || exit $?
   exit 0
 fi
+# Resolve the deployed source identity BEFORE the node is touched: retire
+# sandboxes, stop the gateway, or replace any binary. A failed precondition must
+# leave the node on its working version instead of half-upgraded. Resolve once
+# and reuse it for the image build below.
+DEPLOYED_SOURCE_REVISION="$(resolve_deployed_source_revision)" || exit $?
 retire_managed_sandboxes_before_upgrade || exit $?
 stop_gateway_fail_closed
 backup_openshell_install_for_upgrade || exit $?
