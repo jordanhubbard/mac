@@ -91,6 +91,8 @@ def _sample(name: str) -> Any:
         "baseline_score",
         "expected_plan_version",
         "expected_epoch",
+        "after",
+        "reply_to",
     }:
         return 1
     if name == "min_score":
@@ -117,6 +119,7 @@ def _sample(name: str) -> Any:
         "added_dependencies",
         "recipient_agent_ids",
         "restart_services",
+        "kinds",
     }:
         return ["sample"]
     return "sample"

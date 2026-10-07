@@ -117,6 +117,9 @@ class TokenPrincipal:
     credential_fingerprint: Optional[str] = None
     worker_credential_version: Optional[int] = None
     worker_credential_state: Optional[str] = None
+    #: The one task a per-task inference token was minted for. It confines the
+    #: token's ``task_board`` access to that task's board.
+    task_id: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:
@@ -139,6 +142,12 @@ class TokenPrincipal:
         # reverse never holds -- a per-task inference token carries ONLY this
         # scope and so fails every other route's check.
         if scope == "inference" and "agent" in self.scopes:
+            return True
+        # A task's board is read and written by the agent running it (through
+        # its per-task inference token, or its agent credential) and by people
+        # with read/write access. The route handler then narrows by task,
+        # method and kind (``_authorize_task_board``).
+        if scope == "task_board" and self.scopes & {"inference", "agent", "read", "write"}:
             return True
         return False
 
@@ -243,6 +252,7 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
                 else None
             ),
             worker_credential_state=(str(value.get("worker_credential_state") or "") or None),
+            task_id=(str(value.get("task_id") or "") or None),
         )
     if not isinstance(value, (list, tuple, set, frozenset)):
         # A principal-like object whose class is NOT this module's, which
@@ -261,6 +271,7 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
             credential_fingerprint=getattr(value, "credential_fingerprint", None),
             worker_credential_version=getattr(value, "worker_credential_version", None),
             worker_credential_state=getattr(value, "worker_credential_state", None),
+            task_id=getattr(value, "task_id", None),
         )
     return TokenPrincipal(scopes=frozenset(str(s) for s in value))
 
@@ -863,6 +874,18 @@ class AgentRegister(BaseModel):
     #: the safe one for new registrations.
     owner_human_id: Optional[str] = None
     visibility: Optional[str] = None
+
+
+class TaskMessageCreate(BaseModel):
+    kind: str = "message"
+    body: str
+    reply_to: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    #: Only a worker credential acting for the task's owner may say "hub"
+    #: (the harness posting a verdict or nudge); everyone else is derived.
+    author_kind: Optional[str] = None
+    #: A human's display name when the token does not carry one.
+    author: Optional[str] = None
 
 
 class InferenceTokenMint(BaseModel):
@@ -1876,8 +1899,12 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
     return _normalize_auth_tokens({single: TokenPrincipal(scopes=frozenset({"admin"}))})
 
 
-#: The only routes the ``inference`` scope opens, and only for POST.
-_INFERENCE_ROUTES = frozenset({"/v1/chat/completions", "/v1/embeddings"})
+#: The only model-router routes the ``inference`` scope opens, and only for
+#: POST. ``/v1/messages`` is the Anthropic-shaped front door Claude Code uses.
+_INFERENCE_ROUTES = frozenset(
+    {"/v1/chat/completions", "/v1/embeddings", "/v1/messages", "/v1/messages/count_tokens"}
+)
+_TASK_BOARD_ROUTE = re.compile(r"^/tasks/[^/]+/messages$")
 
 
 def _required_scope(method: str, path: str) -> Optional[str]:
@@ -1906,6 +1933,10 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
+    if _TASK_BOARD_ROUTE.match(path) and method in {"GET", "POST"}:
+        # The task board (mac.task_board). Narrowed per task and per kind in
+        # the handler; see _authorize_task_board.
+        return "task_board"
     if method == "POST" and path in _INFERENCE_ROUTES:
         # Chat completions and embeddings are the only routes a per-task
         # inference token (mac.inference_tokens) may call. Agent credentials
@@ -5518,6 +5549,78 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.require_admin()
         return cp.stop_task(task_id, actor=body.actor, reason=body.reason).to_dict()
+
+    def _authorize_task_board(
+        principal: TokenPrincipal,
+        task_id: str,
+        *,
+        write: bool,
+        requested_author_kind: Optional[str] = None,
+        requested_author: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Who is reading or writing this task's board, as (author_kind, author).
+
+        A per-task inference token reaches only the task it was minted for
+        and writes as that task's agent. An agent credential reaches only a
+        task its agent currently owns; the worker harness behind it may also
+        write as the hub (a verdict or nudge it computed outside the sandbox).
+        Anyone else is a person: reading needs read access, writing needs write.
+        """
+        if principal.principal_kind == "inference":
+            if not principal.task_id or principal.task_id != task_id:
+                raise AuthorizationError("this inference token is not bound to task %s" % task_id)
+            return "agent", str(principal.agent_id or "agent")
+        if principal.agent_id and not principal.is_admin:
+            task = cp.get_task(task_id)
+            if str(task.owner_agent_id or "") != str(principal.agent_id):
+                raise AuthorizationError("agent %s does not own task %s" % (principal.agent_id, task_id))
+            if requested_author_kind == "hub":
+                return "hub", "harness:%s" % principal.agent_id
+            return "agent", str(principal.agent_id)
+        if write:
+            if not (principal.is_admin or principal.has_scope("write")):
+                raise AuthorizationError("posting to a task board needs write access")
+            if requested_author_kind == "hub" and principal.is_admin:
+                return "hub", "hub"
+        elif not (principal.is_admin or principal.scopes & {"read", "write"}):
+            raise AuthorizationError("reading a task board needs read access")
+        human = principal.human_id or (requested_author or "").strip() or principal.client_id
+        return "human", str(human or "operator")
+
+    @app.get("/tasks/{task_id}/messages")
+    def list_task_messages(
+        task_id: str,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Optional[str] = None,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _authorize_task_board(principal, task_id, write=False)
+        wanted = [kind.strip() for kind in (kinds or "").split(",") if kind.strip()]
+        return cp.list_task_messages(task_id, after=after, limit=limit, kinds=wanted)
+
+    @app.post("/tasks/{task_id}/messages")
+    def post_task_message(
+        task_id: str,
+        body: TaskMessageCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        author_kind, author = _authorize_task_board(
+            principal,
+            task_id,
+            write=True,
+            requested_author_kind=body.author_kind,
+            requested_author=body.author,
+        )
+        return cp.post_task_message(
+            task_id,
+            author_kind=author_kind,
+            author=author,
+            kind=body.kind,
+            body=body.body,
+            reply_to=body.reply_to,
+            metadata=dict(body.metadata or {}),
+        )
 
     @app.post("/tasks/{task_id}/ask")
     def ask_task(

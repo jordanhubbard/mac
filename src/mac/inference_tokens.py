@@ -165,6 +165,7 @@ class InferenceTokenPrincipalProvider:
                 "agent_id": row["agent_id"],
                 "principal_kind": "inference",
                 "credential_fingerprint": row["token_fingerprint"],
+                "task_id": str(row["task_id"] or "") or None,
             }
         return result
 

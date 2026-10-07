@@ -215,6 +215,7 @@ EXPECTED_TABLES = [
     "task_flow_spans",
     "task_groups",
     "task_history",
+    "task_messages",
     "task_resource_contentions",
     "task_stranding_episodes",
     "task_transition_outbox",
@@ -482,6 +483,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0008_drop_self_upgrade_and_release_epoch_tables",
         "0009_slim_worker_credentials",
         "0010_inference_tokens",
+        "0011_task_messages",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -513,6 +515,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0010_inference_tokens": (
             "fef5787c0a7c0f6ac8987d572760c11e463fa59d0cd95d76066a79561a6545bd"
+        ),
+        "0011_task_messages": (
+            "1a94bf85e74d55ef23056c0fb8fbdf2eb8faf96cf5bdedbe2f28cecc81e08309"
         ),
     }
     for migration in MIGRATIONS:

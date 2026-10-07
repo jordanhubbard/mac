@@ -2426,6 +2426,52 @@ def cmd_task_ask(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def cmd_task_say(args: argparse.Namespace) -> None:
+    """Post to a task's board as a person."""
+    cp = _plane(args)
+    kind = "directive" if args.directive else ("answer" if args.answer is not None else "message")
+    result = cp.post_task_message(
+        args.task_id,
+        author_kind="human",
+        author=args.author or os.environ.get("USER") or "operator",
+        kind=kind,
+        body=args.text,
+        reply_to=args.answer,
+    )
+    _print(result)
+
+
+def _format_task_message(message: Mapping[str, Any]) -> str:
+    stamp = str(message.get("created_at") or "")[11:19]
+    who = str(message.get("author") or "")
+    kind = str(message.get("kind") or "")
+    label = "" if kind == "message" else "[%s] " % kind
+    reply = " (re #%s)" % message["reply_to"] if message.get("reply_to") else ""
+    return "#%s %s %s: %s%s%s" % (message.get("id"), stamp, who, label, message.get("body"), reply)
+
+
+def cmd_task_messages(args: argparse.Namespace) -> None:
+    """Show (and optionally follow) a task's board."""
+    import time
+
+    cp = _plane(args)
+    after = int(args.after or 0)
+    while True:
+        page = cp.list_task_messages(args.task_id, after=after, limit=args.limit)
+        for message in page.get("messages") or []:
+            if args.no_activity and message.get("kind") == "activity":
+                continue
+            if args.as_jsonl:
+                print(json.dumps(message, sort_keys=True))
+            else:
+                print(_format_task_message(message))
+        sys.stdout.flush()
+        after = int(page.get("cursor") or after)
+        if not args.follow:
+            return
+        time.sleep(2.0)
+
+
 def cmd_task_needs_input(args: argparse.Namespace) -> None:
     """List tasks parked on an unanswered human question.
 
@@ -7075,6 +7121,46 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--why", default="", help="why the answer is needed")
     ask.add_argument("--actor", default="human")
     _set(cmd_task_ask, ask)
+
+    say = task.add_parser(
+        "say",
+        help="post to a task's board; the agent running it sees it before its next step",
+    )
+    say.add_argument("task_id")
+    say.add_argument("text", help="the message")
+    say_kind = say.add_mutually_exclusive_group()
+    say_kind.add_argument(
+        "--directive",
+        action="store_true",
+        help="an instruction the agent must follow, not just information",
+    )
+    say_kind.add_argument(
+        "--answer",
+        type=int,
+        metavar="MESSAGE_ID",
+        default=None,
+        help="answer the agent's question with this message id",
+    )
+    say.add_argument("--as", dest="author", default=None, help="your name, if your token lacks one")
+    _set(cmd_task_say, say)
+
+    messages = task.add_parser(
+        "messages",
+        help="show a task's board: what the agent and people have said, oldest first",
+    )
+    messages.add_argument("task_id")
+    messages.add_argument("--after", type=int, default=0, help="only messages after this id")
+    messages.add_argument("--limit", type=int, default=200)
+    messages.add_argument(
+        "--follow", "-f", action="store_true", help="keep printing new messages as they arrive"
+    )
+    messages.add_argument(
+        "--no-activity", action="store_true", help="hide the agent's tool-by-tool activity lines"
+    )
+    messages.add_argument(
+        "--jsonl", dest="as_jsonl", action="store_true", help="print one JSON object per line"
+    )
+    _set(cmd_task_messages, messages)
 
     needs_input = task.add_parser(
         "needs-input",

@@ -135,6 +135,8 @@ Other:
   export      emit one task whole (record, history, coding-CLI session) as JSON
   transcript  the coding-CLI session for a task, in order
   preflight   would a task with these requirements ever be claimed?
+  say         post to a task's board; the agent running it sees it before its next step
+  messages    show a task's board: what the agent and people have said, oldest first
   edit        answer a parked task in $EDITOR; saving submits it back to the queue
   select      preview the group of tasks a selector expression names
   batch       apply one operation to every task a selector names (dry by default)

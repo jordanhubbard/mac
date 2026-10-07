@@ -470,6 +470,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REVIEW_TICK_HUB_AGENT` | str | consumer-defined | review | Review setting: review tick hub agent. |
 | `MAC_REVIEW_TICK_LIMIT` | int | consumer-defined | review | Review setting: review tick limit. |
 | `MAC_REVIEW_TICK_ON_HEARTBEAT` | str | consumer-defined | review | Review setting: review tick on heartbeat. |
+| `MAC_ROUTER_ANTHROPIC_PROVIDER` | str | consumer-defined | router | Router setting: router anthropic provider. |
+| `MAC_ROUTER_ANTHROPIC_TIMEOUT_SECONDS` | int | consumer-defined | router | Router setting: router anthropic timeout seconds. |
 | `MAC_ROUTER_AUDIO_KEY` | str | consumer-defined | router | Router setting: router audio key. |
 | `MAC_ROUTER_AUDIO_TIMEOUT` | int | consumer-defined | router | Router setting: router audio timeout. |
 | `MAC_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | router | Router setting: router audio upstream. |
