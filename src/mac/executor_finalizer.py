@@ -75,6 +75,7 @@ from mac.models import (
     metadata_declares_report_deliverable,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.requirement_coverage import evaluate_requirement_coverage
 from mac.semantic_acceptance import evaluate_acceptance
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
@@ -804,6 +805,23 @@ def _read_executor_evidence_payload(task_workspace: Path) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _carry_requirement_coverage(
+    manifest: Dict[str, Any], agent_evidence: Mapping[str, Any]
+) -> None:
+    """Carry the agent's requirement coverage mapping into finalizer evidence.
+
+    The review maps a task statement's enumerated requirements to the change or
+    a check. That mapping lives in the agent's pre-finalize mac-evidence.json,
+    which the deterministic finalizer replaces; preserve it so a complete
+    change can still prove coverage.
+    """
+    requirements = (
+        agent_evidence.get("requirements") if isinstance(agent_evidence, Mapping) else None
+    )
+    if isinstance(requirements, list) and requirements:
+        manifest["requirements"] = requirements
+
+
 def _canonical_reconcile_from_evidence(evidence: Mapping[str, Any]) -> Dict[str, Any]:
     block = evidence.get("canonical_reconcile") if isinstance(evidence, Mapping) else None
     return dict(block) if isinstance(block, dict) else {}
@@ -879,6 +897,7 @@ def _finalize_no_change_reconcile(
                 }
             ],
         }
+        _carry_requirement_coverage(manifest, agent_evidence)
         (task_workspace / "mac-evidence.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -925,6 +944,7 @@ def _finalize_no_change_reconcile(
             }
         ],
     }
+    _carry_requirement_coverage(manifest, agent_evidence)
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -1838,6 +1858,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             }
         ],
     }
+    _carry_requirement_coverage(manifest, agent_evidence)
     if freshness_error is not None:
         manifest["freshness_error"] = freshness_error
     if bootstrap is not None:
@@ -2086,7 +2107,13 @@ def run_deterministic_review_verdict(
 
     acceptance = evaluate_acceptance(task.get("metadata"), exec_verification)
     acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
-    semantic_pass = semantic_valid and semantic_verdict == "approved" and acceptance_pass
+    requirement_coverage = evaluate_requirement_coverage(
+        task.get("description"), exec_verification, semantic_manifest
+    )
+    coverage_pass = requirement_coverage.get("status") in {"pass", "not_required"}
+    semantic_pass = (
+        semantic_valid and semantic_verdict == "approved" and acceptance_pass and coverage_pass
+    )
     verdict = "approved" if semantic_pass and independent_pass else "rejected"
     digest_head = str(exec_access.get("base_sha") or "") if read_only_report_review else exec_head
     digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode(
@@ -2107,6 +2134,7 @@ def run_deterministic_review_verdict(
             "semantic": "pass" if semantic_pass else "fail",
         },
         "acceptance": acceptance,
+        "requirement_coverage": requirement_coverage,
         "result": "review_completed",
         "returncode": 0,
         "review_id": review_id,
@@ -2122,6 +2150,11 @@ def run_deterministic_review_verdict(
                 "name": "task_acceptance",
                 "returncode": 0 if acceptance_pass else 1,
                 "status": "pass" if acceptance_pass else "fail",
+            },
+            {
+                "name": "requirement_coverage",
+                "returncode": 0 if coverage_pass else 1,
+                "status": "pass" if coverage_pass else "fail",
             },
             *(
                 [
@@ -2172,6 +2205,10 @@ def run_deterministic_review_verdict(
         elif not acceptance_pass:
             manifest["feedback"] = "task semantic acceptance failed: %s" % "; ".join(
                 str(problem) for problem in acceptance.get("problems", [])
+            )
+        elif not coverage_pass:
+            manifest["feedback"] = "task requirements not addressed: %s" % "; ".join(
+                str(problem) for problem in requirement_coverage.get("problems", [])
             )
         else:
             manifest["feedback"] = independent_problem or "independent verification failed"
