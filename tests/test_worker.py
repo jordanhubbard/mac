@@ -1901,7 +1901,9 @@ def test_source_remediation_task_can_target_dirty_registered_checkout(tmp_path: 
     client = TestClient(create_app(control_plane=cp))
 
     def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        assert task_payload["metadata"]["runtime"] == {"publication_target": None}
+        runtime = task_payload["metadata"]["runtime"]
+        assert runtime["publication_target"] is None
+        assert runtime["coding_policy"]["agents"] == ["opencode"]
         assert not any(task_dir.glob("repo-*"))
         _write_worker_manifest(task_dir)
         return WorkerExecution(0, "source repair inspected", stdout="ok\n")

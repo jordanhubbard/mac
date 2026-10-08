@@ -741,6 +741,19 @@ def _detect_command_inventory() -> JsonDict:
     }
 
 
+def _adopt_hub_coding_policy(policy: Any) -> None:
+    """Take the hub's coding-CLI list (and model settings) from a heartbeat.
+
+    The worker's own probes and heartbeat report follow the hub's list; each
+    task still runs on the list projected into its own assignment.
+    """
+    from mac.coding_agent import HUB_AGENTS_ENV, coding_policy_env
+
+    values = coding_policy_env(policy, agents_env=HUB_AGENTS_ENV)
+    if values:
+        os.environ.update(values)
+
+
 def _resources_with_command_inventory(
     resources: Optional[JsonDict],
     coding_verification: Optional[JsonDict] = None,
@@ -750,38 +763,39 @@ def _resources_with_command_inventory(
     merged["commands"] = _detect_command_inventory()
     if source_repo is not None:
         merged["source_state"] = _worker_source_state(source_repo)
-    # The coding route's status (secret-free) rides the same refresh cycle so
-    # the hub can see whether this worker has a verified coding route. The
-    # wire shape keeps a per-CLI map with one entry: the CLI this worker runs
-    # (opencode, or claude when MAC_CODING_AGENT=claude).
+    # The coding routes' status (secret-free) rides the same refresh cycle so
+    # the hub can see which CLIs on its ordered list this worker can run. The
+    # wire shape is a per-CLI map with one entry per listed CLI, plus the list
+    # itself and where this worker got it.
     try:
-        from mac.coding_agent import route_status, selected_agent
+        from mac.coding_agent import coding_agent_order, route_status
 
-        CODING_AGENT = selected_agent()
-
-        verification: JsonDict = {}
+        order = coding_agent_order()
+        reports: JsonDict = {}
         if isinstance(coding_verification, dict):
-            reports = coding_verification.get("reports")
-            if isinstance(reports, dict):
-                report = reports.get(CODING_AGENT)
-                if isinstance(report, dict):
-                    verification = report
-            elif str(coding_verification.get("agent") or "") == CODING_AGENT:
-                verification = coding_verification
+            nested = coding_verification.get("reports")
+            if isinstance(nested, dict):
+                reports = nested
+            elif coding_verification.get("agent"):
+                reports = {str(coding_verification["agent"]): coding_verification}
         execution_which = None
         if isinstance(coding_verification, dict):
             from mac.task_executor import coding_agent_sandbox_which
 
             execution_which = coding_agent_sandbox_which
+        clis: JsonDict = {}
+        for agent_name in order.agents:
+            report = reports.get(agent_name)
+            clis[agent_name] = route_status(
+                which=execution_which,
+                verification=report if isinstance(report, dict) else {},
+                agent=agent_name,
+            )
         merged["coding_clis"] = {
             "schema": "mac.coding_clis.v2",
             "refreshed_at": _utcnow(),
-            "clis": {
-                CODING_AGENT: route_status(
-                    which=execution_which,
-                    verification=verification,
-                )
-            },
+            "order": order.observable(),
+            "clis": clis,
         }
     except Exception:  # noqa: BLE001 - status is best-effort, never blocks registration
         pass
@@ -5815,6 +5829,8 @@ class MacWorker(
             refreshed.get("resources") if isinstance(refreshed, Mapping) else None,
             os.environ,
         )
+        if isinstance(refreshed, Mapping):
+            _adopt_hub_coding_policy(refreshed.get("coding_policy"))
         if self.running_digest and not self._declared_digest:
             self._declared_digest = True
 
@@ -5983,23 +5999,29 @@ class MacWorker(
                 reports[choice.agent] = checked
                 return checked.get("verified") is True
 
-            choice = _ca.resolve_coding_agent(
-                which=coding_agent_sandbox_which if sandboxed else None,
-                accept=_verify,
-            )
-            verified = bool(choice.available)
+            # Every CLI on the list is proven on its own, so the hub sees the
+            # whole list's health and not just the first CLI that worked.
+            first_verified = ""
+            for agent_name in _ca.coding_agent_order().agents:
+                choice = _ca.resolve_coding_agent(
+                    env={**os.environ, _ca.TASK_AGENTS_ENV: agent_name},
+                    which=coding_agent_sandbox_which if sandboxed else None,
+                    accept=_verify,
+                )
+                if choice.available and not first_verified:
+                    first_verified = choice.agent
+            verified = bool(first_verified)
             if verified:
                 failure_class = ""
             elif reports:
                 failure_class = str(
-                    (reports.get(_ca.selected_agent()) or {}).get("failure_class")
-                    or "probe_failed"
+                    next(iter(reports.values()), {}).get("failure_class") or "probe_failed"
                 )
             else:
                 failure_class = "not_configured"
             report = {
                 "schema": "mac.coding_agent.verifications.v1",
-                "agent": choice.agent if verified else "",
+                "agent": first_verified,
                 "verified": verified,
                 "checked_at": _utcnow(),
                 "failure_class": failure_class,
@@ -6944,6 +6966,16 @@ def _task_model_override(task: JsonDict) -> str:
     if isinstance(runtime, dict):
         return str(runtime.get("model") or "").strip()[:256]
     return ""
+
+
+def _task_coding_policy_env(task: JsonDict) -> Dict[str, str]:
+    """Env carrying the hub's coding policy from this task's assignment."""
+    from mac.coding_agent import coding_policy_env
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+    policy = runtime.get("coding_policy") if isinstance(runtime, dict) else None
+    return coding_policy_env(policy)
 
 
 def _task_iteration_override(task: JsonDict) -> Optional[int]:

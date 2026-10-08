@@ -155,6 +155,24 @@ def _no_live_report_executor_approval(monkeypatch):
             monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_coding_agent_selection(monkeypatch):
+    """Do not let a heartbeat or a previous run choose a test's coding CLI.
+
+    The worker adopts the hub's coding-CLI list from each heartbeat and the
+    executor records the CLI it chose, both in the process environment. That
+    state is daemon- or run-scoped in production but must not cross pytest
+    case boundaries when xdist reuses a worker.
+    """
+    for name in (
+        "MAC_HUB_CODING_AGENTS",
+        "MAC_TASK_CODING_AGENTS",
+        "MAC_ACTIVE_CODING_AGENT",
+        "MAC_CODING_AGENTS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 # ----------------------------------------------------------------------
 # Live-Postgres fixtures (K8s Phase 3.6).
 #

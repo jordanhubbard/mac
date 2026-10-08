@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
@@ -142,8 +143,15 @@ def mount_anthropic_messages(
     env: Optional[Mapping[str, str]] = None,
     secret_resolver: Optional[SecretResolver] = None,
     opener: Callable[..., Any] = urllib.request.urlopen,
+    route_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> bool:
-    """Mount ``POST /v1/messages`` and ``/v1/messages/count_tokens``."""
+    """Mount ``POST /v1/messages`` and ``/v1/messages/count_tokens``.
+
+    Every request is reported to ``route_observer`` as a ``mac.llm_route.v1``
+    record, as the chat-completions route does, so an auth, rate-limit or
+    upstream failure on this route is visible per task without reading any
+    transcript.
+    """
     import os
 
     from fastapi.responses import JSONResponse, StreamingResponse
@@ -162,6 +170,7 @@ def mount_anthropic_messages(
     def _handle(path: str, request: Request, payload: Dict[str, Any]) -> Any:
         principal = getattr(request.state, "principal", None)
         stream = bool(payload.get("stream")) and path == "/messages"
+        started = time.monotonic()
         status, body, media_type = forward(
             provider,
             path,
@@ -180,9 +189,51 @@ def mount_anthropic_messages(
             status,
             getattr(principal, "agent_id", None) or "",
         )
+        _observe(path, payload, request, principal, status, body, started)
         if media_type == "text/event-stream" and 200 <= status < 300:
             return StreamingResponse(body, media_type=media_type)
         return JSONResponse(body if isinstance(body, dict) else {}, status_code=status)
+
+    def _observe(
+        path: str,
+        payload: Dict[str, Any],
+        request: Request,
+        principal: Any,
+        status: int,
+        body: Any,
+        started: float,
+    ) -> None:
+        if route_observer is None:
+            return
+        detail: Dict[str, Any] = {
+            "schema": "mac.llm_route.v1",
+            "path": "/v1" + path,
+            "stream": bool(payload.get("stream")),
+            "requested_model": str(payload.get("model") or ""),
+            "resolved_model": provider.upstream_model(str(payload.get("model") or "")),
+            "provider": provider.name,
+            "status_code": int(status),
+            "outcome": "answered" if 200 <= int(status) < 300 else "provider_failure",
+            "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+        }
+        agent_id = str(getattr(principal, "agent_id", None) or "").strip()
+        task_id = str(getattr(principal, "task_id", None) or "").strip() or str(
+            request.headers.get("X-MAC-Task-ID") or ""
+        ).strip()
+        if agent_id:
+            detail["agent_id"] = agent_id[:256]
+        if task_id:
+            detail["task_id"] = task_id[:256]
+        if isinstance(body, dict) and isinstance(body.get("usage"), dict):
+            detail["usage"] = {
+                str(k): v
+                for k, v in body["usage"].items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            }
+        try:
+            route_observer(detail)
+        except Exception:  # noqa: BLE001 - observability must never break routing
+            logger.warning("failed to record the /v1/messages route", exc_info=True)
 
     async def _read(request: Request) -> Dict[str, Any]:
         try:

@@ -270,6 +270,7 @@ class SubprocessExecutor:
             _repository_context_is_read_only_report,
             _sha256_text,
             _summary_from_output,
+            _task_coding_policy_env,
             _task_iteration_override,
             _task_model_override,
             _utcnow,
@@ -298,6 +299,8 @@ class SubprocessExecutor:
         # inside that agent credential's model policy.
         env.pop("MAC_TASK_MODEL", None)
         env.pop("MAC_TASK_MAX_ITERATIONS", None)
+        env.pop("MAC_TASK_CODING_AGENTS", None)
+        env.pop("MAC_ACTIVE_CODING_AGENT", None)
         # Ensure Rust/cargo tool bin dirs are on the child PATH.  A
         # launchd/non-login-shell worker often runs with a narrow PATH that
         # excludes ~/.cargo/bin, so coding-agent children cannot find
@@ -338,6 +341,10 @@ class SubprocessExecutor:
         model_override = _task_model_override(task)
         if model_override:
             env["MAC_TASK_MODEL"] = model_override
+        # The hub's ordered coding-CLI list for this task (and its model
+        # settings), projected into the assignment. It replaces any per-host
+        # value: which CLIs the fleet runs is hub configuration.
+        env.update(_task_coding_policy_env(task))
         iteration_override = _task_iteration_override(task)
         if iteration_override is not None:
             env["MAC_TASK_MAX_ITERATIONS"] = str(iteration_override)
