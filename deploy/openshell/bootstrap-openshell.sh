@@ -1774,6 +1774,15 @@ log "OpenShell Docker bridge: $OPENSH_BRIDGE_IFACE"
 # configuration fetch failed" (worker canary, 2026-10-03). Render to a
 # temporary file and preflight it with the installed gateway before it
 # replaces the live config, so a rejected file never reaches the service.
+#
+# allow_driver_config: the bounded-tmpfs verifier profile asks for a tmpfs
+# through --driver-config-json, and 0.1 refuses any caller driver JSON unless
+# the operator opts in ("caller driver config is disabled", bullwinkle canary,
+# 2026-10-07). The opt-in is narrow only together with the two settings after
+# it, so all three are pinned: resource admission stays on (volume mounts need
+# operator-applied approval labels; raw host paths are refused) and bind mounts
+# stay off. A caller gains tmpfs mounts and CDI devices, and tasks may already
+# request GPUs.
 render_gateway_toml(){
   cat <<EOF
 [openshell]
@@ -1793,6 +1802,10 @@ kid_path = "$OSH_DIR/pki/jwt/kid"
 default_image = "$OSH_IMAGE_TAG"
 supervisor_image = "$OSH_SUPERVISOR_IMAGE"
 image_pull_policy = "if_not_present"
+allow_driver_config = true
+enable_bind_mounts = false
+[openshell.drivers.docker.resource_admission]
+enabled = true
 EOF
 }
 gateway_toml_candidate="$OSH_DIR/gateway.toml.candidate.$$"

@@ -25,6 +25,12 @@ SANDBOX_BASE_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 
 VERIFIER_PROFILE_READY = "[hub-verifier-profile] bounded-tmpfs ready"
+# The bounded test storage mount. It must sit outside the image's WorkingDir
+# (/sandbox): OpenShell 0.1 reserves the workspace root and everything under
+# it, and refuses a driver mount there ("mount target ... is reserved for the
+# OpenShell workspace"). /tmp is read-write in every MAC sandbox policy, so
+# Landlock admits the mount without a policy change.
+VERIFIER_TEST_STORAGE = "/tmp/mac-test-storage"
 
 
 def verifier_resource_profile() -> tuple[list[str], list[str], str]:
@@ -53,7 +59,7 @@ def verifier_resource_profile() -> tuple[list[str], list[str], str]:
                     "mounts": [
                         {
                             "type": "tmpfs",
-                            "target": "/sandbox/test-storage",
+                            "target": VERIFIER_TEST_STORAGE,
                             "size_bytes": 8 * 1024**3,
                             "mode": 0o1777,
                             "options": ["exec"],
@@ -67,15 +73,15 @@ def verifier_resource_profile() -> tuple[list[str], list[str], str]:
     # Both paths stay sandbox-local; PostgreSQL keeps its normal durability.
     environment = [
         "TMPDIR=/sandbox/test-scratch",
-        "MAC_TEST_PG_DATADIR=/sandbox/test-storage/mac-test-pgdata",
+        f"MAC_TEST_PG_DATADIR={VERIFIER_TEST_STORAGE}/mac-test-pgdata",
         "MAC_TEST_JOBS=8",
     ]
     preflight = (
         'if [ "$(uname -s)" != Linux ] || '
-        '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
-        "[ ! -w /sandbox/test-storage ]; then "
+        f'[ "$(stat -f -c %T {VERIFIER_TEST_STORAGE} 2>/dev/null)" != tmpfs ] || '
+        f"[ ! -w {VERIFIER_TEST_STORAGE} ]; then "
         "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
-        "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
+        f"requires a writable Linux tmpfs at {VERIFIER_TEST_STORAGE}' >&2; exit 96; fi; "
         "export " + " ".join(shlex.quote(value) for value in environment) + "; "
         'if ! mkdir -p "$TMPDIR" || [ ! -w "$TMPDIR" ]; then '
         "echo 'hub verifier resource profile unavailable: fixture scratch is not writable' "

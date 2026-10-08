@@ -1549,8 +1549,25 @@ def test_gateway_toml_renders_schema_v2(tmp_path):
                 "d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a"
             ),
             "image_pull_policy": "if_not_present",
+            "allow_driver_config": True,
+            "enable_bind_mounts": False,
+            "resource_admission": {"enabled": True},
         }
     }
+
+
+def test_gateway_admits_the_verifier_tmpfs_and_nothing_wider(tmp_path):
+    """0.1 refuses caller driver JSON unless the gateway opts in, which broke
+    every bounded-tmpfs task and hub verification on the 0.1.2 canary. The
+    opt-in is only safe while admission and the bind-mount gate stay closed."""
+    from mac.openshell_runtime import VERIFIER_TEST_STORAGE
+
+    docker = _render_gateway_toml(tmp_path)["openshell"]["drivers"]["docker"]
+    assert docker["allow_driver_config"] is True
+    assert docker["enable_bind_mounts"] is False
+    assert docker["resource_admission"] == {"enabled": True}
+    # 0.1 reserves the image WorkingDir (/sandbox) and everything under it.
+    assert not VERIFIER_TEST_STORAGE.startswith("/sandbox/")
 
 
 def test_gateway_toml_is_preflighted_before_it_replaces_the_live_config():
