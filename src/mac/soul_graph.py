@@ -17,6 +17,7 @@ import time
 import uuid
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional, Any
@@ -26,11 +27,26 @@ Clock = Callable[[], float]
 
 
 def default_soul_path(name: str = "soul") -> Path:
-    """Where an agent's soul graph lives: ``<agent home>/<name>.json``, the
-    agent home being mac_paths.gateway_home() ($HERMES_HOME)."""
+    """Where an agent's soul graph lives: ``<Hermes home>/<name>.json``.
+
+    ``HERMES_HOME`` wins. Without it this is ``~/.hermes``, or ``$MAC_HOME/hermes``
+    when ``MAC_HOME`` relocates the MAC tree -- never the legacy
+    ``$MAC_HOME/openclaw`` that ``mac_paths.gateway_home()`` still falls back
+    to. The soul graph is new, so it has no OpenClaw-era file to stay
+    compatible with, and pinning it to an OpenClaw path would strand it there
+    once OpenClaw is gone. Installed MCP configs pass ``--soul-file``
+    explicitly, so this default only matters when the server is run by hand.
+    """
     from mac import mac_paths
 
-    return mac_paths.gateway_home() / f"{name}.json"
+    explicit = os.environ.get("HERMES_HOME", "").strip()
+    if explicit:
+        home = Path(explicit).expanduser()
+    elif os.environ.get("MAC_HOME", "").strip():
+        home = mac_paths.mac_home() / "hermes"
+    else:
+        home = Path.home() / ".hermes"
+    return home / f"{name}.json"
 
 # Words too common to say anything about what a node is about. Search and the
 # inverted index both skip them, so a query is matched on what it is about.

@@ -126,6 +126,13 @@ hub_stuck() {  # the schema has (or may have) moved forward: never downgrade it
   log "     git -C $SRC checkout --detach $3, write that sha to $MAC_HOME/current/source-commit, bootstrap"
   exit 1
 }
+# Soul graph in the hub's own Hermes (see mac.soul_install). Never fails the update.
+soul_install() {
+  local hh
+  hh=$(sed -n 's/^HERMES_HOME=//p' "$HOME/.mac/mac.env" 2> /dev/null | tail -1 | tr -d "\"'") || true
+  log "hub: soul graph: $("$VENV/bin/python" -m mac.soul_install --hermes-home "${hh:-$HOME/.hermes}" 2>&1 | tail -1)" || true
+}
+
 update_hub() {
   local old pending receipt bdir="$MAC_HOME/backups/fleet-update-$TS"
   old=$(git -C "$SRC" rev-parse HEAD)
@@ -136,7 +143,7 @@ update_hub() {
   if [ "$DRY" = 1 ]; then
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; write current/source-commit; bootstrap; poll /health"
-    plan "hub: kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
+    plan "hub: mac.soul_install (Hermes soul graph); kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
@@ -169,6 +176,7 @@ update_hub() {
     hub_stuck "NOT HEALTHY on $SHA12 after migrating" "$bdir" "$old"
   fi
   log "hub: healthy on $SHA12"
+  soul_install
   launchctl kickstart -k "gui/$(id -u)/com.mac.agent" || log "hub: WARNING kickstart com.mac.agent failed"
   if [ "$HERMES" = 1 ]; then launchctl kickstart -k "gui/$(id -u)/ai.hermes.gateway" || log "hub: WARNING kickstart hermes failed"; fi
 }
@@ -193,6 +201,10 @@ if [ -d deploy/bin ]; then
   put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py"
   put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer"
 fi
+# Soul graph: MCP entry, first-time seed and skill in Hermes' config. Idempotent;
+# a failure is reported but never fails the update. Hermes loads it on restart.
+hh=$(sed -n 's/^HERMES_HOME=//p' "$HOME/.mac/mac.env" 2> /dev/null | tail -1 | tr -d "\"'") || true; hh=${hh:-$HOME/.hermes}
+echo "remote: soul graph: $("$venv/bin/python" -m mac.soul_install --hermes-home "$hh" 2>&1 | tail -1)" || true
 sudo -n systemctl restart mac-agent
 [ "$hermes" = 1 ] && systemctl --user restart hermes-gateway
 sleep 10
@@ -227,7 +239,7 @@ update_worker() {
   fi
   if [ "$DRY" = 1 ]; then
     [ "$(jget dispatch_hold <<< "$j")" = true ] || plan "$name: mac agent hold $agent --reason '$reason'"
-    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
+    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, mac.soul_install, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
     plan "$name: verify import, is-active, hub source_state == $SHA12 (clean)$([ "$(jget dispatch_hold <<< "$j")" = true ] || echo '; mac agent resume')"
     return 0
   fi

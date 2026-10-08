@@ -3,9 +3,10 @@
 A soul graph is an agent's long-term memory kept as a graph rather than a
 flat file. It lives in `src/mac/soul_graph.py`, is served to agents over MCP
 by `src/mac/soul_mcp.py`, and can prime a session through
-`src/mac/soul_seed.py`. Nothing in the fleet uses it by default yet; this page
-says what it is, how to run it, and what replaying real history through it
-showed.
+`src/mac/soul_seed.py`. Every host's Hermes gets it through
+`mac.soul_install` (see [Where it is installed](#where-it-is-installed)). This
+page says what it is, how it is installed and rolled out, and what replaying
+real history through it showed.
 
 ## The model
 
@@ -38,8 +39,10 @@ python -m mac.soul_mcp [--soul-file PATH]
 ```
 
 The server speaks MCP (JSON-RPC 2.0) over stdio. The soul file defaults to
-`soul.json` in the agent home (`$HERMES_HOME`), is created on the first write,
-and is saved atomically after every tool call that changes the graph.
+`soul.json` in the Hermes home: `$HERMES_HOME`, else `~/.hermes` (or
+`$MAC_HOME/hermes` when `MAC_HOME` relocates MAC), never an OpenClaw path. It is
+created on the first write and saved atomically after every tool call that
+changes the graph.
 
 | Tool | Use |
 |---|---|
@@ -56,6 +59,63 @@ and is saved atomically after every tool call that changes the graph.
 A hand-written DAG in the portable `{"nodes": [...], "edges": [...]}` form
 loads with `SoulGraph.from_dag()`. Each node's `label` becomes its content, its
 `type` a tag, and `axiom` nodes are pinned.
+
+## Where it is installed
+
+Hermes, the agent's human interface on each host, is the only MAC component
+that loads MCP servers from a per-host config. `python -m mac.soul_install
+[--hermes-home DIR]` makes three idempotent changes in that Hermes home:
+
+1. **MCP server.** An `mcp_servers.soul` entry in `config.yaml` that runs
+   `mac.soul_mcp` with the MAC venv's Python and an explicit `--soul-file
+   $HERMES_HOME/soul.json`. Other `mcp_servers` entries are left as they are,
+   and `config.yaml` is backed up before any change.
+2. **Seed.** If `soul.json` does not exist, it is built from `SOUL.md`,
+   `USER.md`, `MEMORY.md` and Hermes' `memories/` copies: one node per entry,
+   each section heading the parent of the entries under it, SOUL.md entries
+   pinned as axioms. An existing `soul.json` is never touched.
+3. **Skill.** `skills/soul-graph/SKILL.md`, which tells the agent the tools
+   exist and how to use them. It is installed only next to the MCP entry, and
+   a hand-written skill of the same name is left alone.
+
+A host without a Hermes `config.yaml` is skipped. `scripts/fleet-update` runs
+it on every host it updates, after the import check and before services
+restart, and `deploy/hermes/install-hermes-gateway.sh` runs it on a new host.
+Neither treats a failure as fatal.
+
+Coding agents (Claude Code, opencode) do not get it. They run in an OpenShell
+sandbox that cannot see `$HERMES_HOME`, and what they learn about a task
+belongs to the task's board and evidence, not to one agent's memory.
+
+### Rolling it out
+
+```console
+scripts/fleet-update --hermes --yes all <sha>
+```
+
+`--hermes` is what makes the tools live: the install step edits Hermes'
+config, and Hermes reads MCP servers only when it starts. Without `--hermes`
+the config is in place but the tools appear at the next Hermes restart.
+There is no other per-host step.
+
+To check a host, use Hermes' own MCP client, which connects to the server and
+lists its tools:
+
+```console
+# Linux worker: the gateway's runtime interpreter
+HPY=$(systemctl --user cat hermes-gateway | sed -n 's/^ExecStart=\([^ ]*python\).*/\1/p')
+HERMES_HOME=~/.hermes "$HPY" -m hermes_cli.main mcp test soul
+#   ✓ Connected   ✓ Tools discovered: 13
+HERMES_HOME=~/.hermes "$HPY" -m hermes_cli.main mcp list    # soul ... ✓ enabled
+ls -l ~/.hermes/soul.json ~/.hermes/skills/soul-graph/SKILL.md
+```
+
+On the macOS hub the interpreter is
+`~/.mac/hermes-runtimes/<release>/runtime/.venv/bin/python`. Re-running
+`~/.mac/venv/bin/python -m mac.soul_install` is safe and reports
+`"mcp_server": "unchanged", "seed": "exists"` on a host that already has it.
+
+Then ask the agent, in Slack, to run `soul_summary`.
 
 ## Does it recall the right things?
 
@@ -121,5 +181,5 @@ scripts/soul-graph-eval.py /tmp/tasks.json          # or --json, --project P
   markdown with no edges, so they cannot answer the question yet. Ingesting
   memories with lineage, from conversations or journals, is the next corpus to
   test.
-- Nothing installs the MCP server into agents. Wiring it into `mac admin
-  plugin`, or into the Hermes MCP configuration, is a separate decision.
+- Only Hermes has it. Whether coding agents should get a read-only view of
+  an agent's soul is open; it would need a path through the sandbox boundary.

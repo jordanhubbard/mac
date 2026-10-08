@@ -212,6 +212,9 @@ def _run(
             "if sys.argv[1:3] == ['-m','mac.hermes_chat_config']:\n"
             "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['chat-config-sync',*sys.argv[3:]])+'\\n')\n"
             "    sys.exit(0)\n"
+            "if sys.argv[1:3] == ['-m','mac.soul_install']:\n"
+            "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['soul-install',*sys.argv[3:]])+'\\n')\n"
+            "    sys.exit(int(os.environ.get('FAKE_SOUL_INSTALL_RC', '0')))\n"
             "if sys.argv[1:3] == ['-m','mac.hermes_release'] and sys.argv[3] != 'resolve':\n"
             "    action=sys.argv[3]\n"
             "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['release',action])+'\\n')\n"
@@ -624,6 +627,25 @@ def test_prepare_syncs_chat_provider_before_gateway_configuration_and_restart(tm
     assert calls.index(sync_call) < calls.index(
         ["gateway", "install", "--force", "--start-now", "--start-on-login"]
     )
+
+
+def test_prepare_installs_the_soul_graph_after_the_chat_provider(tmp_path):
+    result, calls = _run(tmp_path, "prepare")
+    assert result.returncode == 0, result.stderr
+    soul = ["soul-install", "--hermes-home", str(tmp_path / "home" / ".hermes")]
+    assert soul in calls
+    sync = next(c for c in calls if c[0] == "chat-config-sync")
+    assert calls.index(sync) < calls.index(soul)
+    assert calls.index(soul) < calls.index(
+        ["gateway", "install", "--force", "--start-now", "--start-on-login"]
+    )
+
+
+def test_a_failed_soul_install_does_not_fail_prepare(tmp_path):
+    result, calls = _run(tmp_path, "prepare", extra_env={"FAKE_SOUL_INSTALL_RC": "1"})
+    assert result.returncode == 0, result.stderr
+    assert "soul graph install failed" in result.stderr
+    assert ["gateway", "install", "--force", "--start-now", "--start-on-login"] in calls
 
 
 def test_qualification_failure_does_not_configure_or_stop_existing_gateway(tmp_path):

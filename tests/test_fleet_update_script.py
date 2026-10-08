@@ -311,7 +311,11 @@ def worker_home(fleet):
     venv_bin = home / ".mac" / "venv" / "bin"
     venv_bin.mkdir(parents=True)
     (home / ".mac" / "bin").mkdir()
-    (venv_bin / "python").write_text('#!/bin/sh\n[ -z "$FAKE_IMPORT_FAILS" ]\n')
+    (venv_bin / "python").write_text(
+        '#!/bin/sh\necho "python $*" >> "$FAKE_CALLS"\n'
+        'case "$*" in *soul_install*) [ -z "$FAKE_SOUL_FAILS" ] && echo \'{"status": "ok"}\' ;;\n'
+        '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
+    )
     bindir = fleet.tmp / "bin"
     for name, body in {
         "sudo": '#!/bin/sh\necho "sudo $*" >> "$FAKE_CALLS"\n',
@@ -355,6 +359,27 @@ def test_remote_update_installs_wrappers_and_restarts_services(fleet, worker_hom
     assert "systemctl --user restart hermes-gateway" in calls
     assert "systemctl is-active --quiet mac-agent" in calls
     assert not any(c.startswith("uv ") for c in calls)  # pyproject.toml unchanged
+
+
+def test_remote_update_installs_the_soul_graph_before_restarting(fleet, worker_home) -> None:
+    home, target = worker_home
+    (home / ".mac" / "mac.env").write_text('HERMES_HOME="/srv/hermes"\n')
+    result = _run_remote(fleet, home, target)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet)
+    soul = "python -m mac.soul_install --hermes-home /srv/hermes"
+    assert soul in calls
+    assert calls.index(soul) < calls.index("sudo -n systemctl restart mac-agent")
+    assert 'remote: soul graph: {"status": "ok"}' in result.stdout
+
+
+def test_a_failed_soul_install_does_not_fail_the_update(fleet, worker_home) -> None:
+    home, target = worker_home
+    result = _run_remote(fleet, home, target, FAKE_SOUL_FAILS="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet)
+    assert "python -m mac.soul_install --hermes-home %s/.hermes" % home in calls
+    assert "sudo -n systemctl restart mac-agent" in calls
 
 
 def test_remote_update_restores_the_old_checkout_when_import_fails(fleet, worker_home) -> None:
@@ -438,6 +463,10 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
         c.startswith("launchctl kickstart -k gui/") and c.endswith("/com.mac.agent") for c in calls
     )
     assert any(c.endswith("/ai.hermes.gateway") for c in calls)
+    soul = next(c for c in calls if "mac.soul_install" in c)
+    assert soul.endswith("--hermes-home %s/.hermes" % hub.parent)
+    hermes = next(c for c in calls if c.endswith("/ai.hermes.gateway"))
+    assert calls.index(soul) < calls.index(hermes)
     assert not any(c.startswith("uv ") for c in calls)  # dependency files unchanged a..b
 
 
