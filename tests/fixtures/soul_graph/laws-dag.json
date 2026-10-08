@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "date": "2026-10-05",
+    "topic": "Ukraine's robotic offensive + UN/ICRC/CCW-GGE framing on Lethal Autonomous Weapons Systems",
+    "builder": "gpu-worker (agent_gpu-worker)",
+    "mode": "DAG of today's reasoning; real nodes + edges, saved for reuse. soul_graph engine lives on hub's macOS box; this is a portable mirror."
+  },
+  "nodes": [
+    {"id": "laws", "label": "Lethal Autonomous Weapon Systems (LAWS)", "type": "concept"},
+    {"id": "unpredictable", "label": "prohibit: effects cannot be sufficiently understood/predicted/explained", "type": "axiom", "src": "ICRC position 2021"},
+    {"id": "target-human", "label": "prohibit: systems designed/used to apply force against persons", "type": "axiom", "src": "ICRC position 2021"},
+    {"id": "human-control", "label": "regulate rest: human supervision + timely intervention/deactivation", "type": "axiom", "src": "ICRC position 2021"},
+    {"id": "target-limits", "label": "limits: target type, duration/geo/scale, situation, human-machine interaction", "type": "norm"},
+    {"id": "ihl", "label": "International Humanitarian Law: distinction, proportionality, civilian protection", "type": "norm"},
+    {"id": "gge", "label": "CCW Group of Governmental Experts on LAWS (Geneva) — negotiating forum", "type": "venue"},
+    {"id": "un-sg", "label": "UN Secretary-General: urgent call to regulate/prohibit", "type": "actor"},
+    {"id": "icrc", "label": "ICRC: legal-binding-rules recommendation", "type": "actor"},
+    {"id": "vivaldi", "label": "Operation Vivaldi (Ukraine, ~Oct 2026): air-drop UGVs ~10km behind Russian lines, claimed ~3k casualties", "type": "event", "src": "NYPost / ScienceFocus / Polish Tech / Gadget Review, via search results 2026-10-05"},
+    {"id": "ark1", "label": "ARK-1: UGV/machine-gun robot, deployed since Jul 2026", "type": "event"},
+    {"id": "autodrone", "label": "Ukraine's earlier one-time fully-autonomous drone engagement (Ars Technica ~3mo)", "type": "event"},
+    {"id": "ugv-drone-team", "label": "UGV + drone teaming on the battlefield", "type": "trend"},
+    {"id": "target-profile", "label": "generalized target profile (choose targets w/o specific human pick)", "type": "mechanism"},
+    {"id": "escalation", "label": "escalation + civilian harm risk from loss of human judgement", "type": "concern"},
+    {"id": "diffusion", "label": "normative diffusion: if the ICRC line is right, any state fielding this crosses toward prohibited", "type": "analysis"}
+  ],
+  "edges": [
+    {"from": "laws", "to": "unpredictable", "rel": "split"},
+    {"from": "laws", "to": "target-human", "rel": "split"},
+    {"from": "laws", "to": "human-control", "rel": "split"},
+    {"from": "unpredictable", "to": "target-limits", "rel": "implements"},
+    {"from": "target-human", "to": "ihl", "rel": "grounded-in"},
+    {"from": "ihl", "to": "escalation", "rel": "guards-against"},
+    {"from": "gge", "to": "laws", "rel": "negotiates"},
+    {"from": "un-sg", "to": "gge", "rel": "pressures"},
+    {"from": "icrc", "to": "gge", "rel": "informs"},
+    {"from": "vivaldi", "to": "ugv-drone-team", "rel": "evidence-of"},
+    {"from": "vivaldi", "to": "target-profile", "rel": "degree-of"},
+    {"from": "vivaldi", "to": "diffusion", "rel": "precedent"},
+    {"from": "ark1", "to": "vivaldi", "rel": "component"},
+    {"from": "autodrone", "to": "vivaldi", "rel": "precursor"},
+    {"from": "escalation", "to": "diffusion", "rel": "feeds"},
+    {"from": "laws", "to": "escalation", "rel": "risk-of"}
+  ]
+}

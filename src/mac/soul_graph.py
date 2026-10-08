@@ -17,9 +17,34 @@ import time
 import uuid
 import json
 import math
+import re
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Callable, Iterable, Optional, Any
 from pathlib import Path
+
+Clock = Callable[[], float]
+
+
+def default_soul_path(name: str = "soul") -> Path:
+    """Where an agent's soul graph lives: ``<agent home>/<name>.json``, the
+    agent home being mac_paths.gateway_home() ($HERMES_HOME)."""
+    from mac import mac_paths
+
+    return mac_paths.gateway_home() / f"{name}.json"
+
+# Words too common to say anything about what a node is about. Search and the
+# inverted index both skip them, so a query is matched on what it is about.
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into",
+    "is", "it", "its", "no", "not", "of", "on", "or", "so", "that", "the", "this",
+    "to", "was", "when", "with", "without",
+})
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_]*")
+
+
+def tokens(text: str) -> set[str]:
+    """The searchable words of ``text``: lower-cased, punctuation-free, no stopwords."""
+    return {w for w in _TOKEN_RE.findall(text.lower()) if w not in _STOPWORDS}
 
 
 # ---------------------------------------------------------------------------
@@ -40,11 +65,24 @@ class SoulNode:
     access_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def touch(self):
-        self.last_accessed = time.time()
+    def touch(self, now: float | None = None):
+        self.last_accessed = time.time() if now is None else now
         self.access_count += 1
 
-    def recency_score(self) -> float:
+    def rank_key(self) -> float:
+        """The splay key: orders nodes exactly as recency_score() does, at any time.
+
+        recency_score is (access_count + 1) * exp(-(now - last_accessed) / day).
+        Its log is log(access_count + 1) + last_accessed / day - now / day, and
+        the last term is the same for every node, so ranking by the rest gives
+        the same order at every ``now``. Keying the splay tree on it means the
+        tree never goes stale as time passes and hot() needs no re-ranking pass.
+        """
+        if self.pinned:
+            return math.inf
+        return math.log(self.access_count + 1) + self.last_accessed / 86400
+
+    def recency_score(self, now: float | None = None) -> float:
         """Higher = more recently/frequently accessed. Pinned nodes = inf.
 
         FIX (observed 2026-09-12): original formula (acc+1)/(1+age/86400)
@@ -54,7 +92,7 @@ class SoulNode:
         """
         if self.pinned:
             return math.inf
-        age = time.time() - self.last_accessed
+        age = max(0.0, (time.time() if now is None else now) - self.last_accessed)
         # Exponential decay with half-life of 1 day; access count adds weight
         decay = math.exp(-age / 86400)
         return (self.access_count + 1) * decay
@@ -258,12 +296,34 @@ class SoulGraph:
     The soul. DAG + Splay + Tags + Pins + Exploration branch.
     """
 
-    def __init__(self, name: str = "soul", exploration: bool = False):
+    def __init__(self, name: str = "soul", exploration: bool = False, clock: Clock | None = None):
         self.name = name
         self.exploration = exploration          # True = sandbox branch
         self.nodes: dict[str, SoulNode] = {}
         self.splay = SplayTree()
         self._tag_index: dict[str, set[str]] = {}  # tag → set of node ids
+        # word → ids of nodes whose content has it. Search walks only the
+        # postings of the query's words instead of every node in the graph.
+        self._word_index: dict[str, set[str]] = {}
+        # Recency is relative to this clock. Injecting one lets a caller replay
+        # history at its real timestamps (see scripts/soul-graph-eval.py).
+        self.clock: Clock = clock or time.time
+        self.dropped_edges: list[dict] = []  # see from_dag()
+
+    def _rekey(self, node: SoulNode) -> None:
+        self.splay.access(node.id, node.rank_key())
+
+    def _index_words(self, node: SoulNode) -> None:
+        for word in tokens(node.content):
+            self._word_index.setdefault(word, set()).add(node.id)
+
+    def _unindex_words(self, node: SoulNode) -> None:
+        for word in tokens(node.content):
+            ids = self._word_index.get(word)
+            if ids is not None:
+                ids.discard(node.id)
+                if not ids:
+                    del self._word_index[word]
 
     # ------------------------------------------------------------------
     # Mutation
@@ -279,16 +339,22 @@ class SoulGraph:
         node_id: str | None = None,
     ) -> SoulNode:
         tags = set(tags or [])
+        now = self.clock()
         node = SoulNode(
             id=node_id or str(uuid.uuid4())[:8],
             content=content,
             tags=tags,
-            parents=parents or [],
+            parents=list(parents or []),
             pinned=pinned,
+            created_at=now,
+            last_accessed=now,
             metadata=metadata or {},
         )
+        if node.id in self.nodes:
+            raise ValueError("soul node %r already exists" % node.id)
         self.nodes[node.id] = node
-        self.splay.insert(node.id, node.recency_score())
+        self.splay.insert(node.id, node.rank_key())
+        self._index_words(node)
 
         # DAG: wire parent → child edges
         for pid in node.parents:
@@ -327,8 +393,9 @@ class SoulGraph:
         """
         node = self.nodes.get(node_id)
         if node:
-            node.touch()
-            self.splay.access(node_id, node.recency_score())
+            now = self.clock()
+            node.touch(now)
+            self._rekey(node)
             if propagate_parents:
                 for pid in node.parents:
                     parent = self.nodes.get(pid)
@@ -336,18 +403,26 @@ class SoulGraph:
                         # Partial promotion: nudge last_accessed toward now
                         # without incrementing acc — parent is implicitly relevant
                         # but not the direct focus. Half the recency boost.
-                        parent.last_accessed = (parent.last_accessed + time.time()) / 2
-                        self.splay.access(pid, parent.recency_score())
+                        parent.last_accessed = (parent.last_accessed + now) / 2
+                        self._rekey(parent)
         return node
 
-    def link(self, parent_id: str, child_id: str):
-        """Add a DAG edge."""
-        if parent_id in self.nodes and child_id in self.nodes:
-            p, c = self.nodes[parent_id], self.nodes[child_id]
-            if child_id not in p.children:
-                p.children.append(child_id)
-            if parent_id not in c.parents:
-                c.parents.append(parent_id)
+    def get(self, node_id: str) -> Optional[SoulNode]:
+        return self.nodes.get(node_id)
+
+    def link(self, parent_id: str, child_id: str) -> bool:
+        """Add a DAG edge. Returns False if either node is missing or the edge
+        would make a cycle (the graph must stay a DAG)."""
+        if parent_id not in self.nodes or child_id not in self.nodes:
+            return False
+        if parent_id == child_id or child_id in self.ancestors(parent_id):
+            return False
+        p, c = self.nodes[parent_id], self.nodes[child_id]
+        if child_id not in p.children:
+            p.children.append(child_id)
+        if parent_id not in c.parents:
+            c.parents.append(parent_id)
+        return True
 
     def tag(self, node_id: str, *tags: str):
         if node_id in self.nodes:
@@ -359,22 +434,25 @@ class SoulGraph:
     # Retrieval
     # ------------------------------------------------------------------
 
+    def tagged(self, tag: str) -> set[str]:
+        """Ids of the nodes carrying ``tag`` (unsorted; see by_tag for ranking)."""
+        return set(self._tag_index.get(tag, ()))
+
     def by_tag(self, *tags: str) -> list[SoulNode]:
         """All nodes matching ANY of the given tags, sorted by recency."""
         ids: set[str] = set()
         for t in tags:
             ids |= self._tag_index.get(t, set())
         nodes = [self.nodes[i] for i in ids if i in self.nodes]
-        return sorted(nodes, key=lambda n: n.recency_score(), reverse=True)
+        now = self.clock()
+        return sorted(nodes, key=lambda n: n.recency_score(now), reverse=True)
 
     def hot(self, n: int = 10) -> list[SoulNode]:
-        """Top-n most recently/frequently accessed nodes (splay order)."""
-        # Time decay changes every unpinned score even when the node is never
-        # touched. Keep the index honest before ranking, otherwise an untouched
-        # node can keep a stale creation-time key and outrank a parent that was
-        # just partially promoted by child access.
-        for node_id, node in list(self.nodes.items()):
-            self.splay.access(node_id, node.recency_score())
+        """Top-n most recently/frequently accessed nodes (splay order).
+
+        The tree is keyed on SoulNode.rank_key(), which time does not change,
+        so this is a read of the tree: no per-call re-ranking of every node.
+        """
         ids = self.splay.top_n(n)
         return [self.nodes[i] for i in ids if i in self.nodes]
 
@@ -406,25 +484,81 @@ class SoulGraph:
                     stack.append(pid)
         return list(visited)
 
-    def semantic_search(self, query: str, top_k: int = 5) -> list[tuple[SoulNode, float]]:
+    def semantic_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        candidates: Iterable[str] | None = None,
+        recency_weight: float = 1.0,
+    ) -> list[tuple[SoulNode, float]]:
         """
-        Naive keyword-overlap search (RAG placeholder).
+        Keyword-overlap search, boosted by recency (RAG placeholder).
         Bullwinkle's embedding layer will replace this.
-        Returns (node, score) tuples sorted by score desc.
+        Returns (node, score) tuples sorted by score desc. ``candidates``
+        restricts the search to those node ids (e.g. one tag's nodes).
+        ``recency_weight`` scales the splay boost; 0 ranks on overlap alone,
+        which recalls old experience better (see scripts/soul-graph-eval.py).
         """
-        query_words = set(query.lower().split())
+        # Each shared word counts by how rare it is (inverse document
+        # frequency), so "sandbox" outweighs "fix". Raw overlap ranked old
+        # experience worse than BM25 on the task-ledger replay.
+        overlap: dict[str, float] = {}
+        total = max(1, len(self.nodes))
+        for word in tokens(query):
+            ids = self._word_index.get(word, ())
+            if not ids:
+                continue
+            idf = math.log(1 + (total - len(ids) + 0.5) / (len(ids) + 0.5))
+            for nid in ids:
+                overlap[nid] = overlap.get(nid, 0.0) + idf
+        if candidates is not None:
+            allowed = set(candidates)
+            overlap = {nid: c for nid, c in overlap.items() if nid in allowed}
+        now = self.clock()
         results = []
-        for node in self.nodes.values():
-            node_words = set(node.content.lower().split())
-            overlap = len(query_words & node_words)
-            if overlap > 0:
-                # Boost by recency
-                score = overlap * (1 + math.log1p(node.recency_score()))
-                results.append((node, score))
+        for nid, count in overlap.items():
+            node = self.nodes[nid]
+            recency = node.recency_score(now)
+            boost = math.log1p(recency) if recency != math.inf else math.log1p(1e6)
+            score = count * (1 + recency_weight * boost)
+            results.append((node, score))
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
-    def discover(self, query: str, top_k: int = 5) -> list[tuple[SoulNode, list[str]]]:
+    def related(
+        self,
+        query: str,
+        top_k: int = 10,
+        recency_weight: float = 1.0,
+        touch: bool = False,
+    ) -> list[SoulNode]:
+        """Search hits, each followed by its DAG parents and then its children.
+
+        This is the retrieval the DAG earns its keep on. Replaying the MAC task
+        ledger (scripts/soul-graph-eval.py), asking for the earlier work a new
+        task builds on, this found 0.60 of the dependencies older than six
+        hours in its top five, against 0.20 for keyword search alone: the hit
+        is usually a recent sibling, and the old foundation is its parent.
+        """
+        out: list[SoulNode] = []
+        seen: set[str] = set()
+        for node, _ in self.semantic_search(query, top_k, recency_weight=recency_weight):
+            for nid in [node.id] + list(node.parents) + list(node.children):
+                if nid in seen or nid not in self.nodes:
+                    continue
+                seen.add(nid)
+                out.append(self.nodes[nid])
+            if len(out) >= top_k:
+                break
+        out = out[:top_k]
+        if touch:
+            for node in out:
+                self.touch(node.id, propagate_parents=False)
+        return out
+
+    def discover(
+        self, query: str, top_k: int = 5, touch: bool = True
+    ) -> list[tuple[SoulNode, list[str]]]:
         """
         'The needful you did not know you were.'
 
@@ -435,7 +569,8 @@ class SoulGraph:
         results = []
         for node, score in hits:
             # Touch the node — promotes in splay
-            self.touch(node.id)
+            if touch:
+                self.touch(node.id)
             # Find path from a pinned/root ancestor
             ancestors = self.ancestors(node.id)
             # Find the oldest ancestor (smallest created_at)
@@ -460,7 +595,7 @@ class SoulGraph:
 
     def branch(self) -> "SoulGraph":
         """Create an exploration branch — a sandbox copy."""
-        b = SoulGraph(name=f"{self.name}:explore", exploration=True)
+        b = SoulGraph(name=f"{self.name}:explore", exploration=True, clock=self.clock)
         for nid, node in self.nodes.items():
             b.nodes[nid] = SoulNode(
                 id=node.id,
@@ -474,8 +609,9 @@ class SoulGraph:
                 access_count=node.access_count,
                 metadata=dict(node.metadata),
             )
-            b.splay.insert(nid, node.recency_score())
+            b.splay.insert(nid, b.nodes[nid].rank_key())
         b._tag_index = {t: set(ids) for t, ids in self._tag_index.items()}
+        b._word_index = {w: set(ids) for w, ids in self._word_index.items()}
         return b
 
     def merge_from(self, branch: "SoulGraph", new_only: bool = True):
@@ -487,12 +623,20 @@ class SoulGraph:
         for nid, node in branch.nodes.items():
             if nid not in self.nodes:
                 self.nodes[nid] = node
-                self.splay.insert(nid, node.recency_score())
+                self.splay.insert(nid, node.rank_key())
                 for tag in node.tags:
                     self._tag_index.setdefault(tag, set()).add(nid)
+                self._index_words(node)
+                # Wire the reverse edges the branch's node already declares.
+                for pid in node.parents:
+                    parent = self.nodes.get(pid)
+                    if parent is not None and nid not in parent.children:
+                        parent.children.append(nid)
             elif not new_only:
                 existing = self.nodes[nid]
+                self._unindex_words(existing)
                 existing.content = node.content
+                self._index_words(existing)
                 existing.tags |= node.tags
                 for tag in node.tags:
                     self._tag_index.setdefault(tag, set()).add(nid)
@@ -502,23 +646,63 @@ class SoulGraph:
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path):
+        """Write the graph as JSON, atomically: a crash mid-write leaves the
+        previous file, never a truncated one."""
         data = {
             "name": self.name,
             "exploration": self.exploration,
             "nodes": {nid: n.to_dict() for nid, n in self.nodes.items()},
         }
-        Path(path).write_text(json.dumps(data, indent=2))
+        path = Path(path)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(path)
 
     @classmethod
-    def load(cls, path: str | Path) -> "SoulGraph":
+    def load(cls, path: str | Path, clock: Clock | None = None) -> "SoulGraph":
         data = json.loads(Path(path).read_text())
-        g = cls(name=data["name"], exploration=data.get("exploration", False))
+        g = cls(name=data["name"], exploration=data.get("exploration", False), clock=clock)
         for nid, nd in data["nodes"].items():
             node = SoulNode.from_dict(nd)
             g.nodes[nid] = node
-            g.splay.insert(nid, node.recency_score())
+            g.splay.insert(nid, node.rank_key())
             for tag in node.tags:
                 g._tag_index.setdefault(tag, set()).add(nid)
+            g._index_words(node)
+        return g
+
+    @classmethod
+    def from_dag(cls, data: dict, name: str = "soul", clock: Clock | None = None) -> "SoulGraph":
+        """Build a graph from the portable ``{"nodes": [...], "edges": [...]}``
+        DAG agents write by hand (e.g. natasha's reasoning DAGs).
+
+        Each node's ``label`` becomes its content and its ``type`` a tag;
+        ``axiom`` nodes are pinned. Each edge ``from -> to`` makes ``from`` a
+        parent of ``to`` and keeps the relation name on the child. Edges that
+        would close a cycle, or name a missing node, are dropped and listed in
+        ``dropped_edges``.
+        """
+        g = cls(name=name, clock=clock)
+        for raw in data.get("nodes", []):
+            kind = str(raw.get("type") or "").strip()
+            meta = {k: v for k, v in raw.items() if k not in {"id", "label", "type"}}
+            g.add(
+                str(raw.get("label") or raw["id"]),
+                tags={kind} if kind else set(),
+                pinned=kind == "axiom",
+                metadata=meta,
+                node_id=str(raw["id"]),
+            )
+        dropped = []
+        for edge in data.get("edges", []):
+            parent, child = str(edge["from"]), str(edge["to"])
+            if not g.link(parent, child):
+                dropped.append(edge)
+                continue
+            rel = edge.get("rel")
+            if rel:
+                g.nodes[child].metadata.setdefault("parent_rels", {})[parent] = rel
+        g.dropped_edges = dropped
         return g
 
     # ------------------------------------------------------------------

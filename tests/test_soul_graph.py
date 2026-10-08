@@ -270,7 +270,7 @@ def test_bug4_new_node_scores_higher_than_old():
     old = g.add("old experience", tags={"old"})
     g.nodes[old.id].created_at -= 7 * 86400
     g.nodes[old.id].last_accessed -= 7 * 86400
-    g.splay.access(old.id, g.nodes[old.id].recency_score())
+    g._rekey(g.nodes[old.id])
 
     new = g.add("fresh experience", tags={"new"})
     # With exp decay, new node at age~0 should score >> 5x an unaccessed week-old node
@@ -308,7 +308,163 @@ def test_bug2_new_node_outranks_old_unaccessed():
         n = g.add(f"stale node {i}", tags={"old"})
         g.nodes[n.id].created_at -= 3 * 86400
         g.nodes[n.id].last_accessed -= 3 * 86400
-        g.splay.access(n.id, g.nodes[n.id].recency_score())
+        g._rekey(g.nodes[n.id])
     new = g.add("fresh experience just now", tags={"new"})
     hot_ids = [n.id for n in g.hot(10) if not n.pinned]
     assert hot_ids[0] == new.id
+
+
+# ---------------------------------------------------------------------------
+# Replayable clock, search ranking, DAG integrity, real-DAG import
+# ---------------------------------------------------------------------------
+
+FIXTURES = Path(__file__).parent / "fixtures" / "soul_graph"
+
+
+class _Clock:
+    def __init__(self, now: float = 1_000_000.0):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_an_injected_clock_stamps_and_ages_nodes():
+    clock = _Clock()
+    g = SoulGraph(clock=clock)
+    n = g.add("first")
+    assert n.created_at == n.last_accessed == clock.now
+    clock.now += 86400
+    assert g.nodes[n.id].recency_score(clock.now) == pytest.approx(math.exp(-1))
+    g.touch(n.id)
+    assert g.nodes[n.id].last_accessed == clock.now
+
+
+def test_hot_matches_recency_order_at_every_time_without_reranking():
+    """The splay key is time-invariant, so hot() is a plain read of the tree and
+    still agrees with recency_score() however much time has passed."""
+    import random
+
+    rnd = random.Random(7)
+    clock = _Clock()
+    g = SoulGraph(clock=clock)
+    ids = []
+    for i in range(60):
+        clock.now += rnd.uniform(0, 7200)
+        ids.append(g.add("node %d" % i, node_id="n%d" % i).id)
+        for _ in range(rnd.randint(0, 3)):
+            g.touch(rnd.choice(ids))
+    g.pin("n5")
+    for later in (0, 3600, 5 * 86400, 60 * 86400):
+        clock.now += later
+        expected = sorted(
+            g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True
+        )
+        hot = g.hot(15)
+        assert hot[0].id == "n5"
+        scores = [n.recency_score(clock.now) for n in hot]
+        assert scores == sorted(scores, reverse=True)
+        assert scores == [n.recency_score(clock.now) for n in expected[:15]]
+
+
+def test_search_weights_rare_words_over_common_ones():
+    g = SoulGraph()
+    for i in range(20):
+        g.add("fix the worker test %d" % i)
+    rare = g.add("fix the sandbox mount")
+    hits = g.semantic_search("fix sandbox", top_k=3, recency_weight=0)
+    assert hits[0][0].id == rare.id
+
+
+def test_search_ignores_punctuation_and_stopwords():
+    g = SoulGraph()
+    n = g.add("Lessons: curl is blocked, use urllib.")
+    assert g.semantic_search("urllib", top_k=1)[0][0].id == n.id
+    assert g.semantic_search("is the of", top_k=1) == []
+
+
+def test_search_can_be_restricted_to_candidates():
+    g = SoulGraph()
+    a = g.add("deploy the hub", tags={"project:a"})
+    g.add("deploy the hub", tags={"project:b"})
+    hits = g.semantic_search("deploy hub", top_k=5, candidates=g.tagged("project:a"))
+    assert [n.id for n, _ in hits] == [a.id]
+
+
+def test_related_returns_hits_then_their_parents_and_children():
+    g = SoulGraph()
+    g.add("foundation decision", node_id="root")
+    g.add("sibling that names the sandbox", parents=["root"], node_id="sib")
+    g.add("follow-up work", parents=["sib"], node_id="child")
+    ids = [n.id for n in g.related("sandbox", top_k=5)]
+    assert ids == ["sib", "root", "child"]
+
+
+def test_link_refuses_cycles_and_missing_nodes():
+    g = SoulGraph()
+    g.add("a", node_id="a")
+    g.add("b", parents=["a"], node_id="b")
+    assert g.link("b", "a") is False
+    assert g.link("a", "a") is False
+    assert g.link("a", "missing") is False
+    assert g.nodes["a"].parents == []
+
+
+def test_add_refuses_a_duplicate_id():
+    g = SoulGraph()
+    g.add("a", node_id="a")
+    with pytest.raises(ValueError):
+        g.add("again", node_id="a")
+
+
+def test_merge_keeps_the_word_index_and_reverse_edges():
+    g = SoulGraph()
+    g.add("base", node_id="base")
+    b = g.branch()
+    b.add("hypothesis about quotas", parents=["base"], node_id="h")
+    g.merge_from(b)
+    assert g.semantic_search("quotas", top_k=1)[0][0].id == "h"
+    assert "h" in g.nodes["base"].children
+    b.nodes["base"].content = "renamed root"
+    g.merge_from(b, new_only=False)
+    assert g.semantic_search("renamed", top_k=1)[0][0].id == "base"
+    assert g.semantic_search("base", top_k=1) == []
+
+
+def test_save_is_atomic_and_load_rebuilds_the_indexes(tmp_path):
+    g = make_soul()
+    path = tmp_path / "soul.json"
+    g.save(path)
+    assert not (tmp_path / "soul.json.tmp").exists()
+    loaded = SoulGraph.load(path)
+    assert loaded.semantic_search("urllib", top_k=1)[0][0].id == "l1"
+    assert loaded.hot(1)[0].pinned
+
+
+def test_a_real_reasoning_dag_imports_and_is_traversable():
+    """natasha's hand-built DAG (2026-10-05) in the portable nodes/edges form."""
+    data = json.loads((FIXTURES / "laws-dag.json").read_text())
+    g = SoulGraph.from_dag(data, name="laws")
+    assert len(g.nodes) == len(data["nodes"])
+    assert g.dropped_edges == []
+    assert {n.id for n in g.nodes.values() if n.pinned} == {
+        "unpredictable", "target-human", "human-control"
+    }
+    assert g.nodes["vivaldi"].metadata["parent_rels"] == {"ark1": "component", "autodrone": "precursor"}
+    assert g.tagged("event") == {"vivaldi", "ark1", "autodrone"}
+    related = [n.id for n in g.related("Operation Vivaldi", top_k=6)]
+    assert related[0] == "vivaldi"
+    assert {"ark1", "autodrone"} <= set(related)
+    assert "diffusion" in related
+    assert g.path("laws", "diffusion") == ["laws", "escalation", "diffusion"]
+
+
+def test_from_dag_drops_edges_that_would_close_a_cycle():
+    g = SoulGraph.from_dag(
+        {
+            "nodes": [{"id": "a", "label": "a"}, {"id": "b", "label": "b"}],
+            "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}, {"from": "a", "to": "zz"}],
+        }
+    )
+    assert g.nodes["b"].parents == ["a"]
+    assert len(g.dropped_edges) == 2
