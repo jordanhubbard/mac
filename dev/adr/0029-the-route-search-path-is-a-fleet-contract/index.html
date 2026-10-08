@@ -1940,9 +1940,17 @@
 
 <h1 id="adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment">ADR 0029: The coding-route search path is a fleet contract, not per-worker environment<a class="headerlink" href="#adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Withdrawn 2026-10-02. MAC runs one coding CLI, opencode, through
-  the hub's model router; provider failover lives in the router, so there is
-  no CLI route ladder. <code>src/mac/route_ladder.py</code> was deleted.</li>
+<li>Status: Reinstated 2026-10-08 in reduced form, after being withdrawn
+  2026-10-02. The search path is again fleet configuration: the hub's ordered
+  <code>MAC_CODING_AGENTS</code> list (opencode, claude), projected into every assignment
+  and heartbeat so workers inherit it. Failover moves down the list only on
+  structured failures (missing binary, no token, failed in-sandbox preflight,
+  or an auth, rate-limit or upstream status the hub router recorded for that
+  CLI's route); transcripts are never read, which is what made the deleted
+  ladder misfire. Route identities, the published availability outcomes and
+  the recovering breaker described below are not reinstated.
+  <code>src/mac/route_ladder.py</code> stays deleted. See
+  <a href="../../openshell-sandbox/#the-fleets-ordered-cli-list"><code>openshell-sandbox.md</code></a>.</li>
 <li>Date: 2026-08-22</li>
 <li>Decision owner: MAC fleet owner</li>
 <li>Related:</li>
