@@ -74,7 +74,6 @@ def _run_hook(items: list[_FakeItem], disabled: str | None, monkeypatch) -> _Fak
     [
         ("/repo/tests/test_fleet_node_rollback_supervisor.py", "fleet"),
         ("/repo/tests/test_deploy_fleet_drain.py", "fleet"),
-        ("/repo/tests/test_work_package_pipeline.py", "work_package"),
         ("/repo/tests/test_worker_credentials.py", "worker"),
         ("/repo/tests/test_full_rollout_e2e.py", "heavy_e2e"),
         ("/repo/tests/test_documentation_book.py", "heavy_e2e"),
@@ -114,7 +113,7 @@ def test_empty_flag_deselects_nothing(monkeypatch):
 
 def test_disabled_namespace_is_deselected_and_removed(monkeypatch):
     fleet = _FakeItem("/repo/tests/test_fleet_node.py")
-    other = _FakeItem("/repo/tests/test_work_package_pipeline.py")
+    other = _FakeItem("/repo/tests/test_dispatch.py")
     items = [fleet, other]
     config = _run_hook(items, "fleet", monkeypatch)
 
@@ -127,7 +126,7 @@ def test_disabled_namespace_is_deselected_and_removed(monkeypatch):
 def test_multiple_namespaces_disabled_with_whitespace(monkeypatch):
     fleet = _FakeItem("/repo/tests/test_fleet_node.py")
     worker = _FakeItem("/repo/tests/test_worker_credentials.py")
-    keep = _FakeItem("/repo/tests/test_work_package_pipeline.py")
+    keep = _FakeItem("/repo/tests/test_dispatch.py")
     items = [fleet, worker, keep]
     config = _run_hook(items, " fleet , worker ", monkeypatch)
 

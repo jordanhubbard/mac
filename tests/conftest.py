@@ -20,7 +20,6 @@ pytest_plugins = ["tests.pg_worker_databases"]
 # they stay first-class and lintable.
 _PATH_NAMESPACES = {
     "fleet": lambda p: "/tests/test_fleet_" in p or "/tests/test_deploy_fleet" in p,
-    "work_package": lambda p: "/tests/test_work_package" in p,
     "worker": lambda p: "/tests/test_worker" in p,
     "heavy_e2e": lambda p: p.endswith("_e2e.py") or "/tests/test_documentation_book.py" in p,
 }

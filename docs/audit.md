@@ -368,7 +368,7 @@ first-class attention.
 - **445 files, ~200,600 LOC, 6,883 `def test_` functions → 8,555 collected nodes.**
 - Organization is **marker-based, not directory-based**: `tests/conftest.py`
   auto-applies markers by path (`api`, `cli`, `ui`) and by filename cluster (`fleet`,
-  `work_package`, `worker`, `heavy_e2e`), registered in `pyproject.toml:108-120`. An operator
+  `worker`, `heavy_e2e`), registered in `pyproject.toml:108-120`. An operator
   can disable whole clusters via `MAC_TEST_DISABLE_GROUPS`.
 - **`scripts/run-contract-tests.sh` (506 lines) is *the* mandated quality gate** (`CLAUDE.md`
   "Session Completion"). It builds a hermetic env (unsetting all `MAC_*`/`HERMES_*`/`SLACK_*`
