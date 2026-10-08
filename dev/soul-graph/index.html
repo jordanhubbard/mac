@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/book/07-repository-contracts/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/soul-graph/">
       
       
-        <link rel="prev" href="../06-hermes-and-ide/">
+        <link rel="prev" href="../openshell-sandbox/">
       
       
-        <link rel="next" href="../08-plans-and-dags/">
+        <link rel="next" href="../archive/">
       
       
         
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Repository Contracts - MAC Documentation</title>
+        <title>Soul graph (experimental) - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#repository-contracts" class="md-skip">
+        <a href="#soul-graph-experimental" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -120,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Repository Contracts
+              Soul graph (experimental)
             
           </span>
         </div>
@@ -238,7 +238,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -268,7 +268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -347,7 +347,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/" class="md-nav__link">
+      <a href="../guide/" class="md-nav__link">
         
   
   
@@ -375,7 +375,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/01-architecture/" class="md-nav__link">
+      <a href="../guide/01-architecture/" class="md-nav__link">
         
   
   
@@ -403,7 +403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/02-getting-started/" class="md-nav__link">
+      <a href="../guide/02-getting-started/" class="md-nav__link">
         
   
   
@@ -431,7 +431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/03-advanced/" class="md-nav__link">
+      <a href="../guide/03-advanced/" class="md-nav__link">
         
   
   
@@ -459,7 +459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/04-ui/" class="md-nav__link">
+      <a href="../guide/04-ui/" class="md-nav__link">
         
   
   
@@ -487,7 +487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/05-developer-guide/" class="md-nav__link">
+      <a href="../guide/05-developer-guide/" class="md-nav__link">
         
   
   
@@ -515,7 +515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../python-baseline/" class="md-nav__link">
+      <a href="../python-baseline/" class="md-nav__link">
         
   
   
@@ -547,8 +547,6 @@
       
   
   
-    
-  
   
   
     
@@ -561,11 +559,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
@@ -586,7 +584,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -604,7 +602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../01-system/" class="md-nav__link">
+      <a href="../book/01-system/" class="md-nav__link">
         
   
   
@@ -632,7 +630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../02-local-start/" class="md-nav__link">
+      <a href="../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -660,7 +658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../03-projects-and-tasks/" class="md-nav__link">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -688,7 +686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../04-machines-and-agents/" class="md-nav__link">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -716,7 +714,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../05-evidence-review-completion/" class="md-nav__link">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -744,7 +742,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../06-hermes-and-ide/" class="md-nav__link">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -769,19 +767,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -797,7 +786,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -810,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../08-plans-and-dags/" class="md-nav__link">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -838,7 +826,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../09-fleet-onboarding/" class="md-nav__link">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -866,7 +854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../10-identity-and-secrets/" class="md-nav__link">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -894,7 +882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../11-publication-and-refs/" class="md-nav__link">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -922,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../12-operations/" class="md-nav__link">
+      <a href="../book/12-operations/" class="md-nav__link">
         
   
   
@@ -950,7 +938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../13-deployment-topologies/" class="md-nav__link">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -978,7 +966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../14-images-and-cutover/" class="md-nav__link">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -1006,7 +994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -1034,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../16-apis-and-integrations/" class="md-nav__link">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -1062,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -1090,7 +1078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../18-capstone/" class="md-nav__link">
+      <a href="../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -1177,7 +1165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -1205,7 +1193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/openapi/" class="md-nav__link">
+      <a href="../reference/openapi/" class="md-nav__link">
         
   
   
@@ -1233,7 +1221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../env-config-reference/" class="md-nav__link">
+      <a href="../env-config-reference/" class="md-nav__link">
         
   
   
@@ -1261,7 +1249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-directives/" class="md-nav__link">
+      <a href="../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1289,7 +1277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../repository-runtime-contract/" class="md-nav__link">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1317,7 +1305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-registry-schema/" class="md-nav__link">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1345,7 +1333,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1432,7 +1420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../production-deployment/" class="md-nav__link">
+      <a href="../production-deployment/" class="md-nav__link">
         
   
   
@@ -1460,7 +1448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../operations/fleet-update/" class="md-nav__link">
+      <a href="../operations/fleet-update/" class="md-nav__link">
         
   
   
@@ -1488,7 +1476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hub-availability/" class="md-nav__link">
+      <a href="../hub-availability/" class="md-nav__link">
         
   
   
@@ -1516,7 +1504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1548,8 +1536,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -1560,11 +1550,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
@@ -1585,7 +1575,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1603,7 +1593,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hermes-boundary/" class="md-nav__link">
+      <a href="../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1631,7 +1621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../openshell-sandbox/" class="md-nav__link">
+      <a href="../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1656,10 +1646,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../soul-graph/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Soul graph (experimental)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1675,6 +1692,98 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-is-installed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it is installed
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where it is installed">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rolling-it-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling it out
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-it-recall-the-right-things" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does it recall the right things?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-and-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1687,7 +1796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../archive/" class="md-nav__link">
+      <a href="../archive/" class="md-nav__link">
         
   
   
@@ -1735,6 +1844,86 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-is-installed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it is installed
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where it is installed">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rolling-it-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling it out
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-it-recall-the-right-things" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does it recall the right things?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-and-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1750,7 +1939,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/book/07-repository-contracts.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/soul-graph.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1758,36 +1947,265 @@
   
 
 
-<h1 id="repository-contracts">Repository Contracts<a class="headerlink" href="#repository-contracts" title="Permanent link">&para;</a></h1>
-<p>A repository contract tells MAC how to bootstrap, test, and validate work in a
-project. It records supported platforms, required commands, the canonical
-remote, and the evidence expected from an executor. The contract belongs in
-<code>.mac/project.yaml</code>.</p>
-<p>The MAC checkout contains its own production contract. Registering it in a
-disposable authority demonstrates the binding between project and hub-visible
-checkout.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>init
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/.mac/project.yaml&quot;</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>project<span class="w"> </span>create<span class="w"> </span>mac<span class="w"> </span>--active
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>bridge<span class="w"> </span>repository<span class="w"> </span>register<span class="w"> </span>mac<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--project<span class="w"> </span>mac<span class="w"> </span>--source<span class="w"> </span>docs-book
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>bridge<span class="w"> </span>repository<span class="w"> </span>repos
+<h1 id="soul-graph-experimental">Soul graph (experimental)<a class="headerlink" href="#soul-graph-experimental" title="Permanent link">&para;</a></h1>
+<p>A soul graph is an agent's long-term memory kept as a graph rather than a
+flat file. It lives in <code>src/mac/soul_graph.py</code>, is served to agents over MCP
+by <code>src/mac/soul_mcp.py</code>, and can prime a session through
+<code>src/mac/soul_seed.py</code>. Every host's Hermes gets it through
+<code>mac.soul_install</code> (see <a href="#where-it-is-installed">Where it is installed</a>). This
+page says what it is, how it is installed and rolled out, and what replaying
+real history through it showed.</p>
+<h2 id="the-model">The model<a class="headerlink" href="#the-model" title="Permanent link">&para;</a></h2>
+<p>Every memory, decision or belief is a node with text content. Four structures
+sit over the nodes:</p>
+<table>
+<thead>
+<tr>
+<th>Structure</th>
+<th>What it records</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DAG edges</td>
+<td>causal or semantic lineage: this node was built on that one</td>
+<td><code>related</code>, <code>discover</code>, <code>ancestors</code>, <code>path</code></td>
+</tr>
+<tr>
+<td>Splay order</td>
+<td>how recently and how often a node was used</td>
+<td><code>hot</code>, and as a boost in search</td>
+</tr>
+<tr>
+<td>Tags</td>
+<td>cross-cutting dimensions (<code>axiom</code>, <code>lesson</code>, <code>project:&lt;name&gt;</code>)</td>
+<td><code>by_tag</code>, <code>tagged</code>, search candidates</td>
+</tr>
+<tr>
+<td>Pins</td>
+<td>axioms that never decay</td>
+<td>always at the top of <code>hot</code></td>
+</tr>
+</tbody>
+</table>
+<p>A node's recency score is <code>(access_count + 1) * exp(-age / 1 day)</code>. The splay
+tree is keyed on <code>log(access_count + 1) + last_accessed / 1 day</code>, which orders
+nodes exactly as the score does at every moment (the <code>now</code> term is common to
+all nodes), so the tree never goes stale and <code>hot()</code> is a read of it.</p>
+<p>Search uses an inverted index. Each query word a node shares counts by its
+inverse document frequency, then the total is boosted by recency
+(<code>recency_weight</code> scales the boost; 0 turns it off).</p>
+<p>An exploration branch is a copy of the graph for trying out hypotheses. A
+hypothesis enters the main graph only when it is promoted.</p>
+<h2 id="running-it">Running it<a class="headerlink" href="#running-it" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">python -m mac.soul_mcp [--soul-file PATH]</span>
 </code></pre></div>
-<p>For a new Git-backed project, run <code>mac project register</code> from its checkout or
-use <code>mac project register GIT_URL[#BRANCH]</code> for remote-first onboarding. Its
-contract-authoring task should inspect the real build rather than guessing from
-filenames. Register the checkout only after the contract exists.</p>
-<p>Code executors must run the repository's mandatory tests before pushing. A
-missing test command is a review condition, not permission to skip verification.</p>
+<p>The server speaks MCP (JSON-RPC 2.0) over stdio. The soul file defaults to
+<code>soul.json</code> in the Hermes home: <code>$HERMES_HOME</code>, else <code>~/.hermes</code> (or
+<code>$MAC_HOME/hermes</code> when <code>MAC_HOME</code> relocates MAC), never an OpenClaw path. It is
+created on the first write and saved atomically after every tool call that
+changes the graph.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>soul_prime</code></td>
+<td>Once at session start: the hottest nodes plus a short walk from the node that best matches <code>context</code>.</td>
+</tr>
+<tr>
+<td><code>soul_related</code></td>
+<td>"What earlier work is this built on?" Search hits followed by their DAG parents and children.</td>
+</tr>
+<tr>
+<td><code>soul_query</code></td>
+<td>Plain search, optionally merged with a second <code>hint</code> query.</td>
+</tr>
+<tr>
+<td><code>soul_hot</code></td>
+<td>The splay root: what the agent has been doing.</td>
+</tr>
+<tr>
+<td><code>soul_discover</code></td>
+<td>Walk the DAG's children from a seed node.</td>
+</tr>
+<tr>
+<td><code>soul_by_tag</code></td>
+<td>Every node with a tag.</td>
+</tr>
+<tr>
+<td><code>soul_add</code>, <code>soul_link</code>, <code>soul_pin</code>, <code>soul_splay</code></td>
+<td>Write: add a node, add an edge (cycles are refused), pin an axiom, mark a node used.</td>
+</tr>
+<tr>
+<td><code>soul_explore</code>, <code>soul_promote</code></td>
+<td>Try a hypothesis in the exploration branch, then move that one node into the graph.</td>
+</tr>
+<tr>
+<td><code>soul_summary</code></td>
+<td>Counts and the hottest nodes.</td>
+</tr>
+</tbody>
+</table>
+<p>A hand-written DAG in the portable <code>{"nodes": [...], "edges": [...]}</code> form
+loads with <code>SoulGraph.from_dag()</code>. Each node's <code>label</code> becomes its content, its
+<code>type</code> a tag, and <code>axiom</code> nodes are pinned.</p>
+<h2 id="where-it-is-installed">Where it is installed<a class="headerlink" href="#where-it-is-installed" title="Permanent link">&para;</a></h2>
+<p>Hermes, the agent's human interface on each host, is the only MAC component
+that loads MCP servers from a per-host config. <code>python -m mac.soul_install
+[--hermes-home DIR]</code> makes three idempotent changes in that Hermes home:</p>
+<ol>
+<li><strong>MCP server.</strong> An <code>mcp_servers.soul</code> entry in <code>config.yaml</code> that runs
+   <code>mac.soul_mcp</code> with the MAC venv's Python and an explicit <code>--soul-file
+   $HERMES_HOME/soul.json</code>. Other <code>mcp_servers</code> entries are left as they are,
+   and <code>config.yaml</code> is backed up before any change.</li>
+<li><strong>Seed.</strong> If <code>soul.json</code> does not exist, it is built from <code>SOUL.md</code>,
+   <code>USER.md</code>, <code>MEMORY.md</code> and Hermes' <code>memories/</code> copies: one node per entry,
+   each section heading the parent of the entries under it, SOUL.md entries
+   pinned as axioms. An existing <code>soul.json</code> is never touched.</li>
+<li><strong>Skill.</strong> <code>skills/soul-graph/SKILL.md</code>, which tells the agent the tools
+   exist and how to use them. It is installed only next to the MCP entry, and
+   a hand-written skill of the same name is left alone.</li>
+</ol>
+<p>A host without a Hermes <code>config.yaml</code> is skipped. <code>scripts/fleet-update</code> runs
+it on every host it updates, after the import check and before services
+restart, and <code>deploy/hermes/install-hermes-gateway.sh</code> runs it on a new host.
+Neither treats a failure as fatal.</p>
+<p>Coding agents (Claude Code, opencode) do not get it. They run in an OpenShell
+sandbox that cannot see <code>$HERMES_HOME</code>, and what they learn about a task
+belongs to the task's board and evidence, not to one agent's memory.</p>
+<h3 id="rolling-it-out">Rolling it out<a class="headerlink" href="#rolling-it-out" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">scripts/fleet-update --hermes --yes all &lt;sha&gt;</span>
+</code></pre></div>
+<p><code>--hermes</code> is what makes the tools live: the install step edits Hermes'
+config, and Hermes reads MCP servers only when it starts. Without <code>--hermes</code>
+the config is in place but the tools appear at the next Hermes restart.
+There is no other per-host step.</p>
+<p>To check a host, use Hermes' own MCP client, which connects to the server and
+lists its tools:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="gp"># </span>Linux<span class="w"> </span>worker:<span class="w"> </span>the<span class="w"> </span>gateway<span class="err">&#39;</span>s<span class="w"> </span>runtime<span class="w"> </span>interpreter
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">HPY=$(systemctl --user cat hermes-gateway | sed -n &#39;s/^ExecStart=\([^ ]*python\).*/\1/p&#39;)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">HERMES_HOME=~/.hermes &quot;$HPY&quot; -m hermes_cli.main mcp test soul</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="gp">#   </span>✓<span class="w"> </span>Connected<span class="w">   </span>✓<span class="w"> </span>Tools<span class="w"> </span>discovered:<span class="w"> </span><span class="m">13</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">HERMES_HOME=~/.hermes &quot;$HPY&quot; -m hermes_cli.main mcp list    # soul ... ✓ enabled</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">ls -l ~/.hermes/soul.json ~/.hermes/skills/soul-graph/SKILL.md</span>
+</code></pre></div>
+<p>On the macOS hub the interpreter is
+<code>~/.mac/hermes-runtimes/&lt;release&gt;/runtime/.venv/bin/python</code>. Re-running
+<code>~/.mac/venv/bin/python -m mac.soul_install</code> is safe and reports
+<code>"mcp_server": "unchanged", "seed": "exists"</code> on a host that already has it.</p>
+<p>Then ask the agent, in Slack, to run <code>soul_summary</code>.</p>
+<h2 id="does-it-recall-the-right-things">Does it recall the right things?<a class="headerlink" href="#does-it-recall-the-right-things" title="Permanent link">&para;</a></h2>
+<p><code>scripts/soul-graph-eval.py</code> replays a task ledger through a soul graph at the
+ledger's own timestamps. Each task becomes a node, tagged with its project.
+Its dependencies become DAG edges. A task touches the dependencies it uses,
+and is touched itself when it is updated. As each task is created, before it
+is added, every retrieval method is asked two questions using only the task's
+title:</p>
+<ul>
+<li><strong>built on</strong>: which existing tasks does this one depend on?</li>
+<li><strong>waiting on</strong>: which existing tasks declared a dependency on this one before
+  it existed?</li>
+</ul>
+<p>The real dependency list is the answer key. Most dependencies were created
+seconds earlier by the same plan decomposition, and pure recency finds those.
+The split that tests memory is <strong>long range</strong>: answers created at least six
+hours before the question.</p>
+<p>Results on the full MAC task ledger: 11,443 tasks, 9,091 edges and 7,046
+questions, replayed in 25 seconds. Each retrieval method took under half a
+millisecond per question.</p>
+<table>
+<thead>
+<tr>
+<th>Long-range question</th>
+<th>Questions</th>
+<th>recent</th>
+<th>keyword</th>
+<th>BM25</th>
+<th>soul <code>semantic_search</code></th>
+<th>soul <code>related</code></th>
+<th>soul <code>related</code>, no recency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>built on, recall@5</td>
+<td>78</td>
+<td>0.03</td>
+<td>0.20</td>
+<td>0.19</td>
+<td>0.22</td>
+<td><strong>0.60</strong></td>
+<td>0.56</td>
+</tr>
+<tr>
+<td>waiting on, recall@5</td>
+<td>1,422</td>
+<td>0.00</td>
+<td>0.59</td>
+<td>0.62</td>
+<td>0.62</td>
+<td><strong>0.67</strong></td>
+<td>0.63</td>
+</tr>
+<tr>
+<td>waiting on, recall@10</td>
+<td>1,422</td>
+<td>0.01</td>
+<td>0.64</td>
+<td>0.67</td>
+<td>0.68</td>
+<td><strong>0.72</strong></td>
+<td>0.68</td>
+</tr>
+</tbody>
+</table>
+<p>What this shows:</p>
+<ul>
+<li><strong>The DAG is what earns its keep.</strong> On "built on", search alone finds about
+  a fifth of the old dependencies. Following each hit to its parents finds
+  three fifths, because the hit is usually a recent sibling and the old
+  foundation is its parent.</li>
+<li><strong>Recency helps a little, alongside the DAG.</strong> With the DAG, the recency
+  boost adds about four points on the long-range questions and six to eight
+  on all questions. Before search weighted words by rarity, the boost made
+  old answers harder to find.</li>
+<li><strong><code>hot()</code> is not retrieval.</strong> It recalls almost none of these answers. It
+  describes what the agent has been doing, which is what <code>soul_prime</code> uses it
+  for.</li>
+</ul>
+<p>The test <code>tests/test_soul_graph_eval.py</code> runs the harness on
+<code>tests/fixtures/soul_graph/ledger-sample.json</code>. The sample is a scrubbed
+slice of the same ledger: 1,091 tasks, with renumbered ids, shifted times and
+role names in place of hosts. The test pins the result that <code>related</code> beats
+keyword search and BM25 on long-range recall.</p>
+<p>To rerun the full evaluation against a live hub:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac task list --all --all-states --full-ids &gt; /tmp/tasks.json</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">scripts/soul-graph-eval.py /tmp/tasks.json          # or --json, --project P</span>
+</code></pre></div>
+<h2 id="limits-and-open-questions">Limits and open questions<a class="headerlink" href="#limits-and-open-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Search is lexical. An embedding layer would replace the word index behind
+  <code>semantic_search</code>; the harness is how to tell whether it helps.</li>
+<li>The evaluation's answer key comes from task dependencies, which are a proxy
+  for an agent's memory. Agents' own soul files are still a few kilobytes of
+  markdown with no edges, so they cannot answer the question yet. Ingesting
+  memories with lineage, from conversations or journals, is the next corpus to
+  test.</li>
+<li>Only Hermes has it. Whether coding agents should get a read-only view of
+  an agent's soul is open; it would need a path through the sandbox boundary.</li>
+</ul>
 
 
 
 
 
 
-
-  
-  
 
 
 
@@ -1817,7 +2235,7 @@ missing test command is a review condition, not permission to skip verification.
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../06-hermes-and-ide/" class="md-footer__link md-footer__link--prev" aria-label="Previous: 6. Hermes and the Fleet IDE">
+          <a href="../openshell-sandbox/" class="md-footer__link md-footer__link--prev" aria-label="Previous: OpenShell sandbox">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1827,20 +2245,20 @@ missing test command is a review condition, not permission to skip verification.
                 Previous
               </span>
               <div class="md-ellipsis">
-                6. Hermes and the Fleet IDE
+                OpenShell sandbox
               </div>
             </div>
           </a>
         
         
           
-          <a href="../08-plans-and-dags/" class="md-footer__link md-footer__link--next" aria-label="Next: 8. Plans and Task DAGs">
+          <a href="../archive/" class="md-footer__link md-footer__link--next" aria-label="Next: Historical archive">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                8. Plans and Task DAGs
+                Historical archive
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -1876,10 +2294,10 @@ missing test command is a review condition, not permission to skip verification.
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
