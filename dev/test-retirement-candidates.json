@@ -902,36 +902,6 @@
     },
     {
       "candidates": [
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_canary_count_two",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_preserves_node_id_and_host",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_single_node_is_canary",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_strips_version_whitespace",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_two_nodes_default_canary_count",
-        "tests/test_openclaw_fleet_rollout.py::test_rollout_plan_version_is_stored"
-      ],
-      "covered_files": [
-        "src/mac/openclaw_fleet_rollout.py"
-      ],
-      "covered_lines": 14,
-      "keep": "tests/test_openclaw_fleet_rollout.py::test_build_plan_all_steps_start_as_planned",
-      "members": [
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_all_steps_start_as_planned",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_canary_count_two",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_preserves_node_id_and_host",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_single_node_is_canary",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_strips_version_whitespace",
-        "tests/test_openclaw_fleet_rollout.py::test_build_plan_two_nodes_default_canary_count",
-        "tests/test_openclaw_fleet_rollout.py::test_rollout_plan_version_is_stored"
-      ],
-      "same_test_file": true,
-      "seconds_saved_if_retired": 3.6,
-      "size": 7,
-      "test_files": [
-        "tests/test_openclaw_fleet_rollout.py"
-      ]
-    },
-    {
-      "candidates": [
         "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_could_not_resolve_host",
         "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_git_clone_in_error",
         "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_hub_verification_error_in_reason_text",

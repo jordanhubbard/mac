@@ -1885,23 +1885,18 @@ outputs are present and executable).</p>
 <td><code>src/mac/fleet_ssh.py</code></td>
 <td>434</td>
 </tr>
-<tr>
-<td><code>src/mac/openclaw_fleet_rollout.py</code></td>
-<td>209</td>
-</tr>
 </tbody>
 </table>
 <h3 id="2-each-module-has-a-behavior-suite">2. Each module has a behavior suite<a class="headerlink" href="#2-each-module-has-a-behavior-suite" title="Permanent link">&para;</a></h3>
-<p>The fleet subsystem ships 15 dedicated test modules:
+<p>The fleet subsystem ships 14 dedicated test modules:
 <code>test_fleet_creds.py</code>, <code>test_fleet_deploy_edges.py</code>, <code>test_fleet_env.py</code>,
 <code>test_fleet_learning.py</code>, <code>test_fleet_move.py</code>, <code>test_fleet_node_install.py</code>,
 <code>test_fleet_samples.py</code>, <code>test_fleet_setup.py</code>, <code>test_fleet_setup_edges.py</code>,
 <code>test_fleet_skills.py</code>, <code>test_fleet_snapshot.py</code>, <code>test_fleet_ssh.py</code>,
-<code>test_fleet_tasks_tool.py</code>, <code>test_fleet_tool.py</code>, and
-<code>test_openclaw_fleet_rollout.py</code>.</p>
+<code>test_fleet_tasks_tool.py</code>, and <code>test_fleet_tool.py</code>.</p>
 <h3 id="3-the-fleet-suite-is-green">3. The fleet suite is green<a class="headerlink" href="#3-the-fleet-suite-is-green" title="Permanent link">&para;</a></h3>
 <p>Command:
-<code>.venv/bin/python -m pytest tests/test_fleet_*.py tests/test_openclaw_fleet_rollout.py -q</code></p>
+<code>.venv/bin/python -m pytest tests/test_fleet_*.py -q</code></p>
 <table>
 <thead>
 <tr>

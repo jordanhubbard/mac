@@ -1764,10 +1764,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#update-2026-09-05-hermes-reactivated-on-the-hub-still-not-vendored" class="md-nav__link">
+  <a href="#update-2026-09-05-hermes-runs-as-an-external-install-still-not-vendored" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Update (2026-09-05): Hermes reactivated on the hub, still not vendored
+        Update (2026-09-05): Hermes runs as an external install, still not vendored
       
     </span>
   </a>
@@ -1779,17 +1779,6 @@
     <span class="md-ellipsis">
       
         Update (2026-09-05): repo-owned lifecycle automation restored
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#update-2026-09-05-fleet-orchestrated-hermes-dispatch-closed-the-gap" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Update (2026-09-05): fleet-orchestrated Hermes dispatch closed the gap
       
     </span>
   </a>
@@ -1834,15 +1823,14 @@
 
 <h1 id="fate-of-the-vendored-hermes-tree">Fate of the vendored Hermes tree<a class="headerlink" href="#fate-of-the-vendored-hermes-tree" title="Permanent link">&para;</a></h1>
 <p><strong>Verdict: removed.</strong> <code>src/mac/_hermes</code> (~444k lines) was deleted in PR #377
-on 2026-08-17. OpenClaw was the live gateway at that removal; Hermes is again
-the configured gateway, installed separately. The in-tree Hermes snapshot was
+on 2026-08-17. Hermes is the only human interface and chat gateway, installed
+separately. The in-tree Hermes snapshot was
 inactive and larger than mac's own code. This note records the four
 pre-deletion checks and the post-removal inventory so the decision stays
 auditable during the port.</p>
 <h2 id="pre-deletion-checks-ad">Pre-deletion checks (a)–(d)<a class="headerlink" href="#pre-deletion-checks-ad" title="Permanent link">&para;</a></h2>
 <p>Measured against prepared tip <code>7f2850f76361d676405cacd0491fd017f6f5f5c3</code>
-(tree already absent) and the live-fleet evidence cited in
-<code>docs/hermes-retirement-premises.md</code>.</p>
+(tree already absent).</p>
 <table>
 <thead>
 <tr>
@@ -1858,14 +1846,14 @@ auditable during the port.</p>
 <td>Exact search for <code>from hermes_cli</code> / <code>import hermes_cli</code> under <code>src/mac/</code> finds zero live import sites. <code>mac.hermes_config_surface._hermes_config_module</code> raises <code>ModuleNotFoundError</code> by design (“vendored hermes_cli was removed”).</td>
 </tr>
 <tr>
-<td><strong>(b)</strong> Do OpenShell sandbox images or the openclaw gateway invoke a vendored Hermes entry point as a subprocess?</td>
+<td><strong>(b)</strong> Do OpenShell sandbox images or the chat gateway invoke a vendored Hermes entry point as a subprocess?</td>
 <td><strong>No</strong></td>
 <td><code>mac.agent_command</code> has no executable <code>hermes_cli.main</code> string constants (comment-only history). Task-executor / OpenShell tests assert <code>hermes_cli.main</code> is absent from coding-agent argv. <code>deploy/openshell/mac-hermes.Containerfile</code> installs mac only and has no <code>zz_hermes_vendor.pth</code> injection (stale narrative comments may still mention the old hook; they are not load-bearing).</td>
 </tr>
 <tr>
-<td><strong>(c)</strong> Are vendored plugins/skills (<code>src/mac/_hermes/plugins</code>, <code>.../skills</code>) loaded by the active openclaw path?</td>
+<td><strong>(c)</strong> Are vendored plugins/skills (<code>src/mac/_hermes/plugins</code>, <code>.../skills</code>) loaded by the active gateway path?</td>
 <td><strong>No</strong></td>
-<td>Those directories no longer exist. OpenClaw continuity uses <code>deploy/openclaw/migrate-hermes-continuity.py</code> against a Hermes <em>home</em> workspace, not <code>src/mac/_hermes</code>.</td>
+<td>Those directories no longer exist. The external Hermes runtime reads its own <em>home</em> workspace, not <code>src/mac/_hermes</code>.</td>
 </tr>
 <tr>
 <td><strong>(d)</strong> Does <code>deploy/hermes/SNAPSHOT.md</code> describe an obligation that survives removal?</td>
@@ -1951,17 +1939,7 @@ packages from old runtimes are not automatically copied. Live canary evidence
 remains required before releasing dependent work.</p>
 <p>The <a href="../investigations/hermes-runtime-ownership/">ownership investigation</a>
 records the evidence, corrected diagnosis, and remaining rollout proof.</p>
-<h2 id="update-2026-09-05-hermes-reactivated-on-the-hub-still-not-vendored">Update (2026-09-05): Hermes reactivated on the hub, still not vendored<a class="headerlink" href="#update-2026-09-05-hermes-reactivated-on-the-hub-still-not-vendored" title="Permanent link">&para;</a></h2>
-<p>OpenClaw (the gateway that replaced Hermes above) turned out to be unreliable
-at a layer this repo does not own: its OpenShell sandbox's state mount runs
-on Docker Desktop's overlayfs, where POSIX advisory locking is broken enough
-that a fresh, empty SQLite WAL database hangs indefinitely under a trivial
-write load. Three OpenClaw-side fixes landed first (cron schedule collision,
-a host-side flock mutex, a message-body encoding bug) before this filesystem
-problem was isolated as the actual, unfixable-from-here root cause.</p>
-<p>The retirement premise above was that Hermes's memory capabilities were
-already covered by mac itself — true, but it did not account for OpenClaw's
-reliability. The hub's chat gateway was cut back to Hermes as a result.</p>
+<h2 id="update-2026-09-05-hermes-runs-as-an-external-install-still-not-vendored">Update (2026-09-05): Hermes runs as an external install, still not vendored<a class="headerlink" href="#update-2026-09-05-hermes-runs-as-an-external-install-still-not-vendored" title="Permanent link">&para;</a></h2>
 <p><strong>This is not a re-vendoring.</strong> The mistake in 2026-08 was carrying a
 444k-line patched snapshot in-tree, not depending on Hermes at all. Hermes
 does not support a normal <code>pip install</code> either — its own <code>setup.py</code> refuses
@@ -1977,63 +1955,19 @@ again for exactly this reason; it never worked against upstream's real
 distribution model.</p>
 <p>Management is entirely through Hermes's own CLI, installed to
 <code>~/.local/bin/hermes</code>: <code>hermes gateway install</code> / <code>hermes gateway stop</code> for
-the service, <code>hermes send</code> for one-off/cron message delivery, <code>hermes -z
-&lt;prompt&gt;</code> for one-shot agent turns, and <code>hermes claw migrate</code> for pulling an
-OpenClaw workspace's identity/memory/skills across (used once, live, to bring
-the hub's accumulated OpenClaw state into Hermes during the cutover).
-<code>deploy/openclaw/run-script-cron-job.py</code>'s two-stage host cron runner
-(<code>mac-cron-script-runner</code>) now drives its agent turn and delivery through
-this CLI instead of the OpenClaw sandbox wrappers; see that file's
-<code>_default_hermes_bin()</code> / <code>default_agent_runner()</code> / <code>message_args()</code>.</p>
+the service, <code>hermes send</code> for one-off/cron message delivery, and <code>hermes -z
+&lt;prompt&gt;</code> for one-shot agent turns.</p>
 <h2 id="update-2026-09-05-repo-owned-lifecycle-automation-restored">Update (2026-09-05): repo-owned lifecycle automation restored<a class="headerlink" href="#update-2026-09-05-repo-owned-lifecycle-automation-restored" title="Permanent link">&para;</a></h2>
-<p>The cutover above was driven by hand over SSH, once per node -- real, but not
-durable: a fresh node bootstrap, a redeploy, or a wiped <code>~/.hermes</code> would not
-reproduce it, and every step would need to be re-derived from memory. That gap
-is now closed by <code>deploy/hermes/install-hermes-gateway.sh</code>, the host-level
-sibling of <code>deploy/openclaw/install-openclaw-gateway.sh</code> (same
-<code>prepare</code>/<code>verify</code>/<code>finalize</code>/<code>withdraw</code> shape; no container lifecycle, since
-Hermes runs as a bare host process rather than an OpenShell sandbox). It
-codifies the same steps done by hand: run upstream's shell installer if
-<code>hermes</code> isn't already on <code>PATH</code>, port identity/memory/messaging credentials
-from OpenClaw (<code>mac human-interface port --from openclaw --to hermes --apply</code>),
-pull any existing OpenClaw workspace across (<code>hermes claw migrate</code>), set the
+<p><code>deploy/hermes/install-hermes-gateway.sh</code> codifies the host lifecycle with a
+<code>prepare</code>/<code>verify</code>/<code>finalize</code>/<code>withdraw</code> shape (no container lifecycle, since
+Hermes runs as a bare host process rather than an OpenShell sandbox): run
+upstream's shell installer if <code>hermes</code> isn't already on <code>PATH</code>, set the
 channel-behavior policy from fleet config (<code>slack.require_mention</code> /
 <code>slack.free_response_channels</code>, resolved from the <code>hermes.slack_home_channel_name</code>
 fleet-config field to a channel id via Hermes's own cached channel directory),
 and install the gateway as a properly supervised background service
-(<code>hermes gateway install</code>).</p>
-<p>This does not touch the deleted vendored-in-process model from the update
-above -- <code>install-hermes-gateway.sh</code> only shells out to the externally
-installed <code>hermes</code> CLI, the same as <code>run-script-cron-job.py</code> already does.</p>
-<h2 id="update-2026-09-05-fleet-orchestrated-hermes-dispatch-closed-the-gap">Update (2026-09-05): fleet-orchestrated Hermes dispatch closed the gap<a class="headerlink" href="#update-2026-09-05-fleet-orchestrated-hermes-dispatch-closed-the-gap" title="Permanent link">&para;</a></h2>
-<p>The gap above is closed. <code>deploy/fleet-node-install.sh</code>'s <code>MAC_CHAT_GATEWAY_IMPL</code>
-dispatch already had a <code>hermes</code> case in its systemd and launchd branches --
-restored from before the OpenClaw migration -- but it called dead code: a
-<code>hermes-gateway</code> wrapper that hand-rolled a systemd unit / launchd plist
-around <code>python -m mac.hermes_gateway</code>, the same deleted in-process module
-this whole document is about. That wrapper never ran against upstream's real
-distribution model. It has been replaced with calls into
-<code>deploy/hermes/install-hermes-gateway.sh prepare</code>/<code>finalize</code>/<code>withdraw</code> (the
-script from the update above), matching exactly how the systemd/launchd/
-supervisord branches already call <code>install-openclaw-gateway.sh</code> for OpenClaw.
-A <code>hermes</code> case was also added to the previously-openclaw-only supervisord
-branch, and to the <code>gateway_impl=none</code> cleanup paths on all three supervisors
-(so switching a Hermes-running node to a pure worker actually stops it via
-<code>hermes gateway stop</code>, not just by disabling dead identities).</p>
-<p>The one deliberate asymmetry: <code>hermes gateway install</code> writes and names its
-own supervision unit (<code>hermes</code> manages this internally, not
-<code>deploy/fleet-node-install.sh</code>), so the fleet's generic identity-keyed
-gateway-readiness sampler -- which proves the <em>other</em> implementations are
-running by checking a specific <code>HERMES_SERVICE_NAME</code>/<code>HERMES_LAUNCHD_LABEL</code>/
-<code>HERMES_SUPERVISORD_PROG</code> unit -- cannot see it under those names. Hermes is
-exempted from that specific check; its readiness is instead proven directly,
-before this generic sampler runs, by <code>hermes gateway status --deep</code> inside
-<code>finalize_hermes_gateway()</code>. <code>tests/test_fleet_node_gateway_readiness.py</code>
-covers this exemption explicitly.</p>
-<p>A new node's Hermes gateway now goes through the same transactional
-prepare/verify/finalize/withdraw cutover <code>deploy-mac-fleet.sh</code> already
-orchestrates for OpenClaw -- no more manual <code>install-hermes-gateway.sh
-prepare</code> runs against individual nodes.</p>
+(<code>hermes gateway install</code>). It only shells out to the externally installed
+<code>hermes</code> CLI; it does not touch the deleted vendored-in-process model.</p>
 <h2 id="update-2026-10-01-fleet-orchestration-deleted">Update (2026-10-01): fleet orchestration deleted<a class="headerlink" href="#update-2026-10-01-fleet-orchestration-deleted" title="Permanent link">&para;</a></h2>
 <p><code>deploy/deploy-mac-fleet.sh</code> and <code>deploy/fleet-node-install.sh</code> have been
 deleted; hosts are updated with <code>scripts/fleet-update</code> (see

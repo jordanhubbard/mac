@@ -2527,7 +2527,7 @@ path — did not hold up and has been retired. It was falsified within four days
 2026-07-28 (<code>084c43cf</code>). The follow-up dead-code task (task_251b3796) then
 deleted ten of its twelve never-wired modules with their tests
 (<code>changeset_adoption</code>, <code>evidence_reuse_verifier</code>, <code>harness_reflex</code>,
-<code>hermes_home_audit</code>, <code>openclaw_checkpoint_gc</code>, <code>openclaw_delivery_continuity</code>,
+<code>hermes_home_audit</code>, a gateway checkpoint GC, a gateway delivery-continuity module,
 <code>openshell_static_runtime_refresh</code>, <code>remote_session</code>, <code>reported_version</code>,
 <code>skill_auto_repair</code>) and kept the two survivors — <code>predispatch_conflict</code> and
 <code>investigation_artifacts</code> — each with a dated owner and a concrete wiring plan.
@@ -2537,7 +2537,7 @@ resolution is <code>docs/reference/staged-module-integration-audit.md</code> §0
 </blockquote>
 <p>Nine modules are imported by no <code>src/mac</code> module and are reachable, on a static import graph,
 only from their own test files: <code>dream_scanner.py</code>, <code>predispatch_conflict.py</code>,
-<code>investigation_artifacts.py</code>, <code>openclaw_checkpoint_gc.py</code>, <code>hgx_provision.py</code>,
+<code>investigation_artifacts.py</code>, a gateway checkpoint-GC module, <code>hgx_provision.py</code>,
 <code>skill_auto_repair.py</code>, <code>project_inception.py</code>, <code>harness_reflex.py</code>,
 <code>evidence_reuse_verifier.py</code>. The initial hypothesis was that these were accretion residue to
 remove. <strong>Checking each against the reference graph and git history overturned that:</strong></p>
@@ -2550,7 +2550,7 @@ remove. <strong>Checking each against the reference graph and git history overtu
   <code>dream_repair_tasks.py:22</code>, and via the test-impact map (<code>scripts/resolve-impacted-tests.py</code>).
   They are part of the documented design surface, not stray files.</li>
 <li><strong>The remaining four are recent, deliberate additions, tested-first, integration pending:</strong>
-  <code>openclaw_checkpoint_gc.py</code> landed in the <strong>current HEAD commit (2026-07-24)</strong>,
+  the gateway checkpoint-GC module landed in the <strong>current HEAD commit (2026-07-24)</strong>,
   <code>hgx_provision.py</code> (2026-07-23), <code>predispatch_conflict.py</code> (2026-07-16),
   <code>skill_auto_repair.py</code> (2026-07-12). Deleting these would undo work committed this week.</li>
 </ul>

@@ -1717,7 +1717,7 @@
 <h1 id="hermes-deployment-profile-and-readiness">Hermes deployment profile and readiness<a class="headerlink" href="#hermes-deployment-profile-and-readiness" title="Permanent link">&para;</a></h1>
 <p>Tracked by <code>task_e49af13e0f4849f9962999eb59114503</code>.</p>
 <p>The September 2026 hub rollout exposed two independent failures. Deployment
-selected <code>~/.mac/openclaw</code>, which lacked the Slack credentials and model route
+selected a legacy gateway home under <code>~/.mac</code>, which lacked the Slack credentials and model route
 held in the original <code>~/.hermes</code> profile. Its readiness checks also disagreed:
 the node exempted Hermes from process verification, while the outer attestation
 looked for a MAC-owned service name instead of the upstream service.</p>

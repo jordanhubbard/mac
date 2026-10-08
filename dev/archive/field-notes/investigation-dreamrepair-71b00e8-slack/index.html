@@ -1827,7 +1827,7 @@ skill, config, or deploy edits).</p>
 <p>The candidate carries the provider label <code>slack</code> only because a plain
 word-boundary regex (<code>\bslack\b</code>, confidence <code>0.35</code>, evidence_count <code>1</code>) matched
 the UI advertisement text
-<code>openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified</code>
+<code>hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified</code>
 composed in <code>ide/src/components/agentFacts.ts</code>. That text is a rendered channel
 projection, not a Slack transport, chat-gateway runtime, or persona-binding
 failure. The single supporting record is a <code>plan_decomposed</code> artifact — a
@@ -1872,7 +1872,7 @@ failure.</p>
   fixture whose gateway advertises both channels enabled.</li>
 <li>The channel segment is then joined with the other advertisement fields using
   <code>" · "</code> (<code>ide/src/components/agentFacts.ts:79</code>), yielding
-  <code>openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified</code>.</li>
+  <code>hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified</code>.</li>
 </ul>
 <p>So <code>slack</code> is the <em>name of an advertised channel</em> rendered into a verified
 service advertisement string. The IDE frontend investigation that this chain
@@ -1941,7 +1941,7 @@ evidence-volume signal), not a corroborated fault.</p>
   followed <code>chatGatewayLabel</code> (<code>ide/src/components/agentFacts.ts:52</code>,
   <code>ide/src/components/agentFacts.ts:62</code>, <code>ide/src/components/agentFacts.ts:77</code>,
   <code>ide/src/components/agentFacts.ts:79</code>) to reproduce
-  <code>openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified</code>.</li>
+  <code>hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified</code>.</li>
 <li>Cross-checked the existing IDE-frontend note
   (<code>ide/AGENT_MESH_FINDINGS.md</code>) which independently reaches the "already-correct
   (not a real defect)" verdict for the same projection.</li>

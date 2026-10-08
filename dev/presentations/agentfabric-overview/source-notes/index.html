@@ -1892,15 +1892,10 @@ modules use <code>mac</code>. The deck never claims the two are different system
 <td>bounded elastic provider-session capacity; onboarding is an explicit operator action with a durable receipt</td>
 <td><code>docs/hgx-elastic-capacity.md</code>, <code>AGENTS.md</code> (<code>hgx list</code> / <code>hgx ssh</code> transport), ADR 0005 (Proposed — the elastic tier beyond the operator-driven path is a proposal)</td>
 </tr>
-<tr>
-<td>NVIDIA NemoClaw</td>
-<td>compatibility and design reference for the conversational agent boundary; <strong>not</strong> the deployed gateway implementation</td>
-<td><code>README.md</code>, <code>docs/hermes-boundary.md</code></td>
-</tr>
 </tbody>
 </table>
-<p>The deck must state the HGX and NemoClaw qualifications. Presenting NemoClaw as the
-deployed gateway, or unbounded elastic capacity as shipped, is a factual error.</p>
+<p>The deck must state the HGX qualification. Presenting unbounded elastic capacity
+as shipped is a factual error.</p>
 <h2 id="open-source-re-use-slide-8">Open-source re-use (slide 8)<a class="headerlink" href="#open-source-re-use-slide-8" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1923,8 +1918,8 @@ deployed gateway, or unbounded elastic capacity as shipped, is a factual error.<
 </tr>
 <tr>
 <td>Execution</td>
-<td>Docker Engine / Moby, Kubernetes, OpenClaw, OpenAI Codex CLI, OpenCode</td>
-<td>ADR 0008 (Accepted), <code>src/mac/k8s/runner.py</code>, <code>src/mac/coding_agent.py</code>, <code>docs/openclaw-identities.md</code></td>
+<td>Docker Engine / Moby, Kubernetes, Hermes Agent, OpenAI Codex CLI, OpenCode</td>
+<td>ADR 0008 (Accepted), <code>src/mac/k8s/runner.py</code>, <code>src/mac/coding_agent.py</code>, <code>docs/hermes-boundary.md</code></td>
 </tr>
 <tr>
 <td>Protocol</td>

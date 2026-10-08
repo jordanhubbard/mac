@@ -1862,10 +1862,9 @@
 </ul>
 <h2 id="amendment-2026-08-17">Amendment — 2026-08-17<a class="headerlink" href="#amendment-2026-08-17" title="Permanent link">&para;</a></h2>
 <p>ADR 0001 accepted vendoring a pruned Hermes runtime into <code>src/mac/_hermes/</code>
-and running it <strong>in-process</strong>. That premise ended when the live fleet
-converged on OpenClaw as the only active gateway
-(<code>gateway_ownership.services = {hermes: inactive, nemoclaw: inactive,
-openclaw: active}</code> per <code>docs/hermes-retirement-premises.md</code>).</p>
+and running it <strong>in-process</strong>. That premise ended: Hermes is now installed
+externally (upstream's own installer) and is the only human interface and
+chat gateway; nothing in <code>src/mac/</code> runs it in-process.</p>
 <p>PR #377 removed the inactive snapshot (~444k lines), <code>hermes_vendor.py</code>,
 <code>hermes_gateway.py</code>, <code>deploy/hermes/</code> (including <code>SNAPSHOT.md</code> and the
 re-vendor tooling), the hermes-revendor CI job, and the sandbox <code>.pth</code>
@@ -1874,8 +1873,8 @@ history retains every byte. See <code>docs/hermes-vendor-fate.md</code> for the
 pre-deletion checks (a)–(d) and the post-removal inventory.</p>
 <p>Residual (out of scope for the fate decision): a legacy Hermes gateway
 install path in <code>deploy/fleet-node-install.sh</code> still references
-<code>python -m mac.hermes_gateway</code> (module absent). It is inert on the OpenClaw
-fleet and belongs in a separate deploy cleanup.</p>
+<code>python -m mac.hermes_gateway</code> (module absent). It is inert and belongs in a
+separate deploy cleanup.</p>
 <p>The body below is the original accepted decision and remains historical
 context for why the tree was once carried in-tree.</p>
 <h2 id="tldr-verdict">TL;DR verdict<a class="headerlink" href="#tldr-verdict" title="Permanent link">&para;</a></h2>
@@ -1909,7 +1908,7 @@ context for why the tree was once carried in-tree.</p>
 <p>"Single coherent codebase" is the correct instinct <strong>for the agent runtime</strong>.
 It is the <em>wrong</em> instinct for tokenhub, and it is <em>irrelevant</em> to mac's
 own internal bugs. Conflating all three is how the last two efforts
-(openclaw, ACC) became "too complicated."</p>
+(including ACC) became "too complicated."</p>
 <h2 id="what-is-actually-true-today-ground-truth-not-assumptions">What is actually true today (ground truth, not assumptions)<a class="headerlink" href="#what-is-actually-true-today-ground-truth-not-assumptions" title="Permanent link">&para;</a></h2>
 <h3 id="1-mac-does-not-own-hermes-it-patches-a-pristine-fast-moving-upstream-clone">1. mac does not own Hermes — it patches a pristine, fast-moving upstream clone<a class="headerlink" href="#1-mac-does-not-own-hermes-it-patches-a-pristine-fast-moving-upstream-clone" title="Permanent link">&para;</a></h3>
 <p><code>deploy/deploy-mac-fleet.sh:3995</code> runs:</p>
@@ -2008,7 +2007,7 @@ admin decision feed. 111 Go files.</p>
 infrastructure that should <em>not</em> be rewritten in Python to satisfy a "single
 codebase" aesthetic. That move is the ACC failure mode.</p>
 <h2 id="the-decision-and-why-this-is-not-failure-3">The decision, and why this is not failure #3<a class="headerlink" href="#the-decision-and-why-this-is-not-failure-3" title="Permanent link">&para;</a></h2>
-<p>ACC (714 Rust files) and openclaw were abandoned for being "too complicated."
+<p>ACC (714 Rust files) was abandoned for being "too complicated."
 The reflex worry is that absorbing 350k LOC of Hermes is <em>more</em> complexity, not
 less. The resolution:</p>
 <ul>

@@ -671,8 +671,8 @@ def build() -> Path:
     title(
         s,
         "Where AgentFabric leverages NVIDIA technology.",
-        "Four NVIDIA projects carry four hard problems: confinement, observability, elastic GPU"
-        " capacity, and a reference conversational runtime.",
+        "Three NVIDIA projects carry three hard problems: confinement, observability, and"
+        " elastic GPU capacity.",
         False,
         7,
         tag="NVIDIA STACK",
@@ -708,14 +708,9 @@ def build() -> Path:
             "ELASTIC CAPACITY",
             "Bounded, receipt-bearing\nautoscaling of provider\nsessions from durable\nprovisioning demand.",
         ),
-        (
-            "NVIDIA NemoClaw",
-            "REFERENCE INTEGRATION",
-            "Compatibility and design\nreference for the\nconversational agent\nboundary.",
-        ),
     ]
     for i, (name, role, body) in enumerate(nv):
-        x = 70 + i * 290
+        x = 215 + i * 290
         shape(
             s,
             "roundRect",
@@ -740,7 +735,6 @@ def build() -> Path:
             "OpenShell is the security boundary: process trees, filesystem and network policy, sandbox lifecycle, and normalized action-event collection integrate with it rather than reimplementing isolation. The design goal is exactly one guardrail authority, the policy file, instead of two competing ones.",
             "NeMo Relay is optional and enabled through a packaging extra; observability is mapped into it rather than invented.",
             "HGX capacity is operator-side and bounded: read-only status and plan commands are separate from an explicit execute, and provider work never runs on a dispatcher or HTTP thread.",
-            "NemoClaw is reference material for the conversational boundary, not the deployed implementation of it. That distinction is deliberate and is recorded in source-notes.md.",
         ],
     )
 
@@ -765,7 +759,7 @@ def build() -> Path:
         (
             "EXECUTION",
             C["green2"],
-            ["Docker Engine / Moby", "Kubernetes", "OpenClaw", "Codex CLI · OpenCode"],
+            ["Docker Engine / Moby", "Kubernetes", "Hermes Agent", "Codex CLI · OpenCode"],
         ),
         ("PROTOCOL", C["orange2"], ["ACP", "A2A agent cards", "MCP", "OCSF event streams"]),
     ]

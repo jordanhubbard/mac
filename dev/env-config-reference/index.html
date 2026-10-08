@@ -1948,20 +1948,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: agentbus service result publish retry seconds.</td>
 </tr>
 <tr>
-<td><code>MAC_AGENTFS_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: agentfs url.</td>
-</tr>
-<tr>
-<td><code>MAC_AGENTFS_WRITE_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: agentfs write token.</td>
-</tr>
-<tr>
 <td><code>MAC_AGENT_ATTESTATION_KEY</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -2438,48 +2424,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: command id.</td>
 </tr>
 <tr>
-<td><code>MAC_CONTINUITY_BUS_CHUNK_SCAN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: continuity bus chunk scan.</td>
-</tr>
-<tr>
-<td><code>MAC_CONTINUITY_BUS_STREAM_SCAN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: continuity bus stream scan.</td>
-</tr>
-<tr>
-<td><code>MAC_CONTINUITY_MAX_ITEMS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: continuity max items.</td>
-</tr>
-<tr>
-<td><code>MAC_CONTINUITY_MAX_LOW_VALUE_MEMORIES</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: continuity max low value memories.</td>
-</tr>
-<tr>
-<td><code>MAC_CONTINUITY_MIN_SCORE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: continuity min score.</td>
-</tr>
-<tr>
-<td><code>MAC_CONTINUITY_TOKEN_BUDGET</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: continuity token budget.</td>
-</tr>
-<tr>
 <td><code>MAC_CONTRACT_GIT</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -2611,13 +2555,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>deployment</td>
 <td>Deployment setting: deploy fleet registry.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_GENERATION</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy generation.</td>
 </tr>
 <tr>
 <td><code>MAC_DEPLOY_GH_TOKEN</code></td>
@@ -2921,13 +2858,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: headscale command timeout seconds.</td>
 </tr>
 <tr>
-<td><code>MAC_HERMES_AGENT_BIN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hermes-runtime</td>
-<td>Hermes Runtime setting: hermes agent bin.</td>
-</tr>
-<tr>
 <td><code>MAC_HERMES_AGENT_DIR</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -2942,18 +2872,18 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Hermes Runtime setting: hermes allow approval prompts.</td>
 </tr>
 <tr>
+<td><code>MAC_HERMES_BIN</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>hermes-runtime</td>
+<td>Hermes Runtime setting: hermes bin.</td>
+</tr>
+<tr>
 <td><code>MAC_HERMES_DRY_RUN</code></td>
 <td>bool</td>
 <td>consumer-defined</td>
 <td>hermes-runtime</td>
 <td>Hermes Runtime setting: hermes dry run.</td>
-</tr>
-<tr>
-<td><code>MAC_HERMES_EXISTING_PORT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>hermes-runtime</td>
-<td>Hermes Runtime setting: hermes existing port.</td>
 </tr>
 <tr>
 <td><code>MAC_HERMES_FLEET_NAME</code></td>
@@ -3026,13 +2956,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Hermes Runtime setting: hermes log summary.</td>
 </tr>
 <tr>
-<td><code>MAC_HERMES_MESSAGE_BIN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hermes-runtime</td>
-<td>Hermes Runtime setting: hermes message bin.</td>
-</tr>
-<tr>
 <td><code>MAC_HERMES_PERSONA_ID</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -3066,13 +2989,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>hermes-runtime</td>
 <td>Hermes Runtime setting: hermes runtime context required.</td>
-</tr>
-<tr>
-<td><code>MAC_HERMES_SCRIPTS_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>hermes-runtime</td>
-<td>Hermes Runtime setting: hermes scripts dir.</td>
 </tr>
 <tr>
 <td><code>MAC_HERMES_SLACK_API_BASE</code></td>
@@ -3684,13 +3600,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: ledger backup enabled.</td>
 </tr>
 <tr>
-<td><code>MAC_LEGACY_HERMES_HOME</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: legacy hermes home.</td>
-</tr>
-<tr>
 <td><code>MAC_LOCAL_CONSOLE_ENABLED</code></td>
 <td>bool</td>
 <td>consumer-defined</td>
@@ -3782,69 +3691,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: models dev cache file.</td>
 </tr>
 <tr>
-<td><code>MAC_NEMOCLAW_AGENT_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw agent id.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_FLEET_NAME</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw fleet name.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_GATEWAY_PORT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw gateway port.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_HOME_CHANNEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw home channel.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_HUB_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw hub url.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_INSTANCE_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw instance id.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_SLACK_APP_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw slack app token.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_SLACK_BOT_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw slack bot token.</td>
-</tr>
-<tr>
-<td><code>MAC_NEMOCLAW_SLACK_WORKSPACE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nemoclaw slack workspace.</td>
-</tr>
-<tr>
 <td><code>MAC_NETWORK_PROVIDER</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -3885,454 +3731,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: observability verbose poll.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_AGENT_BIN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw agent bin.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_AGENT_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw agent id.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_AGENT_TIMEOUT_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw agent timeout seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_BOOTSTRAP_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw bootstrap token.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_BUILD_CONTEXT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw build context.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_CANARY_OK</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw canary ok.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_CHANNELS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw channels.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_CONTAINERFILE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw containerfile.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_CONTINUITY_MIGRATOR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw continuity migrator.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_CONTROL_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw control url.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_CREDENTIALS_FILE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw credentials file.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_DOCKER_BIN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw docker bin.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_DRY_RUN</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw dry run.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_EMBEDDING_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw embedding model.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_FINALIZE_HERMES_STATE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw finalize hermes state.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw finalize nemoclaw state.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw finalize openclaw state.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_FINALIZE_SUPERVISOR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw finalize supervisor.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_FLEET_NAME</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw fleet name.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_GATEWAY_HOST</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw gateway host.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_GATEWAY_PORT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw gateway port.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_HOME_CHANNEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw home channel.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw host automation journal sha256.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_HOST_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw host dir.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_IMAGE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw image.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_IMAGE_REVISION</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw image revision.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_INSTANCE_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw instance id.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_KSLUG_SKILL_SRC</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw kslug skill src.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_LEGACY_SCRIPTS_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw legacy scripts dir.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw legacy slack home channels file.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_LIVE_CANARY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw live canary.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_MESSAGE_BIN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw message bin.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_MIRROR_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw mirror model.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw model.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_PEER_TURN_TIMEOUT_MS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw peer turn timeout ms.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_PLUGIN_TIMEOUT_MS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw plugin timeout ms.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_POLICY_TEMPLATE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw policy template.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_PUBLIC_IDENTITY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw public identity.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_REPRESENTATION_MODE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw representation mode.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_REPRESENTED_BY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw represented by.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw require host automation journal.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_ROUTER_API_KEY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw router api key.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_ROUTER_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw router url.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SANDBOX</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw sandbox.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw sandbox delete timeout seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SANDBOX_NAME</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw sandbox name.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw script job output dir.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw script job relocator src.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw script job scripts dir.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SCRIPT_RUNNER_SRC</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw script runner src.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SKIP_IMAGE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw skip image.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SLACK_ACCOUNT_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw slack account id.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SLACK_ACCOUNT_IDS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw slack account ids.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SLACK_APP_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw slack app token.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SLACK_BOT_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw slack bot token.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw slack home channels file.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw subprocess timeout seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_SUPERVISOR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw supervisor.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw telegram account id.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_TELEGRAM_BOT_TOKEN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw telegram bot token.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_TELEGRAM_CANARY_TARGET</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw telegram canary target.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw verify startup interval.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw verify startup timeout.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENCLAW_WORKSPACE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>openclaw-runtime</td>
-<td>Openclaw Runtime setting: openclaw workspace.</td>
 </tr>
 <tr>
 <td><code>MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME</code></td>
@@ -4606,13 +4004,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>openshell-sandbox</td>
 <td>Openshell Sandbox setting: openshell verification start timeout.</td>
-</tr>
-<tr>
-<td><code>MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: opensh expected openclaw sandbox.</td>
 </tr>
 <tr>
 <td><code>MAC_OPENSH_GATEWAY_OWNER</code></td>
@@ -5553,13 +4944,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Semantic Retry setting: semantic retry cap seconds.</td>
 </tr>
 <tr>
-<td><code>MAC_SERVICE_NOFILE_LIMIT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: service nofile limit.</td>
-</tr>
-<tr>
 <td><code>MAC_SERVICE_ROLE_OPS</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -5579,13 +4963,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: skip slack verify.</td>
-</tr>
-<tr>
-<td><code>MAC_SKIP_TELEGRAM_VERIFY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: skip telegram verify.</td>
 </tr>
 <tr>
 <td><code>MAC_SLOW_REQUEST_SECONDS</code></td>
@@ -6258,13 +5635,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>worker</td>
 <td>Worker setting: worker command probes.</td>
-</tr>
-<tr>
-<td><code>MAC_WORKER_DELIVERY_DRAIN_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>worker</td>
-<td>Worker setting: worker delivery drain seconds.</td>
 </tr>
 <tr>
 <td><code>MAC_WORKER_DEPLOY_BARRIER_FILE</code></td>

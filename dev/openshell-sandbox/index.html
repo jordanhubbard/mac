@@ -1903,38 +1903,16 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#nemoclaw-single-host-pilot-observations" class="md-nav__link">
+  <a href="#openshell-version-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        NemoClaw single-host pilot observations
+        OpenShell version notes
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="NemoClaw single-host pilot observations">
+    <nav class="md-nav" aria-label="OpenShell version notes">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#slack-multi-account-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Slack multi-account behavior
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#openshell-policy-friction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        OpenShell policy friction
-      
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#openshell-012-migration-canary-2026-10-03" class="md-nav__link">
@@ -1952,28 +1930,6 @@
     <span class="md-ellipsis">
       
         OpenShell 0.0.72 compatibility — validated 2026-07-04
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fallback-decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fallback decision
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#operational-gaps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operational gaps
       
     </span>
   </a>
@@ -2289,38 +2245,16 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#nemoclaw-single-host-pilot-observations" class="md-nav__link">
+  <a href="#openshell-version-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        NemoClaw single-host pilot observations
+        OpenShell version notes
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="NemoClaw single-host pilot observations">
+    <nav class="md-nav" aria-label="OpenShell version notes">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#slack-multi-account-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Slack multi-account behavior
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#openshell-policy-friction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        OpenShell policy friction
-      
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#openshell-012-migration-canary-2026-10-03" class="md-nav__link">
@@ -2338,28 +2272,6 @@
     <span class="md-ellipsis">
       
         OpenShell 0.0.72 compatibility — validated 2026-07-04
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fallback-decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fallback decision
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#operational-gaps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operational gaps
       
     </span>
   </a>
@@ -3129,40 +3041,7 @@ sandbox</strong>:</p>
 <p>Set <code>MAC_CODING_AGENT_SANDBOX=trust</code> only after validating the image+policy out
 of band; it skips the per-task proof. <code>python -m mac.coding_agent</code> prints the
 (secret-free) host-side routing decision for the current environment.</p>
-<h2 id="nemoclaw-single-host-pilot-observations">NemoClaw single-host pilot observations<a class="headerlink" href="#nemoclaw-single-host-pilot-observations" title="Permanent link">&para;</a></h2>
-<p>Status: pilot observations recorded 2026-07-04. These notes are intentionally
-fleet-generic: use role names, placeholder workspace/channel identifiers, and
-redacted credential sources in downstream runbooks; do not record real
-usernames, hostnames, tokens, Slack team names, or local fleet identities.</p>
-<h3 id="slack-multi-account-behavior">Slack multi-account behavior<a class="headerlink" href="#slack-multi-account-behavior" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Treat each Slack Socket Mode app token as single-owner for the pilot. Running
-  Hermes and NemoClaw against the same app token can create competing event
-  consumers, duplicate replies, or ambiguous thread ownership.</li>
-<li>A single Hermes gateway can use the existing multi-account file shape for
-  multiple workspaces; that does not coordinate an additional external
-  NemoClaw gateway. If both gateways must be live, give each gateway its own
-  Slack app credentials and make the intended workspace/channel binding
-  explicit.</li>
-<li>Home-channel fan-out remains per connected workspace. Pilot notes should name
-  routes with placeholders such as <code>&lt;workspace-id&gt;/&lt;channel-id&gt;</code> and should
-  avoid storing raw tokens or workspace-local display names.</li>
-</ul>
-<h3 id="openshell-policy-friction">OpenShell policy friction<a class="headerlink" href="#openshell-policy-friction" title="Permanent link">&para;</a></h3>
-<ul>
-<li>MAC's default OpenShell posture is deny-by-default egress plus explicit
-  filesystem allow-lists. NemoClaw adds non-MAC traffic patterns, including
-  Slack Web API calls, Socket Mode WebSocket egress, provider endpoints, and any
-  package or model download endpoints used at startup. Those must be policy
-  entries, not interactive approvals.</li>
-<li>The policy iteration loop is the main operational cost: every denied
-  endpoint or missing writable path should become a small, reviewed policy
-  change followed by an off-policy-denial smoke test. Do not loosen the policy
-  to broad internet or broad home-directory access just to make the pilot pass.</li>
-<li>Keep MAC-owned evidence, task worktrees, and finalization outside NemoClaw's
-  writable state. The sandboxed gateway may write its runtime cache/log paths,
-  but repository publication remains the deterministic MAC finalizer's job.</li>
-</ul>
+<h2 id="openshell-version-notes">OpenShell version notes<a class="headerlink" href="#openshell-version-notes" title="Permanent link">&para;</a></h2>
 <h3 id="openshell-012-migration-canary-2026-10-03">OpenShell 0.1.2 migration — canary 2026-10-03<a class="headerlink" href="#openshell-012-migration-canary-2026-10-03" title="Permanent link">&para;</a></h3>
 <p>The fleet pin is OpenShell 0.1.2 (reviewed-cli-assets.sh, bootstrap-openshell.sh,
 openshell_reconcile.py, cli.py). A worker canary confirmed that image ENV
@@ -3205,47 +3084,10 @@ template is fully forward-compatible; no policy adjustments are needed.</p>
   throughout — no change).
 - <code>policy get --base</code> CLI subcommand (informational; MAC uses per-sandbox
   <code>--policy</code> injection, not base-policy inheritance — no change).</p>
-<p>See docs/security/openshell-0.0.72-compatibility-review.mdx for the full
-pass/fail surface results, behavior-change table, and recommendation narrative.</p>
 <p>The 0.0.62 podman-driver mismatch workaround (<code>mirror_image_for_openshell_runtime</code>)
 is retained in bootstrap-openshell.sh as belt-and-suspenders; the upstream
 mismatch is resolved in 0.0.72 but the mirror step is harmless when Podman
 is absent.</p>
-<h3 id="fallback-decision">Fallback decision<a class="headerlink" href="#fallback-decision" title="Permanent link">&para;</a></h3>
-<p>If NemoClaw's OpenShell pin is disruptive, fall back to raw <code>openclaw</code> confined
-by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
-(currently 0.1.2; roll back to 0.0.72 with <code>bootstrap-openshell.sh --rollback</code>
-only if a 0.1-specific failure is confirmed):</p>
-<ol>
-<li>Build or upload a sandbox image containing raw <code>openclaw</code>, the required MAC
-   baseline tools (<code>git</code>, <code>gh</code>), and only the runtime dependencies
-   needed by the pilot.</li>
-<li>Start from <code>deploy/openshell/mac-hermes-policy.yaml</code>, then add explicit
-   Slack, model-provider, hub/gateway, Git host, and package-index egress rules
-   required by raw <code>openclaw</code>. Keep filesystem writes scoped to the task
-   workspace and gateway runtime cache/log directories.</li>
-<li>Use separate Slack app credentials from any Hermes gateway that remains
-   online. Route pilot traffic through placeholder-documented
-   <code>&lt;workspace-id&gt;/&lt;channel-id&gt;</code> bindings.</li>
-<li>Verify with <code>openshell gateway list</code>, an <code>openshell sandbox create</code> smoke
-   test, one Slack receive/send loop, one intentional off-policy denial, and a
-   normal MAC repository task whose evidence is finalized by MAC.</li>
-<li>Treat this as a temporary compatibility bridge. Promote NemoClaw only after
-   its OpenShell version, policy shape, and event stream pass the same MAC
-   smoke tests.</li>
-</ol>
-<h3 id="operational-gaps">Operational gaps<a class="headerlink" href="#operational-gaps" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add a version matrix covering NemoClaw, raw <code>openclaw</code>, OpenShell, Docker
-  Engine/Moby, the sandbox image digest, and the active MAC policy revision.</li>
-<li>Define ownership for Slack app isolation, policy review, event-log retention,
-  and rollback. The rollback condition should be simple: loss of sandbox
-  enforcement, ambiguous Slack routing, missing evidence, or unreviewed broad
-  egress returns the host to the last validated MAC/OpenShell path.</li>
-<li>Add a short pilot checklist that records only secret-free facts: credential
-  source names, placeholder route identifiers, policy revision, image digest,
-  smoke-test outcome, and finalizer evidence status.</li>
-</ul>
 <h2 id="follow-up">Follow-up<a class="headerlink" href="#follow-up" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Tune the operator policy against the real model-gateway/hub hosts (both the
