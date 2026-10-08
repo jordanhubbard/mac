@@ -3799,6 +3799,7 @@ def _verified_coding_route_resources(*, verified=True, model="", cli="opencode")
 
 def test_repo_dispatch_requires_v2_in_sandbox_route_proof(cp, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     cp.register_agent(
         machine.id,
@@ -3848,6 +3849,7 @@ def test_the_coding_route_gate_ignores_a_verified_cli_the_hub_did_not_list(cp, m
 
 def test_repo_dispatch_ignores_a_verified_route_for_any_other_cli(cp, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     cp.register_agent(
         machine.id,
@@ -3891,6 +3893,7 @@ def test_repo_dispatch_accepts_fresh_matching_route_and_model(cp, monkeypatch):
 
 def test_repo_dispatch_holds_unverified_pinned_model(cp, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     cp.register_agent(
         machine.id,
@@ -3911,6 +3914,7 @@ def test_repo_dispatch_holds_unverified_pinned_model(cp, monkeypatch):
 
 def test_repo_dispatch_strict_mode_rejects_legacy_route_report(cp, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     cp.register_agent(
         machine.id,

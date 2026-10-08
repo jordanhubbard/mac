@@ -24,6 +24,9 @@ from uuid import uuid4
 from mac.agent_health import advisory_health_dispatch_ready
 from mac.models import REPORT_REPOSITORY_EXECUTOR_POSTURES
 from mac.roles_service import machine_hardware_satisfies
+from mac.coding_route_gate import REFUSALS as CODING_ROUTE_REFUSALS
+from mac.coding_route_gate import CodingRouteProof
+from mac.coding_route_gate import refusal as coding_route_refusal
 
 
 JsonDict = Dict[str, Any]
@@ -142,6 +145,11 @@ class AllocationTask:
     # it wants evidence about which kinds are genuinely executor-free rather
     # than a guess.
     requires_execution: bool = True
+    # Whether this is repository coding work, which needs a worker with a
+    # fresh coding-route proof (see mac.coding_route_gate), and the model the
+    # task pins, if any. Defaults keep snapshots built outside the hub exempt.
+    requires_coding_route: bool = False
+    pinned_coding_model: str = ""
     # Operator/safety exclusions are hard. Retry exclusions are a placement
     # preference that is relaxed only when every otherwise-valid pair is
     # excluded; keeping them separate is what lets the claim transaction
@@ -198,6 +206,10 @@ class AllocationAgent:
     # this: the SSH installer installs OpenShell and the container image does
     # not, and a future AWS/Azure worker brings its own runtime or none.
     execution_boundary_verified: bool = True
+    #: What this agent has proven about its coding routes, summarized by
+    #: mac.coding_route_gate.proof_from_resources. The default is an agent the
+    #: gate does not apply to.
+    coding_route: CodingRouteProof = field(default_factory=CodingRouteProof)
     #: WHO owns this agent, and whether anyone else may use it. A private agent
     #: belongs to one person -- typically hardware on their own network that
     #: the rest of the fleet cannot even reach.
@@ -671,6 +683,9 @@ TRANSIENT_REJECTIONS: FrozenSet[str] = frozenset(
         AGENT_HELD,
         AGENT_CAPACITY_FULL,
         AGENT_SYNC_BARRIER,
+        # A worker re-probes its routes every few minutes; a missing or stale
+        # proof clears itself, so it says nothing permanent about the fleet.
+        *CODING_ROUTE_REFUSALS,
     }
 )
 
@@ -939,6 +954,16 @@ def evaluate_pair(
             reasons.append(AGENT_CAPABILITIES_MISSING)
         if task.requires_execution and not agent.execution_boundary_verified:
             reasons.append(AGENT_NO_EXECUTION_BOUNDARY)
+        # The same decision the claim boundary makes, from the same module, so
+        # no allocation path can hand repository work to a worker the claim
+        # would refuse.
+        coding_reason = coding_route_refusal(
+            agent.coding_route,
+            task_requires_coding=task.requires_coding_route,
+            pinned_model=task.pinned_coding_model,
+        )
+        if coding_reason is not None:
+            reasons.append(coding_reason)
         # A hub-side stand-in has no worker behind it. The boundary check above
         # cannot catch it: that rule reads `proven or not contradicted`, and a
         # stand-in advertises no runtime at all -- so nothing is proven, nothing
@@ -1349,10 +1374,11 @@ def adapt_v2_claim_primitive(
     """Adapt an authoritative v2 atomic ``claim(task_id, agent_id)`` primitive.
 
     Do not wrap legacy ``ControlPlane.claim_task`` here: that method re-applies
-    historical source cleanliness, command presence, coding-route, and
-    package-specific predicates after v2 has selected a pair.  The supplied
-    primitive must re-check only locked task state/dependencies, capacity,
-    trust/tenant, explicit holds/targets, and hard capabilities while creating
+    historical source cleanliness, command presence, and package-specific
+    predicates after v2 has selected a pair.  The supplied primitive must
+    re-check only locked task state/dependencies, capacity, trust/tenant,
+    explicit holds/targets, hard capabilities, and the coding-route gate
+    (which the allocator itself applies) while creating
     the lease and task transition in the same transaction.  PostgreSQL may
     implement it with ``FOR UPDATE SKIP LOCKED``.
     """

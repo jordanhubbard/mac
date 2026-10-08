@@ -744,7 +744,8 @@
     "retired": false,
     "sources": [
       "deploy/openshell/mac-hermes-policy.yaml",
-      "src/mac/coding_agent.py"
+      "src/mac/coding_agent.py",
+      "src/mac/coding_route_gate.py"
     ],
     "type": "str"
   },
@@ -833,7 +834,7 @@
     "name": "MAC_CODING_ROUTE_MAX_AGE_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/services.py"
+      "src/mac/coding_route_gate.py"
     ],
     "type": "int"
   },
@@ -3439,7 +3440,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/services.py"
+      "src/mac/coding_route_gate.py"
     ],
     "type": "str"
   },

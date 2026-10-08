@@ -61,6 +61,7 @@ from mac.agentbus_control import (
 )
 
 if TYPE_CHECKING:
+    from mac.coding_route_gate import CodingRouteProof
     from mac.executor_directive import TaskOwnershipVerdict
 from mac.attempt_failure_classifier import classify_attempt_failure
 from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
@@ -24373,11 +24374,17 @@ class ControlPlane:
     ) -> Optional[str]:
         """Re-check only allocator-v2 hard constraints under transaction locks.
 
-        Repository cleanliness, command inventories, coding-agent probes,
-        directive acknowledgements, role/persona preferences, and worker-local
-        metadata filters are observations or placement preferences.  They may
-        influence ranking and repair work, but they cannot strand otherwise
-        runnable work at the final lease boundary.
+        Repository cleanliness, command inventories, directive
+        acknowledgements, role/persona preferences, and worker-local metadata
+        filters are observations or placement preferences.  They may influence
+        ranking and repair work, but they cannot strand otherwise runnable work
+        at the final lease boundary.
+
+        The coding-route proof is not a preference: a worker without a fresh
+        proof for a CLI on the hub's list cannot run repository work at all.
+        It is enforced here and in the allocator's pair evaluation through the
+        same :mod:`mac.coding_route_gate`, so the allocator never proposes a
+        pair this check would refuse unless the proof expired in between.
         """
 
         if agent.deleted_at:
@@ -24432,6 +24439,11 @@ class ControlPlane:
             return "agent_resources_insufficient"
         if not set(task.required_capabilities).issubset(set(agent.capabilities)):
             return "capabilities_missing"
+        # The allocator applied the same gate when it chose this pair, so this
+        # refuses only a proof that went stale between snapshot and claim.
+        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(agent, task)
+        if not coding_route_ok:
+            return coding_route_reason
         if role_reason is not None:
             return role_reason
         return None
@@ -24823,69 +24835,34 @@ class ControlPlane:
             return True
         return source_state.get("dirty") is not True
 
+    def _coding_route_proof(self, agent: Agent) -> "CodingRouteProof":
+        """Summarize an agent's reported coding routes for :mod:`mac.coding_route_gate`."""
+        from mac.coding_route_gate import proof_from_resources
+
+        return proof_from_resources(
+            ensure_json_object(agent.resources),
+            requires_openshell=_agent_requires_openshell(agent),
+            listed_agents=self.coding_policy()["agents"],
+        )
+
     def _agent_has_verified_coding_route(self, agent: Agent, task: Task) -> Tuple[bool, str]:
-        """Require a fresh, exact in-sandbox route proof before repo dispatch."""
+        """Require a fresh, exact in-sandbox route proof before repo dispatch.
+
+        A thin reading of :mod:`mac.coding_route_gate`, which the allocator
+        asks too, so the claim boundary and every allocation path agree.
+        """
+        from mac.coding_route_gate import refusal, strict_enabled
+
         if not self._task_is_repo_coupled(task) or not _agent_requires_openshell(agent):
             return True, "not_required"
-        if not _truthy_env("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT"):
+        if not strict_enabled():
             return True, "strict_route_verification_disabled"
-        resources = ensure_json_object(agent.resources)
-        coding = ensure_json_object(resources.get("coding_clis"))
-        # A strict hub must fail closed while a worker is rolling forward. An
-        # old configuration-only report cannot prove that the route works from
-        # the actual sandbox, and accepting it would create a bypass precisely
-        # when credentials or protocol settings are broken.
-        if coding.get("schema") != "mac.coding_clis.v2":
-            return False, "coding_agent_route_unreported"
-        clis = ensure_json_object(coding.get("clis"))
-        try:
-            max_age = max(
-                1.0,
-                float(os.environ.get("MAC_CODING_ROUTE_MAX_AGE_SECONDS") or 1200.0),
-            )
-        except ValueError:
-            max_age = 1200.0
-        # The worker reports every CLI on the hub's ordered list, and it can
-        # run the task if ANY of them has a fresh, exact proof: the executor
-        # takes the first one that works. CLIs off the list are ignored.
-        pinned_model = self._task_pinned_coding_model(task)
-        reasons: List[str] = []
-        for agent_name in self.coding_policy()["agents"]:
-            item = ensure_json_object(clis.get(agent_name))
-            reason = self._coding_route_item_failure(item, max_age, pinned_model)
-            if not reason:
-                return True, "verified"
-            reasons.append(reason)
-        if "coding_agent_model_unverified" in reasons:
-            return False, "coding_agent_model_unverified"
-        return False, "coding_agent_route_unverified"
-
-    @staticmethod
-    def _coding_route_item_failure(item: JsonDict, max_age: float, pinned_model: str) -> str:
-        """Why one CLI's reported route cannot take the task, or ``""``."""
-        if not (item.get("configured") is True and item.get("verified") is True):
-            return "coding_agent_route_unverified"
-        verification = ensure_json_object(item.get("verification"))
-        checked_at = str(verification.get("checked_at") or "").strip()
-        try:
-            age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
-        except Exception:  # noqa: BLE001 - malformed proof must fail closed.
-            return "coding_agent_route_unverified"
-        if age < 0 or age > max_age:
-            return "coding_agent_route_unverified"
-        if verification.get("route_fingerprint") != item.get("route_fingerprint"):
-            return "coding_agent_route_unverified"
-        if not pinned_model:
-            return ""
-        verified_model = str(verification.get("model") or item.get("model") or "").strip()
-        verified_models = {
-            str(value).strip()
-            for value in (verification.get("verified_models") or [])
-            if str(value).strip()
-        }
-        if verified_model == pinned_model or pinned_model in verified_models:
-            return ""
-        return "coding_agent_model_unverified"
+        reason = refusal(
+            self._coding_route_proof(agent),
+            task_requires_coding=True,
+            pinned_model=self._task_pinned_coding_model(task),
+        )
+        return (False, reason) if reason else (True, "verified")
 
     @staticmethod
     def _task_pinned_coding_model(task: Task) -> str:

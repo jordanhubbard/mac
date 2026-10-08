@@ -405,6 +405,8 @@ class DispatchService:
             # everyone else's. Without this the ownership gate would compare
             # against None and no private agent would ever be dispatched to.
             created_by_human=getattr(task, "created_by_human", None),
+            requires_coding_route=self.control_plane._task_is_repo_coupled(task),
+            pinned_coding_model=self.control_plane._task_pinned_coding_model(task),
             metadata=metadata,
         )
 
@@ -559,6 +561,7 @@ class DispatchService:
             bound_role_slug=bound_role_slug,
             bound_role_eligible=bound_role_eligible,
             bound_role_required_capabilities=frozenset(bound_role_required_capabilities),
+            coding_route=self.control_plane._coding_route_proof(agent),
         )
 
     def ready_tasks(
