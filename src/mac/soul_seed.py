@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from mac.soul_graph import SoulGraph
+from mac.soul_graph import SoulGraph, default_soul_path
 
 # Words that carry no signal — filtered before seed extraction
 _STOP = frozenset({
@@ -33,7 +33,6 @@ _STOP = frozenset({
     "please", "just", "get", "let", "me", "my", "your", "so",
 })
 
-_SOUL_DIR = Path.home() / ".hermes"
 
 
 def _extract_signal(text: str, n: int = 5) -> list[str]:
@@ -72,8 +71,7 @@ def seed(
       "reason"   — why inject is what it is
 
     soul_path: explicit path to soul JSON file. Overrides the default
-               ~/.hermes/{soul_name}_soul.json convention. Use when
-               soul file lives outside the default Hermes home.
+               default_soul_path(soul_name): {agent home}/{soul_name}.json.
 
     novelty_threshold: fraction of signal words NOT already in hot nodes
     that triggers a discover() call. Below threshold = already primed,
@@ -82,7 +80,7 @@ def seed(
     if soul_path:
         p = Path(soul_path)
     else:
-        p = _SOUL_DIR / f"{soul_name}_soul.json"
+        p = default_soul_path(soul_name)
 
     if not p.exists():
         return {"inject": [], "queried": False, "signal": [], "reason": "no soul file"}
