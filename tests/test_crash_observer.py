@@ -127,3 +127,26 @@ def test_filesystem_core_is_retained_with_bounded_permissions(tmp_path):
     assert retained_path.read_bytes() == b"core-bytes"
     assert retained_path.stat().st_mode & 0o777 == 0o600
     assert metadata["retained"] is True
+
+
+def test_the_stderr_tee_forwards_a_short_line_while_the_child_is_still_running(monkeypatch, tmp_path):
+    """A buffered read(4096) waited for 4 KiB or EOF, so a quiet worker's log
+    lines reached the journal only when it exited. read1 forwards what's there."""
+    observer = _load_observer()
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd, "rb")
+    sink = open(tmp_path / "forwarded", "wb")
+    monkeypatch.setattr(observer.sys, "stderr", type("E", (), {"buffer": sink})())
+    tee = observer._StderrTee(stream)
+    tee.start()
+    try:
+        os.write(write_fd, b"mac-agent: short line\n")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and b"short line" not in (tmp_path / "forwarded").read_bytes():
+            time.sleep(0.05)
+        assert b"mac-agent: short line\n" == (tmp_path / "forwarded").read_bytes()
+        assert tee.is_alive(), "the writer is still open, so the tee must still be running"
+    finally:
+        os.close(write_fd)
+        tee.join(timeout=5)
+        sink.close()

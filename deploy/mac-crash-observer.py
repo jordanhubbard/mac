@@ -295,8 +295,12 @@ class _StderrTee(threading.Thread):
         self.size = 0
 
     def run(self) -> None:
+        # read1, not read: a buffered read(4096) blocks until 4 KiB arrive or
+        # the child exits, so a quiet worker's log lines reached the journal
+        # only when it stopped -- stamped with the exit time, not when written.
+        read = getattr(self.stream, "read1", self.stream.read)
         while True:
-            chunk = self.stream.read(4096)
+            chunk = read(4096)
             if not chunk:
                 break
             try:

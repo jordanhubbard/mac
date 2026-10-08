@@ -193,3 +193,48 @@ def test_gateway_impl_none_withdraws_the_chat_gateway_advertisement(monkeypatch)
     assert _resources_without_retired_gateway(resources) == {"hardware": {}}
     monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "hermes")
     assert _resources_without_retired_gateway(resources) == resources
+
+
+def test_a_skipped_resource_refresh_is_logged_once_and_its_recovery_too(tmp_path: Path, capsys):
+    """The stale-attestation window this race opens used to be invisible:
+    say so once when it opens, stay quiet while it lasts, and once when it
+    closes."""
+    _cp, _client, worker, agent_id = _worker_with_complete_snapshot(tmp_path)
+    logged: List[Tuple[str, str, Dict[str, Any]]] = []
+    worker._observe_log = lambda name, level="info", **kw: logged.append(  # type: ignore[assignment]
+        (name, level, kw.get("detail") or {})
+    )
+    real_get = worker.client.get
+    failing = {"on": True}
+
+    def flaky_get(path: str, *args: Any, **kwargs: Any):
+        if failing["on"] and path.endswith("/agents/%s" % agent_id):
+            raise MacApiError("hub unavailable during restart")
+        return real_get(path, *args, **kwargs)
+
+    worker.client.get = flaky_get  # type: ignore[assignment]
+    worker._last_command_inventory_at = float("inf")  # inventory not due
+
+    worker._heartbeat()
+    worker._heartbeat()
+    skipped = [entry for entry in logged if entry[0] == "worker.heartbeat.resources_skipped"]
+    assert len(skipped) == 1, logged
+    assert skipped[0][1] == "warning"
+    assert "agent read failed" in skipped[0][2]["reason"]
+    assert "hub unavailable during restart" in skipped[0][2]["reason"]
+    assert "heartbeat sent without resources" in capsys.readouterr().err
+
+    failing["on"] = False
+    worker._heartbeat()
+    restored = [entry for entry in logged if entry[0] == "worker.heartbeat.resources_restored"]
+    assert len(restored) == 1, logged
+    assert "agent read failed" in restored[0][2]["previous_reason"]
+
+
+def test_a_healthy_heartbeat_logs_nothing(tmp_path: Path):
+    _cp, _client, worker, _agent_id = _worker_with_complete_snapshot(tmp_path)
+    logged: List[str] = []
+    worker._observe_log = lambda name, *a, **kw: logged.append(name)  # type: ignore[assignment]
+    worker._heartbeat()
+    worker._heartbeat()
+    assert not [n for n in logged if n.startswith("worker.heartbeat.resources_")], logged
