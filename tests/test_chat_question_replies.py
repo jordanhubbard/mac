@@ -197,6 +197,7 @@ class _FakeSlack:
     def __init__(self) -> None:
         self.posted: List[Dict[str, Any]] = []
         self.threads: Dict[str, List[Dict[str, Any]]] = {}
+        self.channel: List[Dict[str, Any]] = []  # top-level messages people post
 
     def client(self, token: str) -> Any:
         slack = self
@@ -212,6 +213,11 @@ class _FakeSlack:
 
             def conversations_replies(self, channel: str, ts: str, limit: int = 100):
                 return {"messages": [{"ts": ts, "text": "question"}] + slack.threads.get(ts, [])}
+
+            def conversations_history(self, channel: str, oldest: str, limit: int = 200):
+                own = [{"ts": p["ts"], "bot_id": "B0", "text": p["text"]} for p in slack.posted]
+                newest_first = sorted(own + slack.channel, key=lambda m: float(m["ts"]), reverse=True)
+                return {"messages": [m for m in newest_first if float(m["ts"]) >= float(oldest)]}
 
             def users_info(self, user: str):
                 return {"user": {"name": "pat", "profile": {"display_name": "Pat"}}}
@@ -263,7 +269,11 @@ def test_the_worker_relays_a_slack_thread_reply_and_stops_watching(tmp_path: Pat
     worker._process_control_messages()
     assert len(slack.posted) == 1
     parent = slack.posted[0]
-    assert parent["channel"] == "C1" and "Reply in this thread to answer" in parent["text"]
+    assert parent["channel"] == "C1" and parent["text"].startswith("*Q1* Answer needed: Pick a region")
+    assert "post `Q1 <your answer>` in this channel" in parent["text"]
+    # The CLI command that answers it is left out: in Slack it invites Hermes
+    # to answer for the person.
+    assert "mac task" not in parent["text"]
     assert len(worker._load_chat_questions()) == 1
 
     worker._relay_chat_question_replies()  # no replies yet: nothing relayed, still watched
@@ -305,3 +315,37 @@ def test_the_worker_drops_a_question_answered_on_the_board(tmp_path: Path, monke
     worker._relay_chat_question_replies()
 
     assert worker._load_chat_questions() == []
+
+
+def test_a_channel_message_starting_with_the_code_answers_the_question(tmp_path: Path, monkeypatch):
+    cp = _plane()
+    cp.configure_notifier_channel(
+        "questions", "slack", event_types=["task.question"], target={"agent_id": "agent_relay"}
+    )
+    first, _ = _parked_on_board_question(cp)
+    second = cp.create_task("Pick a size")
+    cp.request_task_input(second.id, [{"question": "Which size?"}], "operator")
+    cp.deliver_pending_notifications()
+    worker, slack = _relay_worker(tmp_path, monkeypatch, cp)
+    worker._process_control_messages()
+    codes = sorted(e["code"] for e in worker._load_chat_questions())
+    assert codes == ["Q1", "Q2"]
+    second_code = next(
+        e["code"] for e in worker._load_chat_questions() if e["notification_id"] == _question_note(cp, second.id)
+    )
+
+    slack.channel = [
+        {"ts": "300.1", "user": "U1", "text": "blue"},  # no code: just chat
+        {"ts": "300.2", "user": "U1", "text": "Q99 green"},  # no such question
+        {"ts": "300.3", "user": "U1", "text": "%s: eu-west" % second_code.lower()},
+    ]
+    worker._relay_chat_question_replies()
+
+    answers = _board(cp, second.id, "answer")
+    assert [(m["body"], m["reply_to"]) for m in answers] == [("eu-west", None)]
+    assert answers[0]["metadata"]["chat_ref"] == "slack:T1/C1/300.3"
+    assert cp.get_task(second.id).state == TaskState.OPEN.value
+    assert cp.get_task(first.id).state == TaskState.NEEDS_INPUT.value
+    receipt = slack.posted[-1]
+    assert receipt["thread_ts"] == "300.3" and "Recorded as the answer" in receipt["text"]
+    assert [e["notification_id"] for e in worker._load_chat_questions()] == [_question_note(cp, first.id)]

@@ -695,6 +695,9 @@ def build_runtime_context(
             "Record MAC command audit entries for shell phases that produce task evidence or change repository state.",
             "Use the mac-hermes web research commands instead of undocumented local web-search state.",
             "Do not copy MAC task state into Hermes memory as a source of truth; write only completed-task summaries back to Hermes memory.",
+            "A person's reply to a MAC task question in chat (a reply in the question's thread, "
+            "or a message starting with its code, e.g. `Q7 ...`) is recorded by MAC itself; "
+            "do not answer the question for them with `mac task answer` or `mac task say`.",
             "MAC agents own the write, cross-review, and merge/publish loop; "
             "humans direct intent and consume outcomes, but are not a required "
             "code-diff quality gate.",
