@@ -88,6 +88,23 @@ def gateway_home() -> Path:
     return _env_path("HERMES_HOME") or (mac_home() / "openclaw")
 
 
+def hermes_home() -> Path:
+    """The Hermes home, with no OpenClaw-era fallback.
+
+    ``HERMES_HOME`` wins. Without it this is ``~/.hermes``, upstream Hermes' own
+    default, or ``$MAC_HOME/hermes`` when ``MAC_HOME`` relocates the MAC tree.
+    New Hermes-only state (the soul graph) uses this rather than
+    :func:`gateway_home`, whose legacy ``$MAC_HOME/openclaw`` fallback would
+    strand it in an OpenClaw path.
+    """
+    explicit = _env_path("HERMES_HOME")
+    if explicit is not None:
+        return explicit
+    if _env_path("MAC_HOME") is not None:
+        return mac_home() / "hermes"
+    return Path.home() / ".hermes"
+
+
 # --- Control-plane files (under mac_home) ----------------------------------
 
 

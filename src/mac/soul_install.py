@@ -58,8 +58,9 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 def hermes_home(explicit: Optional[str] = None) -> Path:
     if explicit:
         return Path(explicit).expanduser()
-    env = os.environ.get("HERMES_HOME", "").strip()
-    return Path(env).expanduser() if env else Path.home() / ".hermes"
+    from mac import mac_paths
+
+    return mac_paths.hermes_home()
 
 
 # --- 1. MCP server entry ----------------------------------------------------
