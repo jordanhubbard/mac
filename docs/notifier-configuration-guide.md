@@ -215,15 +215,24 @@ mac admin notifier configure \
   --target '{"agent_id": "<hub-agent-id>"}'
 ```
 
-The worker behind that agent posts each question to its Slack home channels,
-ending with "Reply in this thread to answer", and watches the thread. The first
-reply from a person is recorded on the task board as the answer, authored by
-their Slack display name. If the task is parked on that question, the answer
-returns it to the queue. The worker then posts a one-line receipt in the thread.
-A later reply is kept on the board as a plain message. Replies from bots,
-including Hermes, are ignored.
+The worker behind that agent posts each question to its Slack home channels
+with a short code, for example `*Q7* Answer needed: ...`. A person answers in
+either of two ways:
 
-The worker stops watching a thread when the question is answered anywhere,
+- reply in the question's thread, or
+- post a channel message that starts with the code: `Q7 blue` or `q7: blue`.
+
+The first answer is recorded on the task board as the answer, authored by the
+person's Slack display name. If the task is parked on that question, the answer
+returns it to the queue. The worker then posts a one-line receipt in the thread.
+A later reply is kept on the board as a plain message. Messages from bots,
+including Hermes, are ignored, and so are channel messages without a code.
+
+The Slack text leaves out the `mac task answer` command that the notification
+body carries for operators. In a channel Hermes reads, that line invited Hermes
+to answer for the person, which bypassed the board.
+
+The worker stops watching a question when the question is answered anywhere,
 including on the board or in another workspace, when the task closes, or after
 14 days. It polls every `MAC_WORKER_CHAT_POLL_SECONDS` (default 30). This loop
 also drains the agent's mailbox, so questions go out while the worker is busy
