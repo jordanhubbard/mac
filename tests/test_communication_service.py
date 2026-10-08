@@ -194,7 +194,7 @@ def test_delivered_history_and_active_leases_block_destructive_deletion(
     cp.release_gateway_identity_lease(lease.id, gateway.id, lease.fencing_token)
 
 
-def test_notifier_uses_representative_openclaw_outbox_instead_of_agent_message(
+def test_notifier_sends_slack_status_to_the_agent_not_the_delivery_outbox(
     cp: ControlPlane,
 ) -> None:
     worker = _agent(cp, "worker")
@@ -218,15 +218,14 @@ def test_notifier_uses_representative_openclaw_outbox_instead_of_agent_message(
         channels=["slack"],
     )
 
+    # Hermes is the only human interface: even with a public identity and
+    # account configured, the worker's Hermes home channels deliver the status.
     result = cp.deliver_pending_notifications(notification_id=notification.id)
-    deliveries = cp.list_human_messages()
     assert result["delivered"] == 1
-    assert len(deliveries) == 1
-    assert deliveries[0].identity_id == hive.id
-    assert deliveries[0].origin_agent_id == worker.id
-    assert deliveries[0].target == "channel:C456"
-    assert deliveries[0].body == "[task.completed] Build passed"
-    assert cp.list_messages(worker.id) == []
+    assert cp.list_human_messages() == []
+    messages = cp.list_messages(worker.id)
+    assert len(messages) == 1
+    assert messages[0].message_type == "status_update"
 
 
 def test_identity_registry_does_not_suppress_internal_agent_notifications(

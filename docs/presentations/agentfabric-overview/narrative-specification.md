@@ -38,7 +38,7 @@ mechanism. No level may be skipped.
 3. **Built on the stack, not instead of it** (L1)
    - Why re-use is the design position (L2).
    - Where AgentFabric leverages NVIDIA technology (L2) — OpenShell (L3), NeMo Relay (L3),
-     HGX (L3), NemoClaw as reference rather than deployment (L3).
+     HGX (L3).
    - Where AgentFabric leverages open source (L2) — state, service, execution, protocol
      (one L3 each).
    - What AgentFabric adds anyway (L2) — durable ledger, named gates, route ladder,

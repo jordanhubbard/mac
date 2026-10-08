@@ -52,15 +52,15 @@ non-dict, the self-test appends the string
 > `report repository executor lacks the exact hardened OpenShell attestation`
 
 to `problems`. Crucially, that problem is **never added to
-`non_blocking_problems`** (only OpenClaw gateway problems and
+`non_blocking_problems`** (only chat-gateway problems and
 `transient_problems` are demoted). It therefore falls straight through to
 `blocking_problems`:
 
 ```python
-if openclaw_serves_gateway:
-    non_blocking_problems = list(openclaw_agent_probe_problems)
+if gateway_served_locally:
+    non_blocking_problems = list(gateway_agent_probe_problems)
 else:
-    non_blocking_problems = list(openclaw_problems)
+    non_blocking_problems = list(gateway_problems)
 for problem in transient_problems:
     if problem not in non_blocking_problems:
         non_blocking_problems.append(problem)
@@ -153,8 +153,8 @@ model:
   (or hub) probe that only ever *times out* after bounded retries is recorded in
   `transient_problems`, demoted to `non_blocking_problems`, `status="degraded"`,
   exit 0 — while a deterministic `ConnectionRefusedError` stays blocking (exit 1).
-- `tests/test_gatewayless_worker_selftest_crash.py`: a worker whose OpenClaw
-  gateway artifacts are simply not installed has its OpenClaw problems demoted to
+- `tests/test_gatewayless_worker_selftest_crash.py`: a worker whose chat
+  gateway artifacts are simply not installed has its gateway problems demoted to
   non-blocking (worker/gateway decoupling), exit 0 — while a gateway-serving node
   with a broken gateway still fails hard.
 
@@ -219,7 +219,7 @@ CANCELLED repair's exact diff could not be read from the hub. What the current
   attestation gap still returns exactly `1` from the self-test, which the wrapper
   correctly treats as blocking.
 - The transient-timeout and gateway-less degraded machinery
-  (`transient_problems`, `openclaw_problems`, the `non_blocking_problems`
+  (`transient_problems`, `gateway_problems`, the `non_blocking_problems`
   demotion) already exists, but the attestation-gap message was **never wired
   into any non-blocking list**.
 

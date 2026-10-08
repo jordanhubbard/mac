@@ -199,7 +199,7 @@ mac admin worker-token list   [<agent_id>]
 
 `fleet-update` only moves an already-provisioned host to a new commit. The
 deleted deploy scripts did the rest, so do these by hand. `$HERMES_HOME` is
-the host's Hermes home (`~/.mac/openclaw` on hosts the old installer set up).
+the host's Hermes home (default `~/.hermes`).
 
 1. Install Tailscale and join the tailnet. Confirm that `ssh <host>` works from
    the hub without a password.

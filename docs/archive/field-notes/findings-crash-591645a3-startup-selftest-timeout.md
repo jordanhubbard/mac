@@ -69,13 +69,13 @@ elif firecrawl_url:
     checks["firecrawl_web_search"] = ok
 ```
 
-Only OpenClaw problems can be demoted to non-blocking:
+Only chat-gateway problems can be demoted to non-blocking:
 
 ```python
-if openclaw_serves_gateway:
+if gateway_served_locally:
     non_blocking_problems = []
 else:
-    non_blocking_problems = list(openclaw_problems)
+    non_blocking_problems = list(gateway_problems)
 blocking_problems = [p for p in problems if p not in non_blocking_problems]
 ...
 sys.exit(1 if blocking_problems else 0)

@@ -32,11 +32,7 @@ def _api_retirement_function_source() -> str:
     return bootstrap[start:end]
 
 
-def _run_api_retirement_planner(
-    tmp_path: Path,
-    inventory: list[dict],
-    expected_openclaw: str = "mac-openclaw-bullwinkle",
-):
+def _run_api_retirement_planner(tmp_path: Path, inventory: list[dict]):
     path = tmp_path / "sandbox-inventory.json"
     path.write_text(json.dumps(inventory), encoding="utf-8")
     return subprocess.run(
@@ -45,7 +41,6 @@ def _run_api_retirement_planner(
             "-c",
             _api_retirement_planner_source(),
             str(path),
-            expected_openclaw,
         ],
         capture_output=True,
         text=True,
@@ -129,7 +124,6 @@ esac
         '  OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" '
         '"$cli" "$@"\n'
         "}\n"
-        "checkpoint_openclaw_with_cli() { return 97; }\n"
         "write_managed_openshell_container_ids() {\n"
         '  printf \'containers %s\\n\' "$1" >> "$OPERATIONS"\n'
         '  : > "$2"\n'
@@ -166,15 +160,6 @@ esac
         operations.read_text(encoding="utf-8").splitlines() if operations.exists() else []
     )
     return result, recorded_operations
-
-
-def _openclaw_promotion_source() -> str:
-    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
-    start = bootstrap.index("rollback_openclaw_promotion() {")
-    end = bootstrap.index("\n\ncheckpoint_openclaw_with_cli()", start)
-    return bootstrap[start:end]
 
 
 def _linux_gateway_ownership_source() -> str:
@@ -310,7 +295,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
 def test_bootstrap_pins_the_managed_gateway_endpoint_into_mac_env():
     """Live-found on natasha (2026-09-04): the openshell CLI's own persisted
     "active gateway" selection is local, unrelated state that any other
-    process (a NemoClaw pilot, in this case) can silently repoint. Because
+    process (an unrelated pilot, in this case) can silently repoint. Because
     mac-agent's executor never explicitly set OPENSHELL_GATEWAY_ENDPOINT, it
     inherited whatever gateway happened to be selected, and every
     coding-agent sandbox preflight probe (all 5 configured agents) failed
@@ -860,28 +845,13 @@ def test_api_readable_upgrade_retires_only_ready_owned_dead_pid_sandboxes(
         result = _run_api_retirement_planner(tmp_path, [unsafe])
         assert result.returncode != 0
 
-    openclaw = {
-        "name": "mac-openclaw-bullwinkle",
-        "phase": "Ready",
-        "labels": {"mac.role": "openclaw-gateway"},
-    }
-    result = _run_api_retirement_planner(tmp_path, [openclaw])
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "openclaw\tmac-openclaw-bullwinkle"
-
-    for impersonator in (
-        {
-            "name": "mac-openclaw-bullwinkle-copy",
-            "phase": "Ready",
-            "labels": {"mac.role": "openclaw-gateway"},
-        },
-        {
-            "name": "mac-openclaw-bullwinkle",
-            "phase": "Ready",
-            "labels": {},
-        },
+    # Hermes runs on the host, so no gateway sandbox is ever retired: a
+    # role-labeled or prefix-matching chat-gateway sandbox is not disposable.
+    for gateway in (
+        {"name": "mac-gateway-bullwinkle", "phase": "Ready", "labels": {"mac.role": "gateway"}},
+        {"name": "mac-gateway-bullwinkle", "phase": "Ready", "labels": {}},
     ):
-        result = _run_api_retirement_planner(tmp_path, [impersonator])
+        result = _run_api_retirement_planner(tmp_path, [gateway])
         assert result.returncode != 0
 
 
@@ -961,70 +931,6 @@ def test_api_retirement_kills_a_hung_inventory_call_at_the_deadline(tmp_path):
         pass
     else:
         raise AssertionError(f"hung OpenShell inventory process {hung_pid} survived")
-
-
-def test_openclaw_checkpoint_promotion_rolls_back_an_interrupted_pair(tmp_path):
-    mac_home = tmp_path / "mac home"
-    openclaw = mac_home / "openclaw"
-    recovered = tmp_path / "recovered"
-    osh_dir = mac_home / "openshell"
-    for root, marker in (
-        (openclaw / "workspace", "old-workspace"),
-        (openclaw / "state", "old-state"),
-        (recovered / "workspace", "new-workspace"),
-        (recovered / "state", "new-state"),
-    ):
-        root.mkdir(parents=True, exist_ok=True)
-        (root / "marker.txt").write_text(marker, encoding="utf-8")
-    osh_dir.mkdir(parents=True)
-
-    mock_bin = tmp_path / "bin"
-    mock_bin.mkdir()
-    mock_mv = mock_bin / "mv"
-    mock_mv.write_text(
-        """#!/bin/bash
-last=$((${#@} - 1))
-before=$((${#@} - 2))
-args=("$@")
-src="${args[$before]}"
-dst="${args[$last]}"
-if [ "${FAIL_PROMOTION_STATE_INSTALL:-0}" = 1 ] \\
-    && [[ "$src" == */.upgrade-staging-*/state ]] \\
-    && [[ "$dst" == */openclaw/state ]]; then
-  exit 91
-fi
-exec /bin/mv "$@"
-""",
-        encoding="utf-8",
-    )
-    mock_mv.chmod(0o755)
-
-    harness = (
-        _openclaw_promotion_source()
-        + "\nlog() { :; }\n"
-        + 'if promote_recovered_openclaw_state "$RECOVERED" '
-        + '"mac-openclaw-test" "test"; then exit 90; fi\n'
-    )
-    env = {
-        **os.environ,
-        "MAC_HOME": str(mac_home),
-        "OSH_DIR": str(osh_dir),
-        "RECOVERED": str(recovered),
-        "FAIL_PROMOTION_STATE_INSTALL": "1",
-        "PATH": str(mock_bin) + ":/usr/bin:/bin",
-    }
-    result = subprocess.run(
-        ["/bin/bash", "-c", harness],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert (openclaw / "workspace" / "marker.txt").read_text() == "old-workspace"
-    assert (openclaw / "state" / "marker.txt").read_text() == "old-state"
-    assert (recovered / "workspace" / "marker.txt").read_text() == "new-workspace"
-    assert (recovered / "state" / "marker.txt").read_text() == "new-state"
 
 
 @pytest.mark.parametrize("status", ["exited", "running"])
@@ -1110,10 +1016,7 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
         "^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|rs|gpu-smoke|gs|security-probe|sp)-[A-Za-z0-9._-]+$"
         in direct
     )
-    assert 'sandbox_name" = "$expected_openclaw' in direct
-    checkpoint = direct.index("checkpoint_openclaw_with_docker")
-    exact_remove = direct.index('"$OSH_DOCKER_BIN" rm "$container_id"')
-    assert checkpoint < exact_remove
+    assert '"$OSH_DOCKER_BIN" rm "$container_id"' in direct
     assert '"$OSH_DOCKER_BIN" rm -f "$container_id"' not in direct
 
     api = bootstrap.split("retire_managed_sandboxes_via_api() {", 1)[1].split(

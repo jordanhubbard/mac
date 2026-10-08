@@ -1050,7 +1050,7 @@ class TestControlPlaneIntegration:
 
 
 # ---------------------------------------------------------------------------
-# 11. OpenClaw outbox delivery path (_enqueue_openclaw_delivery)
+# 11. Slack targets go to the agent as STATUS_UPDATE messages
 # ---------------------------------------------------------------------------
 
 
@@ -1071,121 +1071,14 @@ def _register_infra(cp, hermes_id: str, platform: str = "slack", external_id: st
     return tenant, instance, binding
 
 
-def _make_openclaw_notifier(
-    cp,
-    *,
-    sent_ids=None,
-    logged=None,
-    resolve_result=None,
-    enqueue_raises=None,
-):
-    """Build a NotifierService with all three openclaw callbacks present."""
-    sent_ids = [] if sent_ids is None else sent_ids
-    logged = [] if logged is None else logged
-
-    if resolve_result is None:
-        resolve_result = {"identity": {"id": "identity_001", "name": "ops-bot"}}
-
-    def _list_comm_ids(enabled=True):
-        from mac.models import CommunicationIdentity
-
-        return [
-            CommunicationIdentity(
-                id="identity_001",
-                name="ops-bot",
-                display_name="Ops Bot",
-                description="",
-                is_default=True,
-                enabled=True,
-                metadata={},
-                created_at=utcnow(),
-                updated_at=utcnow(),
-            )
-        ]
-
-    def _resolve(agent_id):
-        return resolve_result
-
-    def _enqueue(target, body, **kwargs):
-        if enqueue_raises:
-            raise enqueue_raises
-        from mac.models import HumanMessageDelivery
-
-        delivery = HumanMessageDelivery(
-            id=new_id("delivery"),
-            identity_id=kwargs.get("identity_id", "identity_001"),
-            account_id=None,
-            channel=kwargs.get("channel"),
-            target=target,
-            body=body,
-            origin_agent_id=kwargs.get("origin_agent_id"),
-            task_id=kwargs.get("task_id"),
-            idempotency_key=kwargs.get("idempotency_key", ""),
-            status="pending",
-            attempt_count=0,
-            max_attempts=3,
-            delivery_agent_id=None,
-            delivery_lease_id=None,
-            leased_until=None,
-            provider_message_id=None,
-            last_error=None,
-            metadata=kwargs.get("metadata", {}),
-            created_at=utcnow(),
-            updated_at=utcnow(),
-            delivered_at=None,
-        )
-        sent_ids.append(delivery.id)
-        return delivery
-
-    def _capture_log(name, **kwargs):
-        logged.append({"name": name, **kwargs})
-
-    sent_msgs: List[AgentMessage] = []
-
-    def _send_message(sender, recipient, mtype, payload):
-        msg = AgentMessage(
-            id=new_id("msg"),
-            sender_agent_id=sender,
-            recipient_agent_id=recipient,
-            task_id=None,
-            message_type=mtype,
-            payload=payload,
-            status="pending",
-            created_at=utcnow(),
-            delivered_at=None,
-        )
-        sent_msgs.append(msg)
-        return msg
-
-    from mac.notifier_service import NotifierService as NS
-
-    return (
-        NS(
-            cp.store,
-            list_agents=cp.list_agents,
-            get_agent=cp.get_agent,
-            list_platform_bindings=cp.identity.list_platform_bindings,
-            get_platform_binding=cp.identity.get_platform_binding,
-            send_message=_send_message,
-            record_log=_capture_log,
-            enqueue_human_message=_enqueue,
-            resolve_agent_representation=_resolve,
-            list_communication_identities=_list_comm_ids,
-        ),
-        logged,
-        sent_ids,
-    )
-
-
-class TestOpenClawOutboxDelivery:
-    """Tests for _enqueue_openclaw_delivery and the openclaw branch in _deliver_notification."""
-
-    def test_slack_channel_routed_via_openclaw(self, cp):
-        """Slack-type channel target invokes _enqueue_human_message, not send_message."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        _, instance, binding = _register_infra(cp, "ocsl-1", "slack", "channel:C001")
-        machine = cp.register_machine("host-ocsl-1")
-        agent = cp.register_agent(machine.id, "ocsl-agent-1", hermes_instance_id=instance.id)
+class TestSlackTargetsUseStatusUpdates:
+    def test_slack_channel_target_is_sent_as_status_update_to_the_agent(self, cp):
+        """Hermes is the only human interface: a Slack target becomes a
+        STATUS_UPDATE message to the agent, whose Hermes home channels deliver it."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, binding = _register_infra(cp, "slack-1", "slack", "channel:C001")
+        machine = cp.register_machine("host-slack-1")
+        agent = cp.register_agent(machine.id, "slack-agent-1", hermes_instance_id=instance.id)
         notifiers.configure_channel(
             "slack-ch",
             "slack",
@@ -1194,135 +1087,9 @@ class TestOpenClawOutboxDelivery:
         _make_notification(cp, channels=["slack"])
         result = notifiers.deliver_pending()
         assert result["delivered"] == 1
-        assert len(sent_ids) == 1
-
-    def test_telegram_channel_routed_via_openclaw(self, cp):
-        """Telegram-type channel target invokes the openclaw enqueue path."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        _, instance, binding = _register_infra(cp, "octg-1", "telegram", "tg_chat_123")
-        machine = cp.register_machine("host-octg-1")
-        agent = cp.register_agent(machine.id, "octg-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "tg-ch",
-            "telegram",
-            target={"agent_id": agent.id, "external_id": "tg_chat_123"},
-        )
-        _make_notification(cp, channels=["telegram"])
-        result = notifiers.deliver_pending()
-        assert result["delivered"] == 1
-        assert len(sent_ids) == 1
-
-    def test_representation_unavailable_logs_and_skips(self, cp):
-        """When resolve returns no identity, log representation_unavailable and skip."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(
-            cp,
-            resolve_result={"identity": {}},
-        )
-        _, instance, binding = _register_infra(cp, "ocru-1", "slack", "channel:C002")
-        machine = cp.register_machine("host-ocru-1")
-        agent = cp.register_agent(machine.id, "ocru-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "slack-repr",
-            "slack",
-            target={"agent_id": agent.id, "external_id": binding.external_id},
-        )
-        _make_notification(cp, channels=["slack"])
-        result = notifiers.deliver_pending()
-        assert result["skipped"] == 1
-        assert any(e["name"] == "notifier.representation_unavailable" for e in logged)
-
-    def test_channel_target_missing_logs_when_no_external_id(self, cp):
-        """When external_id is absent in target, log channel_target_missing and skip."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        _, instance, binding = _register_infra(cp, "octm-1", "slack", "channel:C003")
-        machine = cp.register_machine("host-octm-1")
-        agent = cp.register_agent(machine.id, "octm-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "slack-noext",
-            "slack",
-            target={"agent_id": agent.id},  # no external_id
-        )
-        _make_notification(cp, channels=["slack"])
-        result = notifiers.deliver_pending()
-        assert result["skipped"] == 1
-        assert any(e["name"] == "notifier.channel_target_missing" for e in logged)
-
-    def test_openclaw_enqueue_failed_logs_on_exception(self, cp):
-        """When _enqueue_human_message raises, log openclaw_enqueue_failed."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(
-            cp,
-            enqueue_raises=RuntimeError("delivery backend down"),
-        )
-        _, instance, binding = _register_infra(cp, "ocef-1", "slack", "channel:C004")
-        machine = cp.register_machine("host-ocef-1")
-        agent = cp.register_agent(machine.id, "ocef-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "slack-fail",
-            "slack",
-            target={"agent_id": agent.id, "external_id": binding.external_id},
-        )
-        _make_notification(cp, channels=["slack"])
-        result = notifiers.deliver_pending()
-        assert result["skipped"] == 1
-        assert any(e["name"] == "notifier.openclaw_enqueue_failed" for e in logged)
-
-    def test_enqueue_openclaw_non_slack_telegram_returns_none(self, cp):
-        """_enqueue_openclaw_delivery returns None for unsupported channel types."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        notification = _make_notification(cp, channels=["hermes"])
-        result = notifiers._enqueue_openclaw_delivery(
-            notification,
-            {"channel_type": "hermes", "external_id": "some-id"},
-            "agent_001",
-        )
-        assert result is None
-
-    def test_slack_external_id_plain_gets_channel_prefix(self, cp):
-        """A raw Slack channel ID without a prefix gets 'channel:' prepended."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        _, instance, binding = _register_infra(cp, "ocpfx-1", "slack", "C005RAWID")
-        machine = cp.register_machine("host-ocpfx-1")
-        agent = cp.register_agent(machine.id, "ocpfx-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "slack-raw",
-            "slack",
-            target={"agent_id": agent.id, "external_id": "C005RAWID"},
-        )
-        _make_notification(cp, channels=["slack"])
-        result = notifiers.deliver_pending()
-        assert result["delivered"] == 1
-
-    def test_slack_external_id_with_user_prefix_preserved(self, cp):
-        """Slack external_id with 'user:' prefix is passed through unchanged."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        _, instance, binding = _register_infra(cp, "ocupfx-1", "slack", "user:U006")
-        machine = cp.register_machine("host-ocupfx-1")
-        agent = cp.register_agent(machine.id, "ocupfx-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "slack-user",
-            "slack",
-            target={"agent_id": agent.id, "external_id": "user:U006"},
-        )
-        _make_notification(cp, channels=["slack"])
-        result = notifiers.deliver_pending()
-        assert result["delivered"] == 1
-
-    def test_openclaw_delivery_id_recorded_in_message_ids(self, cp):
-        """The delivery id from enqueue_human_message is recorded in message_ids."""
-        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
-        _, instance, binding = _register_infra(cp, "ocid-1", "slack", "channel:C007")
-        machine = cp.register_machine("host-ocid-1")
-        agent = cp.register_agent(machine.id, "ocid-agent-1", hermes_instance_id=instance.id)
-        notifiers.configure_channel(
-            "slack-id",
-            "slack",
-            target={"agent_id": agent.id, "external_id": binding.external_id},
-        )
-        _make_notification(cp, channels=["slack"])
-        result = notifiers.deliver_pending()
-        assert result["delivered"] == 1
-        assert len(sent_ids) == 1
-        assert sent_ids[0] in result["results"][0]["message_ids"]
+        assert len(sent) == 1
+        assert sent[0].recipient_agent_id == agent.id
+        assert sent[0].message_type == MessageType.STATUS_UPDATE.value
 
 
 # ---------------------------------------------------------------------------
@@ -1412,7 +1179,7 @@ class TestClaimNotificationRace:
 
 
 def _make_notifiers_plain(cp):
-    """Return a NotifierService without openclaw extras (uses send_message path)."""
+    """Return a NotifierService that records send_message calls."""
     sent: List[AgentMessage] = []
 
     def _mock_send(sender, recipient, mtype, payload):
@@ -1601,7 +1368,7 @@ class TestDeliverNotificationNoAgentIdSkip:
     def test_target_without_agent_id_is_skipped(self, cp):
         """A target dict with no agent_id is silently skipped in _deliver_notification."""
         logged: List[dict] = []
-        notifiers, _, sent_ids = _make_openclaw_notifier(cp, logged=logged)
+        notifiers, _ = _make_notifiers_plain(cp)
 
         notification = _make_notification(cp, channels=["hermes"])
         # Inject a target with no agent_id directly via _deliver_notification

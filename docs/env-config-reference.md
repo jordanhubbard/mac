@@ -7,8 +7,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | --- | --- | --- | --- | --- |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS` | int | consumer-defined | core | Core setting: agentbus service result publish attempts. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS` | int | consumer-defined | core | Core setting: agentbus service result publish retry seconds. |
-| `MAC_AGENTFS_URL` | str | consumer-defined | core | Core setting: agentfs url. |
-| `MAC_AGENTFS_WRITE_TOKEN` | str | consumer-defined | core | Core setting: agentfs write token. |
 | `MAC_AGENT_ATTESTATION_KEY` | str | consumer-defined | agent | Agent setting: agent attestation key. |
 | `MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS` | int | consumer-defined | agent | Agent setting: agent command exit grace seconds. |
 | `MAC_AGENT_DIR` | str | consumer-defined | agent | Agent setting: agent dir. |
@@ -77,12 +75,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | int | consumer-defined | coding-route | Coding Route setting: coding route max age seconds. |
 | `MAC_COMMAND_AUDIT_RETENTION_SECONDS` | int | consumer-defined | core | Core setting: command audit retention seconds. |
 | `MAC_COMMAND_ID` | str | consumer-defined | core | Core setting: command id. |
-| `MAC_CONTINUITY_BUS_CHUNK_SCAN` | str | consumer-defined | core | Core setting: continuity bus chunk scan. |
-| `MAC_CONTINUITY_BUS_STREAM_SCAN` | str | consumer-defined | core | Core setting: continuity bus stream scan. |
-| `MAC_CONTINUITY_MAX_ITEMS` | str | consumer-defined | core | Core setting: continuity max items. |
-| `MAC_CONTINUITY_MAX_LOW_VALUE_MEMORIES` | str | consumer-defined | core | Core setting: continuity max low value memories. |
-| `MAC_CONTINUITY_MIN_SCORE` | str | consumer-defined | core | Core setting: continuity min score. |
-| `MAC_CONTINUITY_TOKEN_BUDGET` | str | consumer-defined | core | Core setting: continuity token budget. |
 | `MAC_CONTRACT_GIT` | str | consumer-defined | core | Core setting: contract git. |
 | `MAC_CONTRACT_RUNTIME_VENV` | str | consumer-defined | core | Core setting: contract runtime venv. |
 | `MAC_CONTROL_PLANE_DB_PASSWORD` | str | consumer-defined | core | Core setting: control plane db password. |
@@ -102,7 +94,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ENV_FILE` | str | consumer-defined | deployment | Deployment setting: deploy env file. |
 | `MAC_DEPLOY_FLEETS_CONFIG` | str | consumer-defined | deployment | Deployment setting: deploy fleets config. |
 | `MAC_DEPLOY_FLEET_REGISTRY` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry. |
-| `MAC_DEPLOY_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy generation. |
 | `MAC_DEPLOY_GH_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gh token. |
 | `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | str | consumer-defined | deployment | Deployment setting: deploy github review key b64. |
 | `MAC_DEPLOY_HUB_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy hub token. |
@@ -146,11 +137,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_GITHUB_INGEST_MAX_ISSUES_PER_REPO` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max issues per repo. |
 | `MAC_GITHUB_INGEST_MAX_OPEN_TASKS_PER_PROJECT` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max open tasks per project. |
 | `MAC_HEADSCALE_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: headscale command timeout seconds. |
-| `MAC_HERMES_AGENT_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent bin. |
 | `MAC_HERMES_AGENT_DIR` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent dir. |
 | `MAC_HERMES_ALLOW_APPROVAL_PROMPTS` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes allow approval prompts. |
+| `MAC_HERMES_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes bin. |
 | `MAC_HERMES_DRY_RUN` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes dry run. |
-| `MAC_HERMES_EXISTING_PORT` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes existing port. |
 | `MAC_HERMES_FLEET_NAME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes fleet name. |
 | `MAC_HERMES_GATEWAY_API_KEY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway api key. |
 | `MAC_HERMES_GATEWAY_BASE_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway base url. |
@@ -161,13 +151,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_HOME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes home. |
 | `MAC_HERMES_INSTANCE_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes instance id. |
 | `MAC_HERMES_LOG_SUMMARY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes log summary. |
-| `MAC_HERMES_MESSAGE_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes message bin. |
 | `MAC_HERMES_PERSONA_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes persona id. |
 | `MAC_HERMES_PYTHON` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes python. |
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context file. |
 | `MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context markdown. |
 | `MAC_HERMES_RUNTIME_CONTEXT_REQUIRED` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context required. |
-| `MAC_HERMES_SCRIPTS_DIR` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes scripts dir. |
 | `MAC_HERMES_SLACK_API_BASE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes slack api base. |
 | `MAC_HERMES_SLACK_HOME_CHANNELS_JSON` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes slack home channels json. |
 | `MAC_HERMES_SLACK_HOME_CHANNEL_NAME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes slack home channel name. |
@@ -255,7 +243,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LEASE_ID` | str | consumer-defined | core | Core setting: lease id. |
 | `MAC_LEDGER_BACKUP_DIR` | str | consumer-defined | core | Core setting: ledger backup dir. |
 | `MAC_LEDGER_BACKUP_ENABLED` | bool | consumer-defined | core | Core setting: ledger backup enabled. |
-| `MAC_LEGACY_HERMES_HOME` | str | consumer-defined | core | Core setting: legacy hermes home. |
 | `MAC_LOCAL_CONSOLE_ENABLED` | bool | consumer-defined | client-auth | Client Auth setting: local console enabled. |
 | `MAC_LOCAL_CONSOLE_GROUP` | str | consumer-defined | client-auth | Client Auth setting: local console group. |
 | `MAC_LOCAL_CONSOLE_SOCKET` | str | consumer-defined | client-auth | Client Auth setting: local console socket. |
@@ -269,85 +256,12 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
 | `MAC_MIGRATION_DATABASE_URL` | str | consumer-defined | core | Core setting: migration database url. |
 | `MAC_MODELS_DEV_CACHE_FILE` | str | consumer-defined | core | Core setting: models dev cache file. |
-| `MAC_NEMOCLAW_AGENT_ID` | str | consumer-defined | core | Core setting: nemoclaw agent id. |
-| `MAC_NEMOCLAW_FLEET_NAME` | str | consumer-defined | core | Core setting: nemoclaw fleet name. |
-| `MAC_NEMOCLAW_GATEWAY_PORT` | int | consumer-defined | core | Core setting: nemoclaw gateway port. |
-| `MAC_NEMOCLAW_HOME_CHANNEL` | str | consumer-defined | core | Core setting: nemoclaw home channel. |
-| `MAC_NEMOCLAW_HUB_URL` | str | consumer-defined | core | Core setting: nemoclaw hub url. |
-| `MAC_NEMOCLAW_INSTANCE_ID` | str | consumer-defined | core | Core setting: nemoclaw instance id. |
-| `MAC_NEMOCLAW_SLACK_APP_TOKEN` | str | consumer-defined | core | Core setting: nemoclaw slack app token. |
-| `MAC_NEMOCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | core | Core setting: nemoclaw slack bot token. |
-| `MAC_NEMOCLAW_SLACK_WORKSPACE` | str | consumer-defined | core | Core setting: nemoclaw slack workspace. |
 | `MAC_NETWORK_PROVIDER` | str | consumer-defined | core | Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / public addresses and binds loopback plus the Tailscale IPv4 instead. Not a host firewall by itself; it is the listen-address policy that makes the overlay the only worker path. Unset means no mesh bind policy (container/dev). |
 | `MAC_NOTIFIER_DRAIN_HUB_AGENT` | str | consumer-defined | notifier | Notifier setting: notifier drain hub agent. |
 | `MAC_NOTIFIER_DRAIN_LIMIT` | int | consumer-defined | notifier | Notifier setting: notifier drain limit. |
 | `MAC_NOTIFIER_DRAIN_ON_HEARTBEAT` | str | consumer-defined | notifier | Notifier setting: notifier drain on heartbeat. |
 | `MAC_NO_TICKET_MIRROR` | str | consumer-defined | core | Core setting: no ticket mirror. |
 | `MAC_OBSERVABILITY_VERBOSE_POLL` | bool | consumer-defined | core | Core setting: observability verbose poll. |
-| `MAC_OPENCLAW_AGENT_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent bin. |
-| `MAC_OPENCLAW_AGENT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent id. |
-| `MAC_OPENCLAW_AGENT_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent timeout seconds. |
-| `MAC_OPENCLAW_BOOTSTRAP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw bootstrap token. |
-| `MAC_OPENCLAW_BUILD_CONTEXT` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw build context. |
-| `MAC_OPENCLAW_CANARY_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw canary ok. |
-| `MAC_OPENCLAW_CHANNELS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw channels. |
-| `MAC_OPENCLAW_CONTAINERFILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw containerfile. |
-| `MAC_OPENCLAW_CONTINUITY_MIGRATOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw continuity migrator. |
-| `MAC_OPENCLAW_CONTROL_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw control url. |
-| `MAC_OPENCLAW_CREDENTIALS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw credentials file. |
-| `MAC_OPENCLAW_DOCKER_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw docker bin. |
-| `MAC_OPENCLAW_DRY_RUN` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw dry run. |
-| `MAC_OPENCLAW_EMBEDDING_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw embedding model. |
-| `MAC_OPENCLAW_FINALIZE_HERMES_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize hermes state. |
-| `MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize nemoclaw state. |
-| `MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize openclaw state. |
-| `MAC_OPENCLAW_FINALIZE_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize supervisor. |
-| `MAC_OPENCLAW_FLEET_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw fleet name. |
-| `MAC_OPENCLAW_GATEWAY_HOST` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway host. |
-| `MAC_OPENCLAW_GATEWAY_PORT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway port. |
-| `MAC_OPENCLAW_HOME_CHANNEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw home channel. |
-| `MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw host automation journal sha256. |
-| `MAC_OPENCLAW_HOST_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw host dir. |
-| `MAC_OPENCLAW_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image. |
-| `MAC_OPENCLAW_IMAGE_REVISION` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image revision. |
-| `MAC_OPENCLAW_INSTANCE_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw instance id. |
-| `MAC_OPENCLAW_KSLUG_SKILL_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw kslug skill src. |
-| `MAC_OPENCLAW_LEGACY_SCRIPTS_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy scripts dir. |
-| `MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy slack home channels file. |
-| `MAC_OPENCLAW_LIVE_CANARY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw live canary. |
-| `MAC_OPENCLAW_MESSAGE_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw message bin. |
-| `MAC_OPENCLAW_MIRROR_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw mirror model. |
-| `MAC_OPENCLAW_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw model. |
-| `MAC_OPENCLAW_PEER_TURN_TIMEOUT_MS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw peer turn timeout ms. |
-| `MAC_OPENCLAW_PLUGIN_TIMEOUT_MS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw plugin timeout ms. |
-| `MAC_OPENCLAW_POLICY_TEMPLATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw policy template. |
-| `MAC_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw public identity. |
-| `MAC_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw representation mode. |
-| `MAC_OPENCLAW_REPRESENTED_BY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw represented by. |
-| `MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw require host automation journal. |
-| `MAC_OPENCLAW_ROUTER_API_KEY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router api key. |
-| `MAC_OPENCLAW_ROUTER_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router url. |
-| `MAC_OPENCLAW_SANDBOX` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox. |
-| `MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox delete timeout seconds. |
-| `MAC_OPENCLAW_SANDBOX_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox name. |
-| `MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job output dir. |
-| `MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job relocator src. |
-| `MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job scripts dir. |
-| `MAC_OPENCLAW_SCRIPT_RUNNER_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script runner src. |
-| `MAC_OPENCLAW_SKIP_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw skip image. |
-| `MAC_OPENCLAW_SLACK_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account id. |
-| `MAC_OPENCLAW_SLACK_ACCOUNT_IDS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account ids. |
-| `MAC_OPENCLAW_SLACK_APP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack app token. |
-| `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
-| `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
-| `MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw subprocess timeout seconds. |
-| `MAC_OPENCLAW_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw supervisor. |
-| `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |
-| `MAC_OPENCLAW_TELEGRAM_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram bot token. |
-| `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram canary target. |
-| `MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup interval. |
-| `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup timeout. |
-| `MAC_OPENCLAW_WORKSPACE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw workspace. |
 | `MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell adopt published runtime. |
 | `MAC_OPENSHELL_ALLOW_NO_LANDLOCK` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow no landlock. |
 | `MAC_OPENSHELL_BIN` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell bin. |
@@ -387,7 +301,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_TASK_EGRESS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell task egress. |
 | `MAC_OPENSHELL_TRANSFER_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell transfer timeout. |
 | `MAC_OPENSHELL_VERIFICATION_START_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell verification start timeout. |
-| `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
 | `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
 | `MAC_PERSONA_INSTANCE_ID` | str | consumer-defined | core | Core setting: persona instance id. |
@@ -522,11 +435,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SELF_UPDATE_SERVICE_TIMEOUT` | int | consumer-defined | core | Core setting: self update service timeout. |
 | `MAC_SEMANTIC_RETRY_BASE_SECONDS` | int | 15 | semantic-retry | Semantic Retry setting: semantic retry base seconds. |
 | `MAC_SEMANTIC_RETRY_CAP_SECONDS` | int | 300 | semantic-retry | Semantic Retry setting: semantic retry cap seconds. |
-| `MAC_SERVICE_NOFILE_LIMIT` | int | consumer-defined | core | Core setting: service nofile limit. |
 | `MAC_SERVICE_ROLE_OPS` | str | consumer-defined | core | Core setting: service role ops. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | core | Core setting: shared services manager agent. |
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
-| `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |
 | `MAC_SOURCE_COMMIT` | str | consumer-defined | core | Core setting: source commit. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |
@@ -623,7 +534,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
 | `MAC_WORKER_COMMAND_PROBES` | str | consumer-defined | worker | Worker setting: worker command probes. |
-| `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
 | `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Worker setting: worker deploy barrier file. |
 | `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Worker setting: worker deploy barrier max age seconds. |
 | `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Worker setting: worker deploy generation. |

@@ -1,8 +1,8 @@
 # Fate of the vendored Hermes tree
 
 **Verdict: removed.** `src/mac/_hermes` (~444k lines) was deleted in PR #377
-on 2026-08-17. OpenClaw was the live gateway at that removal; Hermes is again
-the configured gateway, installed separately. The in-tree Hermes snapshot was
+on 2026-08-17. Hermes is the only human interface and chat gateway, installed
+separately. The in-tree Hermes snapshot was
 inactive and larger than mac's own code. This note records the four
 pre-deletion checks and the post-removal inventory so the decision stays
 auditable during the port.
@@ -10,14 +10,13 @@ auditable during the port.
 ## Pre-deletion checks (a)–(d)
 
 Measured against prepared tip `7f2850f76361d676405cacd0491fd017f6f5f5c3`
-(tree already absent) and the live-fleet evidence cited in
-`docs/hermes-retirement-premises.md`.
+(tree already absent).
 
 | Check | Answer | Evidence |
 | --- | --- | --- |
 | **(a)** Does anything import `hermes_cli` at runtime? | **No** | Exact search for `from hermes_cli` / `import hermes_cli` under `src/mac/` finds zero live import sites. `mac.hermes_config_surface._hermes_config_module` raises `ModuleNotFoundError` by design (“vendored hermes_cli was removed”). |
-| **(b)** Do OpenShell sandbox images or the openclaw gateway invoke a vendored Hermes entry point as a subprocess? | **No** | `mac.agent_command` has no executable `hermes_cli.main` string constants (comment-only history). Task-executor / OpenShell tests assert `hermes_cli.main` is absent from coding-agent argv. `deploy/openshell/mac-hermes.Containerfile` installs mac only and has no `zz_hermes_vendor.pth` injection (stale narrative comments may still mention the old hook; they are not load-bearing). |
-| **(c)** Are vendored plugins/skills (`src/mac/_hermes/plugins`, `.../skills`) loaded by the active openclaw path? | **No** | Those directories no longer exist. OpenClaw continuity uses `deploy/openclaw/migrate-hermes-continuity.py` against a Hermes *home* workspace, not `src/mac/_hermes`. |
+| **(b)** Do OpenShell sandbox images or the chat gateway invoke a vendored Hermes entry point as a subprocess? | **No** | `mac.agent_command` has no executable `hermes_cli.main` string constants (comment-only history). Task-executor / OpenShell tests assert `hermes_cli.main` is absent from coding-agent argv. `deploy/openshell/mac-hermes.Containerfile` installs mac only and has no `zz_hermes_vendor.pth` injection (stale narrative comments may still mention the old hook; they are not load-bearing). |
+| **(c)** Are vendored plugins/skills (`src/mac/_hermes/plugins`, `.../skills`) loaded by the active gateway path? | **No** | Those directories no longer exist. The external Hermes runtime reads its own *home* workspace, not `src/mac/_hermes`. |
 | **(d)** Does `deploy/hermes/SNAPSHOT.md` describe an obligation that survives removal? | **No** | `deploy/hermes/` (including `SNAPSHOT.md` and re-vendor tooling) is gone. CI has no `hermes-revendor` job; `report-main-red` needs do not list it. |
 
 ## What was removed
@@ -109,19 +108,7 @@ remains required before releasing dependent work.
 The [ownership investigation](investigations/hermes-runtime-ownership.md)
 records the evidence, corrected diagnosis, and remaining rollout proof.
 
-## Update (2026-09-05): Hermes reactivated on the hub, still not vendored
-
-OpenClaw (the gateway that replaced Hermes above) turned out to be unreliable
-at a layer this repo does not own: its OpenShell sandbox's state mount runs
-on Docker Desktop's overlayfs, where POSIX advisory locking is broken enough
-that a fresh, empty SQLite WAL database hangs indefinitely under a trivial
-write load. Three OpenClaw-side fixes landed first (cron schedule collision,
-a host-side flock mutex, a message-body encoding bug) before this filesystem
-problem was isolated as the actual, unfixable-from-here root cause.
-
-The retirement premise above was that Hermes's memory capabilities were
-already covered by mac itself — true, but it did not account for OpenClaw's
-reliability. The hub's chat gateway was cut back to Hermes as a result.
+## Update (2026-09-05): Hermes runs as an external install, still not vendored
 
 **This is not a re-vendoring.** The mistake in 2026-08 was carrying a
 444k-line patched snapshot in-tree, not depending on Hermes at all. Hermes
@@ -139,70 +126,21 @@ distribution model.
 
 Management is entirely through Hermes's own CLI, installed to
 `~/.local/bin/hermes`: `hermes gateway install` / `hermes gateway stop` for
-the service, `hermes send` for one-off/cron message delivery, `hermes -z
-<prompt>` for one-shot agent turns, and `hermes claw migrate` for pulling an
-OpenClaw workspace's identity/memory/skills across (used once, live, to bring
-the hub's accumulated OpenClaw state into Hermes during the cutover).
-`deploy/openclaw/run-script-cron-job.py`'s two-stage host cron runner
-(`mac-cron-script-runner`) now drives its agent turn and delivery through
-this CLI instead of the OpenClaw sandbox wrappers; see that file's
-`_default_hermes_bin()` / `default_agent_runner()` / `message_args()`.
+the service, `hermes send` for one-off/cron message delivery, and `hermes -z
+<prompt>` for one-shot agent turns.
 
 ## Update (2026-09-05): repo-owned lifecycle automation restored
 
-The cutover above was driven by hand over SSH, once per node -- real, but not
-durable: a fresh node bootstrap, a redeploy, or a wiped `~/.hermes` would not
-reproduce it, and every step would need to be re-derived from memory. That gap
-is now closed by `deploy/hermes/install-hermes-gateway.sh`, the host-level
-sibling of `deploy/openclaw/install-openclaw-gateway.sh` (same
-`prepare`/`verify`/`finalize`/`withdraw` shape; no container lifecycle, since
-Hermes runs as a bare host process rather than an OpenShell sandbox). It
-codifies the same steps done by hand: run upstream's shell installer if
-`hermes` isn't already on `PATH`, port identity/memory/messaging credentials
-from OpenClaw (`mac human-interface port --from openclaw --to hermes --apply`),
-pull any existing OpenClaw workspace across (`hermes claw migrate`), set the
+`deploy/hermes/install-hermes-gateway.sh` codifies the host lifecycle with a
+`prepare`/`verify`/`finalize`/`withdraw` shape (no container lifecycle, since
+Hermes runs as a bare host process rather than an OpenShell sandbox): run
+upstream's shell installer if `hermes` isn't already on `PATH`, set the
 channel-behavior policy from fleet config (`slack.require_mention` /
 `slack.free_response_channels`, resolved from the `hermes.slack_home_channel_name`
 fleet-config field to a channel id via Hermes's own cached channel directory),
 and install the gateway as a properly supervised background service
-(`hermes gateway install`).
-
-This does not touch the deleted vendored-in-process model from the update
-above -- `install-hermes-gateway.sh` only shells out to the externally
-installed `hermes` CLI, the same as `run-script-cron-job.py` already does.
-
-## Update (2026-09-05): fleet-orchestrated Hermes dispatch closed the gap
-
-The gap above is closed. `deploy/fleet-node-install.sh`'s `MAC_CHAT_GATEWAY_IMPL`
-dispatch already had a `hermes` case in its systemd and launchd branches --
-restored from before the OpenClaw migration -- but it called dead code: a
-`hermes-gateway` wrapper that hand-rolled a systemd unit / launchd plist
-around `python -m mac.hermes_gateway`, the same deleted in-process module
-this whole document is about. That wrapper never ran against upstream's real
-distribution model. It has been replaced with calls into
-`deploy/hermes/install-hermes-gateway.sh prepare`/`finalize`/`withdraw` (the
-script from the update above), matching exactly how the systemd/launchd/
-supervisord branches already call `install-openclaw-gateway.sh` for OpenClaw.
-A `hermes` case was also added to the previously-openclaw-only supervisord
-branch, and to the `gateway_impl=none` cleanup paths on all three supervisors
-(so switching a Hermes-running node to a pure worker actually stops it via
-`hermes gateway stop`, not just by disabling dead identities).
-
-The one deliberate asymmetry: `hermes gateway install` writes and names its
-own supervision unit (`hermes` manages this internally, not
-`deploy/fleet-node-install.sh`), so the fleet's generic identity-keyed
-gateway-readiness sampler -- which proves the *other* implementations are
-running by checking a specific `HERMES_SERVICE_NAME`/`HERMES_LAUNCHD_LABEL`/
-`HERMES_SUPERVISORD_PROG` unit -- cannot see it under those names. Hermes is
-exempted from that specific check; its readiness is instead proven directly,
-before this generic sampler runs, by `hermes gateway status --deep` inside
-`finalize_hermes_gateway()`. `tests/test_fleet_node_gateway_readiness.py`
-covers this exemption explicitly.
-
-A new node's Hermes gateway now goes through the same transactional
-prepare/verify/finalize/withdraw cutover `deploy-mac-fleet.sh` already
-orchestrates for OpenClaw -- no more manual `install-hermes-gateway.sh
-prepare` runs against individual nodes.
+(`hermes gateway install`). It only shells out to the externally installed
+`hermes` CLI; it does not touch the deleted vendored-in-process model.
 
 ## Update (2026-10-01): fleet orchestration deleted
 

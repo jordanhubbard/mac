@@ -431,10 +431,8 @@ def _apply_versioned_humans_repair(store) -> None:
     from mac.schema_migrations import MIGRATIONS, Migration
 
     start = MIGRATIONS[0].sql.index("CREATE TABLE IF NOT EXISTS humans (")
-    end = MIGRATIONS[0].sql.index(
-        "CREATE TABLE IF NOT EXISTS openclaw_conversation_executions (",
-        start,
-    )
+    marker = "ON human_groups (group_name);"
+    end = MIGRATIONS[0].sql.index(marker, start) + len(marker)
     repair = Migration(
         # The next free ordinal after the binary's chain.
         "%04d_test_humans_repair" % (len(MIGRATIONS) + 1),

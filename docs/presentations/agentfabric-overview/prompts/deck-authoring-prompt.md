@@ -44,7 +44,7 @@ Order is marketing first, then mechanism:
 - Every claim must exist in `source-notes.md` with an authority in the tree. If
   a claim is not there, add it there first or drop it.
 - Re-use is stated as re-use: a dependency is named as a dependency, a design
-  reference as a reference. NemoClaw is a reference, not the deployed gateway.
+  reference as a reference.
   Unbounded elastic capacity is a proposal, not a shipped capability.
 - Never blur status. An accepted decision whose implementation is deferred is
   neither shipped nor proposed, and gets its own label.

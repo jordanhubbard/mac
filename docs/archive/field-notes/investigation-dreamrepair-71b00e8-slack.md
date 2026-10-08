@@ -18,7 +18,7 @@ skill, config, or deploy edits).
 The candidate carries the provider label `slack` only because a plain
 word-boundary regex (`\bslack\b`, confidence `0.35`, evidence_count `1`) matched
 the UI advertisement text
-`openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`
+`hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`
 composed in `ide/src/components/agentFacts.ts`. That text is a rendered channel
 projection, not a Slack transport, chat-gateway runtime, or persona-binding
 failure. The single supporting record is a `plan_decomposed` artifact — a
@@ -68,7 +68,7 @@ The matched string is assembled by `chatGatewayLabel` in
   fixture whose gateway advertises both channels enabled.
 - The channel segment is then joined with the other advertisement fields using
   `" · "` (`ide/src/components/agentFacts.ts:79`), yielding
-  `openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`.
+  `hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`.
 
 So `slack` is the *name of an advertised channel* rendered into a verified
 service advertisement string. The IDE frontend investigation that this chain
@@ -142,7 +142,7 @@ evidence-volume signal), not a corroborated fault.
   followed `chatGatewayLabel` (`ide/src/components/agentFacts.ts:52`,
   `ide/src/components/agentFacts.ts:62`, `ide/src/components/agentFacts.ts:77`,
   `ide/src/components/agentFacts.ts:79`) to reproduce
-  `openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`.
+  `hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`.
 - Cross-checked the existing IDE-frontend note
   (`ide/AGENT_MESH_FINDINGS.md`) which independently reaches the "already-correct
   (not a real defect)" verdict for the same projection.

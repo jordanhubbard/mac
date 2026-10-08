@@ -3,7 +3,7 @@
 `mac` is the durable control plane. Hermes is the human-facing agent runtime.
 The system needs both roles.
 
-Without Hermes, OpenClaw, or an equivalent runtime, the control plane can track
+Without Hermes, the control plane can track
 tasks and machines but has no conversational continuity, adaptive personality,
 or lived memory. `hub`, `worker-1`, `worker-2`, and similar agents are not just
 worker names; they are Hermes identities with souls, user context, prior

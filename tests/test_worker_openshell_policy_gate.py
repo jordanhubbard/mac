@@ -183,8 +183,6 @@ def test_the_hold_reaches_the_outer_loop_and_no_task_is_claimed(mac_home, tmp_pa
         ("_local_repo_update_dispatch_blocker", None),
         ("_maybe_start_workspace_gc", None),
         ("_maybe_sync_service_claims", None),
-        ("_maintain_openclaw_gateway_leases", None),
-        ("_process_human_delivery_outbox", None),
         ("_process_control_messages", None),
         ("apply_pending_repo_update_if_idle", None),
         ("_observe_policy_once", None),

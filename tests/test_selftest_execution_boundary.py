@@ -48,12 +48,12 @@ def _run_self_test(tmp_path, monkeypatch, sandbox_env, *, openshell_on_path=Fals
     """Exec the startup self-test for a pure worker with ``sandbox_env`` applied.
 
     Everything unrelated to the execution boundary is configured to pass: no
-    mandatory shared services, no hub heartbeat, and a non-OpenClaw gateway
-    impl, so the only thing that can fail is the boundary check under test.
+    mandatory shared services, no hub heartbeat, and no chat gateway,
+    so the only thing that can fail is the boundary check under test.
     """
     home = tmp_path / "home"
     mac_home = home / ".mac"
-    (mac_home / "openclaw" / "managed").mkdir(parents=True, exist_ok=True)
+    mac_home.mkdir(parents=True, exist_ok=True)
     (mac_home / "bin").mkdir(parents=True, exist_ok=True)
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
     report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
@@ -109,7 +109,7 @@ def _run_self_test(tmp_path, monkeypatch, sandbox_env, *, openshell_on_path=Fals
         subprocess,
         "run",
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("a pure worker must not invoke openclaw-agent")
+            AssertionError("a pure worker must not spawn a subprocess")
         ),
     )
 

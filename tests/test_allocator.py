@@ -80,7 +80,13 @@ def test_execution_boundary_reads_three_states_not_two():
             machine_trusted=True,
         )
 
-    proven = {"openclaw_runtime": {"confinement": {"provider": "openshell"}, "verified": True}}
+    proven = {
+        "report_repository_executor_attestation": {
+            "platform": "linux",
+            "isolation_posture": "landlock_enforced",
+            "verified": True,
+        }
+    }
     contradicted = {"openshell_required": False}
     # Proof outranks the contradiction: a worker that verified a sandbox is
     # usable whatever a stale requirement flag says.
@@ -93,16 +99,12 @@ def test_execution_boundary_reads_three_states_not_two():
     assert agent({"openshell_required": True}).execution_boundary_verified is True
 
 
-def test_a_macos_host_install_attestation_proves_the_boundary_without_openclaw_runtime():
-    """``openclaw_runtime.confinement`` describes the chat gateway's own
-    sandbox, not this agent's task-execution boundary -- it was only ever a
-    usable proxy while every node ran OpenClaw as that gateway. Confirmed
-    live 2026-09-06: rocky's chat gateway moved to Hermes, a normal
-    re-registration cleared its now-stale ``openclaw_runtime`` value, and a
-    fully healthy macOS host-install worker (ADR 0015: no container is
-    possible on darwin, so ``macos_host`` posture *is* the boundary) read as
-    having no execution boundary at all -- even though its own executor had
-    already reported a verified attestation for exactly this.
+def test_a_macos_host_install_attestation_proves_the_boundary():
+    """Only the executor's own attestation proves the task-execution
+    boundary. A fully healthy macOS host-install worker (ADR 0015: no
+    container is possible on darwin, so ``macos_host`` posture *is* the
+    boundary) must read as verified from that attestation alone, and a
+    chat gateway's own container advertisement proves nothing.
     """
 
     def agent(resources):
@@ -156,3 +158,8 @@ def test_a_macos_host_install_attestation_proves_the_boundary_without_openclaw_r
     assert agent(linux_landlock).execution_boundary_verified is True
     assert agent(unverified_attestation).execution_boundary_verified is False
     assert agent(unrecognized_posture).execution_boundary_verified is False
+    gateway_container_only = {
+        "openshell_required": False,
+        "chat_gateway": {"confinement": {"provider": "openshell"}, "verified": True},
+    }
+    assert agent(gateway_container_only).execution_boundary_verified is False

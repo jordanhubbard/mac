@@ -195,7 +195,6 @@ request and response definitions.
 | `POST` | `/observability/prune` | Prune Observability |
 | `GET` | `/observability/stream` | Observability Stream |
 | `GET` | `/observability/summary` | Observability Summary |
-| `GET` | `/openclaw-executions/{execution_id}` | Get Openclaw Execution |
 | `GET` | `/openshell/policies` | List Openshell Policies |
 | `POST` | `/openshell/policies` | Create Openshell Policy |
 | `DELETE` | `/openshell/policies/{policy_id}` | Delete Openshell Policy |
@@ -208,7 +207,6 @@ request and response definitions.
 | `GET` | `/persona-instances` | List Persona Instances |
 | `POST` | `/persona-instances` | Register Persona Instance |
 | `GET` | `/persona-instances/{instance_id}/context` | Persona Context |
-| `POST` | `/persona-instances/{instance_id}/openclaw-executions` | Begin Openclaw Execution |
 | `GET` | `/persona-instances/{instance_id}/runtime-proof` | Persona Runtime Proof |
 | `POST` | `/persona-instances/{instance_id}/runtime-proof` | Persona Runtime Proof With Startup |
 | `POST` | `/persona-instances/{instance_id}/tasks` | Create Interaction Task |
@@ -312,13 +310,12 @@ request and response definitions.
 | `GET` | `/v1/agents/{agent_id}/config-flags` | List Agent Config Flags |
 | `DELETE` | `/v1/agents/{agent_id}/config-flags/{flag}` | Clear Agent Config Flag |
 | `PUT` | `/v1/agents/{agent_id}/config-flags/{flag}` | Set Agent Config Flag |
-| `GET` | `/v1/agents/{agent_id}/continuity` | Get Openclaw Continuity Context |
 | `PUT` | `/v1/agents/{agent_id}/deploy-config` | Report Agent Deploy Config |
 | `POST` | `/v1/agents/{agent_id}/deregister` | Deregister Agent Route |
 | `GET` | `/v1/agents/{agent_id}/effective-config` | Get Agent Effective Config |
 | `POST` | `/v1/agents/{agent_id}/memory` | Store Agent Memory |
-| `DELETE` | `/v1/agents/{agent_id}/mood` | Clear Openclaw Agent Mood |
-| `POST` | `/v1/agents/{agent_id}/mood` | Set Openclaw Agent Mood |
+| `DELETE` | `/v1/agents/{agent_id}/mood` | Clear Bound Agent Mood |
+| `POST` | `/v1/agents/{agent_id}/mood` | Set Bound Agent Mood |
 | `GET` | `/vector-refs` | List Vector Refs |
 | `POST` | `/vector-refs` | Record Vector Ref |
 | `GET` | `/workflows` | List Workflows |

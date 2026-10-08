@@ -12,10 +12,9 @@
 ## Amendment — 2026-08-17
 
 ADR 0001 accepted vendoring a pruned Hermes runtime into `src/mac/_hermes/`
-and running it **in-process**. That premise ended when the live fleet
-converged on OpenClaw as the only active gateway
-(`gateway_ownership.services = {hermes: inactive, nemoclaw: inactive,
-openclaw: active}` per `docs/hermes-retirement-premises.md`).
+and running it **in-process**. That premise ended: Hermes is now installed
+externally (upstream's own installer) and is the only human interface and
+chat gateway; nothing in `src/mac/` runs it in-process.
 
 PR #377 removed the inactive snapshot (~444k lines), `hermes_vendor.py`,
 `hermes_gateway.py`, `deploy/hermes/` (including `SNAPSHOT.md` and the
@@ -26,8 +25,8 @@ pre-deletion checks (a)–(d) and the post-removal inventory.
 
 Residual (out of scope for the fate decision): a legacy Hermes gateway
 install path in `deploy/fleet-node-install.sh` still references
-`python -m mac.hermes_gateway` (module absent). It is inert on the OpenClaw
-fleet and belongs in a separate deploy cleanup.
+`python -m mac.hermes_gateway` (module absent). It is inert and belongs in a
+separate deploy cleanup.
 
 The body below is the original accepted decision and remains historical
 context for why the tree was once carried in-tree.
@@ -45,7 +44,7 @@ The premise is **two-thirds right, and the right two-thirds matter most.**
 "Single coherent codebase" is the correct instinct **for the agent runtime**.
 It is the *wrong* instinct for tokenhub, and it is *irrelevant* to mac's
 own internal bugs. Conflating all three is how the last two efforts
-(openclaw, ACC) became "too complicated."
+(including ACC) became "too complicated."
 
 ## What is actually true today (ground truth, not assumptions)
 
@@ -131,7 +130,7 @@ codebase" aesthetic. That move is the ACC failure mode.
 
 ## The decision, and why this is not failure #3
 
-ACC (714 Rust files) and openclaw were abandoned for being "too complicated."
+ACC (714 Rust files) was abandoned for being "too complicated."
 The reflex worry is that absorbing 350k LOC of Hermes is *more* complexity, not
 less. The resolution:
 

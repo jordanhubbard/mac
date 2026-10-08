@@ -88,7 +88,7 @@ None. Corroborating checks:
   "slack"; the only matches are unrelated `deployment_learning:mac` records
   (GPU passthrough, OpenShell bootstrap, truncation handling).
 - **Task search**: the other `slack`-mentioning tasks concern the IDE
-  "Slack advertisement projection" UI element, OpenClaw/NemoClaw chat-gateway
+  "Slack advertisement projection" UI element, chat-gateway
   persona work, and `notifier_service` test coverage — none is a Slack
   messaging-provider fault (auth, delivery, API error, config).
 - **Repository**: a case-insensitive scan of the mac worktree finds no Slack

@@ -58,7 +58,7 @@ def seed(cp: ControlPlane) -> None:
         "failed": 207,
         "cancelled": 352,
     }
-    projects = ["mac", "openclaw", "hermes", "fleet-ops"]
+    projects = ["mac", "hermes", "fleet-ops"]
     for state, total in shape.items():
         for index in range(total):
             task = cp.create_task(

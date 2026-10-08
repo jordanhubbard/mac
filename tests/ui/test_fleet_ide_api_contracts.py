@@ -461,8 +461,8 @@ def test_workbench_ide_state_compresses_and_excludes_virtual_service_agents():
         physical_machine.id,
         "worker",
         resources={
-            "openclaw_runtime": {
-                "implementation": "openclaw",
+            "chat_gateway": {
+                "implementation": "hermes",
                 "verified": True,
             },
             "representation": {
@@ -498,7 +498,7 @@ def test_workbench_ide_state_compresses_and_excludes_virtual_service_agents():
     assert [item["agent"]["id"] for item in body["agents"]] == [physical.id]
     assert body["overview"]["counts"]["agents"] == 1
     resources = body["agents"][0]["agent"]["resources"]
-    assert resources["openclaw_runtime"]["implementation"] == "openclaw"
+    assert resources["chat_gateway"]["implementation"] == "hermes"
     assert resources["representation"]["mode"] == "delegated"
 
 

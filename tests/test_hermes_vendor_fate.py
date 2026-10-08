@@ -115,14 +115,6 @@ def test_b_agent_command_has_no_hermes_cli_main_branch() -> None:
             assert "hermes_cli.main" not in node.value
 
 
-def test_c_openclaw_continuity_does_not_point_at_vendor_plugins_or_skills() -> None:
-    migrate = ROOT / "deploy" / "openclaw" / "migrate-hermes-continuity.py"
-    text = migrate.read_text(encoding="utf-8")
-    assert "_hermes/plugins" not in text
-    assert "_hermes/skills" not in text
-    assert "src/mac/_hermes" not in text
-
-
 def test_d_snapshot_obligation_and_revendor_job_are_gone() -> None:
     assert not (ROOT / "deploy" / "hermes" / "SNAPSHOT.md").exists()
     workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))

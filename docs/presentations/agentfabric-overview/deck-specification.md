@@ -48,8 +48,8 @@ same commit. Factual claims trace to [source-notes.md](source-notes.md).
 | # | Title | Visual | Must say |
 | --- | --- | --- | --- |
 | 6 | Built on the stack, not instead of it. | section divider | Isolation, observability, inference, containers, scheduling, and coding agents already exist and are maintained by people whose full-time job they are. |
-| 7 | Where AgentFabric leverages NVIDIA technology. | control-plane bar over four project columns | OpenShell → execution security (Landlock, seccomp, deny-by-default L7 egress, one guardrail authority). NeMo Relay → optional observability mapping. HGX → bounded, receipt-bearing elastic capacity. NemoClaw → compatibility and design reference for the conversational boundary, not the deployed implementation. |
-| 8 | Where AgentFabric leverages open source. | four labelled columns of project bullets | STATE: PostgreSQL, SQLite (local), versioned migrations. SERVICE: FastAPI, Uvicorn, Pydantic, httpx. EXECUTION: Docker Engine / Moby, Kubernetes, OpenClaw, Codex CLI · OpenCode. PROTOCOL: ACP, A2A agent cards, MCP, OCSF event streams. Every box is a dependency, not a fork. |
+| 7 | Where AgentFabric leverages NVIDIA technology. | control-plane bar over three project columns | OpenShell → execution security (Landlock, seccomp, deny-by-default L7 egress, one guardrail authority). NeMo Relay → optional observability mapping. HGX → bounded, receipt-bearing elastic capacity. |
+| 8 | Where AgentFabric leverages open source. | four labelled columns of project bullets | STATE: PostgreSQL, SQLite (local), versioned migrations. SERVICE: FastAPI, Uvicorn, Pydantic, httpx. EXECUTION: Docker Engine / Moby, Kubernetes, Hermes Agent, Codex CLI · OpenCode. PROTOCOL: ACP, A2A agent cards, MCP, OCSF event streams. Every box is a dependency, not a fork. |
 | 9 | What AgentFabric adds that nothing above provides. | five numbered mechanism cards | Durable ledger, named gates, route ladder, evidence closure, break-glass. Agent output is a candidate; these five are how it earns the right to land. |
 | 10 | The trust boundary, drawn explicitly. | inside-the-sandbox panel beside a never-crosses panel | Owned and reaped process tree, allow-listed paths, syscall filter, declared egress, secrets as handles resolved at use. Never crosses: undeclared destinations, raw credential values, another project's repository, self-approval. |
 
@@ -75,7 +75,6 @@ same commit. Factual claims trace to [source-notes.md](source-notes.md).
 
 ## Prohibitions
 
-- Do not describe NemoClaw as the deployed gateway implementation.
 - Do not describe the AgentBus as the system of record.
 - Do not present slide 18's counts as maturity, or carry them forward without
   re-measuring.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 
 import pytest
@@ -46,18 +45,22 @@ def test_runtime_query_contains_request_and_bound() -> None:
     query = _Worker()._reflect_runtime_query("describe memory")
     assert "describe memory" in query
     assert "at or below 300 words" in query
-    assert "OpenClaw runtime" in query
+    assert "Hermes runtime" in query
 
 
-def test_run_reflect_extracts_nested_json_text(monkeypatch) -> None:
-    payload = {"result": {"messages": [{"content": "runtime answer"}]}}
-    monkeypatch.setattr(
-        "mac.worker_reflect.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, stdout=json.dumps(payload), stderr=""
-        ),
-    )
+def test_run_reflect_runs_hermes_oneshot_and_returns_plain_stdout(monkeypatch) -> None:
+    seen = {}
+
+    def fake_run(*args, **kwargs):
+        seen["argv"] = args[0]
+        return subprocess.CompletedProcess(args[0], 0, stdout="runtime answer\n", stderr="")
+
+    monkeypatch.setenv("MAC_HERMES_BIN", "/opt/hermes/bin/hermes")
+    monkeypatch.setattr("mac.worker_reflect.subprocess.run", fake_run)
     assert _Worker()._run_reflect_query("status", stream_id="stream/1") == "runtime answer"
+    argv = seen["argv"]
+    assert argv[:2] == ["/opt/hermes/bin/hermes", "--oneshot"]
+    assert "status" in argv[2]
 
 
 def test_run_reflect_timeout_is_observable(monkeypatch) -> None:

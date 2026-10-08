@@ -29,7 +29,7 @@ core leverage behind the OpenAI-compatible surface `mac`/Hermes already speak
 becomes **one of two interchangeable backends**, selected by config. **Drop the
 admin UI** (re-imagine routing visibility in the evolving hub UI, fed by the
 [[hu-05]] decision feed → native observations). Keep it **minimal and optional**
-— this is explicitly *not* a feature-parity rewrite (that is the ACC/openclaw
+— this is explicitly *not* a feature-parity rewrite (that is the ACC
 "too complicated" trap ADR 0001 warned about).
 
 ## Decision

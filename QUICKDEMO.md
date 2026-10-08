@@ -178,16 +178,16 @@ hgx ssh Hazel -- 'grep MAC_TAILSCALE_NETWORKING_MODE ~/.mac/mac.env'
 
 ## 4. Staff the warren
 
-Every agent runs **OpenClaw**. A personality is a `SOUL.md` file — one of the
-three identity documents OpenClaw carries (`SOUL.md`, `USER.md`, `MEMORY.md`,
+Every agent runs **Hermes**. A personality is a `SOUL.md` file — one of the
+three identity documents Hermes carries (`SOUL.md`, `USER.md`, `MEMORY.md`,
 `src/mac/human_interface_profile.py:58`). `SOUL.md` is the personality; the
 other two are the operator profile and accumulated memory.
 
-Write each soul into the agent's OpenClaw identity directory, which is
-`$MAC_HOME/openclaw/workspace` (`src/mac/mac_paths.py:116`):
+Write each soul into the agent's Hermes home, which is `$HERMES_HOME`
+(default `~/.hermes`, resolved by `mac_paths.gateway_home()`):
 
 ```bash
-hgx ssh mac-demo-hazel -- 'mkdir -p ~/.mac/openclaw/workspace && cat > ~/.mac/openclaw/workspace/SOUL.md' <<'SOUL'
+hgx ssh mac-demo-hazel -- 'mkdir -p ~/.hermes && cat > ~/.hermes/SOUL.md' <<'SOUL'
 # Hazel
 
 Chief Rabbit by consent, not by force. You lead a warren that followed you
@@ -211,18 +211,16 @@ Then register each one. `soul_ref` is the **path to that SOUL.md** and
 
 ```bash
 mac admin persona register <tenant_id> hazel \
-  --soul-ref ~/.mac/openclaw/workspace/SOUL.md \
-  --memory-scope ~/.mac/openclaw
+  --soul-ref ~/.hermes/SOUL.md \
+  --memory-scope ~/.hermes
 mac admin hermes register <tenant_id> hazel --persona-id <persona_id>
 mac agent register <machine_id> hazel --persona-instance-id <instance_id>
 ```
 
 Repeat for `fiver` and `bigwig`.
 
-**Two naming traps in front of an audience.** `mac persona` and `mac hermes`
-both answer *"moved under `admin`"* — type `mac admin …` directly. And the
-persona-instance command is still called `hermes` even though nothing here runs
-Hermes; it registers a generic persona instance.
+**Naming trap in front of an audience.** `mac persona` and `mac hermes`
+both answer *"moved under `admin`"* — type `mac admin …` directly.
 
 ## 5. Register artlab
 

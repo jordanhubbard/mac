@@ -360,152 +360,6 @@ if value != ["/openshell-supervisor"]:
   log "OpenShell supervisor: $version_output"
 }
 
-rollback_openclaw_promotion() {
-  local host_root="$1" archive="$2" installed_workspace="$3" installed_state="$4"
-  local archived_workspace="$5" archived_state="$6" failed=0
-  if [ "$installed_workspace" = 1 ] && ! rm -rf "$host_root/workspace"; then
-    failed=1
-  fi
-  if [ "$installed_state" = 1 ] && ! rm -rf "$host_root/state"; then
-    failed=1
-  fi
-  if [ "$archived_workspace" = 1 ] \
-      && ! mv -f "$archive/workspace" "$host_root/workspace"; then
-    failed=1
-  fi
-  if [ "$archived_state" = 1 ] \
-      && ! mv -f "$archive/state" "$host_root/state"; then
-    failed=1
-  fi
-  [ "$failed" = 0 ]
-}
-
-promote_recovered_openclaw_state() {
-  local recovered="$1" sandbox_name="$2" source_kind="$3"
-  local host_root="$MAC_HOME/openclaw" archive staging stamp
-  local archived_workspace=0 archived_state=0 installed_workspace=0 installed_state=0
-  [ -d "$recovered/workspace" ] || {
-    echo "ERROR: recovered OpenClaw workspace is absent for $sandbox_name" >&2
-    return 1
-  }
-  [ -d "$recovered/state" ] || {
-    echo "ERROR: recovered OpenClaw state is absent for $sandbox_name" >&2
-    return 1
-  }
-  stamp="pre-openshell-upgrade-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  archive="$host_root/archive/$stamp"
-  staging="$host_root/.upgrade-staging-$stamp"
-  if ! mkdir -p "$host_root" "$host_root/archive" \
-      || ! mkdir "$archive" \
-      || ! mkdir "$staging" \
-      || ! chmod 0700 "$host_root" "$host_root/archive" "$archive" "$staging" \
-      || ! cp -rf "$recovered/workspace" "$staging/workspace" \
-      || ! cp -rf "$recovered/state" "$staging/state" \
-      || ! chmod -R go-rwx "$staging/workspace" "$staging/state" \
-      || ! printf 'sandbox=%s\nsource=%s\nrecovered_at=%s\n' \
-        "$sandbox_name" "$source_kind" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        > "$archive/recovery.txt" \
-      || ! chmod 0600 "$archive/recovery.txt"; then
-    rm -rf "$staging"
-    echo "ERROR: could not stage recovered OpenClaw state for $sandbox_name" >&2
-    return 1
-  fi
-  if [ -e "$host_root/workspace" ]; then
-    if ! mv -f "$host_root/workspace" "$archive/workspace"; then
-      rm -rf "$staging"
-      echo "ERROR: could not archive the existing OpenClaw workspace" >&2
-      return 1
-    fi
-    archived_workspace=1
-  fi
-  if [ -e "$host_root/state" ]; then
-    if ! mv -f "$host_root/state" "$archive/state"; then
-      rollback_openclaw_promotion "$host_root" "$archive" 0 0 \
-        "$archived_workspace" 0 || true
-      rm -rf "$staging"
-      echo "ERROR: could not archive the existing OpenClaw state" >&2
-      return 1
-    fi
-    archived_state=1
-  fi
-  if ! mv -f "$staging/workspace" "$host_root/workspace"; then
-    rollback_openclaw_promotion "$host_root" "$archive" 0 0 \
-      "$archived_workspace" "$archived_state" || true
-    rm -rf "$staging"
-    echo "ERROR: could not install the recovered OpenClaw workspace" >&2
-    return 1
-  fi
-  installed_workspace=1
-  if ! mv -f "$staging/state" "$host_root/state"; then
-    rollback_openclaw_promotion "$host_root" "$archive" "$installed_workspace" 0 \
-      "$archived_workspace" "$archived_state" || true
-    rm -rf "$staging"
-    echo "ERROR: could not install the recovered OpenClaw state" >&2
-    return 1
-  fi
-  installed_state=1
-  rm -rf "$staging"
-  if ! chmod -R go-rwx "$host_root/workspace" "$host_root/state" \
-      || ! touch "$OSH_DIR/upgrade-recovery.log" \
-      || ! chmod 0600 "$OSH_DIR/upgrade-recovery.log" \
-      || ! printf '%s\tsandbox=%s\tsource=%s\tarchive=%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sandbox_name" "$source_kind" "$archive" \
-        >> "$OSH_DIR/upgrade-recovery.log"; then
-    if ! rollback_openclaw_promotion "$host_root" "$archive" \
-        "$installed_workspace" "$installed_state" \
-        "$archived_workspace" "$archived_state"; then
-      echo "ERROR: OpenClaw promotion rollback also failed; operator recovery is required" >&2
-    fi
-    echo "ERROR: could not finalize recovered OpenClaw state for $sandbox_name" >&2
-    return 1
-  fi
-  log "checkpointed $sandbox_name before OpenShell upgrade ($source_kind; prior host state archived at $archive)"
-}
-
-checkpoint_openclaw_with_cli() {
-  local cli="$1" sandbox_name="$2" recovered
-  if ! recovered="$(mktemp -d "${TMPDIR:-/tmp}/mac-openclaw-upgrade.XXXXXX")" \
-      || [ -z "$recovered" ]; then
-    echo "ERROR: could not allocate an OpenClaw API checkpoint directory" >&2
-    return 1
-  fi
-  if ! openshell_local_gateway "$cli" sandbox download \
-      "$sandbox_name" /sandbox/workspace "$recovered/workspace" </dev/null \
-      || ! openshell_local_gateway "$cli" sandbox download \
-      "$sandbox_name" /sandbox/state "$recovered/state" </dev/null; then
-    rm -rf "$recovered"
-    echo "ERROR: could not checkpoint $sandbox_name through the existing OpenShell API" >&2
-    return 1
-  fi
-  if ! promote_recovered_openclaw_state "$recovered" "$sandbox_name" "openshell-api"; then
-    rm -rf "$recovered"
-    return 1
-  fi
-  rm -rf "$recovered"
-}
-
-checkpoint_openclaw_with_docker() {
-  local container_id="$1" sandbox_name="$2" recovered
-  if ! recovered="$(mktemp -d "${TMPDIR:-/tmp}/mac-openclaw-docker-upgrade.XXXXXX")" \
-      || [ -z "$recovered" ]; then
-    echo "ERROR: could not allocate an OpenClaw Docker checkpoint directory" >&2
-    return 1
-  fi
-  if ! "$OSH_DOCKER_BIN" cp \
-      "$container_id:/sandbox/workspace" "$recovered/workspace" \
-      || ! "$OSH_DOCKER_BIN" cp \
-      "$container_id:/sandbox/state" "$recovered/state"; then
-    rm -rf "$recovered"
-    echo "ERROR: could not copy owner state from skewed OpenClaw container $container_id" >&2
-    return 1
-  fi
-  if ! promote_recovered_openclaw_state "$recovered" "$sandbox_name" "docker-schema-recovery"; then
-    rm -rf "$recovered"
-    return 1
-  fi
-  rm -rf "$recovered"
-}
-
 write_managed_openshell_container_ids() {
   local scope="$1" output="$2"
   if [ "$scope" = all ]; then
@@ -548,34 +402,6 @@ validate_managed_container_quiescence() {
     return 1
   done < "$inventory"
   rm -f "$inventory"
-}
-
-running_openclaw_sandbox_present() {
-  local container_id sandbox_name inventory
-  if ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-running.XXXXXX")" \
-      || [ -z "$inventory" ]; then
-    echo "ERROR: could not allocate managed-container inventory" >&2
-    return 2
-  fi
-  if ! write_managed_openshell_container_ids running "$inventory"; then
-    rm -f "$inventory"
-    return 2
-  fi
-  while IFS= read -r container_id; do
-    [ -n "$container_id" ] || continue
-    if ! sandbox_name="$("$OSH_DOCKER_BIN" inspect --format \
-        '{{ index .Config.Labels "openshell.ai/sandbox-name" }}' \
-        "$container_id")"; then
-      rm -f "$inventory"
-      echo "ERROR: could not inspect managed OpenShell container $container_id" >&2
-      return 2
-    fi
-    case "$sandbox_name" in
-      mac-openclaw-*) rm -f "$inventory"; return 0 ;;
-    esac
-  done < "$inventory"
-  rm -f "$inventory"
-  return 1
 }
 
 mac_owned_gateway_wrapper() {
@@ -908,7 +734,7 @@ PY
 }
 
 retire_managed_sandboxes_via_api() {
-  local cli="$1" inventory="$2" plan remaining containers sandbox_name action openclaw_count
+  local cli="$1" inventory="$2" plan remaining containers sandbox_name action
   local retirement_poll_status=0
   local retirement_timeout_seconds="${3:-30}"
   if ! plan="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-upgrade-plan.XXXXXX")" \
@@ -916,8 +742,7 @@ retire_managed_sandboxes_via_api() {
     echo "ERROR: could not allocate the API retirement plan" >&2
     return 1
   fi
-  if ! "$MAC_HOME/venv/bin/python" - "$inventory" \
-      "${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}" > "$plan" <<'PY'
+  if ! "$MAC_HOME/venv/bin/python" - "$inventory" > "$plan" <<'PY'
 import json
 import os
 import re
@@ -925,7 +750,6 @@ import sys
 from pathlib import Path
 
 value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-expected_openclaw = sys.argv[2]
 if not isinstance(value, list):
     raise SystemExit("OpenShell sandbox inventory is not a list")
 plan = []
@@ -940,13 +764,7 @@ for item in value:
         raise SystemExit("OpenShell sandbox labels are malformed")
     if str(item.get("phase") or "").strip().lower() != "ready":
         raise SystemExit("non-ready OpenShell sandbox blocks the gateway upgrade")
-    if labels.get("mac.role") == "openclaw-gateway":
-        if not expected_openclaw or name != expected_openclaw:
-            raise SystemExit("role-labeled OpenClaw sandbox does not match the expected identity")
-        action = "openclaw"
-    elif name.startswith("mac-openclaw-"):
-        raise SystemExit("prefix-matching sandbox lacks exact OpenClaw ownership proof")
-    elif labels.get("mac.owner") == "mac":
+    if labels.get("mac.owner") == "mac":
         kind = str(labels.get("mac.kind") or "").strip()
         disposable_patterns = {
             "task": r"mac-task-[A-Za-z0-9._-]+",
@@ -979,10 +797,8 @@ for item in value:
         action = "disposable"
     else:
         raise SystemExit("unowned or retained OpenShell sandbox blocks the gateway upgrade")
-    plan.append((0 if action == "openclaw" else 1, action, name))
-if sum(1 for _, action, _ in plan if action == "openclaw") > 1:
-    raise SystemExit("multiple OpenClaw sandboxes require operator reconciliation")
-for _, action, name in sorted(plan):
+    plan.append((action, name))
+for action, name in sorted(plan):
     print("%s\t%s" % (action, name))
 PY
   then
@@ -992,12 +808,6 @@ PY
 
   while IFS=$'\t' read -r action sandbox_name; do
     [ -n "$sandbox_name" ] || continue
-    if [ "$action" = openclaw ]; then
-      checkpoint_openclaw_with_cli "$cli" "$sandbox_name" || {
-        rm -f "$plan"
-        return 1
-      }
-    fi
     if ! openshell_local_gateway "$cli" sandbox delete "$sandbox_name" >/dev/null; then
       rm -f "$plan"
       echo "ERROR: could not retire managed sandbox $sandbox_name before gateway upgrade" >&2
@@ -1044,8 +854,7 @@ PY
 }
 
 retire_managed_sandboxes_via_docker() {
-  local plan inventory container_id status sandbox_name action openclaw_count=0
-  local expected_openclaw="${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}"
+  local plan inventory container_id status sandbox_name action
   if ! plan="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-docker-plan.XXXXXX")" \
       || [ -z "$plan" ] \
       || ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-containers.XXXXXX")" \
@@ -1082,9 +891,6 @@ retire_managed_sandboxes_via_docker() {
     # is stopped. Any future family fails closed until explicitly reviewed.
     if [[ "$sandbox_name" =~ ^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|rs|gpu-smoke|gs|security-probe|sp)-[A-Za-z0-9._-]+$ ]]; then
       action=disposable
-    elif [ -n "$expected_openclaw" ] && [ "$sandbox_name" = "$expected_openclaw" ]; then
-      action=openclaw
-      openclaw_count=$((openclaw_count + 1))
     else
       rm -f "$plan" "$inventory"
       echo "ERROR: skewed OpenShell container $sandbox_name is outside the exact recovery allowlist" >&2
@@ -1093,20 +899,9 @@ retire_managed_sandboxes_via_docker() {
     printf '%s\t%s\t%s\n' "$action" "$container_id" "$sandbox_name" >> "$plan"
   done < "$inventory"
   rm -f "$inventory"
-  if [ "$openclaw_count" -gt 1 ]; then
-    rm -f "$plan"
-    echo "ERROR: multiple skewed OpenClaw containers require operator reconciliation" >&2
-    return 1
-  fi
 
   while IFS=$'\t' read -r action container_id sandbox_name; do
     [ -n "$container_id" ] || continue
-    if [ "$action" = openclaw ]; then
-      checkpoint_openclaw_with_docker "$container_id" "$sandbox_name" || {
-        rm -f "$plan"
-        return 1
-      }
-    fi
     if ! "$OSH_DOCKER_BIN" rm "$container_id" >/dev/null; then
       rm -f "$plan"
       echo "ERROR: could not remove exact skewed OpenShell container $container_id" >&2
@@ -1142,18 +937,6 @@ retire_managed_sandboxes_before_upgrade() {
   fi
   if [ -x "$cli" ] \
       && openshell_local_gateway "$cli" sandbox list --limit 1000 --output json > "$inventory" 2>/dev/null; then
-    if running_openclaw_sandbox_present; then
-      rm -f "$inventory"
-      echo "ERROR: OpenClaw service is still running; stop it before OpenShell upgrade" >&2
-      return 1
-    else
-      local openclaw_probe_rc=$?
-      if [ "$openclaw_probe_rc" -ne 1 ]; then
-        rm -f "$inventory"
-        echo "ERROR: could not prove the running OpenClaw container inventory" >&2
-        return 1
-      fi
-    fi
     if ! retire_managed_sandboxes_via_api "$cli" "$inventory"; then
       rm -f "$inventory"
       echo "ERROR: existing OpenShell API could not retire its managed sandboxes" >&2
@@ -2052,9 +1835,9 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
   # script already uses for its own openshell_local_gateway() calls (line
   # ~120). Without this, mac-agent's executor inherits whatever gateway the
   # openshell CLI's own persisted "active gateway" selection happens to be --
-  # local, unrelated state any other process (e.g. a NemoClaw pilot) can
-  # silently repoint. Live-found on natasha (2026-09-04): the active gateway
-  # drifted to a NemoClaw pilot endpoint, so every coding-agent sandbox
+  # local, unrelated state any other process can silently repoint.
+  # Live-found on natasha (2026-09-04): the active gateway drifted to an
+  # unrelated pilot endpoint, so every coding-agent sandbox
   # preflight probe uniformly failed (all 5 configured agents) with no
   # per-agent credential explanation, because they were all quietly hitting
   # the wrong gateway.

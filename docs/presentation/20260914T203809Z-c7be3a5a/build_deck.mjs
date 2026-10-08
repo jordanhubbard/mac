@@ -33,7 +33,7 @@ page('A durable request-to-result path',[
 ],2);
 page('Hermes conversation; MAC execution',[
  ['Preserve the selected chat profile','Deployment uses the upstream Hermes service and its configured home.'],
- ['Health follows the configured runtime','Retired OpenClaw probes no longer degrade Hermes workers.'],
+ ['Health follows the configured runtime','Retired gateway probes no longer degrade Hermes workers.'],
  ['Recovery stays independently observable','The crash observer uses its own managed Python 3.14.7 interpreter.'],
 ],3);
 page('Isolate concurrent verification',[

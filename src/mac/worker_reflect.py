@@ -11,14 +11,10 @@ see no change.
 
 from __future__ import annotations
 
-import json
 import os
-import re
 import subprocess
 from pathlib import Path
-
-from mac import mac_paths
-from typing import Any, Dict
+from typing import Any, Dict, List
 from urllib.parse import quote, urlencode
 
 from mac.agentbus_control import (
@@ -39,6 +35,18 @@ def _bounded_float(value: Any, minimum: float, maximum: float, default: float) -
     return min(maximum, max(minimum, parsed))
 
 
+def hermes_oneshot_command(prompt: str) -> List[str]:
+    """argv for one non-interactive turn of this host's Hermes runtime.
+
+    ``hermes --oneshot PROMPT`` runs a single turn and prints the reply. The
+    launcher is the one the Hermes installer owns (``~/.local/bin/hermes``);
+    ``MAC_HERMES_BIN`` overrides it. The prompt goes straight through argv,
+    which no shell interprets, so multi-line text needs no escaping.
+    """
+    binary = os.environ.get("MAC_HERMES_BIN") or str(Path.home() / ".local" / "bin" / "hermes")
+    return [binary, "--oneshot", prompt]
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -54,7 +62,7 @@ class ReflectMixin:
     """
 
     def _handle_reflect_request_stream(self, stream: JsonDict) -> JsonDict:
-        """Dispatch a reflect request to this agent's OpenClaw runtime.
+        """Dispatch a reflect request to this agent's Hermes runtime.
 
         The request payload may include a *query* field.  A bounded subprocess
         call is made so a slow LLM response cannot block the poll loop.  The
@@ -128,12 +136,12 @@ class ReflectMixin:
         return {"status": "completed", "summary": "reflect completed", "stream_id": stream_id}
 
     def _reflect_runtime_query(self, query: str) -> str:
-        """Build the bounded prompt sent into this agent's OpenClaw runtime."""
+        """Build the bounded prompt sent into this agent's Hermes runtime."""
         request = str(query or "").strip()
         return "\n".join(
             [
-                "You are answering a MAC reflect request from inside your own OpenClaw runtime.",
-                "Use the active OpenClaw workspace context, MAC runtime context, and any "
+                "You are answering a MAC reflect request from inside your own Hermes runtime.",
+                "Use your active Hermes context, MAC runtime context, and any "
                 "visible host or command inventory.",
                 "Answer with concrete details about your runtime identity, memory context, "
                 "host inventory or capabilities, active task/status, and the requester query.",
@@ -145,36 +153,21 @@ class ReflectMixin:
         )
 
     def _run_reflect_query(self, query: str, *, stream_id: str = "") -> str:
-        """Run *query* through this agent's OpenClaw/OpenShell runtime.
+        """Run *query* as one non-interactive turn of this agent's Hermes runtime.
 
-        The host wrapper performs ``openshell sandbox exec`` into the verified
-        long-lived OpenClaw sandbox.  No host-side Hermes process or direct
-        provider fallback is allowed.  The bounded timeout prevents a slow LLM
-        response from blocking the worker poll loop.
+        Hermes is the only human interface, so a reflect answer comes from the
+        host ``hermes`` CLI's one-shot mode (see :func:`hermes_oneshot_command`).
+        No direct provider fallback is allowed. The bounded timeout prevents a
+        slow LLM response from blocking the worker poll loop.
         """
         runtime_query = self._reflect_runtime_query(query)
         timeout_s = _bounded_float(os.environ.get("MAC_REFLECT_TIMEOUT"), 1.0, 600.0, 120.0)
-        agent_bin = Path(
-            os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-            or mac_paths.mac_home() / "bin" / "openclaw-agent"
-        )
-        safe_stream = re.sub(r"[^A-Za-z0-9_.-]+", "-", stream_id).strip("-")
-        session_id = "mac-reflect-%s" % (safe_stream or self.agent_id)
         try:
             env = os.environ.copy()
             env["MAC_AGENT_ID"] = self.agent_id
             env["MAC_WORKER_AGENT_ID"] = self.agent_id
             result = subprocess.run(
-                [
-                    str(agent_bin),
-                    "--agent",
-                    "main",
-                    "--message",
-                    runtime_query,
-                    "--session-id",
-                    session_id,
-                    "--json",
-                ],
+                hermes_oneshot_command(runtime_query),
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
@@ -189,32 +182,7 @@ class ReflectMixin:
                     "reflect query completed with returncode %d. %s"
                     % (result.returncode, stderr_summary)
                 ).strip()
-            try:
-                payload = json.loads(output)
-            except (TypeError, ValueError):
-                return output
-
-            def response_text(value: Any) -> str:
-                if isinstance(value, dict):
-                    for key in ("text", "response", "content", "message"):
-                        candidate = value.get(key)
-                        if isinstance(candidate, str) and candidate.strip():
-                            return candidate.strip()
-                        nested = response_text(candidate)
-                        if nested:
-                            return nested
-                    for key in ("payloads", "messages", "result", "data"):
-                        nested = response_text(value.get(key))
-                        if nested:
-                            return nested
-                elif isinstance(value, list):
-                    for item in value:
-                        nested = response_text(item)
-                        if nested:
-                            return nested
-                return ""
-
-            return response_text(payload) or output
+            return output
         except subprocess.TimeoutExpired:
             self._observe_log(
                 "worker.agentbus.reflect.error",

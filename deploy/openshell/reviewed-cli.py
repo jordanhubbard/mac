@@ -117,34 +117,6 @@ def stable_bytes(path: Path, *, private: bool, limit: int) -> bytes:
         os.close(descriptor)
 
 
-def managed_openclaw(mac_home: Path) -> bool:
-    managed = mac_home / "openclaw" / "managed"
-    sandbox = managed / "sandbox-name"
-    runtime = managed / "runtime.env"
-    if sandbox.exists() or sandbox.is_symlink():
-        raw = stable_bytes(sandbox, private=True, limit=1024 * 1024)
-        text = raw.decode("utf-8", errors="strict")
-        if "\n" in text.rstrip("\n") or not text.strip():
-            raise ValueError("managed OpenClaw sandbox identity is malformed")
-        return True
-    if runtime.exists() or runtime.is_symlink():
-        raw = stable_bytes(runtime, private=True, limit=1024 * 1024)
-        text = raw.decode("utf-8", errors="strict")
-        matches = re.findall(
-            r"(?m)^[ \t]*(?:export[ \t]+)?MAC_OPENCLAW_SANDBOX[ \t]*=(.*)$",
-            text,
-        )
-        if len(matches) != 1 or not matches[0].strip():
-            raise ValueError("managed OpenClaw runtime lacks one sandbox identity")
-        return True
-    try:
-        if managed.is_dir() and any(managed.iterdir()):
-            raise ValueError("managed OpenClaw artifacts lack a sandbox identity")
-    except OSError as exc:
-        raise ValueError("managed OpenClaw artifact directory is unreadable") from exc
-    return False
-
-
 def sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -176,32 +148,19 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
             gateway_asset=gateway_asset,
             gateway_asset_sha256=gateway_asset_sha,
         )
-    try:
-        managed = managed_openclaw(mac_home)
-    except (OSError, UnicodeError, ValueError):
-        return {
-            **base,
-            "managed_openclaw": True,
-            "required": True,
-            "status": "migration_required",
-            "reason": "managed_openclaw_identity_untrusted",
-        }
     canonical_dir = mac_home / "bin"
     canonical = canonical_dir / "openshell"
     cli_ever_installed = canonical.exists() or canonical.is_symlink()
-    # A CLI can be installed for mac-agent's own task-sandbox use, independent
-    # of whether OpenClaw's gateway is itself sandbox-managed. Quiescence's
-    # stray-sandbox inventory check (list_openshell_sandboxes) needs a full,
-    # trustworthy reviewed identity whenever OpenShell is installed at all,
-    # not only when OpenClaw is managed -- so treat an already-installed CLI
-    # as requiring full validation too, rather than short-circuiting to a
-    # "ready" result that omits cli_sha256/receipt_sha256.
-    required = bool(args.required) or managed or cli_ever_installed
-    base.update(managed_openclaw=managed, required=required)
+    # Quiescence's stray-sandbox inventory check (list_openshell_sandboxes)
+    # needs a full, trustworthy reviewed identity whenever OpenShell is
+    # installed at all, so an already-installed CLI requires full validation
+    # rather than a "ready" result that omits cli_sha256/receipt_sha256.
+    required = bool(args.required) or cli_ever_installed
+    base.update(required=required)
     if not required:
-        # Nothing to validate: OpenClaw isn't sandbox-managed and no CLI was
-        # ever installed here, so there is no reviewed identity to compute.
-        return {**base, "status": "ready", "reason": "openclaw_not_managed"}
+        # Nothing to validate: no CLI was ever installed here, so there is no
+        # reviewed identity to compute.
+        return {**base, "status": "ready", "reason": "cli_not_installed"}
     receipt_path = mac_home / "openshell" / "reviewed-cli.json"
     try:
         parent = canonical_dir.lstat()

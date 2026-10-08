@@ -216,7 +216,6 @@ from mac.fleet_learning import (
     task_repository_remote,
 )
 from mac.identity_service import IdentityService
-from mac.openclaw_direct_execution import OpenClawDirectExecutionService
 from mac.humans_service import HumansService
 from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
@@ -2604,16 +2603,6 @@ class ControlPlane:
         self._task_outbox_drain_lock = threading.Lock()
         self.reconciliation = ReconciliationCoordinator(self.store)
         self.identity = IdentityService(self.store)
-        self.openclaw_direct_execution = OpenClawDirectExecutionService(
-            self.store,
-            get_persona_instance=self.identity.get_persona_instance,
-            # Task-keyed gates require a minimal bookkeeping task; create it
-            # automatically and transparently (system bookkeeping, not a manual
-            # filing step). A worktree provisioner is injected by the executor
-            # layer; without one the service fails closed rather than pretending
-            # a code change occurred.
-            materialize_task=self._materialize_openclaw_execution_task,
-        )
         self.humans = HumansService(self.store)
         self.action_events = ActionEventService(self.store)
         self.observability = ObservabilityService(
@@ -2718,9 +2707,6 @@ class ControlPlane:
             get_platform_binding=self.identity.get_platform_binding,
             send_message=self.send_message,
             record_log=self.record_log,
-            enqueue_human_message=self.enqueue_human_message,
-            resolve_agent_representation=self.resolve_agent_representation,
-            list_communication_identities=self.list_communication_identities,
         )
         self.evaluations = EvalService(
             self.store,
@@ -4975,32 +4961,6 @@ class ControlPlane:
             "total": sum(by_state.values()),
             "latest": latest,
         }
-
-    def _materialize_openclaw_execution_task(
-        self,
-        *,
-        title: str,
-        description: str,
-        metadata: Dict[str, Any],
-        idempotency_key: Optional[str] = None,
-    ) -> Task:
-        """Auto-materialize the minimal MAC task an OpenClaw direct execution needs.
-
-        Current review/pre-push gates are keyed by ``task_id``. When a direct
-        Slack/OpenClaw code request begins, this transparently creates the
-        backing bookkeeping task so those gates can run. It is system
-        bookkeeping created automatically at execution start, not a manual
-        task-filing prerequisite or an extra conversational step.
-        """
-
-        return self.create_task(
-            title,
-            description=description,
-            metadata=metadata,
-            actor="openclaw",
-            idempotency_key=idempotency_key,
-            _idempotency_scope="openclaw-direct-execution",
-        )
 
     def create_interaction_task(
         self,
@@ -24187,7 +24147,7 @@ class ControlPlane:
         A gateway/model probe may report a degraded startup self-test while
         also proving that it has no blocking problems. ``deploy-mac-fleet.sh``
         already releases such an agent (``release_health_ready``); the
-        allocator has to agree, or an advisory condition — an OpenClaw probe
+        allocator has to agree, or an advisory condition — a gateway probe
         that cannot find a stale sandbox, say — benches an otherwise idle,
         authenticated worker, and does it to every worker at once.
         """

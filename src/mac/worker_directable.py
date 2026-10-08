@@ -2,31 +2,24 @@
 
 Phase 0 of making a pure-executor MAC worker *directable*: the ability to
 receive and act on AgentBus peer messages and hub-verified human directives
-inside the worker's existing control-poll loop, rather than only inside the
-OpenClaw gateway plugin (deploy/openclaw/plugins/mac-continuity). Nodes that
-run no gateway plugin were previously unreachable over the bus; this lands the
-worker-side seam.
+inside the worker's existing control-poll loop.
 
 Everything here is gated behind ``MAC_WORKER_DIRECTABLE`` at the call site in
 worker.py — this module only provides the handlers. It mirrors ReflectMixin:
-bounded subprocess turn into the local openclaw-agent runtime, exhaustive
+a bounded one-shot turn of the local Hermes runtime, exhaustive
 error-swallowing so a turn can never crash the poll loop, and _observe_log
 telemetry.
 
-The peer/directive prompt TEXT is ported verbatim from the gateway plugin's
-runPeerTurn — it is the sole guard on a one-shot autonomous turn (the five
-safety-floor hard-stops), so it must stay byte-identical across both surfaces.
+The peer/directive prompt TEXT is the sole guard on a one-shot autonomous turn
+(the five safety-floor hard-stops); change it deliberately.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
 from pathlib import Path
-
-from mac import mac_paths
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlencode
 
@@ -60,6 +53,7 @@ from mac.executor_directive import (
     executor_ack_payload,
 )
 from mac.models import utcnow
+from mac.worker_reflect import hermes_oneshot_command
 
 JsonDict = Dict[str, Any]
 
@@ -193,7 +187,7 @@ class DirectableMixin:
         # Task-scoped path (task_60be): an executor-scoped directive must reach
         # the ACTIVE task executor, never a persona chat turn. Route it to the
         # durable executor-owned queue and emit a task-executor acknowledgement
-        # instead of running an OpenClaw persona turn.
+        # instead of running a persona chat turn.
         if verification.get("executor_scoped") is True:
             return self._handle_executor_scoped_directive(
                 stream, verification, message, correlation_id
@@ -487,9 +481,8 @@ class DirectableMixin:
         return acknowledged
 
     # ------------------------------------------------------------------ #
-    # Prompt builders — text ported verbatim from the mac-continuity plugin
-    # runPeerTurn (deploy/openclaw/plugins/mac-continuity/index.js). This text
-    # is the sole safety-floor guard on the one-shot turn; keep it identical.
+    # Prompt builders. This text is the sole safety-floor guard on the
+    # one-shot turn; change it deliberately.
     # ------------------------------------------------------------------ #
     def _directable_peer_prompt(self, stream: JsonDict, message: str) -> str:
         sender = str(stream.get("sender_agent_id") or "")
@@ -562,7 +555,7 @@ class DirectableMixin:
     def _run_directable_turn(
         self, prompt: str, *, stream_id: str = "", sender: str = ""
     ) -> "tuple[str, str]":
-        """Run *prompt* through this agent's OpenClaw/OpenShell runtime.
+        """Run *prompt* as one non-interactive turn of this agent's Hermes runtime.
 
         Returns ``(reply_text, turn_outcome)`` where ``turn_outcome`` is a
         structured ``mac.agentbus_outcomes.TURN_*`` code — completed, or one of
@@ -575,27 +568,12 @@ class DirectableMixin:
         by worker.py. Must never raise.
         """
         timeout_s = _bounded_float(os.environ.get("MAC_DIRECTABLE_TIMEOUT"), 1.0, 600.0, 120.0)
-        agent_bin = Path(
-            os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-            or mac_paths.mac_home() / "bin" / "openclaw-agent"
-        )
-        safe_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", (sender or stream_id)).strip("-")
-        session_id = "mac-peer-%s" % (safe_slug or self.agent_id)
         try:
             env = os.environ.copy()
             env["MAC_AGENT_ID"] = self.agent_id
             env["MAC_WORKER_AGENT_ID"] = self.agent_id
             result = subprocess.run(
-                [
-                    str(agent_bin),
-                    "--agent",
-                    "main",
-                    "--message",
-                    prompt,
-                    "--session-id",
-                    session_id,
-                    "--json",
-                ],
+                hermes_oneshot_command(prompt),
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
@@ -609,36 +587,9 @@ class DirectableMixin:
                     "Turn failed with returncode %d. %s" % (result.returncode, stderr_summary)
                 ).strip()
                 return text, TURN_ERROR
-            try:
-                payload = json.loads(output)
-            except (TypeError, ValueError):
-                # Non-JSON stdout is opaque; still scan it for embedded failure
-                # fingerprints so a text-only failure is not signed as ok.
-                return output, classify_turn_result(None, output)
-
-            def response_text(value: Any) -> str:
-                if isinstance(value, dict):
-                    for key in ("text", "response", "content", "message"):
-                        candidate = value.get(key)
-                        if isinstance(candidate, str) and candidate.strip():
-                            return candidate.strip()
-                        nested = response_text(candidate)
-                        if nested:
-                            return nested
-                    for key in ("payloads", "messages", "result", "data"):
-                        nested = response_text(value.get(key))
-                        if nested:
-                            return nested
-                elif isinstance(value, list):
-                    for item in value:
-                        nested = response_text(item)
-                        if nested:
-                            return nested
-                return ""
-
-            reply_text = response_text(payload) or output
-            outcome = classify_turn_result(payload, reply_text)
-            return reply_text, outcome
+            # Hermes prints plain reply text; scan it for embedded failure
+            # fingerprints so a text-only failure is not signed as ok.
+            return output, classify_turn_result(None, output)
         except subprocess.TimeoutExpired:
             self._observe_log(
                 "worker.agentbus.directable.error",

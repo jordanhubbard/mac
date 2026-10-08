@@ -351,6 +351,13 @@ MIGRATIONS: tuple[Migration, ...] = (
         SELECT to_regclass(current_schema() || '.task_messages') IS NOT NULL
         """,
     ),
+    Migration(
+        "0012_drop_conversation_execution_ledger",
+        _load_sql(MIGRATION_PATH / "0012_drop_conversation_execution_ledger.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.openclaw_conversation_executions') IS NULL
+        """,
+    ),
 )
 
 

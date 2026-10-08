@@ -394,8 +394,7 @@ if [ "$#" -eq 0 ] && [ "$_MAC_TEST_NESTED_PYTEST" = "0" ]; then
         tests/test_generated_artifact_guards_always_run.py \
         tests/test_repository_hygiene.py \
         tests/test_no_dead_indexes.py \
-        tests/cli/test_cli_coverage_gate.py \
-        tests/cli/test_cli_human_interface_coverage.py
+        tests/cli/test_cli_coverage_gate.py
 fi
 
 # --------------------------------------------------------------------------

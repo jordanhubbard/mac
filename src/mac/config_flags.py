@@ -1,8 +1,8 @@
 """Allowlisted, runtime-settable agent configuration flags.
 
 The conversational path for "agent, show us your reasoning in this channel":
-a user asks in plain language, the agent calls its config-flag tool (OpenClaw
-plugin -> self-scoped ``/v1/agents/{id}/config-flags`` endpoint), and the flag
+a user asks in plain language, the agent calls its config-flag tool (the
+self-scoped ``/v1/agents/{id}/config-flags`` endpoint), and the flag
 persists in ``agent_config_flags`` with an audit event. Consumers (gateways,
 renderers, the hub itself) read the effective value back through the same
 service.

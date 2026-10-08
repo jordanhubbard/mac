@@ -77,7 +77,8 @@ Relevant environment:
 - `MAC_HERMES_AGENT_DIR` / `HERMES_AGENT_DIR`: optional path to an *external*
   Hermes checkout for legacy shim inspection. Fleet deployment does not vendor
   a Hermes tree; the in-tree snapshot was removed (see
-  [the vendor-fate record](hermes-vendor-fate.md)). Normal chat uses OpenClaw.
+  [the vendor-fate record](hermes-vendor-fate.md)). Hermes is the only human
+  interface and chat gateway.
 - `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM=0`: disable the startup shim patcher
   when `MAC_HERMES_AGENT_DIR` points at an explicit checkout. It is enabled by
   default only for explicit checkout paths.
@@ -99,7 +100,7 @@ Relevant environment:
 - `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS=0`: preserve existing home-channel files
   without discovery.
 
-The default fleet chat runtime is stock OpenClaw, not a vendored Hermes
+The fleet chat runtime is an externally installed Hermes, not a vendored
 snapshot (removed in PR #377). The explicit-checkout shim settings above remain
 only for compatibility with an operator-managed external Hermes checkout. In
 the normal topology the gateway receives its model, provider, base URL, and

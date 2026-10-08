@@ -63,19 +63,13 @@ function dashboardState(overrides?: {
           capabilities: ["testing"],
           resources: {
             hardware: { cpu_count: 4, memory_mb: 8192, arch: "x64" },
-            openclaw_runtime: {
-              implementation: "openclaw",
-              mode: "gateway",
-              confinement: { provider: "openshell" },
-              verified: true,
-            },
             representation: {
               mode: "delegated",
               identity: "MAC Hive",
               human_facing: true,
             },
             chat_gateway: {
-              implementation: "openclaw",
+              implementation: "hermes",
               public_identity: "MAC Hive",
               confinement: { provider: "openshell" },
               channels: {
@@ -212,11 +206,11 @@ async function setupPage(
   return state;
 }
 
-test("agent inspector exposes the verified OpenClaw service advertisement", async ({ page }) => {
+test("agent inspector exposes the verified chat-gateway service advertisement", async ({ page }) => {
   await setupPage(page);
   await page.goto("/");
-  await expect(page.getByText("OpenClaw", { exact: true })).toBeVisible();
-  await expect(page.getByText("openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified")).toBeVisible();
+  await expect(page.getByText("Chat gateway", { exact: true })).toBeVisible();
+  await expect(page.getByText("hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified")).toBeVisible();
 });
 
 test("agent selector preserves every click target under vertical pressure", async ({ page }) => {
@@ -229,9 +223,8 @@ test("agent selector preserves every click target under vertical pressure", asyn
       capabilities: Array.from({ length: 24 }, (__, capability) => `capability-${capability}`),
       resources: {
         hardware: { cpu_count: 8, memory_mb: 16384, arch: "x64" },
-        openclaw_runtime: {
-          implementation: "openclaw",
-          mode: "gateway",
+        chat_gateway: {
+          implementation: "hermes",
           confinement: { provider: "openshell" },
           verified: true,
         },
