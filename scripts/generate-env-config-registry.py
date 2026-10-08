@@ -114,15 +114,46 @@ CONSUMER_DEFAULTS = {
     "MAC_LANDING_DEADLINE_SECONDS": "86400",
     "MAC_CODING_MODELS": "gpt-5.6-sol",
     "MAC_CODING_DEFAULT_MODEL": "gpt-5.6-sol",
+    "MAC_CODING_AGENTS": "opencode",
 }
 # Descriptions an operator cannot derive from the variable name. The generated
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_CODING_AGENTS": (
+        "Hub setting: the fleet's ordered list of coding CLIs (comma-separated; known: "
+        "`opencode`, `claude`; default `opencode`). The hub projects it into every assignment "
+        "and returns it on every heartbeat, so workers inherit it. The executor runs the first "
+        "CLI that works on that host and moves to the next only on a structured route failure "
+        "(binary missing, no hub token, failed in-sandbox preflight, or an auth, rate-limit or "
+        "upstream failure the hub router recorded for that CLI's route). On a worker it is read "
+        "only when the hub has issued no list, and is reported as a local override."
+    ),
+    "MAC_TASK_CODING_AGENTS": (
+        "Set by the worker for each task run, never by an operator: the hub's ordered "
+        "coding-CLI list from the task's assignment."
+    ),
+    "MAC_HUB_CODING_AGENTS": (
+        "Set by the worker from each heartbeat response, never by an operator: the hub's "
+        "ordered coding-CLI list, used for the worker's own route probes and status report."
+    ),
+    "MAC_ACTIVE_CODING_AGENT": (
+        "Set by the executor for one run, never by an operator: the coding CLI it chose "
+        "from the list."
+    ),
     "MAC_CODING_AGENT": (
-        "Coding CLI switch. Unset or `opencode` runs opencode through the hub model router, "
-        "MAC's only coding CLI; `off` disables the coding route (the executor fails closed). "
-        "Any other value is ignored."
+        "Deprecated. `off` (or `none`, `0`) still disables the coding route so the executor "
+        "fails closed. A CLI name is honoured only when no `MAC_CODING_AGENTS` list exists "
+        "anywhere, and is reported as deprecated: set the ordered list on the hub instead."
+    ),
+    "MAC_CLAUDE_MODEL": (
+        "Hub setting, inherited by workers with the coding-CLI list: the model Claude Code "
+        "runs on through the hub's `/v1/messages` (default `claude-opus-4-8`). A task pin "
+        "that names a Claude model wins."
+    ),
+    "MAC_JUDGE_MODEL": (
+        "Hub setting, inherited by workers with the coding-CLI list: the model the "
+        "independent judge uses through the hub router (default `claude-opus-4-8`)."
     ),
     "MAC_CODING_MODELS": (
         "Comma-separated logical model names the generated opencode config declares under "

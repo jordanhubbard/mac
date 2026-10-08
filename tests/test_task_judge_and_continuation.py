@@ -94,7 +94,8 @@ class _Result:
 
 @pytest.fixture
 def claude_workspace(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_CODING_AGENT", "claude")
+    # The judge loop follows the CLI that actually ran this attempt.
+    monkeypatch.setitem(ex._LAST_CODING_ROUTE, "agent", "claude")
     (tmp_path / ".mac-agent").mkdir()
     (tmp_path / ".mac-agent" / "session-id").write_text("sess-1\n")
     ex._LAST_JUDGE_VERDICT.clear()
@@ -112,7 +113,9 @@ def test_a_red_gate_resumes_the_same_session_with_the_failure(claude_workspace, 
     monkeypatch.setattr(ex, "_judge_task_change", lambda task, ws, messages: next(verdicts))
 
     def invoke(runner, prompt, ws, audit_id, opts):
-        calls.append({"prompt": prompt, "resume": opts.get("resume_session")})
+        calls.append(
+            {"prompt": prompt, "resume": opts.get("resume_session"), "only": opts.get("only_agent")}
+        )
         return _Result()
 
     monkeypatch.setattr(ex, "_invoke_agent", invoke)
@@ -120,6 +123,8 @@ def test_a_red_gate_resumes_the_same_session_with_the_failure(claude_workspace, 
     out = ex._continue_claude_session(None, {"title": "t"}, workspace, "task_1", red, {})
     assert out.returncode == 0
     assert calls[0]["resume"] == "sess-1"
+    # A resumed Claude session must resume in Claude, whatever the list says.
+    assert calls[0]["only"] == "claude"
     assert "FAILED test_parse" in calls[0]["prompt"]
     assert ex._LAST_JUDGE_VERDICT["verdict"] == "met"
     assert [p.get("verdict") for p in posts if p["kind"] == "verdict"][-1] == "met"
@@ -162,7 +167,7 @@ def test_verifier_infrastructure_is_not_handed_to_the_agent(claude_workspace, mo
 
 def test_opencode_runs_are_untouched(claude_workspace, monkeypatch):
     workspace, _ = claude_workspace
-    monkeypatch.setenv("MAC_CODING_AGENT", "opencode")
+    monkeypatch.setitem(ex._LAST_CODING_ROUTE, "agent", "opencode")
     monkeypatch.setattr(ex, "_invoke_agent", lambda *a: pytest.fail("must not resume"))
     result = _Result()
     assert ex._continue_claude_session(None, {}, workspace, "task_1", result, {}) is result

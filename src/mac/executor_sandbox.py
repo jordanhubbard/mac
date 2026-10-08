@@ -731,12 +731,20 @@ def _write_claude_agent_files(
 
 
 def _write_coding_agent_config(
-    directory: Path, config_directory: str, env_values: Mapping[str, str], *, python: str
+    directory: Path,
+    config_directory: str,
+    env_values: Mapping[str, str],
+    *,
+    python: str,
+    agent: str = "",
 ) -> Dict[str, str]:
-    """Write the selected coding CLI's router config; return its env overlay."""
+    """Write one coding CLI's router config; return its env overlay.
+
+    ``agent`` defaults to the CLI this run chose (``MAC_ACTIVE_CODING_AGENT``).
+    """
     from . import coding_agent as _ca
 
-    if _ca.selected_agent() == _ca.CLAUDE_AGENT:
+    if (agent or _ca.selected_agent()) == _ca.CLAUDE_AGENT:
         return _write_claude_agent_files(directory, config_directory, env_values, python=python)
     return _write_opencode_router_config(directory, config_directory, env_values)
 
@@ -5641,7 +5649,11 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
                 env_values[_INFERENCE_TOKEN_ENV] = str(probe_token["token"])
                 env_values.update(
                     _write_coding_agent_config(
-                        private_dir, sandbox_dir, env_values, python=_SANDBOX_AGENT_PYTHON
+                        private_dir,
+                        sandbox_dir,
+                        env_values,
+                        python=_SANDBOX_AGENT_PYTHON,
+                        agent=choice.agent,
                     )
                 )
         _write_private_shell_env(private_dir / ".mac-openshell-env.sh", env_values)
@@ -5753,10 +5765,17 @@ def _agent_argv(
     *,
     confined: bool,
     task: Any = None,
-    chosen: Optional[Dict[str, str]] = None,
+    chosen: Optional[Dict[str, Any]] = None,
     resume_session: str = "",
+    exclude: Tuple[str, ...] = (),
+    only_agent: str = "",
 ) -> List[str]:
     """The coding CLI argv for this task, or a deterministic fail-closed command.
+
+    The CLI is the first on the hub's ordered list that qualifies here
+    (:func:`mac.coding_agent.resolve_coding_agent`). ``exclude`` drops CLIs
+    that already failed this attempt; ``only_agent`` pins one CLI (a resumed
+    Claude session must resume in Claude).
 
     opencode runs on a ``machub`` model through the hub router with this task's
     inference-only token (see :mod:`mac.coding_agent`). When OpenShell
@@ -5765,8 +5784,7 @@ def _agent_argv(
     real in-sandbox preflight by default), because a host-side ``which`` does
     NOT prove the CLI works inside the confined sandbox.
 
-    There is no fallback runtime and no second CLI: a missing or unverified
-    route selects ``coding-agent-required``.
+    When no CLI on the list qualifies the route is ``coding-agent-required``.
     """
     from . import coding_agent as _ca
 
@@ -5779,11 +5797,25 @@ def _agent_argv(
             verified_fingerprints.add(candidate.route_fingerprint())
         return accepted
 
+    resolve_env: Mapping[str, str] = os.environ
+    if only_agent:
+        resolve_env = {**os.environ, _ca.TASK_AGENTS_ENV: only_agent}
     choice = _ca.resolve_coding_agent(
+        env=resolve_env,
         which=coding_agent_sandbox_which if confined else None,
         accept=_accept_sandbox_route if confined else None,
+        exclude=tuple(exclude),
     )
+    if choice.available:
+        # Everything downstream of the choice (config files, the judge loop)
+        # follows the CLI that will actually run.
+        os.environ[_ca.ACTIVE_AGENT_ENV] = choice.agent
+    else:
+        os.environ.pop(_ca.ACTIVE_AGENT_ENV, None)
     if chosen is not None:
+        chosen["order"] = list(choice.order)
+        chosen["order_source"] = choice.order_source
+        chosen["skipped"] = [dict(item) for item in choice.skipped]
         # The caller attributes the transcript to the route that actually ran:
         # `task_agent_transcripts` carries `coding_agent` and `model` columns,
         # and this is the only truthful source for either.
@@ -5793,10 +5825,12 @@ def _agent_argv(
             chosen["model"] = choice.model
     rationale = list(choice.rationale)
     if not choice.available:
+        listed = ", ".join(choice.order) or "none"
         reason = (
-            "opencode is not configured and verified inside the task sandbox"
+            "no coding CLI on the list (%s) is configured and verified inside the task sandbox"
+            % listed
             if confined
-            else "opencode is not available on this host"
+            else "no coding CLI on the list (%s) is available on this host" % listed
         )
         rationale.append(reason)
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
@@ -5817,8 +5851,9 @@ def _agent_argv(
         try:
             _ensure_task_inference_token(task_id)
         except Exception as exc:  # noqa: BLE001 - no token means no route
-            reason = "opencode: could not mint the task's inference token (%s)" % (
-                exc.__class__.__name__
+            reason = "%s: could not mint the task's inference token (%s)" % (
+                choice.agent,
+                exc.__class__.__name__,
             )
             rationale.append(reason)
             _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
@@ -5968,16 +6003,25 @@ def _invoke_agent(
             opts.get("task"), workspace
         )
     confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
-    route: Dict[str, str] = {}
+    route: Dict[str, Any] = {}
     resume = str(opts.get("resume_session") or "")
+    route_kwargs: Dict[str, Any] = {}
+    if resume:
+        route_kwargs["resume_session"] = resume
+    if opts.get("exclude_agents"):
+        route_kwargs["exclude"] = tuple(opts["exclude_agents"])
+    if opts.get("only_agent"):
+        route_kwargs["only_agent"] = str(opts["only_agent"])
     agent_argv = _agent_argv(
         PROMPT_SENTINEL,
         workspace,
         confined=confined,
         task=opts.get("task"),
         chosen=route,
-        **({"resume_session": resume} if resume else {}),
+        **route_kwargs,
     )
+    _LAST_CODING_ROUTE.clear()
+    _LAST_CODING_ROUTE.update(route)
     compiled_prompt = _compile_outbound_prompt(
         prompt,
         route.get("agent") or "universal",
@@ -6343,6 +6387,181 @@ _DEFAULT_CONTINUATION_ROUNDS = 3
 #: in the workspace: the agent can write the workspace, and the verdict must
 #: be the host's own observation when it is signed into the evidence.
 _LAST_JUDGE_VERDICT: Dict[str, Any] = {}
+#: The route the last agent run used (agent, model, order, skipped), set by
+#: :func:`_invoke_agent`.
+_LAST_CODING_ROUTE: Dict[str, Any] = {}
+#: Every coding-CLI run in this attempt, for the evidence manifest.
+_CODING_AGENT_RUNS: List[Dict[str, Any]] = []
+
+#: Router HTTP statuses that mean the route itself is unavailable, and the
+#: failure class each one maps to. Anything else is the task's own outcome.
+_ROUTE_FAILURE_STATUSES = {401: "route_auth_failed", 403: "route_auth_failed", 429: "route_rate_limited"}
+
+
+def _route_paths(agent: str) -> Tuple[str, ...]:
+    from . import coding_agent as _ca
+
+    if agent == _ca.CLAUDE_AGENT:
+        return ("/v1/messages",)
+    return ("/chat/completions",)
+
+
+def _route_failure_since(task_id: str, agent: str, since: str) -> Optional[Dict[str, Any]]:
+    """The hub router's verdict on this task's last call through ``agent``'s route.
+
+    Reads the task's ``llm.route`` records since ``since`` (the hub writes one
+    per completion, with the HTTP status it got upstream). Returns a failure
+    when the LAST call on that CLI's route was an auth error, a rate limit or
+    an upstream failure; ``None`` when it succeeded, when there were no calls,
+    or when the hub cannot be read. No transcript is ever inspected.
+    """
+    base_url, token = _hub_env()
+    if not base_url or not token or not task_id:
+        return None
+    from urllib.parse import urlencode
+
+    query = urlencode(
+        {
+            "name": "llm.route",
+            "subject_type": "task",
+            "subject_id": task_id,
+            "since": since,
+            "limit": 500,
+        }
+    )
+    request = urllib.request.Request(
+        "%s/observability/logs?%s" % (base_url.rstrip("/"), query),
+        headers={"Authorization": "Bearer " + token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+            events = json.loads(response.read().decode("utf-8") or "[]")
+    except Exception as exc:  # noqa: BLE001 - unreadable means "no evidence of a route failure"
+        sys.stderr.write("[executor] route records unreadable: %s\n" % exc.__class__.__name__)
+        return None
+    paths = _route_paths(agent)
+    calls = []
+    for event in events if isinstance(events, list) else []:
+        detail = event.get("detail") if isinstance(event, dict) else None
+        if not isinstance(detail, dict):
+            continue
+        if any(path in str(detail.get("path") or "") for path in paths):
+            calls.append((str(event.get("created_at") or ""), int(event.get("sequence") or 0), detail))
+    if not calls:
+        return None
+    _created, _sequence, last = max(calls, key=lambda item: (item[0], item[1]))
+    try:
+        status = int(last.get("status_code") or 0)
+    except (TypeError, ValueError):
+        return None
+    failure_class = _ROUTE_FAILURE_STATUSES.get(status)
+    if failure_class is None and status >= 500:
+        failure_class = "route_upstream_unavailable"
+    if failure_class is None:
+        return None
+    return {
+        "failure_class": failure_class,
+        "status_code": status,
+        "provider": str(last.get("provider") or ""),
+        "path": str(last.get("path") or ""),
+    }
+
+
+def _record_coding_run(task_id: str, result: Any, failover: Optional[Dict[str, Any]]) -> None:
+    run = {
+        "agent": _LAST_CODING_ROUTE.get("agent") or "",
+        "model": _LAST_CODING_ROUTE.get("model") or "",
+        "returncode": getattr(result, "returncode", None),
+        "skipped": list(_LAST_CODING_ROUTE.get("skipped") or []),
+    }
+    if failover:
+        run["route_failure"] = dict(failover)
+    _CODING_AGENT_RUNS.append(run)
+
+
+def _announce_skips(task_id: str) -> None:
+    skipped = _LAST_CODING_ROUTE.get("skipped") or []
+    agent = _LAST_CODING_ROUTE.get("agent") or ""
+    if not skipped or not agent:
+        return
+    _post_board_as_hub(
+        task_id,
+        "status",
+        "Running %s; skipped %s."
+        % (
+            agent,
+            ", ".join("%s (%s)" % (item["agent"], item["failure_class"]) for item in skipped),
+        ),
+        coding_agent=agent,
+        skipped=skipped,
+    )
+
+
+def _fail_over_coding_agent(
+    runner: Callable[..., Any],
+    prompt: str,
+    workspace: Path,
+    task_id: str,
+    result: Any,
+    opts: Dict[str, Any],
+    started_at: str,
+) -> Any:
+    """Move down the CLI list when the route the run used was unavailable.
+
+    Only a structured route failure moves the list: the run exited non-zero,
+    it was not a repository-test or read-only-report failure, and the hub
+    router recorded an auth error, rate limit or upstream failure as the last
+    call on that CLI's route. Each CLI runs at most once per attempt; the
+    next one continues in the same workspace.
+    """
+    tried: List[str] = []
+    while True:
+        agent = str(_LAST_CODING_ROUTE.get("agent") or "")
+        failure: Optional[Dict[str, Any]] = None
+        if (
+            agent
+            and getattr(result, "returncode", 0) != 0
+            and not isinstance(getattr(result, "mac_repository_verification_failure", None), dict)
+            and not getattr(result, "mac_read_only_repository_violation", "")
+            and not getattr(result, "mac_read_only_verification_failure", False)
+        ):
+            failure = _route_failure_since(task_id, agent, started_at)
+        _record_coding_run(task_id, result, failure)
+        if failure is None:
+            return result
+        tried.append(agent)
+        remaining = [a for a in _LAST_CODING_ROUTE.get("order") or [] if a not in tried]
+        if not remaining:
+            _post_board_as_hub(
+                task_id,
+                "status",
+                "%s's route failed (%s, HTTP %s) and no other coding CLI is on the list."
+                % (agent, failure["failure_class"], failure["status_code"]),
+                coding_agent=agent,
+                route_failure=failure,
+            )
+            return result
+        _post_board_as_hub(
+            task_id,
+            "status",
+            "%s's route failed (%s, HTTP %s); continuing with the next coding CLI on the list."
+            % (agent, failure["failure_class"], failure["status_code"]),
+            coding_agent=agent,
+            route_failure=failure,
+        )
+        sys.stderr.write(
+            "[executor] coding-agent failover: %s route %s (HTTP %s); trying %s\n"
+            % (agent, failure["failure_class"], failure["status_code"], ", ".join(remaining))
+        )
+        started_at = utcnow()
+        result = _invoke_agent(
+            runner,
+            prompt,
+            workspace,
+            task_id or None,
+            {**opts, "exclude_agents": list(tried)},
+        )
+        _announce_skips(task_id)
 
 
 def _continuation_rounds() -> int:
@@ -6495,7 +6714,7 @@ def _continue_claude_session(
     """
     from . import coding_agent as _ca
 
-    if _ca.selected_agent() != _ca.CLAUDE_AGENT:
+    if _LAST_CODING_ROUTE.get("agent") != _ca.CLAUDE_AGENT:
         return result
     try:
         session_id = (workspace / _ca.CLAUDE_AGENT_DIR / "session-id").read_text(encoding="utf-8").strip()
@@ -6552,14 +6771,14 @@ def _continue_claude_session(
             feedback + _CONTINUE_FOOTER,
             workspace,
             task_id or None,
-            {**opts, "resume_session": session_id},
+            {**opts, "resume_session": session_id, "only_agent": _ca.CLAUDE_AGENT},
         )
     return result
 
 
 def _record_judge_verdict_in_evidence(workspace: Path) -> None:
-    """Put the judge's verdict into the evidence manifest the worker signs."""
-    if not _LAST_JUDGE_VERDICT:
+    """Put the judge's verdict and the coding-CLI runs into the evidence manifest."""
+    if not _LAST_JUDGE_VERDICT and not _CODING_AGENT_RUNS:
         return
     path = workspace / "mac-evidence.json"
     try:
@@ -6568,7 +6787,14 @@ def _record_judge_verdict_in_evidence(workspace: Path) -> None:
         return
     if not isinstance(manifest, dict):
         return
-    manifest["judge"] = dict(_LAST_JUDGE_VERDICT)
+    if _LAST_JUDGE_VERDICT:
+        manifest["judge"] = dict(_LAST_JUDGE_VERDICT)
+    if _CODING_AGENT_RUNS:
+        manifest["coding_agents"] = {
+            "order": list(_LAST_CODING_ROUTE.get("order") or []),
+            "order_source": _LAST_CODING_ROUTE.get("order_source") or "",
+            "runs": [dict(run) for run in _CODING_AGENT_RUNS],
+        }
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -6690,17 +6916,26 @@ def _run_executor(
     if break_glass_authorization is not None:
         prompt += _break_glass_prompt(break_glass_authorization)
 
+    _agent_started_at = utcnow()
+    _task_opts = {"execution_kind": "task", "timeout": _agent_timeout(), "task": task}
     result = _invoke_agent(
         runner,
         prompt,
         task_workspace,
         str(task_id) if task_id else None,
-        {
-            "execution_kind": "task",
-            "timeout": _agent_timeout(),
-            "task": task,
-        },
+        _task_opts,
     )
+    _announce_skips(str(task_id or ""))
+    if not _is_planning and break_glass_authorization is None:
+        result = _fail_over_coding_agent(
+            runner,
+            prompt,
+            task_workspace,
+            str(task_id or ""),
+            result,
+            _task_opts,
+            _agent_started_at,
+        )
     _task_metadata = task.get("metadata") if isinstance(task, dict) else None
     if (
         not _is_planning

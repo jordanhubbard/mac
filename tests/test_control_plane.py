@@ -3817,6 +3817,35 @@ def test_repo_dispatch_requires_v2_in_sandbox_route_proof(cp, monkeypatch):
     assert cp.get_task(task.id).state == "open"
 
 
+def _coding_route_verdict(cp, resources):
+    machine = cp.register_machine("worker")
+    agent = cp.register_agent(machine.id, "coder", capabilities=["python"], resources=resources)
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(),
+    )
+    return cp._agent_has_verified_coding_route(cp.get_agent(agent.id), cp.get_task(task.id))
+
+
+def test_the_coding_route_gate_accepts_any_verified_cli_on_the_hub_list(cp, monkeypatch):
+    # opencode first, claude second: a worker whose only verified route is
+    # claude can still take the task, because the executor will run claude.
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    monkeypatch.setenv("MAC_CODING_AGENTS", "opencode,claude")
+    resources = _verified_coding_route_resources(cli="claude")
+    resources["coding_clis"]["clis"]["opencode"] = {"configured": True, "verified": False}
+    assert _coding_route_verdict(cp, resources) == (True, "verified")
+
+
+def test_the_coding_route_gate_ignores_a_verified_cli_the_hub_did_not_list(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    monkeypatch.setenv("MAC_CODING_AGENTS", "opencode")
+    resources = _verified_coding_route_resources(cli="claude")
+    assert _coding_route_verdict(cp, resources) == (False, "coding_agent_route_unverified")
+
+
 def test_repo_dispatch_ignores_a_verified_route_for_any_other_cli(cp, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
     machine = cp.register_machine("worker")

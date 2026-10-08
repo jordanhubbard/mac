@@ -1,24 +1,32 @@
-"""MAC's coding CLIs: opencode or Claude Code, driven through the hub's router.
+"""MAC's coding CLIs: an ordered list the hub owns, driven through its router.
 
-opencode is the default. ``MAC_CODING_AGENT=claude`` selects Claude Code,
-which gets its model through the hub's Anthropic-shaped front door
-(``/v1/messages``, :mod:`mac.anthropic_passthrough`) with the same per-task
-inference token, and runs with MAC's board hooks (:mod:`mac.claude_hooks`).
+The fleet's coding CLIs are an ordered list, ``MAC_CODING_AGENTS`` (default
+``opencode``; known CLIs: opencode, claude), configured on the hub. Workers do
+not choose: the hub projects its list into every assignment
+(``metadata.runtime.coding_agents``, exported to the executor as
+``MAC_TASK_CODING_AGENTS``) and returns it on every heartbeat
+(``MAC_HUB_CODING_AGENTS``), so a change on the hub reaches the whole fleet on
+the next task. :func:`coding_agent_order` says where the order came from.
 
-opencode gets its model from the hub's
-OpenAI-compatible router through a generated config whose only provider is
-``machub`` (:func:`opencode_router_config`), and it authenticates with a
-per-task, inference-only token (:mod:`mac.inference_tokens`). Provider choice
-and provider failover live in the hub router, not here: this module only
-answers "is opencode installed and can it reach the router from here?".
+The executor takes the first CLI in the list that works here and moves to the
+next only on a structured availability failure: the binary is missing, the
+host cannot reach the hub router (no hub URL, no token), or the in-sandbox
+preflight fails (:func:`resolve_coding_agent`). After a run, it also moves on
+when the hub router recorded an auth, rate-limit or upstream failure for that
+CLI's route (see :mod:`mac.executor_sandbox`). A failing test, a judge's
+``not_met`` or a bad diff is a task outcome and never moves the list.
 
-The route is available when ``opencode`` is on PATH and this host can reach
-the hub as a worker (a hub URL plus a worker token to mint the task's
-inference token with), or already holds an inference token, as a sandbox does.
-Otherwise the executor fails closed.
+Both CLIs reach models through the hub with the task's inference-only token
+(:mod:`mac.inference_tokens`): opencode through ``/v1/chat/completions`` via a
+generated config whose only provider is ``machub``
+(:func:`opencode_router_config`), and Claude Code through ``/v1/messages``
+(:mod:`mac.anthropic_passthrough`) with MAC's board hooks
+(:mod:`mac.claude_hooks`). Provider failover inside one route is the hub
+router's job.
 
 The decision is *legible*: every resolution yields a secret-free
-:meth:`CodingAgentChoice.observable` plus a human-readable ``rationale``.
+:meth:`CodingAgentChoice.observable` plus a human-readable ``rationale`` and
+the CLIs it skipped, with why.
 
 The module is intentionally dependency-free (stdlib only) and has no import-time
 side effects (``resolve_coding_agent`` takes injectable ``env``/``home``/``which``).
@@ -42,13 +50,27 @@ __all__ = [
     "route_status",
     "PREFERENCE_ENV",
     "FORCE_ENV",
+    "AGENTS_ENV",
+    "coding_agent_order",
 ]
 
 #: The default coding CLI.
 CODING_AGENT = "opencode"
-#: Claude Code, selected with ``MAC_CODING_AGENT=claude``.
+#: Claude Code.
 CLAUDE_AGENT = "claude"
 SUPPORTED_AGENTS = (CODING_AGENT, CLAUDE_AGENT)
+
+#: The fleet's ordered coding-CLI list. Configured on the hub; a worker reads
+#: its own value only when the hub has issued none (and says so).
+AGENTS_ENV = "MAC_CODING_AGENTS"
+#: The hub's list for the task being run, from the assignment.
+TASK_AGENTS_ENV = "MAC_TASK_CODING_AGENTS"
+#: The hub's list as of the worker's last heartbeat (used outside a task).
+HUB_AGENTS_ENV = "MAC_HUB_CODING_AGENTS"
+#: The CLI the executor is running right now (set per run, never configured).
+ACTIVE_AGENT_ENV = "MAC_ACTIVE_CODING_AGENT"
+#: The order used when nothing is configured anywhere.
+DEFAULT_AGENTS: Tuple[str, ...] = (CODING_AGENT,)
 #: The Anthropic model Claude Code runs on unless a task pins a Claude model.
 CLAUDE_MODEL_ENV = "MAC_CLAUDE_MODEL"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
@@ -60,9 +82,10 @@ DEFAULT_CLAUDE_MAX_TURNS = 400
 #: is eligible and the executor fails closed.
 PREFERENCE_ENV = "MAC_PREFER_CODING_AGENT"
 
-#: ``opencode`` (or unset) selects opencode and ``claude`` selects Claude Code;
-#: a disable value (``off``, ``none``, ``0`` ...) turns the coding route off so
-#: the executor fails closed. Any other value is ignored with a rationale line.
+#: Deprecated single-CLI switch. A disable value (``off``, ``none``, ``0`` ...)
+#: still turns the coding route off so the executor fails closed. A CLI name is
+#: honoured only when no list was configured anywhere, and is reported as
+#: deprecated: the list is :data:`AGENTS_ENV`, set on the hub.
 FORCE_ENV = "MAC_CODING_AGENT"
 
 #: Sentinel the coding agent must echo back for the preflight to pass. A correct
@@ -118,6 +141,11 @@ class CodingAgentChoice:
     endpoint: str = ""
     model: str = ""
     rationale: List[str] = field(default_factory=list)
+    #: The ordered list this choice was made from, and where it came from.
+    order: Tuple[str, ...] = ()
+    order_source: str = ""
+    #: CLIs passed over before this one: ``{"agent", "failure_class", "detail"}``.
+    skipped: Tuple[Dict[str, str], ...] = ()
 
     def route_fingerprint(self) -> str:
         """Stable, secret-free identity of the route that was actually checked."""
@@ -149,6 +177,9 @@ class CodingAgentChoice:
             "model": self.model or None,
             "route_fingerprint": self.route_fingerprint() if self.agent else None,
             "rationale": list(self.rationale),
+            "order": list(self.order),
+            "order_source": self.order_source or None,
+            "skipped": [dict(item) for item in self.skipped],
         }
 
 
@@ -182,11 +213,146 @@ def _env_text(env: Mapping[str, str], *names: str) -> str:
     return ""
 
 
-def selected_agent(env: Optional[Mapping[str, str]] = None) -> str:
-    """The coding CLI this host runs: ``claude`` when chosen, else opencode."""
+@dataclass(frozen=True)
+class AgentOrder:
+    """The ordered coding-CLI list in effect, where it came from, and notes."""
+
+    agents: Tuple[str, ...]
+    source: str
+    notes: Tuple[str, ...] = ()
+
+    def observable(self) -> Dict[str, object]:
+        return {"agents": list(self.agents), "source": self.source, "notes": list(self.notes)}
+
+
+def parse_agent_list(raw: object) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """``(known CLIs in order, unknown names)`` from a comma list or sequence."""
+    if isinstance(raw, (list, tuple)):
+        items = [str(item) for item in raw]
+    else:
+        items = str(raw or "").split(",")
+    agents: List[str] = []
+    unknown: List[str] = []
+    for item in items:
+        name = item.strip().lower()
+        if not name:
+            continue
+        if name not in SUPPORTED_AGENTS:
+            unknown.append(name)
+        elif name not in agents:
+            agents.append(name)
+    return tuple(agents), tuple(unknown)
+
+
+def coding_agent_order(env: Optional[Mapping[str, str]] = None) -> AgentOrder:
+    """The ordered list of coding CLIs, hub first.
+
+    Precedence: the hub's list for this task (``MAC_TASK_CODING_AGENTS``), the
+    hub's list from the last heartbeat (``MAC_HUB_CODING_AGENTS``), this
+    host's own ``MAC_CODING_AGENTS`` (only when the hub has issued nothing,
+    and reported as a local override), the deprecated ``MAC_CODING_AGENT``,
+    then :data:`DEFAULT_AGENTS`. Unknown names are dropped with a note.
+    """
     env = os.environ if env is None else env
-    forced = str(env.get(FORCE_ENV) or "").strip().lower()
-    return CLAUDE_AGENT if forced == CLAUDE_AGENT else CODING_AGENT
+    notes: List[str] = []
+    for name, source in (
+        (TASK_AGENTS_ENV, "hub"),
+        (HUB_AGENTS_ENV, "hub"),
+        (AGENTS_ENV, "worker-local"),
+    ):
+        raw = _env_text(env, name)
+        if not raw:
+            continue
+        agents, unknown = parse_agent_list(raw)
+        if unknown:
+            notes.append(
+                "%s names unknown coding CLIs %s (known: %s); ignored"
+                % (name, ", ".join(unknown), ", ".join(SUPPORTED_AGENTS))
+            )
+        if not agents:
+            notes.append("%s lists no known coding CLI; ignored" % name)
+            continue
+        if source == "worker-local":
+            notes.append(
+                "no hub-issued list; using this host's own %s (a local override)" % AGENTS_ENV
+            )
+        return AgentOrder(agents, source, tuple(notes))
+    forced = _env_text(env, FORCE_ENV).lower()
+    if forced and forced not in SUPPORTED_AGENTS and forced not in _DISABLE_VALUES:
+        notes.append(
+            "%s=%s is not supported; MAC's coding CLIs are %s"
+            % (FORCE_ENV, forced, ", ".join(SUPPORTED_AGENTS))
+        )
+    if forced in SUPPORTED_AGENTS:
+        notes.append(
+            "%s=%s is deprecated: set the ordered list %s on the hub"
+            % (FORCE_ENV, forced, AGENTS_ENV)
+        )
+        return AgentOrder((forced,), "deprecated:%s" % FORCE_ENV, tuple(notes))
+    return AgentOrder(DEFAULT_AGENTS, "default", tuple(notes))
+
+
+#: Hub-owned model settings carried alongside the list. The worker exports
+#: them under these names for the run, replacing any per-host value.
+POLICY_MODEL_ENVS: Dict[str, str] = {
+    "claude_model": CLAUDE_MODEL_ENV,
+    "judge_model": "MAC_JUDGE_MODEL",
+}
+CODING_POLICY_SCHEMA = "mac.coding_policy.v1"
+
+
+def hub_coding_policy(env: Optional[Mapping[str, str]] = None) -> Dict[str, object]:
+    """The coding policy the hub issues to workers, from the hub's own config.
+
+    ``agents`` is the hub's ``MAC_CODING_AGENTS`` (default opencode). The model
+    keys appear only when the hub sets them, so a worker keeps the module
+    defaults otherwise.
+    """
+    env = os.environ if env is None else env
+    agents, _unknown = parse_agent_list(_env_text(env, AGENTS_ENV))
+    policy: Dict[str, object] = {
+        "schema": CODING_POLICY_SCHEMA,
+        "agents": list(agents or DEFAULT_AGENTS),
+    }
+    for key, name in POLICY_MODEL_ENVS.items():
+        value = _env_text(env, name)
+        if value:
+            policy[key] = value
+    return policy
+
+
+def coding_policy_env(policy: object, *, agents_env: str = TASK_AGENTS_ENV) -> Dict[str, str]:
+    """Env assignments that carry a hub-issued policy into a process.
+
+    ``agents_env`` is :data:`TASK_AGENTS_ENV` for a task run and
+    :data:`HUB_AGENTS_ENV` for the worker's own (heartbeat) view. Anything
+    malformed yields nothing, so a bad document never empties the list.
+    """
+    if not isinstance(policy, Mapping):
+        return {}
+    agents, _unknown = parse_agent_list(policy.get("agents") or ())
+    if not agents:
+        return {}
+    values = {agents_env: ",".join(agents)}
+    for key, name in POLICY_MODEL_ENVS.items():
+        value = str(policy.get(key) or "").strip()
+        if value:
+            values[name] = value
+    return values
+
+
+def selected_agent(env: Optional[Mapping[str, str]] = None) -> str:
+    """The coding CLI the current run uses.
+
+    Inside a run the executor records the CLI it actually chose
+    (``MAC_ACTIVE_CODING_AGENT``); outside one this is the first CLI on the
+    list.
+    """
+    env = os.environ if env is None else env
+    active = _env_text(env, ACTIVE_AGENT_ENV).lower()
+    if active in SUPPORTED_AGENTS:
+        return active
+    return coding_agent_order(env).agents[0]
 
 
 def claude_model(env: Mapping[str, str]) -> str:
@@ -424,10 +590,13 @@ def route_status(
     which: Optional[Callable[[str], Optional[str]]] = None,
     verification: Optional[Mapping[str, object]] = None,
     host_which: Optional[Callable[[str], Optional[str]]] = None,
+    agent: str = "",
 ) -> Dict[str, object]:
-    """Secret-free status of the opencode route, for the worker heartbeat.
+    """Secret-free status of one coding CLI's route, for the worker heartbeat.
 
-    Workers embed this as ``resources["coding_clis"]["clis"]["opencode"]``.
+    Workers embed one of these per listed CLI as
+    ``resources["coding_clis"]["clis"][<agent>]``. ``agent`` defaults to the
+    first CLI on the list.
     Three facts are reported and MUST NOT be conflated:
 
     * **execution inventory** -- ``on_path`` and ``configured`` describe the
@@ -444,7 +613,7 @@ def route_status(
     host_which = _service_augmented_which(env, home) if host_which is None else host_which
     if which is None:
         which = host_which
-    agent = selected_agent(env)
+    agent = agent if agent in SUPPORTED_AGENTS else selected_agent(env)
     host_configured, host_binary, host_source, host_detail = _detect(agent, env, host_which)
     configured, binary, source, detail = _detect(agent, env, which)
     checked = dict(verification or {})
@@ -509,59 +678,122 @@ def route_status(
     }
 
 
+def _unavailable_class(binary: str, env: Mapping[str, str]) -> str:
+    """Why a detector said no, as a closed failure class."""
+    if not binary:
+        return "agent_binary_missing"
+    if not router_hub_url(env):
+        return "not_configured"
+    return "inference_token_unavailable"
+
+
 def resolve_coding_agent(
     env: Optional[Mapping[str, str]] = None,
     home: Optional[Path] = None,
     which: Optional[Callable[[str], Optional[str]]] = None,
     accept: Optional[Callable[[CodingAgentChoice], bool]] = None,
+    exclude: Tuple[str, ...] = (),
 ) -> CodingAgentChoice:
-    """Resolve the opencode route, or none (the executor fails closed).
+    """The first CLI on the ordered list that works here, or none.
+
+    Each CLI is checked in order: installed, able to reach the hub router,
+    and accepted by ``accept`` (the in-sandbox preflight) when one is given.
+    A CLI that fails one of those is skipped with a failure class and the
+    next is tried; when none qualifies the executor fails closed. ``exclude``
+    names CLIs already tried in this attempt (post-run failover), which are
+    skipped as ``already_failed``.
 
     ``env``/``home``/``which`` are injectable for tests; they default to the
     live process environment, ``Path.home()`` and the same service-augmented
     lookup used by :func:`route_status`.
-
-    ``accept`` is an end-to-end verifier (the in-sandbox preflight). When it
-    rejects the route, or raises, there is no route: there is nothing to fall
-    back to, and provider failover is the hub router's job.
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
     which = _service_augmented_which(env, home) if which is None else which
 
-    rationale: List[str] = []
-    if not _truthy(env.get(PREFERENCE_ENV, "1")):
-        rationale.append("%s is disabled; executor will fail closed" % PREFERENCE_ENV)
-        return _choice(False, "", "", rationale, env)
+    order = coding_agent_order(env)
+    rationale: List[str] = list(order.notes)
+    rationale.append(
+        "coding CLIs in order: %s (from %s)" % (", ".join(order.agents), order.source)
+    )
 
-    forced = str(env.get(FORCE_ENV) or "").strip().lower()
-    if forced in _DISABLE_VALUES:
-        rationale.append("%s=%s disables the coding route" % (FORCE_ENV, forced))
-        return _choice(False, "", "", rationale, env)
-    if forced and forced not in SUPPORTED_AGENTS:
-        rationale.append(
-            "%s=%s is not supported; MAC's coding CLIs are %s"
-            % (FORCE_ENV, forced, ", ".join(SUPPORTED_AGENTS))
+    def _none(reason: str, skipped: List[Dict[str, str]]) -> CodingAgentChoice:
+        rationale.append(reason)
+        return CodingAgentChoice(
+            agent="",
+            available=False,
+            rationale=rationale,
+            order=order.agents,
+            order_source=order.source,
+            skipped=tuple(skipped),
         )
-    agent = selected_agent(env)
 
-    available, binary, auth_source, reason = _detect(agent, env, which)
-    rationale.append(reason)
-    if not available:
-        rationale.append("no coding route available; executor will fail closed")
-        return _choice(False, "", "", rationale, env)
-    choice = _choice(True, binary, auth_source, rationale, env, agent)
-    if accept is None:
-        return choice
-    try:
-        accepted = bool(accept(choice))
-    except Exception as exc:  # noqa: BLE001 - a verifier crash means "not verified"
-        rationale.append("%s: verifier raised %s" % (agent, exc.__class__.__name__))
-        accepted = False
-    if accepted:
-        return choice
-    rationale.append("%s: route verification failed; executor will fail closed" % agent)
-    return _choice(False, "", "", rationale, env)
+    if not _truthy(env.get(PREFERENCE_ENV, "1")):
+        return _none("%s is disabled; executor will fail closed" % PREFERENCE_ENV, [])
+    forced = _env_text(env, FORCE_ENV).lower()
+    if forced in _DISABLE_VALUES:
+        return _none("%s=%s disables the coding route" % (FORCE_ENV, forced), [])
+
+    skipped: List[Dict[str, str]] = []
+    for agent in order.agents:
+        if agent in exclude:
+            skipped.append(
+                {
+                    "agent": agent,
+                    "failure_class": "already_failed",
+                    "detail": "%s already failed this attempt" % agent,
+                }
+            )
+            continue
+        available, binary, auth_source, reason = _detect(agent, env, which)
+        rationale.append(reason)
+        if not available:
+            skipped.append(
+                {
+                    "agent": agent,
+                    "failure_class": _unavailable_class(binary, env),
+                    "detail": reason,
+                }
+            )
+            continue
+        choice = _choice(True, binary, auth_source, rationale, env, agent)
+        if accept is not None:
+            try:
+                accepted = bool(accept(choice))
+            except Exception as exc:  # noqa: BLE001 - a verifier crash means "not verified"
+                rationale.append("%s: verifier raised %s" % (agent, exc.__class__.__name__))
+                accepted = False
+            if not accepted:
+                rationale.append("%s: route verification failed" % agent)
+                skipped.append(
+                    {
+                        "agent": agent,
+                        "failure_class": "preflight_failed",
+                        "detail": "%s did not pass the in-sandbox preflight" % agent,
+                    }
+                )
+                continue
+        if skipped:
+            rationale.append(
+                "using %s after skipping %s"
+                % (agent, ", ".join("%s (%s)" % (i["agent"], i["failure_class"]) for i in skipped))
+            )
+        return CodingAgentChoice(
+            agent=choice.agent,
+            available=True,
+            binary=choice.binary,
+            auth_source=choice.auth_source,
+            provider=choice.provider,
+            protocol=choice.protocol,
+            auth_kind=choice.auth_kind,
+            endpoint=choice.endpoint,
+            model=choice.model,
+            rationale=rationale,
+            order=order.agents,
+            order_source=order.source,
+            skipped=tuple(skipped),
+        )
+    return _none("no coding route available; executor will fail closed", skipped)
 
 
 def opencode_argv(binary: str, prompt: str, *, model: str = "") -> List[str]:

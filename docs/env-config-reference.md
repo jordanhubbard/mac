@@ -5,6 +5,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 
 | Variable | Type | Default | Family | Description |
 | --- | --- | --- | --- | --- |
+| `MAC_ACTIVE_CODING_AGENT` | str | consumer-defined | core | Set by the executor for one run, never by an operator: the coding CLI it chose from the list. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS` | int | consumer-defined | core | Core setting: agentbus service result publish attempts. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS` | int | consumer-defined | core | Core setting: agentbus service result publish retry seconds. |
 | `MAC_AGENT_ATTESTATION_KEY` | str | consumer-defined | agent | Agent setting: agent attestation key. |
@@ -58,13 +59,14 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
 | `MAC_CLAUDE_CONTINUATION_ROUNDS` | str | consumer-defined | core | Core setting: claude continuation rounds. |
 | `MAC_CLAUDE_MAX_TURNS` | str | consumer-defined | core | Core setting: claude max turns. |
-| `MAC_CLAUDE_MODEL` | str | consumer-defined | core | Core setting: claude model. |
+| `MAC_CLAUDE_MODEL` | str | consumer-defined | core | Hub setting, inherited by workers with the coding-CLI list: the model Claude Code runs on through the hub's `/v1/messages` (default `claude-opus-4-8`). A task pin that names a Claude model wins. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
 | `MAC_CLIENT_CREDENTIAL_TTL_SECONDS` | int | consumer-defined | core | Core setting: client credential ttl seconds. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
 | `MAC_CLIENT_PRINCIPALS_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals file. |
 | `MAC_CLIENT_PROFILES_DIR` | str | consumer-defined | core | Core setting: client profiles dir. |
-| `MAC_CODING_AGENT` | str | consumer-defined | core | Coding CLI switch. Unset or `opencode` runs opencode through the hub model router, MAC's only coding CLI; `off` disables the coding route (the executor fails closed). Any other value is ignored. |
+| `MAC_CODING_AGENT` | str | consumer-defined | core | Deprecated. `off` (or `none`, `0`) still disables the coding route so the executor fails closed. A CLI name is honoured only when no `MAC_CODING_AGENTS` list exists anywhere, and is reported as deprecated: set the ordered list on the hub instead. |
+| `MAC_CODING_AGENTS` | str | opencode | core | Hub setting: the fleet's ordered list of coding CLIs (comma-separated; known: `opencode`, `claude`; default `opencode`). The hub projects it into every assignment and returns it on every heartbeat, so workers inherit it. The executor runs the first CLI that works on that host and moves to the next only on a structured route failure (binary missing, no hub token, failed in-sandbox preflight, or an auth, rate-limit or upstream failure the hub router recorded for that CLI's route). On a worker it is read only when the hub has issued no list, and is reported as a local override. |
 | `MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight failure ttl seconds. |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight timeout. |
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight ttl seconds. |
@@ -165,6 +167,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HOME` | str | consumer-defined | core | Core setting: home. |
 | `MAC_HOME_DIR` | str | consumer-defined | core | Core setting: home dir. |
 | `MAC_HOSTNAME` | str | consumer-defined | core | Core setting: hostname. |
+| `MAC_HUB_CODING_AGENTS` | str | consumer-defined | hub | Set by the worker from each heartbeat response, never by an operator: the hub's ordered coding-CLI list, used for the worker's own route probes and status report. |
 | `MAC_HUB_CONTROL_PLANE_CPU_HIGH` | str | consumer-defined | hub | Hub setting: hub control plane cpu high. |
 | `MAC_HUB_CONTROL_PLANE_CPU_LOW` | str | consumer-defined | hub | Hub setting: hub control plane cpu low. |
 | `MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss high mb. |
@@ -207,7 +210,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_DIR` | str | consumer-defined | core | Core setting: journal dir. |
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
-| `MAC_JUDGE_MODEL` | str | consumer-defined | core | Core setting: judge model. |
+| `MAC_JUDGE_MODEL` | str | consumer-defined | core | Hub setting, inherited by workers with the coding-CLI list: the model the independent judge uses through the hub router (default `claude-opus-4-8`). |
 | `MAC_LANDING_DEADLINE_SECONDS` | int | 86400 | core | Wall-clock deadline, from the first landing attempt, for every review/landing wait (reviewer, hub verify, publication target/evidence, checks pending, release barrier). Past it the task moves to BLOCKED with `landing_budget_exhausted`. |
 | `MAC_LANDING_MAX_ATTEMPTS` | int | 8 | core | Landing attempts (publication retries, unavailable hub verifies) a task may spend between review and landing before it moves to BLOCKED with `landing_budget_exhausted`. Attempts back off from 5 to 60 minutes. |
 | `MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd artifact timeout seconds. |
@@ -454,6 +457,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TAILSCALE_SOCKS5_PROXY` | str | consumer-defined | core | Core setting: tailscale socks5 proxy. |
 | `MAC_TASK_ATTEMPT` | str | consumer-defined | task-execution | Task Execution setting: task attempt. |
 | `MAC_TASK_CANONICAL_REMOTE` | str | consumer-defined | task-execution | Task Execution setting: task canonical remote. |
+| `MAC_TASK_CODING_AGENTS` | str | consumer-defined | task-execution | Set by the worker for each task run, never by an operator: the hub's ordered coding-CLI list from the task's assignment. |
 | `MAC_TASK_EXECUTOR_PYTHON` | str | consumer-defined | task-execution | Task Execution setting: task executor python. |
 | `MAC_TASK_EXECUTOR_SCRIPT` | str | consumer-defined | task-execution | Task Execution setting: task executor script. |
 | `MAC_TASK_FILE` | str | consumer-defined | task-execution | Task Execution setting: task file. |

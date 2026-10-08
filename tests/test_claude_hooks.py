@@ -183,15 +183,18 @@ def test_executor_writes_claude_files_outside_the_repository_with_no_secret_on_d
     assert ex._write_claude_agent_files(tmp_path, "/s", {"MAC_HUB_URL": "http://hub"}, python="p") == {}
 
 
-def test_the_selected_agent_decides_which_config_is_written(tmp_path, monkeypatch):
+def test_the_cli_that_runs_decides_which_config_is_written(tmp_path, monkeypatch):
     from mac import executor_sandbox as ex
 
     env = {"MAC_HUB_URL": "http://hub", "MAC_INFERENCE_TOKEN": "t"}
-    monkeypatch.setenv("MAC_CODING_AGENT", "claude")
+    assert "ANTHROPIC_BASE_URL" in ex._write_coding_agent_config(
+        tmp_path, "/s", env, python="p", agent="claude"
+    )
+    monkeypatch.setenv("MAC_ACTIVE_CODING_AGENT", "claude")
     assert "ANTHROPIC_BASE_URL" in ex._write_coding_agent_config(tmp_path, "/s", env, python="p")
-    monkeypatch.setenv("MAC_CODING_AGENT", "opencode")
+    monkeypatch.setenv("MAC_ACTIVE_CODING_AGENT", "opencode")
     assert "OPENCODE_CONFIG" in ex._write_coding_agent_config(tmp_path, "/s", env, python="p")
-    assert ca.selected_agent({"MAC_CODING_AGENT": "claude"}) == "claude"
+    assert ca.selected_agent({"MAC_TASK_CODING_AGENTS": "claude,opencode"}) == "claude"
     assert ca.selected_agent({}) == "opencode"
 
 

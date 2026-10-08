@@ -24026,6 +24026,12 @@ class ControlPlane:
             projected["reason"] = reason
         return projected
 
+    def coding_policy(self) -> JsonDict:
+        """The hub's ordered coding-CLI list and model settings, for workers."""
+        from mac.coding_agent import hub_coding_policy
+
+        return hub_coding_policy(os.environ)
+
     def _assignment_task_payload(self, task: Task, lease: Lease) -> JsonDict:
         """Attach a lease-bound host authorization to an in-memory assignment.
 
@@ -24065,6 +24071,10 @@ class ControlPlane:
         # model-written preliminary manifest as an opt-out.
         runtime = ensure_json_object(metadata.get("runtime"))
         runtime["publication_target"] = self._default_publication_target(task)
+        # The fleet's ordered coding-CLI list (and its model settings) is hub
+        # configuration, projected the same way: a task cannot carry its own,
+        # and every attempt runs on the hub's current list.
+        runtime["coding_policy"] = self.coding_policy()
         metadata["runtime"] = runtime
         payload["metadata"] = metadata
         authorization = self._claimed_break_glass_authorization(task.id, lease.agent_id, lease.id)
@@ -24835,26 +24845,38 @@ class ControlPlane:
             )
         except ValueError:
             max_age = 1200.0
-        # A worker reports the one coding CLI it runs: opencode, or Claude
-        # Code (MAC_CODING_AGENT=claude). An entry for any other is ignored.
-        item = ensure_json_object(clis.get("opencode"))
-        if not item:
-            item = ensure_json_object(clis.get("claude"))
+        # The worker reports every CLI on the hub's ordered list, and it can
+        # run the task if ANY of them has a fresh, exact proof: the executor
+        # takes the first one that works. CLIs off the list are ignored.
+        pinned_model = self._task_pinned_coding_model(task)
+        reasons: List[str] = []
+        for agent_name in self.coding_policy()["agents"]:
+            item = ensure_json_object(clis.get(agent_name))
+            reason = self._coding_route_item_failure(item, max_age, pinned_model)
+            if not reason:
+                return True, "verified"
+            reasons.append(reason)
+        if "coding_agent_model_unverified" in reasons:
+            return False, "coding_agent_model_unverified"
+        return False, "coding_agent_route_unverified"
+
+    @staticmethod
+    def _coding_route_item_failure(item: JsonDict, max_age: float, pinned_model: str) -> str:
+        """Why one CLI's reported route cannot take the task, or ``""``."""
         if not (item.get("configured") is True and item.get("verified") is True):
-            return False, "coding_agent_route_unverified"
+            return "coding_agent_route_unverified"
         verification = ensure_json_object(item.get("verification"))
         checked_at = str(verification.get("checked_at") or "").strip()
         try:
             age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
         except Exception:  # noqa: BLE001 - malformed proof must fail closed.
-            return False, "coding_agent_route_unverified"
+            return "coding_agent_route_unverified"
         if age < 0 or age > max_age:
-            return False, "coding_agent_route_unverified"
+            return "coding_agent_route_unverified"
         if verification.get("route_fingerprint") != item.get("route_fingerprint"):
-            return False, "coding_agent_route_unverified"
-        pinned_model = self._task_pinned_coding_model(task)
+            return "coding_agent_route_unverified"
         if not pinned_model:
-            return True, "verified"
+            return ""
         verified_model = str(verification.get("model") or item.get("model") or "").strip()
         verified_models = {
             str(value).strip()
@@ -24862,8 +24884,8 @@ class ControlPlane:
             if str(value).strip()
         }
         if verified_model == pinned_model or pinned_model in verified_models:
-            return True, "verified"
-        return False, "coding_agent_model_unverified"
+            return ""
+        return "coding_agent_model_unverified"
 
     @staticmethod
     def _task_pinned_coding_model(task: Task) -> str:

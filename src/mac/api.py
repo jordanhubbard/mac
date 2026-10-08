@@ -6365,7 +6365,10 @@ def create_app(
             resources.pop("deployment_generation", None)
         if resources_value is not None or resources:
             data["resources"] = resources
-        return cp.heartbeat_agent(agent_id, **data).to_dict()
+        refreshed = cp.heartbeat_agent(agent_id, **data).to_dict()
+        # Workers inherit the fleet's coding-CLI list from the hub.
+        refreshed["coding_policy"] = cp.coding_policy()
+        return refreshed
 
     @app.post("/agents/{agent_id}/crash-reports")
     def report_agent_crash(

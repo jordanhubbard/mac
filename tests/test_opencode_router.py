@@ -31,7 +31,11 @@ def test_unset_coding_agent_means_opencode(tmp_path):
     env = {**_HUB_ENV, "ANTHROPIC_API_KEY": "k"}
     choice = ca.resolve_coding_agent(env=env, home=tmp_path, which=_which("claude", "opencode"))
     assert choice.agent == "opencode"
-    assert choice.rationale[0].startswith("opencode: routed through the hub model router")
+    assert choice.order == ("opencode",) and choice.order_source == "default"
+    assert any(
+        line.startswith("opencode: routed through the hub model router")
+        for line in choice.rationale
+    )
     # Without opencode there is no silent fall-through to another CLI.
     missing = ca.resolve_coding_agent(env=env, home=tmp_path, which=_which("claude"))
     assert missing.agent == "" and missing.available is False

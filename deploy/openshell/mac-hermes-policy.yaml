@@ -131,7 +131,7 @@ network_policies:
       - { path: /usr/local/bin/opencode }
       - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
 
-  # Claude Code (MAC_CODING_AGENT=claude) speaks the Anthropic Messages API;
+  # Claude Code (when `claude` is on the hub's MAC_CODING_AGENTS list) speaks the Anthropic Messages API;
   # the hub relays it to its Anthropic provider (mac.anthropic_passthrough).
   # Listed like opencode: the PATH symlink and its resolved target.
   claude_router:

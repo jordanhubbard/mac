@@ -272,6 +272,11 @@ def _route_context_from_request(request: Any, body: Dict[str, Any]) -> Dict[str,
                 claimed_agent_id,
             )
         context["agent_id"] = principal_agent_id
+    # An inference token is bound to one task; that binding, not a header,
+    # says which task a completion belongs to.
+    principal_task_id = _string_value(getattr(principal, "task_id", None))
+    if principal_task_id:
+        context["task_id"] = principal_task_id
     return context
 
 
@@ -1352,7 +1357,9 @@ def mount_router(
     # Anthropic provider (mac.anthropic_passthrough).
     from mac.anthropic_passthrough import mount_anthropic_messages
 
-    if mount_anthropic_messages(app, env=env, secret_resolver=secret_resolver):
+    if mount_anthropic_messages(
+        app, env=env, secret_resolver=secret_resolver, route_observer=route_observer
+    ):
         mounted = True
     proxy = proxy or build_proxy_from_env(
         env, secret_resolver=secret_resolver, route_observer=route_observer

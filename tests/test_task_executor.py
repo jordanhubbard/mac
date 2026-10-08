@@ -3651,11 +3651,8 @@ def test_agent_argv_confined_selects_opencode_from_the_task_image(tmp_path, monk
 
     def resolve_for_test(**kwargs):
         seen["which"] = kwargs.get("which")
-        return real_resolve(
-            env={"MAC_HUB_URL": "http://hub.example:8789", "MAC_INFERENCE_TOKEN": "t"},
-            home=tmp_path,
-            **kwargs,
-        )
+        kwargs["env"] = {"MAC_HUB_URL": "http://hub.example:8789", "MAC_INFERENCE_TOKEN": "t"}
+        return real_resolve(home=tmp_path, **kwargs)
 
     monkeypatch.setattr(ca, "resolve_coding_agent", resolve_for_test)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda candidate: True)
@@ -3697,7 +3694,7 @@ def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatc
                 "runner": "coding-agent-required",
                 "rationale": [
                     "no coding agent",
-                    "opencode is not configured and verified inside the task sandbox",
+                    "no coding CLI on the list (none) is configured and verified inside the task sandbox",
                 ],
             },
         )
@@ -3776,7 +3773,7 @@ def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_no_coding_
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "opencode is not configured and verified inside the task sandbox" in joined
+    assert "no coding CLI on the list (none) is configured and verified inside the task sandbox" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_agent(
@@ -3793,7 +3790,7 @@ def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_a
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "opencode is not configured and verified inside the task sandbox" in joined
+    assert "no coding CLI on the list (none) is configured and verified inside the task sandbox" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_not_verified(
@@ -3881,7 +3878,7 @@ def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_no_coding_
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "opencode is not configured and verified inside the task sandbox" in joined
+    assert "no coding CLI on the list (none) is configured and verified inside the task sandbox" in joined
 
 
 def test_sandbox_mode_off_never_probes(monkeypatch):
