@@ -628,6 +628,16 @@ network_policies:
     # Answering only applies to a task already parked on a question.
     cp.request_task_input(answer_task["id"], [{"question": "route coverage question?"}], "operator")
     ctx["answer_task_id"] = answer_task["id"]
+    # A question for the chat-reply routes: a board question on its own task.
+    chat_task = task("route chat question task")
+    cp.post_task_message(
+        chat_task["id"], author_kind="agent", author="route-agent", kind="question",
+        body="route coverage chat question?",
+    )
+    ctx["question_notification_id"] = cp.store.query_one(
+        "SELECT id FROM operator_notifications WHERE event_type = 'task.question' AND subject_id = ?",
+        (chat_task["id"],),
+    )["id"]
     ctx["force_complete_task_id"] = task("route force-complete task")["id"]
     ctx["claim_task_id"] = task("route claim task")["id"]
     ctx["claim_next_task_id"] = task("route claim-next task")["id"]
@@ -1288,6 +1298,12 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         # DELETE /humans/{human_id} targets a dedicated seed row so it does
         # not remove the human_id row used by GET /humans/{human_id}.
         ("DELETE", "/humans/{human_id}"): {"human_id": "delete_human_id"},
+        ("GET", "/notifications/{notification_id}/question"): {
+            "notification_id": "question_notification_id"
+        },
+        ("POST", "/notifications/{notification_id}/replies"): {
+            "notification_id": "question_notification_id"
+        },
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
         ("GET", "/task-groups/{name}"): {"name": "task_group_name"},
         ("DELETE", "/task-groups/{name}"): {"name": "task_group_delete_name"},
@@ -2047,6 +2063,12 @@ edges:
             "notify": True,
         },
         ("POST", "/notifications/{notification_id}/delivered"): {"status": "delivered"},
+        ("POST", "/notifications/{notification_id}/replies"): {
+            "body": "route coverage answer",
+            "ref": "slack:T/C/1.0",
+            "author": "route-coverage",
+            "source": "slack",
+        },
         ("POST", "/notifier/channels"): {
             "name": "route-channel-case",
             "channel_type": "slack",

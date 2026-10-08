@@ -1481,6 +1481,14 @@ class NotificationDelivery(BaseModel):
     status: str = "delivered"
 
 
+class QuestionReply(BaseModel):
+    body: str
+    #: The chat message this reply is, e.g. "slack:<team>/<channel>/<ts>".
+    ref: str
+    author: Optional[str] = None
+    source: str = "chat"
+
+
 class NotifierChannelConfig(BaseModel):
     name: str
     channel_type: str
@@ -7213,6 +7221,50 @@ def create_app(
         body: NotificationDelivery,
     ) -> Dict[str, Any]:
         return cp.mark_notification_delivered(notification_id, status=body.status).to_dict()
+
+    def _require_question_relayer(principal: TokenPrincipal, notification_id: str) -> str:
+        """Only an admin, or the agent the notifier sent this question to, may
+        watch or answer it: an agent speaks for people only where it asked."""
+        principal.refuse_tenant_bound()
+        if principal.is_admin:
+            return "admin"
+        agent_id = str(principal.agent_id or "")
+        sent = agent_id and cp.store.query_one(
+            "SELECT 1 FROM messages WHERE recipient_agent_id = ?"
+            " AND json_extract(payload, '$.notification.id') = ?",
+            (agent_id, notification_id),
+        )
+        if not sent:
+            raise AuthorizationError(
+                "only the agent that delivered notification %s may relay replies to it"
+                % notification_id
+            )
+        return agent_id
+
+    @app.get("/notifications/{notification_id}/question")
+    def question_status(
+        notification_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _require_question_relayer(principal, notification_id)
+        return cp.question_status(notification_id)
+
+    @app.post("/notifications/{notification_id}/replies")
+    def relay_question_reply(
+        notification_id: str,
+        body: QuestionReply,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """A person answered a ``task.question`` in Slack or Telegram."""
+        relayed_by = _require_question_relayer(principal, notification_id)
+        return cp.relay_question_reply(
+            notification_id,
+            body=body.body,
+            author=body.author or "",
+            ref=body.ref,
+            source=body.source,
+            relayed_by=relayed_by,
+        )
 
     @app.post("/notifier/channels")
     def configure_notifier_channel(

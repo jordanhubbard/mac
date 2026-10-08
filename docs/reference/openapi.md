@@ -182,6 +182,8 @@ request and response definitions.
 | `POST` | `/messages` | Send Message |
 | `GET` | `/notifications` | List Notifications |
 | `POST` | `/notifications/{notification_id}/delivered` | Mark Notification Delivered |
+| `GET` | `/notifications/{notification_id}/question` | Question Status |
+| `POST` | `/notifications/{notification_id}/replies` | Relay Question Reply |
 | `GET` | `/notifier/channels` | List Notifier Channels |
 | `POST` | `/notifier/channels` | Configure Notifier Channel |
 | `DELETE` | `/notifier/channels/{channel_id_or_name}` | Delete Notifier Channel |

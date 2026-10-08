@@ -11109,6 +11109,9 @@ class ControlPlane:
                 "\n".join(lines),
                 subject_type="task",
                 subject_id=message.task_id,
+                # "hermes" lets a Slack or Telegram channel subscribed to
+                # task.question deliver it; "dashboard" alone reaches no one.
+                channels=["dashboard", "hermes"],
                 metadata={
                     "task_message_id": message.id,
                     "blocking": False,
@@ -11122,6 +11125,107 @@ class ControlPlane:
                 level="warning",
                 detail={"task_id": message.task_id, "error": str(exc)[:500]},
             )
+
+    def relay_question_reply(
+        self,
+        notification_id: str,
+        *,
+        body: str,
+        author: str,
+        ref: str,
+        source: str,
+        relayed_by: str,
+    ) -> JsonDict:
+        """Record a person's chat reply to a ``task.question`` as the answer.
+
+        The agent that posted the question to Slack (or Telegram) relays the
+        reply here. A board question gets a board answer, which resumes a task
+        parked on it; a task parked by ``mac task ask`` is answered directly.
+        ``ref`` names the chat message, so relaying it twice records it once.
+        ``question_open`` says whether the relayer should keep watching.
+        """
+        body = str(body or "").strip()
+        ref = str(ref or "").strip()
+        if not body:
+            raise ValidationError("reply body is required")
+        if not ref:
+            raise ValidationError("reply ref is required")
+        notification = self.get_notification(notification_id)
+        if notification.event_type != "task.question" or notification.subject_type != "task":
+            raise ValidationError("notification %s is not a task question" % notification_id)
+        task_id = str(notification.subject_id or "")
+        detail = ensure_json_object(notification.metadata)
+        question_id = detail.get("task_message_id") or detail.get("board_message_id")
+        existing = self.store.query_one(
+            "SELECT id FROM task_messages WHERE task_id = ? AND json_extract(metadata, '$.chat_ref') = ?",
+            (task_id, ref),
+        )
+        if existing is not None:
+            return self._question_reply_result("duplicate", task_id, question_id)
+        metadata = {
+            "chat_ref": ref,
+            "source": str(source or "chat"),
+            "relayed_by": str(relayed_by or ""),
+            "notification_id": notification.id,
+        }
+        author = str(author or "").strip() or "%s user" % (source or "chat")
+        task = self.get_task(task_id)
+        if question_id is not None:
+            waiting = self._question_reply_result("", task_id, question_id)["question_open"]
+            # An answer resumes a task parked on this question (post_task_message).
+            # Once it is answered or the task is closed, a later reply is kept
+            # on the board as a plain message.
+            self.post_task_message(
+                task_id,
+                author_kind="human",
+                author=author,
+                kind="answer" if waiting else "message",
+                body=body,
+                reply_to=int(question_id),
+                metadata=metadata,
+            )
+            return self._question_reply_result(
+                "answered" if waiting else "not_waiting", task_id, question_id
+            )
+        if task.state != TaskState.NEEDS_INPUT.value:
+            # Parked by `mac task ask` and since answered or closed.
+            self.post_task_message(
+                task_id, author_kind="human", author=author, kind="message", body=body, metadata=metadata
+            )
+            return self._question_reply_result("not_waiting", task_id, None)
+        self.post_task_message(
+            task_id, author_kind="human", author=author, kind="answer", body=body, metadata=metadata
+        )
+        self.answer_task_input(task_id, body, author, disposition="resume")
+        return self._question_reply_result("answered", task_id, None)
+
+    def question_status(self, notification_id: str) -> JsonDict:
+        """Whether the ``task.question`` behind a notification still wants an answer."""
+        notification = self.get_notification(notification_id)
+        if notification.event_type != "task.question" or notification.subject_type != "task":
+            raise ValidationError("notification %s is not a task question" % notification_id)
+        detail = ensure_json_object(notification.metadata)
+        question_id = detail.get("task_message_id") or detail.get("board_message_id")
+        return self._question_reply_result("status", str(notification.subject_id or ""), question_id)
+
+    def _question_reply_result(self, status: str, task_id: str, question_id: Any) -> JsonDict:
+        task = self.get_task(task_id)
+        if question_id is not None:
+            answered = self.store.query_one(
+                "SELECT 1 FROM task_messages WHERE reply_to = ? AND kind = 'answer'",
+                (int(question_id),),
+            )
+            question_open = answered is None and task.state not in TERMINAL_TASK_STATES
+        else:
+            question_open = task.state == TaskState.NEEDS_INPUT.value
+        return {
+            "schema": "mac.question_reply.v1",
+            "status": status,
+            "task_id": task_id,
+            "task_title": task.title,
+            "task_state": task.state,
+            "question_open": question_open,
+        }
 
     def _resume_task_answered_on_board(self, board: Any, answer: Any) -> None:
         """An answer to the question a task is parked on returns it to the queue."""

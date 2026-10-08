@@ -6288,6 +6288,17 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker chat poll seconds.",
+    "family": "worker",
+    "name": "MAC_WORKER_CHAT_POLL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker claim only canary tasks.",
     "family": "worker",
     "name": "MAC_WORKER_CLAIM_ONLY_CANARY_TASKS",
