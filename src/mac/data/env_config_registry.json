@@ -196,6 +196,7 @@
       "src/mac/executor_hub_io.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
       "src/mac/openshell_collector.py",
@@ -1527,6 +1528,7 @@
     "name": "MAC_FLEET_TENANT_ID",
     "retired": false,
     "sources": [
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/worker.py"
     ],
@@ -1752,6 +1754,7 @@
     "name": "MAC_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/worker.py"
@@ -1776,6 +1779,7 @@
     "name": "MAC_HERMES_PERSONA_ID",
     "retired": false,
     "sources": [
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/worker.py"
     ],
@@ -1800,6 +1804,7 @@
     "name": "MAC_HERMES_RUNTIME_CONTEXT_FILE",
     "retired": false,
     "sources": [
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
@@ -1815,6 +1820,7 @@
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-fleet-context-service.sh",
       "src/mac/cli.py",
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_release.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
@@ -1897,6 +1903,7 @@
     "name": "MAC_HERMES_WORKSPACE",
     "retired": false,
     "sources": [
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
@@ -1921,6 +1928,7 @@
       "deploy/mac-crash-observer.py",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/mac_paths.py",
       "src/mac/models_catalog.py",
@@ -2161,6 +2169,7 @@
       "src/mac/executor_scope.py",
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/local_console.py",
@@ -6051,6 +6060,7 @@
       "src/mac/executor_scope.py",
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
       "src/mac/local_console.py",
@@ -6248,6 +6258,7 @@
       "deploy/mac-crash-observer.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/openshell_runtime.py"
     ],

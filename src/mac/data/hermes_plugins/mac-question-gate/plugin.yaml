@@ -1,0 +1,6 @@
+name: mac-question-gate
+version: 1.0.0
+description: "Keeps Hermes out of answers to MAC task questions in Slack. The MAC worker relays those answers to the task board itself. Managed by mac.hermes_question_gate."
+author: MAC
+hooks:
+  - pre_gateway_dispatch

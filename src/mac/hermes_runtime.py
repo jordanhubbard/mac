@@ -697,7 +697,9 @@ def build_runtime_context(
             "Do not copy MAC task state into Hermes memory as a source of truth; write only completed-task summaries back to Hermes memory.",
             "A person's reply to a MAC task question in chat (a reply in the question's thread, "
             "or a message starting with its code, e.g. `Q7 ...`) is recorded by MAC itself; "
-            "do not answer the question for them with `mac task answer` or `mac task say`.",
+            "do not answer the question for them with `mac task answer` or `mac task say`, "
+            "and do not reply to it: the MAC worker posts the receipt. If you are @-mentioned "
+            "in a question's thread, help, but leave recording the answer to MAC.",
             "MAC agents own the write, cross-review, and merge/publish loop; "
             "humans direct intent and consume outcomes, but are not a required "
             "code-diff quality gate.",
