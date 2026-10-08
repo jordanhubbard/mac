@@ -572,3 +572,11 @@ def test_reap_orphaned_task_sandboxes_survives_limit_flag_removal(monkeypatch):
     report = reap_orphaned_task_sandboxes(apply=True, pid_is_alive=lambda _p: False)
 
     assert report["deleted"] == ["mac-task-dead"]
+
+
+def test_reaper_reaps_short_named_smoke_sandboxes():
+    for name, kind in (("mac-rs-4194304", "runtime-smoke"), ("mac-gs-4194304", "gpu-smoke")):
+        record = classify_orphan_task_sandbox(
+            _orphan(name, kind=kind), pid_is_alive=lambda _p: False
+        )
+        assert record["reap"] is True, record

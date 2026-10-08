@@ -1107,7 +1107,7 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     assert "openshell.ai/managed-by=openshell" in inventory_writer
     assert "openshell.ai/sandbox-name" in direct
     assert (
-        "^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+        "^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|rs|gpu-smoke|gs|security-probe|sp)-[A-Za-z0-9._-]+$"
         in direct
     )
     assert 'sandbox_name" = "$expected_openclaw' in direct
@@ -1549,8 +1549,25 @@ def test_gateway_toml_renders_schema_v2(tmp_path):
                 "d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a"
             ),
             "image_pull_policy": "if_not_present",
+            "allow_driver_config": True,
+            "enable_bind_mounts": False,
+            "resource_admission": {"enabled": True},
         }
     }
+
+
+def test_gateway_admits_the_verifier_tmpfs_and_nothing_wider(tmp_path):
+    """0.1 refuses caller driver JSON unless the gateway opts in, which broke
+    every bounded-tmpfs task and hub verification on the 0.1.2 canary. The
+    opt-in is only safe while admission and the bind-mount gate stay closed."""
+    from mac.openshell_runtime import VERIFIER_TEST_STORAGE
+
+    docker = _render_gateway_toml(tmp_path)["openshell"]["drivers"]["docker"]
+    assert docker["allow_driver_config"] is True
+    assert docker["enable_bind_mounts"] is False
+    assert docker["resource_admission"] == {"enabled": True}
+    # 0.1 reserves the image WorkingDir (/sandbox) and everything under it.
+    assert not VERIFIER_TEST_STORAGE.startswith("/sandbox/")
 
 
 def test_gateway_toml_is_preflighted_before_it_replaces_the_live_config():
@@ -1727,3 +1744,69 @@ def test_rollback_without_a_backup_fails_before_touching_the_gateway(tmp_path):
     assert rollback.returncode != 0
     assert "no OpenShell upgrade backup" in rollback.stderr
     assert not (tmp_path / "calls").exists()
+
+
+def test_smoke_sandbox_names_fit_openshell_name_limit():
+    # OpenShell rejects sandbox names over 19 characters. The bootstrap's smoke
+    # names end in the shell PID, which reaches 7 digits on Linux (pid_max is
+    # at most 4194304), so check the longest name the bootstrap can produce.
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    for variable in ("smoke_name", "gpu_smoke_name"):
+        line = next(
+            line.strip()
+            for line in bootstrap.splitlines()
+            if line.strip().startswith('%s="' % variable)
+        )
+        template = line.split("=", 1)[1].strip('"')
+        assert template.endswith("$$"), line
+        assert len(template.replace("$$", "4194304")) <= 19, line
+    probe = next(
+        line.strip()
+        for line in bootstrap.splitlines()
+        if line.strip().startswith("run_live_confinement_probe ")
+    )
+    template = probe.split()[2].strip('"')
+    assert template.endswith("$$"), probe
+    assert len(template.replace("$$", "4194304")) <= 19, probe
+
+
+def test_upgrade_retires_short_named_smoke_sandboxes(tmp_path):
+    for name, kind in (
+        ("mac-rs-4194304", "runtime-smoke"),
+        ("mac-gs-4194304", "gpu-smoke"),
+        ("mac-sp-4194304", "security-probe"),
+    ):
+        smoke = {
+            "name": name,
+            "phase": "Ready",
+            "labels": {
+                "mac.owner": "mac",
+                "mac.kind": kind,
+                "mac.keep": "false",
+                "mac.pid": "99999999",
+            },
+        }
+        result = _run_api_retirement_planner(tmp_path, [smoke])
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "disposable\t%s" % name
+
+
+def test_env_recipe_only_removes_variables_it_rewrites():
+    # The env recipe deletes its own lines from mac.env and appends fresh ones.
+    # A variable it deletes but never writes back is lost on every bootstrap;
+    # MAC_HERMES_PYTHON (owned by the Hermes installer) was dropped this way.
+    import re
+
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    recipe = bootstrap.split("# --- 11. env recipe in mac.env", 1)[1]
+    sed_line = next(line for line in recipe.splitlines() if line.startswith("sed -i '/^# OpenShell"))
+    deleted = set(re.findall(r"/\^([A-Z_]+)=/d", sed_line))
+    written = set(re.findall(r'echo "([A-Z_]+)=', recipe)) | set(
+        re.findall(r'&& echo "([A-Z_]+)=', recipe)
+    )
+    assert deleted, sed_line
+    assert deleted <= written, sorted(deleted - written)

@@ -108,11 +108,16 @@ The same verifier execution path serves the worker's pre-push verification
 worker process. Unset, empty,
 or `default` retains the driver's existing behavior. `bounded-tmpfs` requests
 12 CPUs, 32 GiB memory and an 8 GiB Docker-driver tmpfs at
-`/sandbox/test-storage`, with `MAC_TEST_PG_DATADIR` pointing to its
+`/tmp/mac-test-storage`, with `MAC_TEST_PG_DATADIR` pointing to its
 `mac-test-pgdata` subdirectory and `MAC_TEST_JOBS=8`. Repository fixture scratch
 uses `TMPDIR=/sandbox/test-scratch` on the sandbox filesystem, so large fixture
 copies cannot fill PostgreSQL's mount. The tmpfs uses mode 1777 and does not
 expose a host directory. PostgreSQL keeps its normal durability settings.
+The mount is outside `/sandbox` because OpenShell 0.1 reserves the image's
+working directory and everything under it; `/tmp` is writable under every MAC
+sandbox policy. OpenShell 0.1 also refuses caller driver JSON unless the
+gateway enables `allow_driver_config`, which `bootstrap-openshell.sh` renders
+with resource admission on and bind mounts off.
 
 Before extracting or bootstrapping the repository, the sandbox proves that it
 is on Linux and that the requested path is a writable tmpfs. A missing proof,

@@ -81,7 +81,7 @@ def test_bounded_profile_requests_native_limits_and_local_test_storage(monkeypat
             "mounts": [
                 {
                     "type": "tmpfs",
-                    "target": "/sandbox/test-storage",
+                    "target": "/tmp/mac-test-storage",
                     "size_bytes": 8 * 1024**3,
                     "mode": 0o1777,
                     "options": ["exec"],
@@ -91,7 +91,7 @@ def test_bounded_profile_requests_native_limits_and_local_test_storage(monkeypat
     }
     env = [argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--env"]
     assert "TMPDIR=/sandbox/test-scratch" in env
-    assert "MAC_TEST_PG_DATADIR=/sandbox/test-storage/mac-test-pgdata" in env
+    assert "MAC_TEST_PG_DATADIR=/tmp/mac-test-storage/mac-test-pgdata" in env
     assert "MAC_TEST_JOBS=8" in env
     assert "MAC_TEST_PG_LOCAL=1" in env
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env)
@@ -144,7 +144,7 @@ def test_storage_preflight_gates_repository_execution(
     preflight = "export PATH=" + command.split("export PATH=", 1)[1].split("cd /sandbox/repo", 1)[0]
     # Replace only the mount operand, not the same prefix inside the fake
     # command directory on Linux sandboxes (whose pytest TMPDIR is this mount).
-    preflight = preflight.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
+    preflight = preflight.replace(" /tmp/mac-test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
     preflight = preflight.replace(
         "TMPDIR=/sandbox/test-scratch", "TMPDIR=" + shlex.quote(str(tmp_path / "scratch"))
     )
@@ -173,7 +173,7 @@ def test_profile_refuses_unavailable_fixture_scratch(monkeypatch, tmp_path):
     scratch = tmp_path / "not-a-directory"
     scratch.touch()
     _, _, shell = verifier_resource_profile()
-    shell = shell.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
+    shell = shell.replace(" /tmp/mac-test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
     shell = shell.replace("TMPDIR=/sandbox/test-scratch", "TMPDIR=" + shlex.quote(str(scratch)))
     marker = tmp_path / "repository-started"
     result = subprocess.run(
@@ -259,7 +259,7 @@ def test_fresh_worker_shell_reasserts_profile_before_setup(
         if lane == "worker-exec"
         else sandbox._sandbox_read_only_repository_verification_shell(environment)
     )
-    shell = shell.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
+    shell = shell.replace(" /tmp/mac-test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
     scratch = tmp_path / "scratch"
     shell = shell.replace("TMPDIR=/sandbox/test-scratch", "TMPDIR=" + shlex.quote(str(scratch)))
     result = subprocess.run(
@@ -272,7 +272,7 @@ def test_fresh_worker_shell_reasserts_profile_before_setup(
     assert result.returncode == expected, result.stderr
     assert marker.exists() is (expected == 0)
     if not expected:
-        assert marker.read_text().strip() == f"{scratch} /sandbox/test-storage/mac-test-pgdata 8"
+        assert marker.read_text().strip() == f"{scratch} /tmp/mac-test-storage/mac-test-pgdata 8"
         assert scratch.is_dir()
     else:
         assert UNAVAILABLE in result.stderr
@@ -317,7 +317,7 @@ def test_separate_read_only_verifier_requests_controller_profile(monkeypatch, tm
             assert args[args.index("--cpu") + 1] == "12"
             assert args[args.index("--memory") + 1] == "32Gi"
             mount = json.loads(args[args.index("--driver-config-json") + 1])["docker"]["mounts"][0]
-            assert mount["target"] == "/sandbox/test-storage"
+            assert mount["target"] == "/tmp/mac-test-storage"
             assert mount["size_bytes"] == 8 * 1024**3
             upload = __import__("pathlib").Path(args[args.index("--upload") + 1].split(":", 1)[0])
             script = (upload / ".mac-sandbox-repository-verify.sh").read_text()
