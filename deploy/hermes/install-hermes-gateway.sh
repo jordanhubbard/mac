@@ -103,6 +103,10 @@ sync_chat_config() {
   "$mac_python" -m mac.hermes_chat_config \
     --hermes-home "$HERMES_HOME" --mac-env "$MAC_HOME/mac.env" \
     || die "Hermes chat provider config could not be synchronized"
+  # The soul graph's MCP server, first-time seed and skill (mac.soul_install).
+  # Optional: a failure is reported, never fatal to the install.
+  "$mac_python" -m mac.soul_install --hermes-home "$HERMES_HOME" \
+    || echo "WARNING: soul graph install failed; Hermes runs without soul_* tools" >&2
 }
 
 qualify_staged_runtime() {

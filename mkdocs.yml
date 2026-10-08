@@ -170,4 +170,5 @@ nav:
   - Architecture:
       - Hermes boundary: hermes-boundary.md
       - OpenShell sandbox: openshell-sandbox.md
+      - Soul graph (experimental): soul-graph.md
       - Historical archive: archive/index.md

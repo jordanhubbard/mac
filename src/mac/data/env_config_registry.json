@@ -1899,7 +1899,8 @@
       "src/mac/hermes_runtime.py",
       "src/mac/mac_paths.py",
       "src/mac/models_catalog.py",
-      "src/mac/pg_backup_scheduler.py"
+      "src/mac/pg_backup_scheduler.py",
+      "src/mac/soul_graph.py"
     ],
     "type": "str"
   },

@@ -200,6 +200,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`review-tick-stall-diagnosis.md`](../review-tick-stall-diagnosis.md) | Why the hub self-tick fails to drain the REVIEWING backlog |
 | supplemental reference | [`roadmap.md`](../roadmap.md) | MAC Roadmap |
 | supplemental reference | [`secrets-management-guide.md`](../secrets-management-guide.md) | Secrets Management Guide |
+| supplemental reference | [`soul-graph.md`](../soul-graph.md) | Soul graph (experimental) |
 | runbook | [`soul-preservation-runbook.md`](../soul-preservation-runbook.md) | Soul Preservation Runbook |
 | supplemental reference | [`structured-task-bodies.md`](../structured-task-bodies.md) | Structured task bodies: actions on a Component |
 | historical archive | [`superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
