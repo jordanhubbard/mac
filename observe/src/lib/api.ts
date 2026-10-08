@@ -370,6 +370,34 @@ export interface ProjectGraphResponse {
   graph?: ProjectGraph;
 }
 
+export interface BoardMessage {
+  id: number;
+  task_id: string;
+  author_kind: "agent" | "human" | "hub";
+  author: string;
+  kind: string;
+  body: string;
+  reply_to: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  task_title?: string;
+  task_project?: string | null;
+  task_state?: string;
+}
+
+export interface BoardFeed {
+  schema: string;
+  messages: BoardMessage[];
+  open_questions: BoardMessage[];
+  cursor: number;
+}
+
+export interface TaskBoardPage {
+  task_id: string;
+  messages: BoardMessage[];
+  cursor: number;
+}
+
 export interface StreamEvent {
   event: "connected" | "updated" | "heartbeat" | string;
   server_time: string;
@@ -409,6 +437,24 @@ export class ConsoleClient {
       { timeoutMs: 20_000 },
     );
     return (await response.json()) as ProjectGraphResponse;
+  }
+
+  /** Every task's board after `after` (the newest page on a first read). */
+  async board(after = 0, includeActivity = false): Promise<BoardFeed> {
+    const response = await this.get(
+      `/dashboard/board?after=${encodeURIComponent(after)}&include_activity=${includeActivity}`,
+      { timeoutMs: 15_000 },
+    );
+    return (await response.json()) as BoardFeed;
+  }
+
+  /** One task's board after `after`, oldest first. */
+  async taskBoard(taskId: string, after = 0): Promise<TaskBoardPage> {
+    const response = await this.get(
+      `/tasks/${encodeURIComponent(taskId)}/messages?after=${encodeURIComponent(after)}&limit=500`,
+      { timeoutMs: 15_000 },
+    );
+    return (await response.json()) as TaskBoardPage;
   }
 
   /** One transcript turn's text. Fetched only when a turn is expanded. */

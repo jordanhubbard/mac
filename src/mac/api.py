@@ -4585,6 +4585,17 @@ def create_app(
         del principal
         return build_transcript_entry(cp, transcript_id)
 
+    @app.get("/dashboard/board")
+    def dashboard_board(
+        after: int = 0,
+        limit: int = 200,
+        include_activity: bool = False,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Every task's board, newest last: what every agent is doing and asking."""
+        del principal
+        return cp.list_recent_board(after=after, limit=limit, include_activity=include_activity)
+
     @app.get("/dashboard/state")
     def dashboard_state(
         view: Optional[str] = Query(default=None),

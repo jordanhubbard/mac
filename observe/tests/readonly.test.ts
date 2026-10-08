@@ -120,18 +120,22 @@ describe("no mutation anywhere in the source tree", () => {
     expect(files.length).toBeGreaterThan(5);
   });
 
-  it("routes every network call through src/lib/http.ts", () => {
+  // The one sanctioned write: a person posting to a task's board
+  // (src/lib/board.ts, held to that single route by tests/board.test.ts).
+  const isBoardWriter = (f: string) => f.endsWith(join("lib", "board.ts"));
+
+  it("routes every network call through src/lib/http.ts (or the board writer)", () => {
     const offenders = files
-      .filter((f) => !f.endsWith(join("lib", "http.ts")))
+      .filter((f) => !f.endsWith(join("lib", "http.ts")) && !isBoardWriter(f))
       .filter((f) => /\b(fetch|XMLHttpRequest|EventSource|navigator\.sendBeacon)\s*\(/.test(
         readFileSync(f, "utf8"),
       ));
     expect(offenders).toEqual([]);
   });
 
-  it("contains no mutating HTTP verbs", () => {
+  it("contains no mutating HTTP verbs outside the board writer", () => {
     const offenders: string[] = [];
-    for (const file of files) {
+    for (const file of files.filter((f) => !isBoardWriter(f))) {
       const text = readFileSync(file, "utf8");
       // Match the verbs only where they'd be used as an HTTP method, i.e.
       // as a quoted string. Prose in comments is fine.

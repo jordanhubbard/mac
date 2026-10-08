@@ -8,6 +8,9 @@ import { AgentsView, ProjectsView } from "./views/Fleet";
 import { PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
 import { MissionControlView } from "./views/MissionControl";
+import { ConversationsView } from "./views/Conversations";
+import { createBoardPoster } from "./lib/board";
+import type { PostToBoard } from "./components/TaskBoard";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -16,6 +19,7 @@ import { MissionControlView } from "./views/MissionControl";
 const TOKEN_KEY = "mac.dashboard.token";
 
 const VIEWS = [
+  { id: "conversations", label: "Conversations", group: "Movement" },
   { id: "live", label: "Live", group: "Movement" },
   { id: "stuck", label: "Stuck work", group: "Movement" },
   { id: "agents", label: "Agents", group: "Fleet" },
@@ -84,6 +88,7 @@ export function App() {
   const [draftToken, setDraftToken] = useState("");
 
   const client = useMemo(() => new ConsoleClient(() => token), [token]);
+  const postToBoard = useMemo<PostToBoard>(() => createBoardPoster(() => token), [token]);
   const live = useLive(client, windowHours, 60);
 
   // Keep ?view= (and ?task= / ?project= / ?selected=) in the URL so a view is
@@ -231,6 +236,7 @@ export function App() {
             view={view}
             snap={snap}
             client={client}
+            postToBoard={postToBoard}
             taskId={taskId}
             project={project}
             selectedId={selectedId}
@@ -252,6 +258,7 @@ function Router({
   view,
   snap,
   client,
+  postToBoard,
   taskId,
   project,
   selectedId,
@@ -264,6 +271,7 @@ function Router({
   view: ViewId;
   snap: Snapshot;
   client: ConsoleClient;
+  postToBoard: PostToBoard;
   taskId: string | null;
   project: string;
   selectedId: string | null;
@@ -276,8 +284,16 @@ function Router({
   switch (view) {
     case "task":
       return (
-        <TaskView client={client} taskId={taskId} snap={snap} onBack={onBack} />
+        <TaskView
+          client={client}
+          taskId={taskId}
+          snap={snap}
+          onBack={onBack}
+          postToBoard={postToBoard}
+        />
       );
+    case "conversations":
+      return <ConversationsView client={client} onOpenTask={onOpenTask} />;
     case "stuck":
       return <StuckView snap={snap} onOpenTask={onOpenTask} />;
     case "agents":
