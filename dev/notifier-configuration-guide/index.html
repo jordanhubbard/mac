@@ -2320,6 +2320,14 @@ including Hermes, are ignored, and so are channel messages without a code.</p>
 <p>The Slack text leaves out the <code>mac task answer</code> command that the notification
 body carries for operators. In a channel Hermes reads, that line invited Hermes
 to answer for the person, which bypassed the board.</p>
+<p>Hermes still answers every message in a free-response channel, so each agent
+would otherwise reply to an answer meant for MAC. <code>scripts/fleet-update</code> installs
+a Hermes plugin, <code>mac-question-gate</code> (<code>mac.hermes_question_gate</code>), on every host.
+It drops a coded channel message and any reply in a question's thread before the
+agent sees it. A message that @-mentions someone still goes through, so a person
+can pull an agent into a question thread. The same step regenerates the agent's
+MAC runtime context, so runtime rules reach Hermes on every update. Hermes loads
+both on restart, so roll the change out with <code>fleet-update --hermes</code>.</p>
 <p>The worker stops watching a question when the question is answered anywhere,
 including on the board or in another workspace, when the task closes, or after
 14 days. It polls every <code>MAC_WORKER_CHAT_POLL_SECONDS</code> (default 30). This loop
