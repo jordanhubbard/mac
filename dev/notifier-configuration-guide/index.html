@@ -1914,6 +1914,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#44-questions-answering-from-slack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Questions: answering from Slack
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2285,6 +2296,35 @@ back to auto-discovery (see Section 5).</p>
 <a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>    <span class="n">target</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;agent_id&quot;</span><span class="p">:</span> <span class="s2">&quot;&lt;hub-agent-id&gt;&quot;</span><span class="p">},</span>
 <a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="p">)</span>
 </code></pre></div>
+<h3 id="44-questions-answering-from-slack">4.4 Questions: answering from Slack<a class="headerlink" href="#44-questions-answering-from-slack" title="Permanent link">&para;</a></h3>
+<p>An agent's question (<code>task.question</code>) is the one notification a person replies
+to. Subscribe a channel to it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac admin notifier configure \</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">  --name questions-slack \</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">  --channel-type slack \</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="go">  --event-types task.question \</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="go">  --target &#39;{&quot;agent_id&quot;: &quot;&lt;hub-agent-id&gt;&quot;}&#39;</span>
+</code></pre></div>
+<p>The worker behind that agent posts each question to its Slack home channels,
+ending with "Reply in this thread to answer", and watches the thread. The first
+reply from a person is recorded on the task board as the answer, authored by
+their Slack display name. If the task is parked on that question, the answer
+returns it to the queue. The worker then posts a one-line receipt in the thread.
+A later reply is kept on the board as a plain message. Replies from bots,
+including Hermes, are ignored.</p>
+<p>The worker stops watching a thread when the question is answered anywhere,
+including on the board or in another workspace, when the task closes, or after
+14 days. It polls every <code>MAC_WORKER_CHAT_POLL_SECONDS</code> (default 30). This loop
+also drains the agent's mailbox, so questions go out while the worker is busy
+with a long task.</p>
+<p>The bot token needs the <code>channels:history</code> scope (<code>groups:history</code> for a private
+channel) to read the thread, and <code>users:read</code> for display names. Without
+<code>users:read</code>, the answer is authored by the Slack user ID.</p>
+<p>Only an admin, or the agent the notifier sent the question to, may relay a reply
+(<code>POST /notifications/&lt;id&gt;/replies</code>). Anyone who can post in the channel can
+answer, so subscribe questions only to channels whose members you would let
+answer the agents.</p>
+<p>Telegram questions are not relayed yet: the worker does not post to Telegram.</p>
 <hr />
 <h2 id="5-auto-hermes-fallback">5. Auto-Hermes Fallback<a class="headerlink" href="#5-auto-hermes-fallback" title="Permanent link">&para;</a></h2>
 <p>When a notification carries <code>channels: ["hermes"]</code> and <strong>no</strong> configured
@@ -2302,25 +2342,25 @@ channel in the notification or by registering an explicit notifier channel.</p>
 <hr />
 <h2 id="6-template-customisation">6. Template Customisation<a class="headerlink" href="#6-template-customisation" title="Permanent link">&para;</a></h2>
 <p>Message payloads use the schema <code>mac.notifier.task_progress.v1</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">&quot;schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mac.notifier.task_progress.v1&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;event_type&gt;&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">&quot;notification&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">&quot;event_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task.completed&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">    </span><span class="nt">&quot;subject_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="nt">&quot;subject_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task_...&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Task completed: ...&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">    </span><span class="nt">&quot;body&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">    </span><span class="nt">&quot;channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;hermes&quot;</span><span class="p">],</span>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">    </span><span class="nt">&quot;metadata&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span>
-<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;delivered&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="w">    </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="w">    </span><span class="nt">&quot;delivered_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="w">  </span><span class="nt">&quot;channel_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;hermes&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="w">  </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
-<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">&quot;schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mac.notifier.task_progress.v1&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;event_type&gt;&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">&quot;notification&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="nt">&quot;event_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task.completed&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">    </span><span class="nt">&quot;subject_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="nt">&quot;subject_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task_...&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">    </span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Task completed: ...&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">    </span><span class="nt">&quot;body&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">    </span><span class="nt">&quot;channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;hermes&quot;</span><span class="p">],</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">    </span><span class="nt">&quot;metadata&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">    </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;delivered&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="w">    </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">    </span><span class="nt">&quot;delivered_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="w">  </span><span class="nt">&quot;channel_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;hermes&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="w">  </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a><span class="p">}</span>
 </code></pre></div>
 <p>The Hermes agent that receives the <code>STATUS_UPDATE</code> message is responsible for
 rendering it to the destination platform. Edit the agent's system prompt or a
@@ -2340,8 +2380,8 @@ serializability. Those are contracts, not guards.</p>
 <hr />
 <h2 id="7-debugging-delivery-failures">7. Debugging Delivery Failures<a class="headerlink" href="#7-debugging-delivery-failures" title="Permanent link">&para;</a></h2>
 <h3 id="71-inspect-notification-status">7.1 Inspect Notification Status<a class="headerlink" href="#71-inspect-notification-status" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac notification list --status failed --limit 20</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">mac notification show &lt;notification-id&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac notification list --status failed --limit 20</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">mac notification show &lt;notification-id&gt;</span>
 </code></pre></div>
 <p>Status values:</p>
 <table>
@@ -2376,24 +2416,24 @@ serializability. Those are contracts, not guards.</p>
 </table>
 <h3 id="72-check-observability-logs">7.2 Check Observability Logs<a class="headerlink" href="#72-check-observability-logs" title="Permanent link">&para;</a></h3>
 <p>Delivery failures emit a <code>notifier.delivery_failed</code> observability event:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin observability events --name notifier.delivery_failed --limit 10</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac admin observability events --name notifier.delivery_failed --limit 10</span>
 </code></pre></div>
 <p>Successful deliveries emit <code>notifier.delivered</code> with the message IDs.</p>
 <h3 id="73-validate-webhook-credentials">7.3 Validate Webhook Credentials<a class="headerlink" href="#73-validate-webhook-credentials" title="Permanent link">&para;</a></h3>
 <p><strong>Slack</strong>: Test with <code>curl</code>:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">curl -X POST https://slack.com/api/chat.postMessage \</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">  -H &quot;Authorization: Bearer xoxb-...&quot; \</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="go">  -H &quot;Content-Type: application/json&quot; \</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="go">  -d &#39;{&quot;channel&quot;: &quot;C0123456789&quot;, &quot;text&quot;: &quot;test&quot;}&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="go">curl -X POST https://slack.com/api/chat.postMessage \</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="go">  -H &quot;Authorization: Bearer xoxb-...&quot; \</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="go">  -H &quot;Content-Type: application/json&quot; \</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="go">  -d &#39;{&quot;channel&quot;: &quot;C0123456789&quot;, &quot;text&quot;: &quot;test&quot;}&#39;</span>
 </code></pre></div>
 Check <code>"ok": true</code> in the response. Common errors:
 - <code>not_in_channel</code> — invite the bot to the channel first.
 - <code>token_revoked</code> — regenerate the token in the Slack app dashboard.
 - <code>channel_not_found</code> — use the channel ID (starts with <code>C</code>), not the name.</p>
 <p><strong>Telegram</strong>: Test with:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="go">curl &quot;https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage&quot; \</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="go">  -d chat_id=&lt;CHAT_ID&gt; \</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="go">  -d text=&quot;test&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="go">curl &quot;https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage&quot; \</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="go">  -d chat_id=&lt;CHAT_ID&gt; \</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="go">  -d text=&quot;test&quot;</span>
 </code></pre></div>
 Common errors:
 - <code>400 Bad Request: chat not found</code> — bot not a member of the group; add it.
@@ -2413,7 +2453,7 @@ that batches messages.</p>
 default) on the next <code>deliver_pending()</code> call. No manual intervention is
 required; however, if you see persistent <code>delivering</code> rows older than 10
 minutes, check that the notifier background tick is running:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="go">mac service status notifier</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">mac service status notifier</span>
 </code></pre></div>
 <h3 id="76-skipped-notifications">7.6 Skipped Notifications<a class="headerlink" href="#76-skipped-notifications" title="Permanent link">&para;</a></h3>
 <p>A notification is <code>skipped</code> when <code>deliver_pending()</code> finds no targets. This
@@ -2423,36 +2463,36 @@ means either:
 - All matching channels are disabled (<code>enabled=False</code>).
 - The platform binding's Hermes instance has no registered agents.</p>
 <p>Enable verbose logging to trace target resolution:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">MAC_LOG_LEVEL=debug mac admin notifier deliver --once</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="go">MAC_LOG_LEVEL=debug mac admin notifier deliver --once</span>
 </code></pre></div>
 <hr />
 <h2 id="8-quick-reference">8. Quick Reference<a class="headerlink" href="#8-quick-reference" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mac.services</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControlPlane</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">cp</span> <span class="o">=</span> <span class="n">ControlPlane</span><span class="o">.</span><span class="n">in_memory</span><span class="p">()</span>  <span class="c1"># or load from config in production</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="c1"># Create a Slack notifier channel</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="n">ch</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">configure_channel</span><span class="p">(</span>
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="s2">&quot;ops-slack&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="s2">&quot;slack&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">event_types</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;task.completed&quot;</span><span class="p">,</span> <span class="s2">&quot;task.failed&quot;</span><span class="p">],</span>
-<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">target</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;platform_binding_id&quot;</span><span class="p">:</span> <span class="s2">&quot;&lt;binding-id&gt;&quot;</span><span class="p">},</span>
-<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="p">)</span>
-<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>
-<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="c1"># List all enabled channels</span>
-<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">list_channels</span><span class="p">(</span><span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
-<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">channel_type</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">event_types</span><span class="p">)</span>
-<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>
-<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="c1"># Trigger delivery manually (normally runs on a schedule)</span>
-<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="n">result</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">deliver_pending</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
-<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;delivered&quot;</span><span class="p">],</span> <span class="s2">&quot;delivered,&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;failed&quot;</span><span class="p">],</span> <span class="s2">&quot;failed&quot;</span><span class="p">)</span>
-<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>
-<a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="c1"># Disable a channel temporarily</span>
-<a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a><span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">configure_channel</span><span class="p">(</span><span class="s2">&quot;ops-slack&quot;</span><span class="p">,</span> <span class="s2">&quot;slack&quot;</span><span class="p">,</span> <span class="n">enabled</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>
-<a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a><span class="c1"># Delete a channel</span>
-<a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a><span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">delete_channel</span><span class="p">(</span><span class="s2">&quot;ops-slack&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mac.services</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControlPlane</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">cp</span> <span class="o">=</span> <span class="n">ControlPlane</span><span class="o">.</span><span class="n">in_memory</span><span class="p">()</span>  <span class="c1"># or load from config in production</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="c1"># Create a Slack notifier channel</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="n">ch</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">configure_channel</span><span class="p">(</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="s2">&quot;ops-slack&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>    <span class="s2">&quot;slack&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>    <span class="n">event_types</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;task.completed&quot;</span><span class="p">,</span> <span class="s2">&quot;task.failed&quot;</span><span class="p">],</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>    <span class="n">target</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;platform_binding_id&quot;</span><span class="p">:</span> <span class="s2">&quot;&lt;binding-id&gt;&quot;</span><span class="p">},</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>    <span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="p">)</span>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="c1"># List all enabled channels</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">list_channels</span><span class="p">(</span><span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">channel_type</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">event_types</span><span class="p">)</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="c1"># Trigger delivery manually (normally runs on a schedule)</span>
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="n">result</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">deliver_pending</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;delivered&quot;</span><span class="p">],</span> <span class="s2">&quot;delivered,&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;failed&quot;</span><span class="p">],</span> <span class="s2">&quot;failed&quot;</span><span class="p">)</span>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="c1"># Disable a channel temporarily</span>
+<a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a><span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">configure_channel</span><span class="p">(</span><span class="s2">&quot;ops-slack&quot;</span><span class="p">,</span> <span class="s2">&quot;slack&quot;</span><span class="p">,</span> <span class="n">enabled</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a>
+<a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a><span class="c1"># Delete a channel</span>
+<a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a><span class="n">cp</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">delete_channel</span><span class="p">(</span><span class="s2">&quot;ops-slack&quot;</span><span class="p">)</span>
 </code></pre></div>
 
 
