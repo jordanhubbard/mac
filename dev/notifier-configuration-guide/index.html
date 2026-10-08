@@ -2305,14 +2305,22 @@ to. Subscribe a channel to it:</p>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="go">  --event-types task.question \</span>
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="go">  --target &#39;{&quot;agent_id&quot;: &quot;&lt;hub-agent-id&gt;&quot;}&#39;</span>
 </code></pre></div>
-<p>The worker behind that agent posts each question to its Slack home channels,
-ending with "Reply in this thread to answer", and watches the thread. The first
-reply from a person is recorded on the task board as the answer, authored by
-their Slack display name. If the task is parked on that question, the answer
+<p>The worker behind that agent posts each question to its Slack home channels
+with a short code, for example <code>*Q7* Answer needed: ...</code>. A person answers in
+either of two ways:</p>
+<ul>
+<li>reply in the question's thread, or</li>
+<li>post a channel message that starts with the code: <code>Q7 blue</code> or <code>q7: blue</code>.</li>
+</ul>
+<p>The first answer is recorded on the task board as the answer, authored by the
+person's Slack display name. If the task is parked on that question, the answer
 returns it to the queue. The worker then posts a one-line receipt in the thread.
-A later reply is kept on the board as a plain message. Replies from bots,
-including Hermes, are ignored.</p>
-<p>The worker stops watching a thread when the question is answered anywhere,
+A later reply is kept on the board as a plain message. Messages from bots,
+including Hermes, are ignored, and so are channel messages without a code.</p>
+<p>The Slack text leaves out the <code>mac task answer</code> command that the notification
+body carries for operators. In a channel Hermes reads, that line invited Hermes
+to answer for the person, which bypassed the board.</p>
+<p>The worker stops watching a question when the question is answered anywhere,
 including on the board or in another workspace, when the task closes, or after
 14 days. It polls every <code>MAC_WORKER_CHAT_POLL_SECONDS</code> (default 30). This loop
 also drains the agent's mailbox, so questions go out while the worker is busy
