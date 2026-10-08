@@ -533,6 +533,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_ALLOWED_PROJECTS` | str | consumer-defined | worker | Worker setting: worker allowed projects. |
 | `MAC_WORKER_CANCELLATION_POLL_SECONDS` | int | consumer-defined | worker | Worker setting: worker cancellation poll seconds. |
 | `MAC_WORKER_CAPABILITIES` | str | consumer-defined | worker | Worker setting: worker capabilities. |
+| `MAC_WORKER_CHAT_POLL_SECONDS` | int | consumer-defined | worker | Worker setting: worker chat poll seconds. |
 | `MAC_WORKER_CLAIM_ONLY_CANARY_TASKS` | str | consumer-defined | worker | Worker setting: worker claim only canary tasks. |
 | `MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker coding route probe interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |

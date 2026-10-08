@@ -202,6 +202,44 @@ cp.notifiers.configure_channel(
 )
 ```
 
+### 4.4 Questions: answering from Slack
+
+An agent's question (`task.question`) is the one notification a person replies
+to. Subscribe a channel to it:
+
+```console
+mac admin notifier configure \
+  --name questions-slack \
+  --channel-type slack \
+  --event-types task.question \
+  --target '{"agent_id": "<hub-agent-id>"}'
+```
+
+The worker behind that agent posts each question to its Slack home channels,
+ending with "Reply in this thread to answer", and watches the thread. The first
+reply from a person is recorded on the task board as the answer, authored by
+their Slack display name. If the task is parked on that question, the answer
+returns it to the queue. The worker then posts a one-line receipt in the thread.
+A later reply is kept on the board as a plain message. Replies from bots,
+including Hermes, are ignored.
+
+The worker stops watching a thread when the question is answered anywhere,
+including on the board or in another workspace, when the task closes, or after
+14 days. It polls every `MAC_WORKER_CHAT_POLL_SECONDS` (default 30). This loop
+also drains the agent's mailbox, so questions go out while the worker is busy
+with a long task.
+
+The bot token needs the `channels:history` scope (`groups:history` for a private
+channel) to read the thread, and `users:read` for display names. Without
+`users:read`, the answer is authored by the Slack user ID.
+
+Only an admin, or the agent the notifier sent the question to, may relay a reply
+(`POST /notifications/<id>/replies`). Anyone who can post in the channel can
+answer, so subscribe questions only to channels whose members you would let
+answer the agents.
+
+Telegram questions are not relayed yet: the worker does not post to Telegram.
+
 ---
 
 ## 5. Auto-Hermes Fallback
