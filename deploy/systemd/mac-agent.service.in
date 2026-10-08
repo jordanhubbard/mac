@@ -27,7 +27,7 @@ KillMode=mixed
 KillSignal=SIGTERM
 # A worker may need to withdraw an OpenShell task sandbox and publish its
 # terminal evidence before the supervisor escalates to SIGKILL.
-TimeoutStopSec=600
+TimeoutStopSec=3600
 LimitNOFILE=65536
 LimitCORE=infinity
 StandardOutput=journal

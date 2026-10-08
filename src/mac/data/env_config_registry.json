@@ -4161,6 +4161,17 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell delete timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_DELETE_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell docker bin.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_DOCKER_BIN",
@@ -4513,6 +4524,17 @@
       "src/mac/executor_sandbox.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openshell Sandbox setting: openshell transfer timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_TRANSFER_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -7387,6 +7409,17 @@
       "src/mac/worker_directable.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker executor timeout.",
+    "family": "worker",
+    "name": "MAC_WORKER_EXECUTOR_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,
