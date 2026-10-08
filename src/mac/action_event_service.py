@@ -222,8 +222,7 @@ class ActionEventService:
             # action_events a duplicate superset of observability_events — the
             # firehose that grew the hub mac.db to 16GB. No reader extracts
             # action_events.attributes.detail: OTLP export (_otel_attributes)
-            # projects typed columns only, and dream_scanner also scans
-            # observability_events directly, so dropping the copy loses no
+            # projects typed columns only, so dropping the copy loses no
             # signal while halving this table's write volume and row size.
             attributes={
                 "schema": ACTION_EVENT_SCHEMA,

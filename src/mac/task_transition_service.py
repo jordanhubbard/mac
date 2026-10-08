@@ -90,6 +90,12 @@ def _structured_failure_diagnosis(
     )
 
 
+# States an operator reopen returns to OPEN with a fresh landing budget.
+_LANDING_BUDGET_RESET_STATES = frozenset(
+    {TaskState.FAILED.value, TaskState.CANCELLED.value, TaskState.BLOCKED.value}
+)
+
+
 def _retry_generation(metadata: JsonDict) -> int:
     try:
         return max(0, int(metadata.get("retry_generation") or 0))
@@ -294,6 +300,9 @@ class TaskTransitionService:
                 "retry_excluded_agent_ids",
                 "retry_failure_fingerprint",
                 "retry_failure_kind",
+                # The last failed gate's output belongs to the attempts the
+                # reopen just reset.
+                "repository_gate_failure",
                 # A dependency_resolution record describes ONE unsatisfied
                 # prerequisite episode. Left behind across a reopen it makes
                 # _dependency_state_satisfies_join count this task as
@@ -304,6 +313,18 @@ class TaskTransitionService:
                 "dependency_resolution",
             ):
                 candidate_metadata.pop(key, None)
+            if task.state in _LANDING_BUDGET_RESET_STATES:
+                # An operator reopen is a fresh landing budget: the send-back
+                # counters (check_fixes, rebases), landing attempts, deadline,
+                # backoff and outcome all start over. Left in place, a task
+                # blocked at the check-fix cap came back with zero fix rounds
+                # and blocked again on its first failure (task_b3e16b5f). The
+                # record moves to the reopen's history event for audit. Only
+                # the budget goes: the publication route (fix_failed_checks
+                # names the pull request the next attempt builds on) is kept.
+                previous_landing = candidate_metadata.pop("landing", None)
+                if previous_landing:
+                    detail["previous_landing"] = previous_landing
             metadata_changed = True
         if diagnosis_record is not None:
             diagnosis_summary = _failure_diagnosis(target, detail) or diagnosis_record["problem"]

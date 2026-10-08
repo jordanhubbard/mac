@@ -29,17 +29,16 @@ from typing import (
     Dict,
     Iterable,
     List,
-    Literal,
     Mapping,
     Optional,
     Tuple,
     Union,
 )
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from mac import __version__
@@ -64,7 +63,6 @@ from mac.observability_console import (
     build_task_drilldown,
     build_transcript_entry,
 )
-from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
 from mac.models import (
     AmbiguousIdError,
     AuthorizationError,
@@ -76,16 +74,8 @@ from mac.models import (
 )
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
-from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
-from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
-from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
-from mac.nap_ticker import NapTicker, NapTickerConfig
-from mac.judgement import JudgementConfig, JudgementProcess
-from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
-from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
-from mac.hgx_autoscaler import HgxAutoscaler, HgxAutoscalerConfig
 from mac.http_routes.system import SystemRouteServices, build_system_router
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
@@ -95,19 +85,6 @@ from mac.services import ControlPlane
 from mac.store import StoreError, make_store_from_env, open_postgres_store
 
 _log = logging.getLogger(__name__)
-
-
-def _vector_writer_for_memory(
-    cp: ControlPlane, *, enabled: bool, qdrant_url: Optional[str]
-) -> Optional[Any]:
-    if not enabled:
-        return None
-    resolved = _configured_qdrant_url(qdrant_url)
-    if not resolved:
-        return None
-    from mac.vector_writer_service import VectorWriterService
-
-    return VectorWriterService(memory=cp.memory, qdrant_url=resolved)
 
 
 @dataclass(frozen=True)
@@ -140,7 +117,9 @@ class TokenPrincipal:
     credential_fingerprint: Optional[str] = None
     worker_credential_version: Optional[int] = None
     worker_credential_state: Optional[str] = None
-    worker_identity_mode: str = "compatibility"
+    #: The one task a per-task inference token was minted for. It confines the
+    #: token's ``task_board`` access to that task's board.
+    task_id: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:
@@ -158,6 +137,18 @@ class TokenPrincipal:
             return True
         if scope in {"roles", "workflow"} and "write" in self.scopes:
             return True
+        # ``inference`` is the model router's front door and nothing else. Every
+        # agent credential already reaches /v1, so ``agent`` implies it; the
+        # reverse never holds -- a per-task inference token carries ONLY this
+        # scope and so fails every other route's check.
+        if scope == "inference" and "agent" in self.scopes:
+            return True
+        # A task's board is read and written by the agent running it (through
+        # its per-task inference token, or its agent credential) and by people
+        # with read/write access. The route handler then narrows by task,
+        # method and kind (``_authorize_task_board``).
+        if scope == "task_board" and self.scopes & {"inference", "agent", "read", "write"}:
+            return True
         return False
 
     def assert_tenant(self, target_tenant_id: Optional[str]) -> None:
@@ -171,7 +162,7 @@ class TokenPrincipal:
     def refuse_tenant_bound(self) -> None:
         """Refuse the call for tenant-bound, non-admin tokens.
 
-        Machines, agents, runtimes, environments, and rollouts are part of the
+        Machines, agents, and runtimes are part of the
         shared fleet today. A tenant-bound token has no business reaching them
         until we extend the schema to be tenant-aware.
 
@@ -217,29 +208,22 @@ class TokenPrincipal:
 
         mac-rreh / mac-kgi5 / mac-wcfy: callers pass actor identifiers
         (``agent_id``, ``sender_agent_id``, ``accessor_agent_id``,
-        ``created_by``) in request bodies / URL paths. Actor-bearing worker
-        endpoints require a per-agent credential: neither a shared write token
-        nor an admin token may turn a payload string into worker authority.
-        Operators use explicit admin/recovery routes; trusted services call the
-        private ControlPlane path after their own authority check.
+        ``created_by``) in request bodies / URL paths. An agent-bound worker
+        token may act only as its own agent. An unbound token (static
+        ``MAC_API_TOKENS`` entry or operator client) may name any agent; the
+        route's scope decides what it may do.
         """
         from mac.worker_credentials import evaluate_worker_actor
 
         decision = evaluate_worker_actor(
-            mode=self.worker_identity_mode,
             principal_agent_id=self.agent_id,
             claimed_agent_id=claimed_agent_id,
         )
-        if decision.allowed:
-            return
-        if decision.reason == "agent_principal_mismatch":
+        if not decision.allowed:
             raise AuthorizationError(
                 "token is bound to agent %s and cannot act as %r"
                 % (self.agent_id, claimed_agent_id)
             )
-        if decision.reason == "legacy_worker_package_link_forbidden":
-            raise AuthorizationError("legacy worker credentials cannot act on package-linked work")
-        raise AuthorizationError("actor-bearing worker endpoint requires an agent-bound token")
 
 
 AuthTokenMapping = Mapping[str, Union[List[str], Dict[str, Any], TokenPrincipal]]
@@ -268,6 +252,7 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
                 else None
             ),
             worker_credential_state=(str(value.get("worker_credential_state") or "") or None),
+            task_id=(str(value.get("task_id") or "") or None),
         )
     if not isinstance(value, (list, tuple, set, frozenset)):
         # A principal-like object whose class is NOT this module's, which
@@ -286,6 +271,7 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
             credential_fingerprint=getattr(value, "credential_fingerprint", None),
             worker_credential_version=getattr(value, "worker_credential_version", None),
             worker_credential_state=getattr(value, "worker_credential_state", None),
+            task_id=getattr(value, "task_id", None),
         )
     return TokenPrincipal(scopes=frozenset(str(s) for s in value))
 
@@ -356,7 +342,7 @@ def _agent_filed_on_behalf_of(
        provenance in the strict sense, and it survives the agent being
        re-owned or replaced.
     2. The agent's own owner. Covers work an agent originates itself (repair
-       sweeps, dreams, curiosity) where there is no parent to inherit from.
+       sweeps) where there is no parent to inherit from.
 
     Returns None when neither is known, which leaves the task unowned exactly
     as it is today rather than guessing at a responsible person.
@@ -606,67 +592,6 @@ class TaskGroupRequest(BaseModel):
     selector: str
     description: str = ""
     actor: str = "human"
-
-
-class ReviewExperimentAssign(BaseModel):
-    experiment_id: str
-    arm: Optional[str] = None
-    arms: Optional[Dict[str, float]] = None
-    assignment_probability: Optional[float] = None
-    blind: bool = False
-    blind_arms: List[str] = Field(default_factory=list)
-    policy_version: str = "v1"
-    hypothesis: str = ""
-    stratum: str = ""
-    actor: str = "human"
-
-
-class ReviewOutcomeCreate(BaseModel):
-    kind: str
-    status: str
-    finding_id: str = ""
-    severity_weight: float = 1.0
-    source: str = "operator"
-    detail: Dict[str, Any] = Field(default_factory=dict)
-    actor: str = "human"
-
-
-class ScientificPolicyCreate(BaseModel):
-    name: str
-    project: str
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    description: str = ""
-    created_by: str = "human"
-
-
-class ScientificPolicyAction(BaseModel):
-    actor: str = "operator"
-    reason: str = ""
-
-
-class ScientificExperimentCreate(BaseModel):
-    name: str
-    project: str
-    hypothesis: str
-    control_policy_id: str
-    treatment_policy_id: str
-    primary_metric: str
-    direction: Optional[str] = None
-    min_effect: float = 0.0
-    quality_margin: float = 0.05
-    min_samples_per_arm: Optional[int] = None
-    max_samples_per_arm: Optional[int] = None
-    exploration_fraction: Optional[float] = None
-    outcome_horizon_seconds: Optional[float] = None
-    guardrails: Dict[str, Any] = Field(default_factory=dict)
-    auto_promote: Optional[bool] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_by: str = "human"
-
-
-class ScientificExperimentAction(BaseModel):
-    actor: str = "operator"
-    reason: str = ""
 
 
 class TaskChildCreate(BaseModel):
@@ -951,13 +876,26 @@ class AgentRegister(BaseModel):
     visibility: Optional[str] = None
 
 
+class TaskMessageCreate(BaseModel):
+    kind: str = "message"
+    body: str
+    reply_to: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    #: Only a worker credential acting for the task's owner may say "hub"
+    #: (the harness posting a verdict or nudge); everyone else is derived.
+    author_kind: Optional[str] = None
+    #: A human's display name when the token does not carry one.
+    author: Optional[str] = None
+
+
+class InferenceTokenMint(BaseModel):
+    task_id: str = ""
+    ttl_seconds: int = 6 * 60 * 60
+
+
 class AgentAttestationKeyVerify(BaseModel):
     challenge: Dict[str, Any] = Field(default_factory=dict)
     signature: str
-
-
-class AgentAttestationKeyRecover(BaseModel):
-    probe: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentReportRepositoryExecutorApprove(BaseModel):
@@ -984,20 +922,6 @@ class AgentUpdate(BaseModel):
     owner_human_id: Optional[str] = None
     visibility: Optional[str] = None
     actor: str = "human"
-
-
-class CuriosityDecision(BaseModel):
-    """Approve/reject one quarantined curiosity candidate.
-
-    actor, reason and approval_id are all mandatory: the sidecar withholds
-    approve/reject from the submitting agent precisely so that promotion
-    carries external judgment with an auditable trail, and dropping any of the
-    three would defeat that.
-    """
-
-    actor: str
-    reason: str
-    approval_id: str
 
 
 class AgentBulkUpdate(BaseModel):
@@ -1047,24 +971,6 @@ class RoleAssign(BaseModel):
 
 class RoleSeed(BaseModel):
     replace: bool = False
-
-
-class ProvisioningRequestCreate(BaseModel):
-    reason: str
-    role_slug: Optional[str] = None
-    capabilities: List[str] = Field(default_factory=list)
-    hardware: Dict[str, Any] = Field(default_factory=dict)
-    task_id: Optional[str] = None
-    tenant_id: Optional[str] = None
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ProvisioningRequestFulfill(BaseModel):
-    agent_id: str
-
-
-class ProvisioningRequestCancel(BaseModel):
-    reason: str = "operator-cancelled"
 
 
 class WorkflowCreate(BaseModel):
@@ -1286,74 +1192,6 @@ class DispatchHoldAcquireRequest(BaseModel):
     reason: str
     expected_dispatch_hold: bool
     expected_reason: Optional[str] = None
-
-
-class DispatchHoldBatchItem(BaseModel):
-    agent_id: str
-    reason: str
-    generation: str
-    baseline_seen: str
-    principal_id: Optional[str] = None
-    require_authenticated: bool = True
-    require_report_executor: bool = False
-
-
-class DispatchHoldBatchReleaseRequest(BaseModel):
-    epoch_id: str
-    holds: List[DispatchHoldBatchItem] = Field(default_factory=list)
-
-
-class DispatchHoldBatchTransitionRequest(DispatchHoldBatchReleaseRequest):
-    successor_reason: str
-
-
-class FleetReleaseAttestationCandidateRequest(BaseModel):
-    key: SecretStr
-
-
-class FleetReleaseEpochParticipantRequest(BaseModel):
-    agent_id: str
-    expected_dispatch_hold: bool
-    expected_hold_reason: Optional[str] = None
-    expected_hold_at: Optional[str] = None
-    generation: str
-    baseline_seen: str
-    principal_id: str
-    attestation_candidate: Optional[FleetReleaseAttestationCandidateRequest] = None
-    report_executor_action: Literal["preserve", "approve", "revoke"] = "preserve"
-    report_executor_attestation: Optional[Dict[str, Any]] = None
-
-
-class FleetReleaseEpochOpenRequest(BaseModel):
-    epoch_id: str
-    participants: List[FleetReleaseEpochParticipantRequest] = Field(default_factory=list)
-    successor_hold_reason: Optional[str] = None
-    desired_worker_credential_mode: Optional[Literal["compatibility", "enforced"]] = None
-
-
-class FleetReleaseEpochCommitRequest(BaseModel):
-    identity_sha256: str
-
-
-class FleetReleaseAttestationProofRequest(BaseModel):
-    challenge: Dict[str, Any] = Field(default_factory=dict)
-    signature: str
-
-
-class FleetReleaseEpochParticipantProofRequest(BaseModel):
-    agent_id: str
-    install_receipt: Dict[str, Any] = Field(default_factory=dict)
-    attestation_proof: Optional[FleetReleaseAttestationProofRequest] = None
-    report_executor_startup_timestamp: Optional[str] = None
-
-
-class FleetReleaseEpochProveRequest(FleetReleaseEpochCommitRequest):
-    proofs: List[FleetReleaseEpochParticipantProofRequest] = Field(default_factory=list)
-
-
-class FleetReleaseEpochAbortRequest(FleetReleaseEpochCommitRequest):
-    reason: str
-    disposition: str = "auto"
 
 
 class BreakGlassAuthorizeRequest(BaseModel):
@@ -1641,13 +1479,6 @@ class DashboardTerminalClose(BaseModel):
     sender_agent_id: Optional[str] = None
 
 
-class SandboxRolloutRequest(BaseModel):
-    image: str
-    bom: Optional[Dict[str, Any]] = None
-    project: Optional[str] = None
-    actor: Optional[str] = None
-
-
 class ObservabilityMetricCreate(BaseModel):
     name: str
     value: float
@@ -1914,54 +1745,6 @@ class AgentMemoryStore(BaseModel):
     task_id: Optional[str] = None
 
 
-class NapConfigure(BaseModel):
-    offset_minutes: Optional[int] = None
-    window_minutes: int = 15
-    enabled: bool = True
-    actor: Optional[str] = None
-
-
-class NapBegin(BaseModel):
-    actor: Optional[str] = None
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class NapComplete(BaseModel):
-    summary_evidence_id: Optional[str] = None
-    detail: Optional[Dict[str, Any]] = None
-    actor: Optional[str] = None
-
-
-class NapFail(BaseModel):
-    reason: str
-    actor: Optional[str] = None
-
-
-class NapCycle(BaseModel):
-    actor: Optional[str] = None
-    embed_into_medium: bool = True
-    emit_dream_artifacts: bool = True
-    qdrant_url: Optional[str] = None
-
-
-class DreamImportLogs(BaseModel):
-    dream_logs_dir: Optional[str] = None
-    agent_id: Optional[str] = None
-    created_by: str = "dream-log-import"
-    embed: bool = True
-    dry_run: bool = False
-    qdrant_url: Optional[str] = None
-
-
-class NapConsolidate(BaseModel):
-    since: Optional[str] = None
-    nap_run_id: Optional[str] = None
-    embed_into_medium: bool = True
-    emit_dream_artifacts: bool = True
-    created_by: Optional[str] = None
-    qdrant_url: Optional[str] = None
-
-
 class ConversationThreadTrack(BaseModel):
     platform_binding_id: str
     external_thread_id: str
@@ -1978,21 +1761,6 @@ class VectorRefRecord(BaseModel):
     embedding_model: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     created_by: str = "human"
-
-
-class EnvironmentRegister(BaseModel):
-    name: str
-    tenant_id: Optional[str] = None
-    channel: str = "fleet"
-    promotes_from: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_by: str = "human"
-
-
-class DeploymentCreate(BaseModel):
-    artifact_id: str
-    actor: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeCreate(BaseModel):
@@ -2084,86 +1852,6 @@ class MemoryRemember(BaseModel):
     actor: Optional[str] = None
 
 
-class SourceReleaseCreate(BaseModel):
-    repository_id: str
-    repository_name: str
-    canonical_remote_url: str
-    commit_sha: str
-    canonical_ref: str
-    tree_digest: str
-    status: str = "draft"
-    artifact_digest: Optional[str] = None
-    image_digest: Optional[str] = None
-    created_by_task_id: Optional[str] = None
-    review_evidence_id: Optional[str] = None
-    publication_evidence_id: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class FleetDesiredSourceUpdate(BaseModel):
-    release_id: str
-    request_id: str
-    reason: str
-    fleet_id: Optional[str] = None
-    environment_id: Optional[str] = None
-    rollout_policy: str = "immediate"
-    paused: bool = False
-    expected_generation: Optional[int] = None
-
-
-class FleetUpgradeCreate(BaseModel):
-    fleet_id: str
-    idempotency_key: str
-    target_policy: str
-    reason: str
-    requested_release_id: Optional[str] = None
-    slack_provenance: Dict[str, Any] = Field(default_factory=dict)
-    recovery_policy: str = "retain-upgraded-hub"
-
-
-class FleetUpgradeCancel(BaseModel):
-    reason: str
-
-
-class FleetUpgradeStage(BaseModel):
-    branch: str = "main"
-    required_checks: List[str] = Field(default_factory=list)
-
-
-class FleetUpgradeArm(BaseModel):
-    service: str
-    health_url: str
-    attestation_url: str
-    authorization_ttl_seconds: int = 900
-
-
-class FleetUpgradeEpochOpen(BaseModel):
-    participants: List[Dict[str, Any]]
-
-
-class FleetUpgradeEpochProve(BaseModel):
-    proofs: List[Dict[str, Any]]
-
-
-class FleetUpgradeEpochAbort(BaseModel):
-    reason: str
-    disposition: str = "restore"
-
-
-class RolloutCreate(BaseModel):
-    version: str
-    strategy: str
-    target_percent: int
-    created_by: str
-    tenant_id: Optional[str] = None
-    channel: str = "fleet"
-    runtime_environment_id: Optional[str] = None
-    artifact_uri: Optional[str] = None
-    artifact_hash: Optional[str] = None
-    health_policy: Dict[str, Any] = Field(default_factory=dict)
-    required_eval_set_id: Optional[str] = None
-
-
 class EvalSetCreate(BaseModel):
     name: str
     scoring: str = "higher_is_better"
@@ -2189,29 +1877,6 @@ class EvalRunRecord(BaseModel):
     created_by: str = "human"
 
 
-class RolloutAdvance(BaseModel):
-    action: str
-    actor: str
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RolloutRescue(BaseModel):
-    actor: str
-    reason: str
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RolloutArtifactVerify(BaseModel):
-    artifact_uri: str
-    artifact_hash: str
-    actor: str
-
-
-class RolloutHealthReport(BaseModel):
-    actor: str
-    checks: Dict[str, Any]
-
-
 def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
     # Server-side hub is single-fleet, but honor the fleet-scoped form
     # so a hub started from a multi-fleet ~/.mac/.env (e.g., via
@@ -2234,6 +1899,14 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
     return _normalize_auth_tokens({single: TokenPrincipal(scopes=frozenset({"admin"}))})
 
 
+#: The only model-router routes the ``inference`` scope opens, and only for
+#: POST. ``/v1/messages`` is the Anthropic-shaped front door Claude Code uses.
+_INFERENCE_ROUTES = frozenset(
+    {"/v1/chat/completions", "/v1/embeddings", "/v1/messages", "/v1/messages/count_tokens"}
+)
+_TASK_BOARD_ROUTE = re.compile(r"^/tasks/[^/]+/messages$")
+
+
 def _required_scope(method: str, path: str) -> Optional[str]:
     """The token scope a request must carry. THIS is the authorization gate.
 
@@ -2247,46 +1920,42 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     """
     if path in {"/health", "/startup-attestation"}:
         return None
-    if path == "/.well-known/acp":
-        # ACP discovery manifest (ADR 0006, Phase 3): a public well-known doc,
-        # like /health. No secrets; just mac's capability advertisement.
-        return None
     if path in ("/.well-known/agent-card.json", "/.well-known/agent.json"):
         # A2A AgentCard discovery (Phase 4, agent<->agent axis): an
-        # unauthenticated well-known doc, like /.well-known/acp. Identity +
+        # unauthenticated well-known doc, like /health. Identity +
         # capabilities + skills only; no secrets. The canonical path is
         # agent-card.json (A2A v0.3+); agent.json is the legacy alias.
         return None
     if path == "/a2a":
         # A2A JSON-RPC endpoint (Phase 4): inbound delegation is an agent
         # action, so it requires the agent scope (admin inherits it), the same
-        # bar as /v1 inference and the /acp/ws runtime seam.
+        # bar as /v1 inference.
         return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
-    if path in ("/v1/memory/promote", "/v1/memory/reconcile-embeddings"):
-        # Both rewrite the shared vector store: promotion can retire medium-tier
-        # points, and reconciliation re-embeds a whole collection (every point a
-        # paid embedding call). They live under /v1 next to the rest of the
-        # memory surface, but the blanket /v1 rule below would hand them the
-        # agent scope alongside model inference — and a bound agent token has no
-        # business triggering a fleet-wide re-embed. Admin, like every other
-        # mutating control-plane trigger.
-        return "admin"
+    if _TASK_BOARD_ROUTE.match(path) and method in {"GET", "POST"}:
+        # The task board (mac.task_board). Narrowed per task and per kind in
+        # the handler; see _authorize_task_board.
+        return "task_board"
+    if method == "POST" and path in _INFERENCE_ROUTES:
+        # Chat completions and embeddings are the only routes a per-task
+        # inference token (mac.inference_tokens) may call. Agent credentials
+        # carry the scope implicitly (TokenPrincipal.has_scope).
+        return "inference"
     if path == "/v1" or path.startswith("/v1/"):
         # In-mac model router (th-merge-02): LLM inference is an agent action, so
         # the OpenAI front door requires the agent scope (admin inherits it),
         # regardless of method. This keeps the router from being an open proxy
         # when the API is bound to a network interface (e.g. the hub node).
         return "agent"
+    if re.match(r"^/agents/[^/]+/inference-tokens(/[^/]+)?$", path):
+        # A worker mints (and revokes) its own sandbox inference tokens. The
+        # handler binds the path agent to the principal; an inference token
+        # lacks ``agent`` and so cannot mint another.
+        return "agent"
     if path.startswith("/repository-refs"):
         # A forced reconciliation in prune mode can delete remote branches.
         # Status is ordinary read data; every mutating trigger is admin-only.
-        return "read" if method == "GET" else "admin"
-    if path.startswith("/optimizer"):
-        # Learned policy changes future task execution across a project.  Reads
-        # are ordinary fleet visibility; mutation and manual ticks are admin
-        # control-plane operations, not general task writes.
         return "read" if method == "GET" else "admin"
     if method == "GET" and re.match(r"^/evidence/[^/]+/artifacts/[^/]+$", path):
         # Durable evidence artifact bytes can contain raw stdout/stderr and
@@ -2376,12 +2045,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # are matched earlier and keep the `agent` scope, so a worker still
         # receives and acknowledges directives normally.
         return "admin"
-    if path == "/fleet-upgrades" or path.startswith("/fleet-upgrades/"):
-        if method == "GET":
-            return "upgrade"
-        if path == "/fleet-upgrades" or path.endswith("/cancel"):
-            return "upgrade"
-        return "deploy"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
@@ -2424,26 +2087,14 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path.startswith("/dispatch"):
         return "dispatch"
-    if path.startswith("/source-releases") or path.startswith("/fleet-desired-source"):
-        return "read" if method == "GET" else "deploy"
     if path.startswith("/secrets") or path.startswith("/secret-audits"):
         return "secret"
-    if (
-        path.startswith("/runtimes")
-        or path.startswith("/runtime-deltas")
-        or path.startswith("/environments")
-        or path.startswith("/rollouts")
-    ):
+    if path.startswith("/runtimes") or path.startswith("/runtime-deltas"):
         return "deploy"
     if path.startswith("/roles") or path.endswith("/role"):
         return "roles"
     if path.startswith("/workflows"):
         return "workflow"
-    if path.startswith("/provisioning"):
-        # Provisioning rows are operational signals; treat them as
-        # deploy-level (a future provisioner that polls + spawns agents
-        # is doing infra work, not user-facing writes).
-        return "deploy"
     if path.startswith("/reviews/default"):
         # The automated review tick is the closest thing the swarm has to an
         # auto-merge button, so it does not fall under the generic `write`
@@ -2477,6 +2128,7 @@ def _authorize_request(
     path: str,
     authorization: Optional[str],
     auth_tokens: Mapping[str, TokenPrincipal],
+    explain_expired: Optional[Callable[[str], Optional[Mapping[str, Any]]]] = None,
 ) -> Optional[TokenPrincipal]:
     required = _required_scope(method, path)
     if required is None or not auth_tokens:
@@ -2486,72 +2138,21 @@ def _authorize_request(
     token = authorization.removeprefix("Bearer ").strip()
     principal = _resolve_principal(token, auth_tokens)
     if principal is None:
+        # Name expiry when that is the actual cause. "unknown bearer token" is
+        # true but useless here: it reads as token drift, when the credential
+        # simply aged out and the fix is `mac admin client renew`.
+        detail = explain_expired(token) if explain_expired is not None else None
+        if detail:
+            client_id = detail.get("client_id") or "client"
+            raise AuthorizationError(
+                "expired bearer token: credential %s expired at %s; "
+                "renew it with `mac admin client renew %s` (this is expiry, "
+                "not token drift)" % (client_id, detail.get("expires_at"), client_id)
+            )
         raise AuthorizationError("unknown bearer token")
     if not principal.has_scope(required):
         raise AuthorizationError("token lacks required scope: %s" % required)
     return principal
-
-
-def _authorize_acp_websocket(
-    websocket: "WebSocket", auth_tokens: Mapping[str, TokenPrincipal]
-) -> "tuple[Optional[TokenPrincipal], Optional[str]]":
-    """Resolve the principal for an ACP WebSocket handshake.
-
-    The HTTP auth middleware only runs for ``http`` scope, so the ``/acp/ws``
-    route authenticates here instead. Returns ``(principal, accepted_subprotocol)``:
-
-    * ``principal`` is ``None`` when no token is supplied or it does not match a
-      registered token (or lacks the required ``agent`` scope). The caller
-      rejects the socket *only when tokens are configured* -- when no tokens are
-      set (dev mode), ``_authorize_request`` also returns ``None`` and the
-      request is treated as admin, so we keep WS consistent with that.
-    * ``accepted_subprotocol`` is ``"Authorization"`` when the token arrived via
-      the ``Authorization`` subprotocol (the server must echo the chosen
-      subprotocol back on accept), else ``None``.
-
-    ACP runtime work requires the ``agent`` scope (same as ``/v1`` inference and
-    the ``/agentbus`` / ``/action-events`` agent channels in
-    :func:`_required_scope`).
-    """
-
-    required = "agent"
-    token = ""
-    accepted_subprotocol: Optional[str] = None
-
-    # 1) ?token= query param.
-    raw_token = websocket.query_params.get("token") if hasattr(websocket, "query_params") else None
-    if raw_token:
-        token = str(raw_token).strip()
-
-    # 2) Authorization WebSocket subprotocol: clients offer
-    #    ["Authorization", "<bearer>"] (browsers can't set headers on a WS
-    #    handshake). Accept either a bare token as the second value or a
-    #    "Bearer <token>" form.
-    if not token:
-        offered = []
-        header = (
-            websocket.headers.get("sec-websocket-protocol")
-            if hasattr(websocket, "headers")
-            else None
-        )
-        if header:
-            offered = [p.strip() for p in header.split(",") if p.strip()]
-        if offered and offered[0] == "Authorization" and len(offered) > 1:
-            candidate = offered[1].strip()
-            if candidate.lower().startswith("bearer "):
-                candidate = candidate[len("bearer ") :].strip()
-            token = candidate
-            accepted_subprotocol = "Authorization"
-
-    if not token:
-        return None, accepted_subprotocol
-
-    principal = _resolve_principal(token, auth_tokens)
-    if principal is None:
-        return None, accepted_subprotocol
-    if not principal.has_scope(required):
-        return None, accepted_subprotocol
-    return principal, accepted_subprotocol
 
 
 def _should_record_http_observation(path: str) -> bool:
@@ -2566,8 +2167,6 @@ def _should_record_http_observation(path: str) -> bool:
             # telemetry source and feed the read -> metric -> refresh loop the
             # two lines above already exist to break.
             "/dashboard/observe",
-            "/news",
-            "/news/stream",
             "/.well-known/agent-card.json",
             "/.well-known/agent.json",
         }
@@ -2992,29 +2591,6 @@ def _dashboard_hermes_activity(
         if _task_origin(task.to_dict()).get("hermes_instance_id") == instance_id
     ]
     return {"context": context, "interaction_tasks": interaction_tasks}
-
-
-def _dashboard_rollout_status(cp: ControlPlane, rollout_id: str) -> Dict[str, Any]:
-    rollout = cp.get_rollout(rollout_id)
-    runtime = (
-        cp.get_runtime(rollout.runtime_environment_id).to_dict()
-        if rollout.runtime_environment_id
-        else None
-    )
-    latest_eval = None
-    if rollout.required_eval_set_id is not None:
-        latest = cp.latest_eval_run(
-            rollout.required_eval_set_id,
-            "rollout_version",
-            rollout.version,
-        )
-        latest_eval = latest.to_dict() if latest is not None else None
-    return {
-        "rollout": rollout.to_dict(),
-        "runtime": runtime,
-        "events": cp.list_rollout_events(rollout_id),
-        "latest_eval_run": latest_eval,
-    }
 
 
 TOKENHUB_SESSION_TICKET_PURPOSE = "tokenhub-admin-session-v1"
@@ -3458,7 +3034,6 @@ def _dashboard_ide_state(
     secrets = [secret.to_dict() for secret in cp.list_secrets()][-200:]
     runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()][-120:]
-    rollouts = [rollout.to_dict() for rollout in cp.list_rollouts()][-120:]
     fleets = [fleet.to_dict() for fleet in cp.list_fleets()][-120:]
 
     return {
@@ -3503,7 +3078,6 @@ def _dashboard_ide_state(
         "runtimes": [],
         "runtime_deltas": runtime_deltas,
         "runtime_runs": runtime_runs,
-        "rollouts": rollouts,
         "secrets": secrets,
         "secret_audits": [],
         "service_links": _dashboard_service_links(hermes_startup),
@@ -3529,11 +3103,7 @@ def _dashboard_state(
     tasks = cp.list_tasks()
     task_dicts = [task.to_dict() for task in tasks]
     dead_letters = [task.to_dict() for task in cp.list_dead_letters()]
-    rollouts = cp.list_rollouts()
     roles = [role.to_dict() for role in cp.list_roles()]
-    provisioning_requests = [
-        request.to_dict() for request in cp.provisioning.list_requests(limit=120)
-    ]
     secrets = [secret.to_dict() for secret in cp.list_secrets()]
     secret_audits = [audit.to_dict() for audit in cp.list_secret_audits()]
     workflows = [workflow.to_dict() for workflow in cp.list_workflows()]
@@ -3548,8 +3118,6 @@ def _dashboard_state(
     # beads repositories (kept as an empty list for dashboard shape stability).
     project_repositories: List[Dict[str, Any]] = []
     memory_records = [record.to_dict() for record in cp.search_memory()][-120:]
-    nap_schedules = [schedule.to_dict() for schedule in cp.list_nap_schedules()]
-    nap_runs = [run.to_dict() for run in cp.list_nap_runs()]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()]
     runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
     integration_findings = [
@@ -3573,7 +3141,6 @@ def _dashboard_state(
     openshell_agent_statuses = [cp.get_openshell_status(agent.id) for agent in agents]
     action_events = [event.to_dict() for event in cp.list_action_events(limit=240)]
     task_details = [_dashboard_task_summary(task) for task in tasks[:DASHBOARD_TASK_LIMIT]]
-    rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
     hermes_work_contexts = {
         instance["id"]: cp.persona_work_context(instance["id"], task_limit=40)
@@ -3605,13 +3172,9 @@ def _dashboard_state(
                     1 for task in tasks if task.state not in TERMINAL_DASHBOARD_STATES
                 ),
                 "dead_letters": len(dead_letters),
-                "rollouts": len(rollouts),
                 "secrets": len(secrets),
                 "secret_audits": len(secret_audits),
                 "roles": len(roles),
-                "pending_provisioning_requests": sum(
-                    1 for request in provisioning_requests if request["status"] == "pending"
-                ),
                 "workflows": len(workflows),
                 "workflow_drafts": len(workflow_drafts),
                 "workflow_runs": workflow_runs.get("total", 0),
@@ -3646,7 +3209,6 @@ def _dashboard_state(
         ),
         "platform_bindings": bindings,
         "roles": roles,
-        "provisioning_requests": provisioning_requests,
         "machines": [machine.to_dict() for machine in machines],
         "fleets": fleets,
         "agents": [_dashboard_agent_base(cp, agent, tasks, machines_by_id) for agent in agents],
@@ -3670,8 +3232,6 @@ def _dashboard_state(
         "bridge_items": bridge_items,
         "project_repositories": project_repositories,
         "memory_records": memory_records,
-        "nap_schedules": nap_schedules,
-        "nap_runs": nap_runs,
         "integration_findings": integration_findings,
         "integration_observations": integration_observations,
         "openshell_policies": openshell_policies,
@@ -3687,7 +3247,6 @@ def _dashboard_state(
         "runtimes": [runtime.to_dict() for runtime in cp.list_runtimes()],
         "runtime_deltas": runtime_deltas,
         "runtime_runs": runtime_runs,
-        "rollouts": rollout_statuses,
         "eval_sets": [eval_set.to_dict() for eval_set in cp.list_eval_sets()],
         "eval_runs": [run.to_dict() for run in cp.list_eval_runs()],
         "observability": cp.observability_summary(),
@@ -4210,7 +3769,6 @@ def _start_publication_worker(app: FastAPI, cp: ControlPlane) -> None:
                     limit=limit,
                     actor="publication-worker",
                     tenant_id=None,
-                    allow_blocking_hub_verify=True,
                 )
             except Exception:  # noqa: BLE001 - the worker must never crash the hub
                 logging.getLogger("mac.publication_worker").warning(
@@ -4392,23 +3950,6 @@ def create_app(
         cp = ControlPlane(open_postgres_store(db_path))
     else:
         cp = ControlPlane(make_store_from_env())
-    # Attach the transcript index once, not per request: transcripts arrive on
-    # the worker write path and rebuilding a writer for each would pay
-    # collection probing on every turn. Absent qdrant configuration this stays
-    # None and indexing silently does not happen, which is the state of every
-    # test and every standalone hub.
-    if getattr(cp, "vector_writer", None) is None:
-        try:
-            resolved_qdrant = _configured_qdrant_url(None)
-            from mac.env_config import env_bool
-
-            if resolved_qdrant and env_bool("MAC_TRANSCRIPT_VECTOR_INDEX", True):
-                from mac.vector_writer_service import VectorWriterService
-
-                cp.vector_writer = VectorWriterService(memory=cp.memory, qdrant_url=resolved_qdrant)
-        except Exception:  # noqa: BLE001 - the hub must start without a vector store
-            cp.vector_writer = None
-
     # When the caller injects a control_plane or db_path directly (embedded/test
     # mode) and does not supply explicit auth_tokens, default to no-auth so the
     # injected instance behaves hermetically.  Production ``create_app()``
@@ -4425,10 +3966,8 @@ def create_app(
     # This gives SSH enrollment immediate issuance/renewal/revocation without a
     # control-plane restart while preserving the static admin recovery token.
     from mac.client_principals import ClientPrincipalProvider
-    from mac.worker_credentials import (
-        WorkerCredentialPolicyProvider,
-        WorkerCredentialPrincipalProvider,
-    )
+    from mac.inference_tokens import InferenceTokenPrincipalProvider
+    from mac.worker_credentials import WorkerCredentialPrincipalProvider
 
     injected_app = control_plane is not None or db_path is not None
     if injected_app:
@@ -4449,7 +3988,7 @@ def create_app(
     )
     client_registry_seen = bool(client_principals is not None and client_principals.path.exists())
     worker_principals = WorkerCredentialPrincipalProvider(cp.store)
-    worker_identity_policy = WorkerCredentialPolicyProvider(cp.store)
+    inference_principals = InferenceTokenPrincipalProvider(cp.store)
     local_console_service = None
     if local_console_enabled:
         from mac.client_principals import ClientPrincipalStore
@@ -4480,6 +4019,11 @@ def create_app(
         # Static environment tokens are the recovery authority if an
         # impossible hash collision or duplicate registration occurs.
         merged = {**dynamic, **workers, **tokens}
+        if merged:
+            # Inference tokens narrow an authenticated hub. They never switch
+            # auth ON: on an open development hub the first task's mint would
+            # otherwise lock every other caller out.
+            merged = {**_normalize_auth_tokens(inference_principals.tokens()), **merged}
         if client_registry_seen and not merged:
             # A registry that becomes empty/corrupt after enrollment must not
             # turn a previously authenticated hub into open development mode.
@@ -4526,48 +4070,6 @@ def create_app(
     # for any project that has not set metadata["github_issue_ingest"], so
     # enabling it fleet-wide is safe.
     github_ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
-    # CI is a repository lifecycle continuation, not part of the publication
-    # transaction.  The monitor periodically reconciles registered GitHub
-    # repositories and follows up exact SHAs after MAC lands them.
-    cicd_monitor = CICDMonitor(cp, CICDMonitorConfig.from_env())
-    # Publication is the only point that has both the durable publication id
-    # and the canonical integration SHA.  Give the service layer the running
-    # monitor so it can atomically hand that identity to the delayed checker.
-    cp._cicd_monitor = cicd_monitor
-    # mac-backlog-groom: seed grooming tasks for opted-in repos going idle, so
-    # the fleet manufactures its own backlog instead of starving when the
-    # human/GitHub-issue queue drains. No-op until a project opts in via
-    # metadata["backlog_grooming"].
-    backlog_groomer = BacklogGroomer(cp, BacklogGroomerConfig.from_env())
-    # mac-model-select: periodically pick the fleet's powerhouse models from a
-    # web search of what's currently leading, moderated by what the gateway can
-    # actually route — instead of a hard-coded, forever-pinned default. No-op
-    # unless MAC_MODEL_SELECT_ENABLED is set.
-    model_selection_service = ModelSelectionService(cp, ModelSelectionConfig.from_env())
-    scientific_optimizer = cp.optimizer
-    # mac-nap-tick: OS-agnostic nap driver inside the hub process. The old
-    # systemd timer was useless on a launchd hub and the whole nap → dream →
-    # repair pipeline silently died with it. No-op unless MAC_NAP_TICK_ENABLED.
-    nap_ticker = NapTicker(cp, NapTickerConfig.from_env())
-    # mac-curiosity-review: close the curiosity quarantine loop by filing
-    # pinned adjudication tasks. No-op unless MAC_CURIOSITY_REVIEW_ENABLED.
-    curiosity_reviewer = CuriosityReviewer(cp, CuriosityReviewerConfig.from_env())
-    # mac-self-heal: observe → plan → act → verify over hub invariants (nap
-    # liveness, task starvation, daemon heartbeats, silent read paths, stuck
-    # quarantines). Violations become fleet tasks; fixes that don't hold are
-    # re-filed with escalation. No-op unless MAC_SELF_HEAL_ENABLED.
-    self_healing_sentinel = SelfHealingSentinel(cp, SelfHealingConfig.from_env())
-    # mac-judgement: hourly process-quality authority over the claim/fix/
-    # deliver cycle. Not sandboxed. Can stop tasks, hold agents, stop the
-    # fleet, and redeploy. No-op unless MAC_JUDGEMENT_ENABLED; the hub
-    # deploy turns it on.
-    judgement_process = JudgementProcess(cp, JudgementConfig.from_env())
-    cp._judgement_process = judgement_process
-    # Durable provisioning requests wake a background HGX reconciler. Provider
-    # calls never run on dispatch or HTTP threads; sustained-demand and
-    # step/cooldown policy prevent transient backlog from creating a worker
-    # cascade. Default-off outside explicitly configured HGX hubs.
-    hgx_autoscaler = HgxAutoscaler(cp, HgxAutoscalerConfig.from_env())
     # mac-pg-backup: scheduled, restore-verified PostgreSQL authority
     # backups for the hub — consistent pg_dump, owner-only artifacts,
     # retention, failure telemetry, and a periodic restore-to-scratch drill.
@@ -4591,11 +4093,7 @@ def create_app(
         # the try, so one failing service skipped the finally entirely and left
         # every service started before it running as an orphaned daemon thread
         # against a control plane the app then abandoned.
-        # A replacement hub claims only digest-bound supervisor receipts from
-        # durable storage. No conversational state participates in recovery.
-        cp.resume_fleet_upgrades(actor="hub-startup")
         services: List[Tuple[str, Callable[[], Any], Callable[[], Any]]] = [
-            ("fleet_upgrade", cp.fleet_upgrades.start, cp.fleet_upgrades.stop),
             ("hub_tick", lambda: _start_hub_tick_loop(_app, cp), lambda: _stop_hub_tick_loop(_app)),
             (
                 "retention",
@@ -4613,19 +4111,6 @@ def create_app(
                 repository_ref_reconciler.stop,
             ),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
-            ("cicd_monitor", cicd_monitor.start, cicd_monitor.stop),
-            ("backlog_groomer", backlog_groomer.start, backlog_groomer.stop),
-            (
-                "model_selection_service",
-                model_selection_service.start,
-                model_selection_service.stop,
-            ),
-            ("scientific_optimizer", scientific_optimizer.start, scientific_optimizer.stop),
-            ("nap_ticker", nap_ticker.start, nap_ticker.stop),
-            ("curiosity_reviewer", curiosity_reviewer.start, curiosity_reviewer.stop),
-            ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
-            ("judgement_process", judgement_process.start, judgement_process.stop),
-            ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
             # Last, and started from the lifespan so it runs on the SAME loop
             # uvicorn accepts connections on. A gap between its beats is time
@@ -4678,19 +4163,9 @@ def create_app(
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
     app.state.worker_principals = worker_principals
-    app.state.worker_identity_policy = worker_identity_policy
     app.state.local_console_service = local_console_service
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
-    app.state.cicd_monitor = cicd_monitor
-    app.state.backlog_groomer = backlog_groomer
-    app.state.model_selection_service = model_selection_service
-    app.state.scientific_optimizer = scientific_optimizer
-    app.state.nap_ticker = nap_ticker
-    app.state.curiosity_reviewer = curiosity_reviewer
-    app.state.self_healing_sentinel = self_healing_sentinel
-    app.state.judgement_process = judgement_process
-    app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
     # integration. Routing decisions now come from the in-mac router.
@@ -4767,7 +4242,7 @@ def create_app(
         to write a uvicorn access line for every request, synchronously, on the
         event loop; that log reached 626MB / 5.4M lines and a thread dump caught
         the loop inside logging flush() instead of serving, which is what got
-        the hub restarted mid-publication (see deploy/fleet-node-install.sh).
+        the hub restarted mid-publication (see deploy/bin/mac-service).
         So: nothing is written on the normal path, and a slow request costs one
         line.
 
@@ -4845,14 +4320,12 @@ def create_app(
                 request.url.path,
                 request.headers.get("authorization"),
                 auth_tokens_for_request,
+                explain_expired=(
+                    client_principals.explain_expired
+                    if client_principals is not None and not public_route
+                    else None
+                ),
             )
-            if principal is not None:
-                principal = replace(
-                    principal,
-                    worker_identity_mode=await asyncio.to_thread(
-                        lambda: worker_identity_policy.mode
-                    ),
-                )
             request.state.principal = principal
         except AuthorizationError as exc:
             status_code = 403
@@ -4950,13 +4423,6 @@ def create_app(
             SystemRouteServices(
                 repository_ref_reconciler=repository_ref_reconciler,
                 github_ingestor=github_ingestor,
-                cicd_monitor=cicd_monitor,
-                backlog_groomer=backlog_groomer,
-                nap_ticker=nap_ticker,
-                curiosity_reviewer=curiosity_reviewer,
-                self_healing_sentinel=self_healing_sentinel,
-                judgement_process=judgement_process,
-                model_selection_service=model_selection_service,
             ),
             get_principal=_get_principal,
         )
@@ -5018,43 +4484,6 @@ def create_app(
             str(payload.get("method")), payload.get("params"), payload.get("id")
         )
         return JSONResponse(content=result)
-
-    @app.websocket("/acp/ws")
-    async def acp_websocket(websocket: WebSocket) -> None:
-        # ADR 0006 Phase 2 remote transport: an external ACP client drives a mac
-        # agent over WebSocket, reusing the same ACPAgentServer/Peer the stdio
-        # path uses. The HTTP auth middleware does not run for websocket scope,
-        # so we validate the bearer token here, before accepting the socket.
-        #
-        # Token sources (first match wins):
-        #   * ``?token=<bearer>`` query param, or
-        #   * an ``Authorization`` WebSocket subprotocol: clients offer
-        #     ``["Authorization", "<bearer>"]`` (the bearer rides as the second
-        #     subprotocol value, since browsers can't set Authorization headers
-        #     on a WS handshake). We echo ``Authorization`` back as the accepted
-        #     subprotocol.
-        current_tokens = _current_auth_tokens()
-        principal, accepted_subprotocol = _authorize_acp_websocket(websocket, current_tokens)
-        if principal is None and current_tokens:
-            # tokens configured but no valid principal -> reject (1008 policy).
-            await websocket.close(code=1008)
-            return
-
-        # Backend selection mirrors serve_stdio: the production MacAgentBackend
-        # when an agent command is configured, else the harmless EchoBackend.
-        from mac.acp.server import EchoBackend
-
-        if os.environ.get("MAC_ACP_BACKEND_CMD"):
-            from mac.acp.backend import MacAgentBackend
-
-            backend: Any = MacAgentBackend()
-        else:
-            backend = EchoBackend()
-
-        from mac.acp.ws import serve_acp_websocket
-
-        accept_kwargs = {"subprotocol": accepted_subprotocol} if accepted_subprotocol else None
-        await serve_acp_websocket(websocket, backend, accept_kwargs=accept_kwargs)
 
     @app.get("/startup/hermes")
     def hermes_startup() -> Dict[str, Any]:
@@ -5155,6 +4584,17 @@ def create_app(
         """The decompressed text of one transcript turn. Read-only."""
         del principal
         return build_transcript_entry(cp, transcript_id)
+
+    @app.get("/dashboard/board")
+    def dashboard_board(
+        after: int = 0,
+        limit: int = 200,
+        include_activity: bool = False,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Every task's board, newest last: what every agent is doing and asking."""
+        del principal
+        return cp.list_recent_board(after=after, limit=limit, include_activity=include_activity)
 
     @app.get("/dashboard/state")
     def dashboard_state(
@@ -5693,12 +5133,6 @@ def create_app(
     ) -> Dict[str, int]:
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
-    # Registered alongside the other static /tasks/* reads so it is not
-    # captured by the /tasks/{task_id} path parameter.
-    @app.get("/tasks/generator-yield")
-    def task_generator_yield() -> Dict[str, Any]:
-        return cp.generator_yield_report()
-
     # Admin-only: applying this re-supervises live tasks in bulk. Registered
     # with the other static /tasks/* routes so /tasks/{task_id} cannot capture
     # it.
@@ -5905,132 +5339,6 @@ def create_app(
         if data.get("metadata") is not None:
             _ensure_payload_bounded(data["metadata"], "task.metadata")
         return cp.update_task(task_id, actor=actor, **data).to_dict()
-
-    @app.post("/tasks/{task_id}/review-experiment")
-    def assign_review_experiment(task_id: str, body: ReviewExperimentAssign) -> Dict[str, Any]:
-        data = _data(body)
-        actor = data.pop("actor", "human")
-        return cp.assign_review_experiment(task_id, actor=actor, **data)
-
-    @app.get("/tasks/{task_id}/review-observation")
-    def review_observation(task_id: str) -> Dict[str, Any]:
-        return cp.review_observation(task_id)
-
-    @app.post("/tasks/{task_id}/review-outcomes")
-    def record_review_outcome(task_id: str, body: ReviewOutcomeCreate) -> Dict[str, Any]:
-        data = _data(body)
-        actor = data.pop("actor", "human")
-        _ensure_payload_bounded(data.get("detail") or {}, "review_outcome.detail")
-        return cp.record_review_outcome(task_id, actor=actor, **data)
-
-    @app.get("/review-experiments/{experiment_id}")
-    def review_experiment_report(
-        experiment_id: str,
-        project: Optional[str] = Query(default=None),
-        min_tasks_per_arm: int = Query(default=5, ge=1, le=10000),
-        min_validated_outcomes_per_arm: int = Query(default=3, ge=0, le=10000),
-    ) -> Dict[str, Any]:
-        return cp.review_experiment_report(
-            experiment_id,
-            project=project,
-            min_tasks_per_arm=min_tasks_per_arm,
-            min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
-        )
-
-    @app.get("/optimizer/status")
-    def scientific_optimizer_status() -> Dict[str, Any]:
-        return scientific_optimizer.status()
-
-    @app.post("/optimizer/tick")
-    def scientific_optimizer_tick() -> Dict[str, Any]:
-        return scientific_optimizer.tick(trigger="operator")
-
-    @app.post("/optimizer/policies")
-    def create_scientific_policy(body: ScientificPolicyCreate) -> Dict[str, Any]:
-        _ensure_payload_bounded(body.parameters, "scientific_policy.parameters")
-        return scientific_optimizer.create_policy(**_data(body))
-
-    @app.get("/optimizer/policies")
-    def list_scientific_policies(
-        project: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return scientific_optimizer.list_policies(project=project, status=status)
-
-    @app.get("/optimizer/policies/{policy_id}")
-    def get_scientific_policy(policy_id: str) -> Dict[str, Any]:
-        return scientific_optimizer.get_policy(policy_id)
-
-    @app.post("/optimizer/policies/{policy_id}/promote")
-    def promote_scientific_policy(policy_id: str, body: ScientificPolicyAction) -> Dict[str, Any]:
-        return scientific_optimizer.promote_policy(policy_id, actor=body.actor, reason=body.reason)
-
-    @app.post("/optimizer/projects/{project}/rollback/{policy_id}")
-    def rollback_scientific_policy(
-        project: str, policy_id: str, body: ScientificPolicyAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.rollback_policy(
-            project, policy_id, actor=body.actor, reason=body.reason
-        )
-
-    @app.post("/optimizer/experiments")
-    def create_scientific_experiment(
-        body: ScientificExperimentCreate,
-    ) -> Dict[str, Any]:
-        _ensure_payload_bounded(body.guardrails, "scientific_experiment.guardrails")
-        _ensure_payload_bounded(body.metadata, "scientific_experiment.metadata")
-        return scientific_optimizer.create_experiment(**_data(body))
-
-    @app.get("/optimizer/experiments")
-    def list_scientific_experiments(
-        project: Optional[str] = Query(default=None),
-        state: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return scientific_optimizer.list_experiments(project=project, state=state)
-
-    @app.get("/optimizer/experiments/{experiment_id}")
-    def get_scientific_experiment(experiment_id: str) -> Dict[str, Any]:
-        return scientific_optimizer.get_experiment(experiment_id)
-
-    @app.get("/optimizer/experiments/{experiment_id}/evidence")
-    def get_scientific_experiment_evidence(
-        experiment_id: str,
-        limit: int = Query(default=500, ge=1, le=5000),
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.experiment_evidence(experiment_id, limit=limit)
-
-    @app.post("/optimizer/experiments/{experiment_id}/start")
-    def start_scientific_experiment(
-        experiment_id: str, body: ScientificExperimentAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.start_experiment(experiment_id, actor=body.actor)
-
-    @app.post("/optimizer/experiments/{experiment_id}/pause")
-    def pause_scientific_experiment(
-        experiment_id: str, body: ScientificExperimentAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.pause_experiment(
-            experiment_id, actor=body.actor, reason=body.reason
-        )
-
-    @app.post("/optimizer/experiments/{experiment_id}/promote")
-    def promote_scientific_experiment(
-        experiment_id: str, body: ScientificExperimentAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.promote_experiment(
-            experiment_id,
-            actor=body.actor,
-            reason=body.reason,
-        )
-
-    @app.post("/optimizer/experiments/{experiment_id}/observe/{task_id}")
-    def observe_scientific_task(experiment_id: str, task_id: str) -> Dict[str, Any]:
-        return scientific_optimizer.observe_task(experiment_id, task_id)
-
-    @app.post("/optimizer/experiments/{experiment_id}/analyze")
-    def analyze_scientific_experiment(experiment_id: str) -> Dict[str, Any]:
-        scientific_optimizer.refresh_experiment(experiment_id)
-        return scientific_optimizer.analyze_experiment(experiment_id, actor="operator")
 
     @app.post("/tasks/{task_id}/children")
     def add_child_tasks(
@@ -6253,6 +5561,78 @@ def create_app(
         principal.require_admin()
         return cp.stop_task(task_id, actor=body.actor, reason=body.reason).to_dict()
 
+    def _authorize_task_board(
+        principal: TokenPrincipal,
+        task_id: str,
+        *,
+        write: bool,
+        requested_author_kind: Optional[str] = None,
+        requested_author: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Who is reading or writing this task's board, as (author_kind, author).
+
+        A per-task inference token reaches only the task it was minted for
+        and writes as that task's agent. An agent credential reaches only a
+        task its agent currently owns; the worker harness behind it may also
+        write as the hub (a verdict or nudge it computed outside the sandbox).
+        Anyone else is a person: reading needs read access, writing needs write.
+        """
+        if principal.principal_kind == "inference":
+            if not principal.task_id or principal.task_id != task_id:
+                raise AuthorizationError("this inference token is not bound to task %s" % task_id)
+            return "agent", str(principal.agent_id or "agent")
+        if principal.agent_id and not principal.is_admin:
+            task = cp.get_task(task_id)
+            if str(task.owner_agent_id or "") != str(principal.agent_id):
+                raise AuthorizationError("agent %s does not own task %s" % (principal.agent_id, task_id))
+            if requested_author_kind == "hub":
+                return "hub", "harness:%s" % principal.agent_id
+            return "agent", str(principal.agent_id)
+        if write:
+            if not (principal.is_admin or principal.has_scope("write")):
+                raise AuthorizationError("posting to a task board needs write access")
+            if requested_author_kind == "hub" and principal.is_admin:
+                return "hub", "hub"
+        elif not (principal.is_admin or principal.scopes & {"read", "write"}):
+            raise AuthorizationError("reading a task board needs read access")
+        human = principal.human_id or (requested_author or "").strip() or principal.client_id
+        return "human", str(human or "operator")
+
+    @app.get("/tasks/{task_id}/messages")
+    def list_task_messages(
+        task_id: str,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Optional[str] = None,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _authorize_task_board(principal, task_id, write=False)
+        wanted = [kind.strip() for kind in (kinds or "").split(",") if kind.strip()]
+        return cp.list_task_messages(task_id, after=after, limit=limit, kinds=wanted)
+
+    @app.post("/tasks/{task_id}/messages")
+    def post_task_message(
+        task_id: str,
+        body: TaskMessageCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        author_kind, author = _authorize_task_board(
+            principal,
+            task_id,
+            write=True,
+            requested_author_kind=body.author_kind,
+            requested_author=body.author,
+        )
+        return cp.post_task_message(
+            task_id,
+            author_kind=author_kind,
+            author=author,
+            kind=body.kind,
+            body=body.body,
+            reply_to=body.reply_to,
+            metadata=dict(body.metadata or {}),
+        )
+
     @app.post("/tasks/{task_id}/ask")
     def ask_task(
         task_id: str,
@@ -6464,24 +5844,7 @@ def create_app(
                 # static worker must not be able to relabel itself fungible
                 # and thereby opt into replacement/re-attestation behavior.
                 principal.require_admin()
-        resources = dict(data.get("resources") or {})
-        resources.pop("worker_credential_authenticated", None)
-        if (
-            principal.principal_kind == "worker"
-            and principal.agent_id
-            and principal.agent_id == requested_agent_id
-        ):
-            from mac.worker_credentials import authenticated_credential_resource
-
-            authenticated = authenticated_credential_resource(
-                agent_id=requested_agent_id,
-                principal_id=principal.client_id,
-                token_fingerprint=principal.credential_fingerprint,
-                credential_version=principal.worker_credential_version,
-            )
-            if authenticated:
-                resources["worker_credential_authenticated"] = authenticated
-        data["resources"] = resources
+        data["resources"] = dict(data.get("resources") or {})
         fleet_id = data.pop("fleet_id", None)
         actor = str(data.get("actor") or "human")
         agent = cp.register_agent(
@@ -6521,6 +5884,61 @@ def create_app(
             "attestation_key": cp.rotate_agent_attestation_key(agent_id),
         }
 
+    def _require_own_inference_agent(principal: TokenPrincipal, agent_id: str) -> None:
+        # Only the agent itself mints its sandbox token. An unbound operator or
+        # static token is refused unless it is admin: a plain write token has no
+        # business holding inference credentials attributed to some worker.
+        if principal.agent_id:
+            principal.assert_actor(agent_id)
+        elif not principal.is_admin:
+            raise AuthorizationError(
+                "inference tokens are minted by the agent itself (or an admin)"
+            )
+
+    @app.post("/agents/{agent_id}/inference-tokens")
+    def mint_agent_inference_token(
+        agent_id: str,
+        body: InferenceTokenMint,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Mint a short-lived, inference-only token bound to this agent.
+
+        The worker hands it to the task sandbox as MAC_INFERENCE_TOKEN. It
+        reaches POST /v1/chat/completions and /v1/embeddings and nothing else,
+        so the worker's own token never has to enter the sandbox.
+        """
+        from mac.inference_tokens import InferenceTokenError, InferenceTokenLifecycle
+
+        _require_own_inference_agent(principal, agent_id)
+        try:
+            issued = InferenceTokenLifecycle(cp.store).mint(
+                agent_id,
+                ttl_seconds=body.ttl_seconds,
+                task_id=body.task_id,
+                actor=principal.client_id or principal.agent_id or "",
+            )
+        except (InferenceTokenError, ValueError) as exc:
+            raise ValidationError(str(exc)) from exc
+        return issued.response()
+
+    @app.delete("/agents/{agent_id}/inference-tokens/{token_id}")
+    def revoke_agent_inference_token(
+        agent_id: str,
+        token_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Revoke one of this agent's inference tokens (the task has ended)."""
+        from mac.inference_tokens import InferenceTokenLifecycle
+
+        _require_own_inference_agent(principal, agent_id)
+        try:
+            revoked = InferenceTokenLifecycle(cp.store).revoke(agent_id, token_id)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        if not revoked:
+            raise NotFoundError("no live inference token %s for agent %s" % (token_id, agent_id))
+        return {"id": token_id, "agent_id": agent_id, "revoked": True}
+
     @app.post("/agents/{agent_id}/attestation-key/verify")
     def verify_agent_attestation_key(
         agent_id: str,
@@ -6541,22 +5959,6 @@ def create_app(
                 body.challenge,
                 body.signature,
             ),
-        }
-
-    @app.post("/agents/{agent_id}/attestation-key/recover")
-    def recover_agent_attestation_key(
-        agent_id: str,
-        body: AgentAttestationKeyRecover,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, str]:
-        # The response contains the new cleartext key. Only the fenced deploy
-        # controller may request it; a bound worker can submit a secret-free
-        # verify probe but can never rotate or retrieve key material.
-        principal.require_admin()
-        _ensure_payload_bounded(body.probe, "agent.attestation.recovery_probe")
-        return {
-            "agent_id": agent_id,
-            "attestation_key": cp.recover_agent_attestation_key(agent_id, body.probe),
         }
 
     @app.post("/agents/{agent_id}/report-repository-executor/approve")
@@ -6589,39 +5991,6 @@ def create_app(
             body.reason,
             actor=body.actor,
         ).to_dict()
-
-    # Hub-mediated curiosity quarantine access (task_3a4503f0).
-    #
-    # The ledger lives inside the mac-openclaw-<agent> sandbox, and dispatched
-    # tasks run in a different mac-task-* sandbox that cannot reach it -- so
-    # every adjudication task ever filed against the quarantine was
-    # unsatisfiable, no matter which host it was pinned to. The hub runs ON the
-    # agent host and can invoke the wrapper, and every task sandbox can already
-    # reach the hub, so mediating here is what makes the loop closable.
-    @app.get("/curiosity/candidates")
-    def list_curiosity_candidates(
-        status: Optional[str] = None,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        # ControlPlane already raises domain errors (ValidationError for a bad
-        # request or a failing wrapper, NotFoundError for a host with no
-        # OpenClaw ledger at all), which the app's handlers map to status codes.
-        return cp.list_curiosity_candidates(status)
-
-    @app.post("/curiosity/candidates/{candidate_id}/{decision}")
-    def decide_curiosity_candidate(
-        candidate_id: str,
-        decision: str,
-        body: CuriosityDecision,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.decide_curiosity_candidate(
-            candidate_id,
-            decision,
-            actor=body.actor,
-            reason=body.reason,
-            approval_id=body.approval_id,
-        )
 
     @app.get("/agents")
     def list_agents() -> List[Dict[str, Any]]:
@@ -6757,186 +6126,6 @@ def create_app(
     ) -> Dict[str, Any]:
         return cp.roles.unassign_role(agent_id).to_dict()
 
-    @app.post("/agents/dispatch-hold/release-batch")
-    def release_dispatch_holds_batch(
-        body: DispatchHoldBatchReleaseRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Commit an exact fleet release epoch as one database transaction."""
-
-        principal.require_admin()
-        agents = cp.release_agent_dispatch_holds_batch(
-            ((item.agent_id, item.reason) for item in body.holds),
-            epoch_id=body.epoch_id,
-            expectations={
-                item.agent_id: {
-                    "generation": item.generation,
-                    "baseline_seen": item.baseline_seen,
-                    "principal_id": item.principal_id,
-                    "require_authenticated": item.require_authenticated,
-                    "require_report_executor": item.require_report_executor,
-                }
-                for item in body.holds
-            },
-        )
-        return {
-            "released": True,
-            "epoch_id": body.epoch_id,
-            "agents": [agent.to_dict() for agent in agents],
-        }
-
-    @app.get("/agents/dispatch-hold/authority")
-    def dispatch_hold_authority(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Return the durable hub identity used to bind a fleet transaction."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return {
-            "schema": "mac.fleet_release_hub_authority.v1",
-            "hub_authority_id": cp.fleet_release_epochs.hub_authority_id,
-        }
-
-    @app.get("/agents/dispatch-hold/epochs/{epoch_id}")
-    def dispatch_hold_epoch_status(
-        epoch_id: str,
-        identity_sha256: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Read one durable fleet-release epoch without replaying it."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        if identity_sha256.startswith("sha256:"):
-            return cp.fleet_release_epochs.status(epoch_id, identity_sha256)
-        return cp.agent_dispatch_hold_epoch_status(epoch_id, identity_sha256)
-
-    @app.get("/agents/dispatch-hold/epochs/{epoch_id}/readiness")
-    def dispatch_hold_epoch_pre_prove_readiness(
-        epoch_id: str,
-        identity_sha256: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Fail closed unless the exact pending cohort is ready to prove."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.fleet_release_epochs.pre_prove_readiness(epoch_id, identity_sha256)
-
-    @app.post("/agents/dispatch-hold/epochs/open")
-    def open_fleet_release_epoch(
-        body: FleetReleaseEpochOpenRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Atomically reserve one exact cohort without promoting authority."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        participants: List[Dict[str, Any]] = []
-        for item in body.participants:
-            value = item.model_dump(exclude={"attestation_candidate"})
-            if item.attestation_candidate is not None:
-                value["attestation_candidate"] = {
-                    "key": item.attestation_candidate.key.get_secret_value(),
-                }
-            participants.append(value)
-        return cp.fleet_release_epochs.open_epoch(
-            body.epoch_id,
-            participants,
-            successor_hold_reason=body.successor_hold_reason,
-            desired_policy_mode=body.desired_worker_credential_mode,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/prove")
-    def prove_fleet_release_epoch(
-        epoch_id: str,
-        body: FleetReleaseEpochProveRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Verify exact post-apply evidence without promoting authority."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        proofs: List[Dict[str, Any]] = []
-        for item in body.proofs:
-            value = item.model_dump(exclude={"attestation_proof"})
-            value["attestation_proof"] = (
-                item.attestation_proof.model_dump() if item.attestation_proof is not None else None
-            )
-            proofs.append(value)
-        return cp.fleet_release_epochs.prove(
-            epoch_id,
-            body.identity_sha256,
-            proofs,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/commit")
-    def commit_fleet_release_epoch(
-        epoch_id: str,
-        body: FleetReleaseEpochCommitRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Promote identity, approval, policy, and holds in one transaction."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.fleet_release_epochs.commit(
-            epoch_id,
-            body.identity_sha256,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/abort")
-    def abort_fleet_release_epoch(
-        epoch_id: str,
-        body: FleetReleaseEpochAbortRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Discard epoch staging and restore each exact pre-open authority."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.fleet_release_epochs.abort(
-            epoch_id,
-            body.identity_sha256,
-            reason=body.reason,
-            disposition=body.disposition,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/transition-batch")
-    def transition_dispatch_holds_batch(
-        body: DispatchHoldBatchTransitionRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Atomically hand an exact fleet hold epoch to one successor hold."""
-
-        principal.require_admin()
-        agents = cp.release_agent_dispatch_holds_batch(
-            ((item.agent_id, item.reason) for item in body.holds),
-            epoch_id=body.epoch_id,
-            expectations={
-                item.agent_id: {
-                    "generation": item.generation,
-                    "baseline_seen": item.baseline_seen,
-                    "principal_id": item.principal_id,
-                    "require_authenticated": item.require_authenticated,
-                    "require_report_executor": item.require_report_executor,
-                }
-                for item in body.holds
-            },
-            successor_reason=body.successor_reason,
-        )
-        return {
-            "transitioned": True,
-            "epoch_id": body.epoch_id,
-            "successor_reason": body.successor_reason.strip(),
-            "agents": [agent.to_dict() for agent in agents],
-        }
-
     @app.post("/agents/{agent_id}/dispatch-hold")
     def set_dispatch_hold(
         agent_id: str,
@@ -6986,53 +6175,6 @@ def create_app(
     @app.get("/agents/{agent_id}/identity")
     def get_agent_identity(agent_id: str) -> Dict[str, Any]:
         return cp.agent_identity(agent_id)
-
-    # Agent provisioning hook --------------------------------------
-
-    @app.post("/provisioning/requests")
-    def create_provisioning_request(
-        body: ProvisioningRequestCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.assert_tenant(body.tenant_id)
-        return cp.provisioning.request_agent(**_data(body)).to_dict()
-
-    @app.get("/provisioning/requests")
-    def list_provisioning_requests(
-        status: Optional[str] = Query(default=None),
-        role_slug: Optional[str] = Query(default=None),
-        tenant_id: Optional[str] = Query(default=None),
-        limit: int = Query(default=100),
-    ) -> List[Dict[str, Any]]:
-        return [
-            request.to_dict()
-            for request in cp.provisioning.list_requests(
-                status=status,
-                role_slug=role_slug,
-                tenant_id=tenant_id,
-                limit=limit,
-            )
-        ]
-
-    @app.get("/provisioning/requests/{request_id}")
-    def get_provisioning_request(request_id: str) -> Dict[str, Any]:
-        return cp.provisioning.get_request(request_id).to_dict()
-
-    @app.post("/provisioning/requests/{request_id}/fulfill")
-    def fulfill_provisioning_request(
-        request_id: str,
-        body: ProvisioningRequestFulfill,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.provisioning.fulfill_request(request_id, body.agent_id).to_dict()
-
-    @app.post("/provisioning/requests/{request_id}/cancel")
-    def cancel_provisioning_request(
-        request_id: str,
-        body: ProvisioningRequestCancel,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.provisioning.cancel_request(request_id, reason=body.reason).to_dict()
 
     # Workflows (data-driven, definable) -----------------------------
 
@@ -7291,97 +6433,6 @@ def create_app(
     def list_mood_history(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return [overlay.to_dict() for overlay in cp.list_mood_history(agent_id, limit=limit)]
 
-    # Nap — daily memory-consolidation lifecycle
-    @app.put("/agents/{agent_id}/nap-schedule")
-    @app.post("/agents/{agent_id}/nap-schedule")
-    def configure_nap(agent_id: str, body: NapConfigure) -> Dict[str, Any]:
-        return cp.configure_nap(agent_id, **_data(body)).to_dict()
-
-    @app.get("/agents/{agent_id}/nap-schedule")
-    def get_nap_schedule(agent_id: str) -> Optional[Dict[str, Any]]:
-        schedule = cp.get_nap_schedule(agent_id)
-        return schedule.to_dict() if schedule is not None else None
-
-    @app.get("/agents/{agent_id}/nap-schedule/next")
-    def next_nap_window(agent_id: str) -> Optional[Dict[str, Any]]:
-        return cp.next_nap_window(agent_id)
-
-    @app.get("/nap-schedules")
-    def list_nap_schedules() -> List[Dict[str, Any]]:
-        return [schedule.to_dict() for schedule in cp.list_nap_schedules()]
-
-    @app.get("/nap-due")
-    def list_due_nap_agents(as_of: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return cp.list_due_nap_agents(as_of=as_of)
-
-    @app.post("/agents/{agent_id}/nap-runs")
-    def begin_nap(agent_id: str, body: NapBegin) -> Dict[str, Any]:
-        return cp.begin_nap(agent_id, **_data(body)).to_dict()
-
-    @app.get("/nap-runs")
-    def list_nap_runs(agent_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return [run.to_dict() for run in cp.list_nap_runs(agent_id)]
-
-    @app.get("/nap-runs/{run_id}")
-    def get_nap_run(run_id: str) -> Dict[str, Any]:
-        return cp.get_nap_run(run_id).to_dict()
-
-    @app.post("/nap-runs/{run_id}/complete")
-    def complete_nap(run_id: str, body: NapComplete) -> Dict[str, Any]:
-        return cp.complete_nap(run_id, **_data(body)).to_dict()
-
-    @app.post("/nap-runs/{run_id}/fail")
-    def fail_nap(run_id: str, body: NapFail) -> Dict[str, Any]:
-        return cp.fail_nap(run_id, **_data(body)).to_dict()
-
-    @app.post("/agents/{agent_id}/nap-cycle")
-    def run_nap_cycle(agent_id: str, body: NapCycle) -> Dict[str, Any]:
-        vector_writer = _vector_writer_for_memory(
-            cp,
-            enabled=body.embed_into_medium,
-            qdrant_url=body.qdrant_url,
-        )
-        return cp.run_nap_cycle(
-            agent_id,
-            actor=body.actor,
-            vector_writer=vector_writer,
-            embed_into_medium=body.embed_into_medium,
-            emit_dream_artifacts=body.emit_dream_artifacts,
-        )
-
-    @app.post("/dream/import-logs")
-    def import_dream_logs(body: DreamImportLogs) -> Dict[str, Any]:
-        vector_writer = _vector_writer_for_memory(
-            cp,
-            enabled=body.embed and not body.dry_run,
-            qdrant_url=body.qdrant_url,
-        )
-        return cp.import_dream_logs(
-            dream_logs_dir=body.dream_logs_dir,
-            agent_id=body.agent_id,
-            created_by=body.created_by,
-            embed=body.embed,
-            vector_writer=vector_writer,
-            dry_run=body.dry_run,
-        )
-
-    @app.post("/agents/{agent_id}/nap-consolidate")
-    def consolidate_nap(agent_id: str, body: NapConsolidate) -> Dict[str, Any]:
-        vector_writer = _vector_writer_for_memory(
-            cp,
-            enabled=body.embed_into_medium,
-            qdrant_url=body.qdrant_url,
-        )
-        return cp.consolidate_nap(
-            agent_id,
-            since=body.since,
-            nap_run_id=body.nap_run_id,
-            embed_into_medium=body.embed_into_medium,
-            emit_dream_artifacts=body.emit_dream_artifacts,
-            vector_writer=vector_writer,
-            created_by=body.created_by,
-        )
-
     @app.post("/agents/{agent_id}/heartbeat")
     def heartbeat_agent(
         agent_id: str,
@@ -7406,21 +6457,6 @@ def create_app(
             # must not inherit the last worker's release generation merely
             # because the API clones resources to attach principal facts.
             resources.pop("deployment_generation", None)
-        # This namespace is hub-owned. A legacy/shared token clears any stale
-        # authentication proof; a DB-backed exact worker token replaces it
-        # with facts derived from the resolved bearer principal.
-        resources.pop("worker_credential_authenticated", None)
-        if principal.principal_kind == "worker" and principal.agent_id == agent_id:
-            from mac.worker_credentials import authenticated_credential_resource
-
-            authenticated = authenticated_credential_resource(
-                agent_id=agent_id,
-                principal_id=principal.client_id,
-                token_fingerprint=principal.credential_fingerprint,
-                credential_version=principal.worker_credential_version,
-            )
-            if authenticated:
-                resources["worker_credential_authenticated"] = authenticated
         if resources_value is not None or resources:
             data["resources"] = resources
         return cp.heartbeat_agent(agent_id, **data).to_dict()
@@ -8011,57 +7047,6 @@ def create_app(
             since=since,
             until=until,
             limit=limit,
-        )
-
-    @app.get("/news")
-    def list_news(
-        after_sequence: Optional[int] = Query(default=None, ge=0),
-        project: Optional[str] = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=500),
-    ) -> Dict[str, Any]:
-        return cp.list_news(after_sequence=after_sequence, project=project, limit=limit)
-
-    @app.get("/news/stream")
-    async def stream_news(
-        request: Request,
-        after_sequence: int = Query(default=0, ge=0),
-        project: Optional[str] = Query(default=None),
-        timeout_seconds: float = Query(default=300.0),
-        poll_interval_seconds: float = Query(default=1.0),
-    ) -> StreamingResponse:
-        """Follow the same curated activity representation returned by /news."""
-        clamped_timeout = clamp_stream_timeout(timeout_seconds)
-        clamped_interval = clamp_stream_poll_interval(poll_interval_seconds)
-
-        async def iter_news() -> Any:
-            cursor = max(0, int(after_sequence))
-            deadline = time.monotonic() + clamped_timeout
-            while True:
-                if await _client_gone(request):
-                    break
-                page = cp.list_news(after_sequence=cursor, project=project, limit=500)
-                for item in page["items"]:
-                    cursor = max(cursor, int(item["sequence"]))
-                    yield json.dumps(item, sort_keys=True, default=str) + "\n"
-                if time.monotonic() >= deadline:
-                    break
-                await asyncio.sleep(0 if page["items"] else clamped_interval)
-
-        return StreamingResponse(iter_news(), media_type="application/x-ndjson")
-
-    @app.post("/sandbox/rollout")
-    def roll_out_sandbox_image(body: SandboxRolloutRequest) -> Dict[str, Any]:
-        """File one drained-worker barrier task per agent for a reviewed image.
-
-        Served over HTTP because the hub is how the fleet is actually operated.
-        Without this the command worked only against a direct --db authority,
-        which is the maintenance path, not the one anybody uses.
-        """
-        return cp.roll_out_sandbox_image(
-            body.image,
-            bom=body.bom or {},
-            actor=body.actor or "human",
-            project=body.project,
         )
 
     @app.get("/events/stream")
@@ -8739,215 +7724,6 @@ def create_app(
             release_id=body.release_id,
         )
 
-    @app.post("/source-releases")
-    def register_source_release(
-        body: SourceReleaseCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id:
-            raise AuthorizationError("agent credentials cannot publish source releases")
-        actor = str(principal.human_id or principal.client_id or "").strip()
-        if not actor:
-            raise AuthorizationError("source release publication requires a bound principal")
-        return cp.register_source_release(created_by=actor, **_data(body)).to_dict()
-
-    @app.get("/source-releases")
-    def list_source_releases(
-        repository_id: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        principal.refuse_tenant_bound()
-        return [
-            item.to_dict()
-            for item in cp.list_source_releases(
-                repository_id=repository_id,
-                status=status,
-                limit=limit,
-            )
-        ]
-
-    @app.get("/source-releases/{release_id}")
-    def get_source_release(
-        release_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        return cp.get_source_release(release_id).to_dict()
-
-    @app.post("/fleet-desired-source")
-    def set_fleet_desired_source(
-        body: FleetDesiredSourceUpdate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id:
-            raise AuthorizationError("agent credentials cannot set fleet desired source")
-        actor = str(principal.human_id or principal.client_id or "").strip()
-        if not actor:
-            raise AuthorizationError("desired-source mutation requires a bound principal")
-        return cp.set_fleet_desired_source(actor=actor, **_data(body)).to_dict()
-
-    @app.post("/fleet-upgrades")
-    def request_fleet_upgrade(
-        body: FleetUpgradeCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id or not principal.human_id:
-            raise AuthorizationError(
-                "fleet upgrade requests require a human-bound elevated credential"
-            )
-        actor = str(principal.client_id or principal.human_id)
-        return cp.request_fleet_upgrade(
-            requested_by_human=principal.human_id,
-            requested_by_principal=actor,
-            **_data(body),
-        )
-
-    @app.get("/fleet-upgrades")
-    def list_fleet_upgrades(
-        fleet_id: Optional[str] = Query(default=None),
-        state: Optional[str] = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        principal.refuse_tenant_bound()
-        return cp.list_fleet_upgrades(fleet_id=fleet_id, state=state, limit=limit)
-
-    @app.get("/fleet-upgrades/{upgrade_id}")
-    def get_fleet_upgrade(
-        upgrade_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        return cp.get_fleet_upgrade(upgrade_id)
-
-    @app.get("/fleet-upgrades/{upgrade_id}/events")
-    def get_fleet_upgrade_events(
-        upgrade_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        principal.refuse_tenant_bound()
-        return cp.fleet_upgrade_events(upgrade_id)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/cancel")
-    def cancel_fleet_upgrade(
-        upgrade_id: str,
-        body: FleetUpgradeCancel,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id or not principal.human_id:
-            raise AuthorizationError(
-                "fleet upgrade cancellation requires a human-bound elevated credential"
-            )
-        return cp.cancel_fleet_upgrade(
-            upgrade_id,
-            actor=principal.human_id,
-            reason=body.reason,
-        )
-
-    @app.post("/fleet-upgrades/{upgrade_id}/stage")
-    def stage_fleet_upgrade(
-        upgrade_id: str,
-        body: FleetUpgradeStage,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet upgrade staging requires a bound deploy principal")
-        return cp.stage_fleet_upgrade(
-            upgrade_id,
-            actor=actor,
-            branch=body.branch,
-            explicit_required_checks=body.required_checks,
-        )
-
-    @app.post("/fleet-upgrades/{upgrade_id}/arm")
-    def arm_fleet_upgrade(
-        upgrade_id: str,
-        body: FleetUpgradeArm,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet upgrade arming requires a bound deploy principal")
-        return cp.arm_fleet_upgrade(upgrade_id, actor=actor, **_data(body))
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/open")
-    def open_fleet_upgrade_epoch(
-        upgrade_id: str,
-        body: FleetUpgradeEpochOpen,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch open requires a bound deploy principal")
-        return cp.open_fleet_upgrade_epoch(upgrade_id, body.participants, actor=actor)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/prove")
-    def prove_fleet_upgrade_epoch(
-        upgrade_id: str,
-        body: FleetUpgradeEpochProve,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch proof requires a bound deploy principal")
-        return cp.prove_fleet_upgrade_epoch(upgrade_id, body.proofs, actor=actor)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/commit")
-    def commit_fleet_upgrade_epoch(
-        upgrade_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch commit requires a bound deploy principal")
-        return cp.commit_fleet_upgrade_epoch(upgrade_id, actor=actor)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/abort")
-    def abort_fleet_upgrade_epoch(
-        upgrade_id: str,
-        body: FleetUpgradeEpochAbort,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch abort requires a bound deploy principal")
-        return cp.abort_fleet_upgrade_epoch(
-            upgrade_id,
-            actor=actor,
-            reason=body.reason,
-            disposition=body.disposition,
-        )
-
-    @app.get("/source-convergence")
-    def source_convergence_status(
-        fleet_id: Optional[str] = Query(default=None),
-        limit: int = Query(default=250, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        return cp.source_convergence_status(fleet_id=fleet_id, limit=limit)
-
-    @app.post("/source-convergence/tick")
-    def tick_source_convergence(
-        limit: int = Query(default=100, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.tick_source_convergence(limit=limit)
-
     @app.post("/agentbus/artifact-publish")
     def publish_agentbus_artifact(
         body: AgentBusArtifactPublish,
@@ -9439,38 +8215,6 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [ref.to_dict() for ref in cp.list_vector_refs(memory_id, vector_db, collection)]
 
-    @app.post("/environments")
-    def register_environment(
-        body: EnvironmentRegister,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.assert_tenant(body.tenant_id)
-        return cp.register_environment(**_data(body)).to_dict()
-
-    @app.get("/environments")
-    def list_environments(
-        tenant_id: Optional[str] = Query(default=None),
-        channel: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return [env.to_dict() for env in cp.list_environments(tenant_id, channel)]
-
-    @app.get("/environments/{env_id}")
-    def get_environment(env_id: str) -> Dict[str, Any]:
-        return cp.get_environment(env_id).to_dict()
-
-    @app.post("/environments/{env_id}/deploy")
-    def deploy_artifact(env_id: str, body: DeploymentCreate) -> Dict[str, Any]:
-        return cp.deploy_artifact(env_id, body.artifact_id, body.actor, body.metadata).to_dict()
-
-    @app.get("/environments/{env_id}/current")
-    def current_deployment(env_id: str) -> Optional[Dict[str, Any]]:
-        current = cp.current_deployment(env_id)
-        return current.to_dict() if current is not None else None
-
-    @app.get("/environments/{env_id}/deployments")
-    def list_deployments(env_id: str) -> List[Dict[str, Any]]:
-        return [d.to_dict() for d in cp.list_deployments(env_id)]
-
     @app.post("/runtimes")
     def create_runtime(
         body: RuntimeCreate,
@@ -9593,13 +8337,13 @@ def create_app(
         subject_type: Optional[str] = Query(default=None),
         subject_id: Optional[str] = Query(default=None),
         record_type: Optional[str] = Query(
-            default=None, description="Exact record_type filter (e.g. nap_summary)"
+            default=None, description="Exact record_type filter (e.g. agent_learning)"
         ),
         record_type_prefix: Optional[str] = Query(
-            default=None, description="Prefix match on record_type (e.g. dream:)"
+            default=None, description="Prefix match on record_type (e.g. agent_learning:)"
         ),
         created_by: Optional[str] = Query(
-            default=None, description="Filter by creator (e.g. nap-consolidator, agent_rocky)"
+            default=None, description="Filter by creator (e.g. agent_rocky)"
         ),
         since: Optional[str] = Query(
             default=None, description="ISO-8601 lower bound on created_at (inclusive)"
@@ -9648,92 +8392,6 @@ def create_app(
     def forget_memory(key: str, project: Optional[str] = Query(default=None)) -> Dict[str, Any]:
         return cp.forget_memory(key, project=project)
 
-    # mem-10: memory-tier health snapshot for operators + future alerter.
-    @app.get("/v1/memory/health")
-    def memory_health(
-        nap_interval_hours: float = Query(default=1.0, ge=0.1, le=720.0),
-        vector_ingestion_max_age_hours: float = Query(
-            default=24.0,
-            ge=0.1,
-            le=8760.0,
-            description=(
-                "a Qdrant collection whose newest embedded_at is older than "
-                "this raises stalled_vector_ingestion"
-            ),
-        ),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.memory_health(
-            nap_interval_hours=nap_interval_hours,
-            vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
-        )
-
-    # The writer mac_memory_long never had. Operator-triggered here; the nap
-    # cycle also runs it on its own schedule.
-    @app.post("/v1/memory/promote")
-    def promote_memory_tier(
-        min_age_days: Optional[float] = Query(default=None, ge=0.0, le=3650.0),
-        limit: Optional[int] = Query(default=None, ge=1, le=10000),
-        drop_medium: bool = Query(
-            default=False,
-            description=("retire each medium point once its long-tier write succeeded"),
-        ),
-        dry_run: bool = Query(default=False),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.promote_memory_tier(
-            min_age_days=min_age_days,
-            limit=limit,
-            drop_medium=drop_medium,
-            dry_run=dry_run,
-            created_by="api:memory-promote",
-        )
-
-    # Collapse a tier onto one embedding model; see mixed_embedding_spaces.
-    @app.post("/v1/memory/reconcile-embeddings")
-    def reconcile_memory_embedding_spaces(
-        tier: str = Query(default="medium"),
-        limit: Optional[int] = Query(default=None, ge=1, le=100000),
-        scan_limit: Optional[int] = Query(default=None, ge=1, le=1000000),
-        dry_run: bool = Query(default=False),
-        report_only: bool = Query(
-            default=False, description="count the models present, write nothing"
-        ),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.reconcile_memory_embedding_spaces(
-            tier=tier,
-            limit=limit,
-            scan_limit=scan_limit,
-            dry_run=dry_run,
-            report_only=report_only,
-            created_by="api:memory-reconcile-embeddings",
-        )
-
-    # mem-09: vector-tier recall.
-    @app.get("/v1/memory/recall")
-    def recall_memory(
-        q: str = Query(..., min_length=1, description="free-form query text"),
-        tier: str = Query(default="medium"),
-        limit: int = Query(default=5, ge=1, le=100),
-        min_score: Optional[float] = Query(default=None),
-        project: Optional[str] = Query(default=None),
-        tenant_id: Optional[str] = Query(default=None),
-        agent_id: Optional[str] = Query(default=None),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        if principal.agent_id and agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError("agent token cannot recall a peer agent's memory")
-        return cp.recall_memory(
-            q,
-            tier=tier,
-            limit=limit,
-            min_score=min_score,
-            project=project,
-            tenant_id=tenant_id,
-            agent_id=agent_id,
-        )
-
     @app.get("/v1/agents/{agent_id}/continuity")
     def get_openclaw_continuity_context(
         agent_id: str,
@@ -9741,11 +8399,14 @@ def create_app(
         limit: int = Query(default=5, ge=0, le=20),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        """Return the bound agent's dynamic mood and medium-term memories.
+        """Return the bound agent's dynamic mood and recent peer conversation.
 
         This endpoint is the narrow runtime bridge used by MAC's OpenClaw
         plugin.  It lives below ``/v1`` so an ordinary bound agent token can
         read its own context without receiving fleet-wide ``read`` scope.
+
+        The vector memory tier was removed on 2026-09-30, so ``memories`` no
+        longer carries vector recall; it carries only bounded AgentBus history.
         """
         if principal.agent_id and principal.agent_id != agent_id:
             raise AuthorizationError("agent token cannot read a peer agent's continuity context")
@@ -9756,14 +8417,13 @@ def create_app(
         memories: List[Dict[str, Any]] = []
         metrics = ContinuityMetrics()
         if q.strip() and limit:
-            # Selective, provenance-rich recall: a calibrated score floor keeps
-            # low-value filler out, and bounded AgentBus recall lets a prior
-            # peer conversation resurface labelled with its source and score.
+            # Bounded AgentBus recall lets a prior peer conversation resurface
+            # labelled with its source and score. No vector recall: the memory
+            # tier it read from was removed.
             memories, metrics = recall_continuity(
                 agent_id=agent_id,
                 query=q,
                 limit=limit,
-                recall=cp.recall_memory,
                 agentbus=getattr(cp, "agentbus", None),
             )
         from mac.mood_policy import render_mood_overlay
@@ -10117,11 +8777,8 @@ def create_app(
 
         This is the conversational write path Hermes' background review used
         to provide: without it, nothing an OpenClaw agent learns in chat can
-        outlive the session. Records land in the raw tier as
-        ``agent_learning*`` rows (``created_by = agent_id``), which is exactly
-        the population nap consolidation summarizes into the recallable
-        medium tier — so stored learnings flow into recall via the existing
-        nap → embed pipeline rather than a new one.
+        outlive the session. Records land in ``memory_records`` as
+        ``agent_learning*`` rows (``created_by = agent_id``).
 
         The record_type is constrained to the ``agent_learning`` namespace so
         an agent cannot masquerade as protected tiers (``user``, ``feedback``,
@@ -10159,33 +8816,6 @@ def create_app(
         )
         return record.to_dict()
 
-    @app.get("/v1/memory/dreams/recall")
-    def recall_dream_artifacts(
-        q: str = Query(..., min_length=1, description="free-form query text"),
-        tier: str = Query(default="medium"),
-        limit: int = Query(default=5, ge=1, le=100),
-        min_score: Optional[float] = Query(default=None),
-        project: Optional[str] = Query(default=None),
-        agent_id: Optional[str] = Query(default=None),
-        scope: Optional[str] = Query(default=None),
-        kind: Optional[str] = Query(default=None),
-        min_confidence: Optional[str] = Query(default=None),
-        tenant_id: Optional[str] = Query(default=None),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        return cp.recall_dream_artifacts(
-            q,
-            tier=tier,
-            limit=limit,
-            min_score=min_score,
-            project=project,
-            agent_id=agent_id,
-            scope=scope,
-            kind=kind,
-            min_confidence=min_confidence,
-            tenant_id=tenant_id,
-        )
-
     @app.post("/eval-sets")
     def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:
         return cp.create_eval_set(**_data(body)).to_dict()
@@ -10218,43 +8848,6 @@ def create_app(
         target_id: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         return [run.to_dict() for run in cp.list_eval_runs(eval_set_id, target_id)]
-
-    @app.post("/rollouts")
-    def create_rollout(
-        body: RolloutCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.assert_tenant(body.tenant_id)
-        return cp.create_rollout(**_data(body)).to_dict()
-
-    @app.get("/rollouts")
-    def list_rollouts(
-        tenant_id: Optional[str] = Query(default=None),
-        channel: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return [rollout.to_dict() for rollout in cp.list_rollouts(tenant_id, channel)]
-
-    @app.post("/rollouts/{rollout_id}/advance")
-    def advance_rollout(rollout_id: str, body: RolloutAdvance) -> Dict[str, Any]:
-        return cp.advance_rollout(rollout_id, body.action, body.actor, body.detail).to_dict()
-
-    @app.post("/rollouts/{rollout_id}/artifact")
-    def verify_rollout_artifact(rollout_id: str, body: RolloutArtifactVerify) -> Dict[str, Any]:
-        return cp.verify_rollout_artifact(
-            rollout_id,
-            body.artifact_uri,
-            body.artifact_hash,
-            body.actor,
-        ).to_dict()
-
-    @app.post("/rollouts/{rollout_id}/health")
-    def evaluate_rollout_health(rollout_id: str, body: RolloutHealthReport) -> Dict[str, Any]:
-        return cp.evaluate_rollout_health(rollout_id, body.checks, body.actor)
-
-    @app.post("/rollouts/{rollout_id}/rescue")
-    def rescue_rollout(rollout_id: str, body: RolloutRescue) -> Dict[str, Any]:
-        rollout, task = cp.rescue_rollout(rollout_id, body.actor, body.reason, body.detail)
-        return {"rollout": rollout.to_dict(), "task": task.to_dict()}
 
     # th-merge-02: optional in-mac OpenAI front door (provider router + recovering
     # breaker). No-op unless MAC_ROUTER_BACKEND=inproc, so the standalone TokenHub

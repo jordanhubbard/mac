@@ -9,9 +9,7 @@ the ``TaskState`` constants, and the structured ``Message`` / ``Part`` /
 plus ``to_dict`` / ``from_dict`` (de)serialization, so it can be exercised
 without a transport.
 
-This is the agent<->agent axis and is distinct from :mod:`mac.acp.protocol`,
-which is the host<->agent runtime seam. Both speak JSON-RPC 2.0, so the
-envelope mirrors ACP's, but the method names and payload shapes are A2A's.
+This is the agent<->agent axis, carried over a JSON-RPC 2.0 envelope.
 
 Spec notes pinned by this implementation (verified against
 ``a2a-protocol.org`` on 2026-06-17):
@@ -119,9 +117,8 @@ ERROR_TASK_NOT_FOUND = -32001
 def json_dumps(value: Any) -> str:
     """Deterministic, compact JSON encoding.
 
-    Mirrors :func:`mac.models.json_dumps` and :func:`mac.acp.protocol.json_dumps`
-    (sorted keys, no whitespace) so A2A frames are byte-stable for tests and
-    logging.
+    Mirrors :func:`mac.models.json_dumps` (sorted keys, no whitespace) so A2A
+    frames are byte-stable for tests and logging.
     """
 
     return json.dumps(value, sort_keys=True, separators=(",", ":"))

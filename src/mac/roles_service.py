@@ -615,12 +615,37 @@ def machine_hardware_satisfies(
     return (not reasons), reasons
 
 
+#: Boolean accelerator capability flags a constraint may require.
+#:
+#: `detect_hardware` has always emitted these (`hardware.py`: `rtx_capable` is
+#: derived as `"RTX" in name.upper()`), but nothing ever read them, so a
+#: capability every agent reported could not be required. A workload that needs
+#: RTX had no way to say so: `model` is matched by exact equality, so it cannot
+#: express "any RTX card", and `tags_all` reads `hardware["tags"]`, which
+#: detection leaves unset. Observed 2026-09-25 on a fifty-worker fleet whose
+#: agents all report `NVIDIA A40 / rtx_capable: false` -- a real GPU that is
+#: silently wrong for the workload, which is worse than no GPU at all, because
+#: a coarse `gpu` capability tag would have accepted it.
+_ACCELERATOR_FLAGS = ("rtx_capable", "render_capable")
+
+
 def _accelerator_matches(constraint: Dict[str, Any], candidate: Any) -> bool:
     if not isinstance(candidate, dict):
         return False
     for key in ("kind", "vendor", "model"):
         want = constraint.get(key)
         if want is not None and candidate.get(key) != want:
+            return False
+    for key in _ACCELERATOR_FLAGS:
+        want = constraint.get(key)
+        if want is None:
+            continue
+        # An agent that does not report the flag reads as False, so requiring
+        # a capability excludes agents whose hardware report predates it.
+        # Fail closed: dispatching work to a host that cannot do it is a
+        # worse outcome than leaving it unclaimed and visible to
+        # `unsatisfiable-requirements`.
+        if bool(candidate.get(key)) is not bool(want):
             return False
     memory_min = constraint.get("memory_gb_min")
     if memory_min is not None:

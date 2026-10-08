@@ -77,8 +77,6 @@ def _sample(name: str) -> Any:
         "enabled",
         "all_agents",
         "restart",
-        "embed_into_medium",
-        "emit_dream_artifacts",
         "sync_beads",
     }:
         return True
@@ -93,9 +91,11 @@ def _sample(name: str) -> Any:
         "baseline_score",
         "expected_plan_version",
         "expected_epoch",
+        "after",
+        "reply_to",
     }:
         return 1
-    if name in {"nap_interval_hours", "min_score"}:
+    if name == "min_score":
         return 1.0
     if name in {
         "manifest",
@@ -119,6 +119,7 @@ def _sample(name: str) -> Any:
         "added_dependencies",
         "recipient_agent_ids",
         "restart_services",
+        "kinds",
     }:
         return ["sample"]
     return "sample"

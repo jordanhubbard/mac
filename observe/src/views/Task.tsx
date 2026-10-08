@@ -16,6 +16,7 @@ import {
   shortId,
 } from "../lib/format";
 import { healthColor, taskStateColor } from "../lib/states";
+import { TaskBoard, type PostToBoard } from "../components/TaskBoard";
 
 function reason(detail: TaskDrilldown, section: string): string | undefined {
   return detail.degraded.find((d) => d.section === section)?.reason;
@@ -36,11 +37,13 @@ export function TaskView({
   taskId,
   snap,
   onBack,
+  postToBoard,
 }: {
   client: ConsoleClient;
   taskId: string | null;
   snap: Snapshot;
   onBack: () => void;
+  postToBoard?: PostToBoard;
 }) {
   const { detail, error, loading, reload } = useTask(client, taskId);
   const [openTurn, setOpenTurn] = useState<string | null>(null);
@@ -48,8 +51,8 @@ export function TaskView({
   if (!taskId) {
     return (
       <Empty>
-        Pick a task from <strong>Live</strong>, <strong>Stuck work</strong>,{" "}
-        <strong>News board</strong>, or <strong>Mission Control</strong> to see
+        Pick a task from <strong>Live</strong>, <strong>Stuck work</strong>, or{" "}
+        <strong>Mission Control</strong> to see
         its history, transcript and commands.
       </Empty>
     );
@@ -116,6 +119,8 @@ export function TaskView({
         <span className="id">{task.id}</span>
         {loading ? <span className="micro">reloading…</span> : null}
       </div>
+
+      {postToBoard ? <TaskBoard client={client} taskId={task.id} post={postToBoard} /> : null}
 
       <div className="tiles">
         <Tile

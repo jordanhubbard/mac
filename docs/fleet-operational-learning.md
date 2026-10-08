@@ -51,18 +51,16 @@ workflow tick after the memory write.
 The control plane's pushed-ref evidence check uses the same authentication
 resolver. A control-plane authentication, authorization, or network failure is
 treated as indeterminate rather than as proof that a pushed ref is absent; the
-independently routed reviewer remains responsible for verification. A
+worker's pre-push verifier run remains responsible for verification. A
 successful lookup with no matching ref still rejects phantom-push evidence.
 
-### Success-first reviewer routing
+### Reviewer repository access
 
-For the task's repository host, reviewer candidates are ordered as follows:
-
-1. agents with a recent successful `review_clone` learning;
-2. agents with no recent matching learning.
-
-An agent whose newest matching learning is an authentication or authorization
-failure is ineligible during the failure cooldown. A later success immediately
+The default review workflow no longer selects reviewer agents: the hub-reviewer
+approves from validated worker evidence. Repository-access learning still gates
+reviewers assigned explicitly through the review API. For the task's repository
+host, an agent whose newest matching learning is an authentication or
+authorization failure is ineligible during the failure cooldown. A later success immediately
 supersedes the failure. After the cooldown, the agent becomes unknown rather
 than permanently banned, so credential repairs can be proven naturally.
 
@@ -70,14 +68,6 @@ Configuration:
 
 - `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` defaults to 1800;
 - `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` defaults to 86400.
-
-### Bounded retries
-
-Review nudge attempts are counted from durable delivered nudge messages for
-the specific review. Idempotent claim calls are not an attempt counter. Once
-`MAC_REVIEW_NUDGE_MAX_ATTEMPTS` is reached, the review is retracted through the
-existing bounded review workflow instead of producing an unbounded retry
-storm.
 
 ### Prompt recall
 

@@ -468,16 +468,18 @@ def recall_continuity(
     agent_id: str,
     query: str,
     limit: int,
-    recall: Callable[..., List[JsonDict]],
+    recall: Optional[Callable[..., List[JsonDict]]] = None,
     agentbus: Any = None,
     tiers: Sequence[str] = ("medium", "long"),
     config: Optional[ContinuityConfig] = None,
 ) -> Tuple[List[JsonDict], ContinuityMetrics]:
     """Return fused, provenance-rich continuity items plus recall metrics.
 
-    ``recall`` is the vector-memory callable (``cp.recall_memory``); ``agentbus``
-    is the ``AgentBusService`` (or ``None`` to skip bus recall). Bus recall
-    failures degrade gracefully: memory recall still returns.
+    ``recall`` is an optional vector-memory callable; the hub passes ``None``
+    since the vector memory tier was removed (2026-09-30), so the hub route
+    serves AgentBus history only. ``agentbus`` is the ``AgentBusService`` (or
+    ``None`` to skip bus recall). Bus recall failures degrade gracefully: memory
+    recall still returns.
     """
 
     config = config or ContinuityConfig.from_env()
@@ -487,15 +489,17 @@ def recall_continuity(
     if not query or limit <= 0:
         return [], metrics
 
-    candidates: List[_Candidate] = collect_memory_candidates(
-        query=query,
-        tiers=tiers,
-        limit=limit,
-        agent_id=agent_id,
-        recall=recall,
-        config=config,
-        metrics=metrics,
-    )
+    candidates: List[_Candidate] = []
+    if recall is not None:
+        candidates = collect_memory_candidates(
+            query=query,
+            tiers=tiers,
+            limit=limit,
+            agent_id=agent_id,
+            recall=recall,
+            config=config,
+            metrics=metrics,
+        )
 
     if agentbus is not None:
         candidates.extend(

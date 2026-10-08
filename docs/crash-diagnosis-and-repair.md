@@ -1,4 +1,4 @@
-# Crash diagnosis and autonomous repair
+# Crash diagnosis
 
 MAC fleet agents run beneath a supervisor-independent crash observer. The
 observer is copied to `~/.mac/bin/mac-crash-observer` and deliberately uses the
@@ -68,22 +68,22 @@ fingerprint itself from the source revision, process, termination class, and a
 normalized stack signature. Every occurrence remains durable while matching
 events share one active incident.
 
-## Repair policy
+## Operator response
 
-The first occurrence creates an immediately dispatchable P0 `mac` repair task.
-Every affected agent is added to the task's hard `excluded_agent_ids`; the
-dispatcher will wait rather than assign crash diagnosis to the revision/node
-that crashed. If the chosen repairer later exhibits the same fingerprint, its
-lease is released and another healthy peer takes over.
+The hub records crashes; it does not repair them. The first occurrence of a
+fingerprint opens an incident and records one `agent.crash.observed` operator
+notification. Further occurrences of an open incident are retained and counted
+without another notification. An occurrence after the operator resolved the
+incident reopens it and notifies again.
 
-Hub ticks reconcile the repair task. Completion resolves the incident. Failure
-or cancellation creates a new repair attempt that references the prior task.
-After three failed autonomous attempts the incident becomes `needs_human` and
-an operator notification is recorded.
+No task is filed. Earlier releases filed a P0 repair task per incident under
+the `crash-observer` actor and re-filed it after each failed attempt; that
+autonomous repair loop was removed on 2026-09-30. Decide what to do from the
+report and `POST /crash-reports/{report_id}/resolve` once the fix is verified.
 
 ## Verification
 
 A deployment is conformant only when its installed service command contains
 `mac-crash-observer`, the observer can post a synthetic non-zero child exit,
-the hub retains the occurrence, and the resulting repair task excludes the
-crashed agent. Restart policy alone is not crash-diagnosis conformance.
+and the hub retains the occurrence. Restart policy alone is not
+crash-diagnosis conformance.

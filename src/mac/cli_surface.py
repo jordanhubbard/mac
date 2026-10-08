@@ -121,7 +121,7 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
                 ),
             ),
             ("Break-glass", ("break-glass", "break-glass-list", "break-glass-revoke")),
-            ("Reporting", ("throughput", "generator-yield", "outcome", "outcomes", "accept")),
+            ("Reporting", ("throughput", "outcome", "outcomes", "accept")),
             (
                 "Migration",
                 (
@@ -151,7 +151,6 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
             (
                 "Administration",
                 (
-                    "attestation-recover",
                     "report-executor-approve",
                     "report-executor-revoke",
                     "migrate",
@@ -193,15 +192,12 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
         (
             ("fleet", "deploy, inspect and maintain the fleet as a whole"),
             ("machine", "hosts that agents run on"),
-            ("hgx", "HGX / GPU capacity management"),
             ("openshell", "sandboxed execution environments for agents"),
             ("mcp", "serve the ledger to coding agents as Model Context Protocol tools"),
             ("plugin", "install mac skills and MCP into Claude, Codex, Cursor, OpenCode"),
             ("cli-session", "auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)"),
-            ("sandbox-image", "the sandbox IMAGE: its bill of materials and its rollout"),
+            ("sandbox-image", "the sandbox IMAGE: its bill of materials"),
             ("runtime", "runtime images and environment definitions"),
-            ("rollout", "staged rollout of a runtime or configuration"),
-            ("env", "environment variables projected onto fleet hosts"),
             ("secret", "secret storage, rotation and access audit"),
             ("database", "control-plane database maintenance"),
             ("migrate", "schema and data migrations"),
@@ -212,12 +208,10 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
         (
             ("dispatch", "the loop that matches ready tasks to eligible agents"),
             ("review", "adversarial review of completed work"),
-            ("judgement", "hourly process-quality authority over lifecycle gates"),
             ("publish", "publish reviewed work to its destination"),
             ("pull-request", "pull requests raised from task work"),
             ("workflow", "multi-step workflow definitions and runs"),
             ("eval", "evaluation runs over agent output"),
-            ("optimizer", "model and routing optimization"),
             ("repo", "repositories that tasks execute against"),
             ("artifact", "durable artifacts produced by task work"),
         ),
@@ -228,9 +222,6 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("memory", "durable cross-session knowledge"),
             ("journal", "per-agent narrative history"),
             ("mood", "agent temperament and its effect on execution"),
-            ("nap", "consolidation cycles that summarize recent work"),
-            ("dream", "offline pattern-finding over past work"),
-            ("curiosity", "quarantined self-proposed experiments awaiting judgment"),
             ("human-interface", "port an agent profile between Hermes and OpenClaw"),
             ("persona", "Hermes personas and their memory scopes"),
         ),
@@ -264,6 +255,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("human", "people who own agents and file tasks"),
             ("user", "tenant-scoped user identities"),
             ("client", "API clients and their principals"),
+            ("worker-token", "long-lived worker bearer tokens: issue, rotate, list"),
         ),
     ),
     (

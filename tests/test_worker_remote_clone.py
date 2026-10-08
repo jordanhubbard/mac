@@ -27,6 +27,21 @@ from mac.worker import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_mac_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point MAC_HOME at an empty directory for every test here.
+
+    The worker also looks for a repository at ``$MAC_HOME/src/<name>``. Without
+    this, a developer whose real ``~/.mac/src`` holds a checkout of the same
+    name (``ova``, say) takes the local-source branch instead of the remote
+    clone these tests exercise, and the result depends on whose machine runs it.
+    """
+    home = tmp_path / "mac-home"
+    home.mkdir()
+    monkeypatch.setenv("MAC_HOME", str(home))
+    return home
+
+
 def _noop_transport(method: str, path: str, payload: Any) -> Any:
     return None
 
@@ -1619,70 +1634,6 @@ def test_manifest_enrichment_replaces_redacted_display_remote_with_canonical() -
 
     assert enriched["repo"]["remote_url"] == "git@github.com:org/repo.git"
     assert "<redacted>" not in enriched["repo"]["remote_url"]
-
-
-def test_review_clone_prefers_task_contract_over_redacted_executor_remote(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    canonical_remote = "file:///tmp/canonical.git"
-    redacted_remote = "https://x-access-token:<redacted>@github.com/org/repo.git"
-    head_sha = "ab" * 20
-    task_detail = {
-        "task": {
-            "id": "task-contract-remote",
-            "project": "demo",
-            "metadata": {
-                "execution_contract": {
-                    "repository_contract": {
-                        "canonical_remote_url": canonical_remote,
-                    }
-                }
-            },
-        },
-        "evidence": [
-            {
-                "id": "ev-contract-remote",
-                "metadata": {
-                    "verification": {
-                        "repo": {
-                            "head_sha": head_sha,
-                            "base_sha": "cd" * 20,
-                            "remote_ref": "refs/heads/mac/contract-remote",
-                            "remote_url": redacted_remote,
-                        }
-                    }
-                },
-            }
-        ],
-    }
-    commands: list[list[str]] = []
-
-    def successful_git(argv, *args, **kwargs):
-        command = list(argv)
-        commands.append(command)
-        if command[:3] == ["git", "clone", "--no-checkout"]:
-            Path(command[-1]).mkdir(parents=True)
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr("mac.worker.subprocess.run", successful_git)
-    worker = _make_worker(tmp_path)
-    task_dir = tmp_path / "review-contract-remote"
-    task_dir.mkdir()
-
-    context = worker._prepare_review_repository_worktree(
-        task_dir,
-        task_detail,
-        "ev-contract-remote",
-        "review-contract-remote",
-    )
-
-    clone = next(
-        command for command in commands if command[:3] == ["git", "clone", "--no-checkout"]
-    )
-    assert clone[4] == canonical_remote
-    assert redacted_remote not in clone
-    assert context is not None
-    assert context["repository_origin_remote"] == canonical_remote
 
 
 def test_local_worktree_same_lease_debris_is_reclaimed(

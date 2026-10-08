@@ -8,8 +8,7 @@ an actual squash merge, then assert on what reached the bus.
 ``tree_sha`` is checked against the real tree of the merged commit, because it
 is the field the whole terminal-event design rests on: the squash mints a new
 commit sha at merge time, so a consumer matching on commit identity would miss
-every merge this fleet performs. Tree identity survives the squash — which is
-why ``native_merge_queue.landing_is_safe`` gates on it too.
+every merge this fleet performs. Tree identity survives the squash.
 """
 
 from __future__ import annotations

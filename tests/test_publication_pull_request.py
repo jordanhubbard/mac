@@ -13,6 +13,7 @@ performs an actual squash merge so the assertions are about real git history.
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ import pytest
 from mac import gitops
 from mac.models import ReviewStatus, TaskState, ValidationError
 from mac.services import ControlPlane
-from tests.conftest import submit_review_verdict
+from tests.conftest import submit_review_verdict, verifier_test_item
 from tests.test_control_plane import _sign, register_agent
 
 
@@ -69,21 +70,36 @@ class FakeForge:
         workdir: Path,
         *,
         merge_blocked: str = "",
-        queue: bool = False,
     ):
         self.remote = remote
         self.workdir = workdir
         self.merge_blocked = merge_blocked
-        self.queue = queue
         self.opened: list[dict] = []
         self.merges: list[dict] = []
-        self.enqueued: list[dict] = []
         self.queue_merged_sha = ""
         self.verified: list[dict] = []
         self.checks_pending = False
         self.checks_failed: tuple = ()
         self.checks_known = True
         self.pr_head_ref = ""
+        self.mergeable_state = ""
+        self.update_conflict = False
+        self.branch_updates: list[dict] = []
+        self.closed: list[dict] = []
+        self.close_error = ""
+        self.failed_check_logs: dict = {}
+        self.pr_state = "open"
+
+    def failed_check_details(self, repo_url, sha, failed, **_):
+        return [
+            {
+                "name": name,
+                "conclusion": "failure",
+                "details_url": "https://github.invalid/acme/widgets/actions/runs/1/job/%d" % index,
+                "log_tail": self.failed_check_logs.get(name, ""),
+            }
+            for index, name in enumerate(failed)
+        ]
 
     # -- required checks --------------------------------------------------
     def required_check_verdicts(self, repo_url, sha, contexts, **_):
@@ -96,32 +112,43 @@ class FakeForge:
             "failed": list(self.checks_failed),
         }
 
-    # -- merge queue -----------------------------------------------------
-    def merge_queue_enabled(self, repo_url, branch, **_):
-        return self.queue
-
-    def enqueue_pull_request(self, repo_url, number, *, sha, **_):
-        self.enqueued.append({"number": number, "sha": sha})
-        return gitops.PullRequestMergeResult(
-            merged=False,
-            number=number,
-            queued=True,
-            serialization="merge_queue",
-            reason="enqueued into the merge queue",
-        )
-
     def pull_request_state(self, repo_url, number, **_):
         return {
             "known": True,
             "merged": bool(self.queue_merged_sha),
             "sha": self.queue_merged_sha,
-            "state": "closed" if self.queue_merged_sha else "open",
+            "state": "closed" if self.queue_merged_sha else self.pr_state,
             "head_sha": "",
             "head_ref": self.pr_head_ref,
+            "mergeable_state": self.mergeable_state,
         }
 
+    def update_pull_request_branch(self, repo_url, number, *, expected_head_sha=None, **_):
+        """GitHub's update-branch: merge main into the PR branch, for real."""
+        self.branch_updates.append({"number": number, "expected_head_sha": expected_head_sha})
+        if self.update_conflict:
+            return {"updated": False, "conflict": True, "reason": "merge conflict"}
+        checkout = self.workdir / ("update-%d" % len(self.branch_updates))
+        subprocess.run(
+            ["git", "clone", "--branch", "task/feature", str(self.remote), str(checkout)],
+            check=True,
+            capture_output=True,
+        )
+        git(checkout, "config", "user.email", "forge@example.com")
+        git(checkout, "config", "user.name", "Fake Forge")
+        git(checkout, "fetch", "origin", "main")
+        git(checkout, "merge", "--no-ff", "--no-edit", "origin/main")
+        git(checkout, "push", "origin", "HEAD:refs/heads/task/feature")
+        self.mergeable_state = ""
+        return {"updated": True, "conflict": False, "reason": ""}
+
+    def close_pull_request(self, repo_url, number, *, comment="", **_):
+        if self.close_error:
+            raise RuntimeError(self.close_error)
+        self.closed.append({"repo_url": repo_url, "number": number, "comment": comment})
+
     def land_from_queue(self, sha: str, number: int = 101) -> str:
-        """What the queue does asynchronously: squash the PR onto main."""
+        """Land the PR behind publication's back (a human, or a dead attempt)."""
         self.queue_merged_sha = self._squash(sha, number)
         return self.queue_merged_sha
 
@@ -145,7 +172,7 @@ class FakeForge:
         )
 
     def _squash(self, sha, number) -> str:
-        checkout = self.workdir / ("merge-%d" % (len(self.merges) + len(self.enqueued) + 1))
+        checkout = self.workdir / ("merge-%d" % (len(self.merges) + 1))
         subprocess.run(
             ["git", "clone", "--branch", "main", str(self.remote), str(checkout)],
             check=True,
@@ -153,7 +180,7 @@ class FakeForge:
         )
         git(checkout, "config", "user.email", "forge@example.com")
         git(checkout, "config", "user.name", "Fake Forge")
-        git(checkout, "fetch", "origin", "task/feature")
+        git(checkout, "fetch", "origin")
         git(checkout, "merge", "--squash", sha)
         git(checkout, "commit", "-m", "squashed (#%d)" % number)
         merged = git(checkout, "rev-parse", "HEAD")
@@ -161,18 +188,24 @@ class FakeForge:
         return merged
 
 
-def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",)):
+def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",), strict=False):
     monkeypatch.setattr(gitops, "resolve_forge", lambda url: "github")
     monkeypatch.setattr(gitops, "required_status_check_contexts", lambda url, branch: tuple(checks))
+    monkeypatch.setattr(
+        gitops,
+        "required_status_check_policy",
+        lambda url, branch: gitops.RequiredStatusChecks(tuple(checks), strict),
+    )
+    monkeypatch.setattr(gitops, "update_pull_request_branch", forge.update_pull_request_branch)
+    monkeypatch.setattr(gitops, "close_pull_request", forge.close_pull_request)
     monkeypatch.setattr(gitops, "open_pull_request", forge.open_pull_request)
     monkeypatch.setattr(gitops, "merge_pull_request", forge.merge_pull_request)
-    monkeypatch.setattr(gitops, "merge_queue_enabled", forge.merge_queue_enabled)
     monkeypatch.setattr(gitops, "required_check_verdicts", forge.required_check_verdicts)
-    monkeypatch.setattr(gitops, "enqueue_pull_request", forge.enqueue_pull_request)
     monkeypatch.setattr(gitops, "pull_request_state", forge.pull_request_state)
+    monkeypatch.setattr(gitops, "failed_check_details", forge.failed_check_details)
 
 
-def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
+def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None, repo_extra=None):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     cp.create_project(
@@ -213,8 +246,9 @@ def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
                 "dirty": False,
                 "files_changed": ["feature.txt"],
                 **({"pull_request": pull_request} if pull_request else {}),
+                **(repo_extra or {}),
             },
-            "tests": [{"command": "make smoke", "returncode": 0}],
+            "tests": [verifier_test_item(task_head)],
         },
     )
     evidence = cp.add_evidence(
@@ -247,12 +281,6 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-
-    # The hub must never run its own contract gate on this path -- the PR's
-    # required checks are the gate. If it did, this runner would fire.
-    cp._publication_merge_test_runner = lambda *a, **k: pytest.fail(
-        "hub contract gate ran even though the forge gates the merge"
-    )
 
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
@@ -298,8 +326,9 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     strategy = next(item for item in commands if item["name"] == "publication_strategy")
     assert strategy["strategy"] == "pull_request"
     assert strategy["required_status_checks"] == ["sanity"]
-    gate = next(item for item in commands if item["name"] == "publication_contract_gate")
-    assert gate["skipped"] is True
+    assert strategy["test_gate"] == "required_checks"
+    # The hub runs no contract gate of its own: the PR's checks are the gate.
+    assert not any(item["name"] == "publication_contract_gate" for item in commands)
 
     # The completion proof is honest about squashing and still admits the task.
     proofs = [
@@ -312,6 +341,161 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     assert proofs[0]["contains_reviewed_head"] is False
     assert proofs[0]["canonical_tip_sha"] == final
     assert proofs[0]["reviewed_head_sha"] == task_head
+
+
+def test_stopping_an_admitted_publisher_fences_the_forge_mutation(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    admitted = threading.Event()
+    resume = threading.Event()
+    original_verdicts = forge.required_check_verdicts
+
+    def pause_after_admission(*args, **kwargs):
+        admitted.set()
+        assert resume.wait(timeout=5)
+        return original_verdicts(*args, **kwargs)
+
+    monkeypatch.setattr(gitops, "required_check_verdicts", pause_after_admission)
+    outcome = {}
+
+    def publish():
+        try:
+            cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+        except Exception as exc:  # noqa: BLE001 - asserted below
+            outcome["error"] = exc
+
+    publisher = threading.Thread(target=publish)
+    publisher.start()
+    assert admitted.wait(timeout=5)
+    cp.stop_task(task.id, actor="operator", reason="publication hold")
+    resume.set()
+    publisher.join(timeout=10)
+
+    assert not publisher.is_alive()
+    assert getattr(outcome.get("error"), "publication_failure_kind", "") == (
+        "publication_authority_revoked"
+    )
+    assert forge.merges == []
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
+    assert cp.get_task(task.id).state == TaskState.STOPPED.value
+    assert cp.get_evidence(evidence.id).id == evidence.id
+
+    restarted = cp.start_stopped_task(task.id, actor="operator")
+    assert restarted.state == TaskState.OPEN.value
+    assert cp.get_evidence(evidence.id).id == evidence.id
+
+
+def _expire_publication_backoff(cp, task_id):
+    """Let the next land step run now, as if every backoff had elapsed."""
+    metadata = dict(cp.get_task(task_id).metadata)
+    landing = dict(metadata.get("landing") or {})
+    landing.pop("not_before", None)
+    metadata["landing"] = landing
+    metadata.pop("publication_retry", None)
+    cp._persist_task_metadata_narrow(task_id, metadata, actor="test")
+
+
+def test_revoked_publication_authority_retries_under_the_landing_budget(cp, tmp_path, monkeypatch):
+    """Live 2026-10-03: an approved task's land step raised "git publication
+    authority changed before forge mutation; a fresh review publication
+    attempt is required". The landing budget read that bare ValidationError as
+    non-retryable, so the task went BLOCKED and then FAILED. The message asks
+    for a fresh attempt, and a fresh attempt is what the task now gets."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    review_state = cp.get_task(task.id).state
+    original_verdicts = forge.required_check_verdicts
+    touched = []
+
+    def touch_task_once(*args, **kwargs):
+        # A write to the task row between admission and the merge request:
+        # the fence sees a different ``updated_at``.
+        if not touched:
+            touched.append(1)
+            metadata = dict(cp.get_task(task.id).metadata)
+            metadata["concurrent_note"] = "written mid-publication"
+            cp._persist_task_metadata_narrow(task.id, metadata, actor="test")
+        return original_verdicts(*args, **kwargs)
+
+    monkeypatch.setattr(gitops, "required_check_verdicts", touch_task_once)
+
+    first = cp.advance_default_review_workflow(task.id)
+
+    assert first["status"] == "publish_failed"
+    assert "fresh review publication attempt" in first["error"]
+    assert "blocked_reason" not in first
+    after = cp.get_task(task.id)
+    assert after.state == review_state
+    landing = dict(after.metadata["landing"])
+    assert landing["attempts"] == 1
+    assert landing["last_reason"] == "publication_authority_revoked"
+    assert landing["not_before"]
+    assert not landing.get("blocked_at")
+    assert forge.merges == []
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
+
+    # Still backing off: the next tick does not retry yet.
+    assert cp.advance_default_review_workflow(task.id)["status"] in {
+        "publication_backoff",
+        "landing_backoff",
+    }
+
+    # Once the backoff elapses, a fresh attempt re-reads the task (new
+    # authority) and lands.
+    _expire_publication_backoff(cp, task.id)
+    second = cp.advance_default_review_workflow(task.id)
+
+    assert second["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert len(forge.merges) == 1
+
+
+def test_a_second_consumer_does_not_revoke_the_land_step_in_progress(cp, tmp_path, monkeypatch):
+    """The sweep and the event-driven consumer can both reach the land step for
+    one task. The loser used to record a ``landing_serialized`` wait on the
+    task, bumping ``updated_at`` under the winner and revoking its authority
+    fence just before the merge. The loser now writes nothing."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    admitted = threading.Event()
+    resume = threading.Event()
+    original_verdicts = forge.required_check_verdicts
+
+    def pause_after_admission(*args, **kwargs):
+        admitted.set()
+        assert resume.wait(timeout=30)
+        return original_verdicts(*args, **kwargs)
+
+    monkeypatch.setattr(gitops, "required_check_verdicts", pause_after_admission)
+    outcome = {}
+
+    def land():
+        outcome["result"] = cp.advance_default_review_workflow(task.id, actor="sweep")
+
+    lander = threading.Thread(target=land)
+    lander.start()
+    try:
+        assert admitted.wait(timeout=30)
+        before = cp.get_task(task.id)
+        loser = cp.advance_default_review_workflow(task.id, actor="event-driven-review")
+        assert loser["status"] == "landing_in_progress"
+        unchanged = cp.get_task(task.id)
+        assert unchanged.updated_at == before.updated_at
+        assert "landing" not in unchanged.metadata
+        assert "publication_retry" not in unchanged.metadata
+    finally:
+        resume.set()
+        lander.join(timeout=60)
+
+    assert not lander.is_alive()
+    assert outcome["result"]["status"] == "published"
+    assert len(forge.merges) == 1
 
 
 def test_publication_defers_while_the_pull_request_checks_are_pending(cp, tmp_path, monkeypatch):
@@ -342,7 +526,6 @@ def test_direct_push_opt_out_still_pushes_the_canonical_branch(cp, tmp_path, mon
     install_forge(monkeypatch, forge)
     monkeypatch.setenv("MAC_PUBLICATION_STRATEGY", "direct_push")
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    cp._publication_merge_test_runner = lambda *a, **k: (0, "suite passed")
 
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
@@ -366,7 +549,6 @@ def test_repository_without_a_forge_falls_back_to_direct_push(cp, tmp_path):
     # no API to open a pull request against. Publication must still land.
     remote, source, main_head, task_head = build_repo(tmp_path)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    cp._publication_merge_test_runner = lambda *a, **k: (0, "suite passed")
 
     publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
@@ -489,6 +671,99 @@ def test_required_status_check_contexts_reads_rulesets(monkeypatch):
         "sanity",
         "compatibility",
     )
+
+
+def test_required_status_check_policy_reports_a_strict_ruleset(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    rules = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [{"context": "sanity"}],
+            },
+        }
+    ]
+    monkeypatch.setattr(gitops, "_http_get_json", lambda *a, **k: rules)
+    policy = gitops.required_status_check_policy("https://github.com/acme/widgets.git", "main")
+    assert policy == gitops.RequiredStatusChecks(contexts=("sanity",), strict=True)
+
+    rules[0]["parameters"]["strict_required_status_checks_policy"] = False
+    policy = gitops.required_status_check_policy("https://github.com/acme/widgets.git", "main")
+    assert policy.strict is False
+    assert gitops.required_status_check_contexts("https://github.com/acme/widgets.git", "main") == (
+        "sanity",
+    )
+
+
+def test_update_pull_request_branch_reports_updated_and_conflict(monkeypatch):
+    token = "ghp_" + "u" * 36
+    monkeypatch.setenv("GH_TOKEN", token)
+    calls = []
+
+    def put(url, headers, body, timeout=30.0):
+        calls.append((url, body))
+        return responses.pop(0)
+
+    responses = [
+        (202, {"message": "Updating pull request branch."}, ""),
+        (422, {}, "merge conflict between base and head"),
+        (422, {}, "expected head sha didn't match current head ref %s" % token),
+    ]
+    monkeypatch.setattr(gitops, "_http_put_json", put)
+    url = "https://github.com/acme/widgets.git"
+
+    assert gitops.update_pull_request_branch(url, 7, expected_head_sha="a" * 40) == {
+        "updated": True,
+        "conflict": False,
+        "reason": "",
+    }
+    assert calls[0] == (
+        "https://api.github.com/repos/acme/widgets/pulls/7/update-branch",
+        {"expected_head_sha": "a" * 40},
+    )
+    conflict = gitops.update_pull_request_branch(url, 7)
+    assert conflict["updated"] is False and conflict["conflict"] is True
+    moved = gitops.update_pull_request_branch(url, 7)
+    assert moved["updated"] is False and moved["conflict"] is False
+    assert token not in moved["reason"]
+
+
+def test_close_pull_request_comments_then_closes(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "c" * 36)
+    calls = []
+    monkeypatch.setattr(
+        gitops, "_http_post_json", lambda url, headers, body, **_: calls.append(("POST", url, body))
+    )
+    monkeypatch.setattr(
+        gitops,
+        "_http_patch_json",
+        lambda url, headers, body, **_: calls.append(("PATCH", url, body)),
+    )
+
+    gitops.close_pull_request("https://github.com/acme/widgets.git", 9, comment="superseded")
+
+    assert calls == [
+        (
+            "POST",
+            "https://api.github.com/repos/acme/widgets/issues/9/comments",
+            {"body": "superseded"},
+        ),
+        ("PATCH", "https://api.github.com/repos/acme/widgets/pulls/9", {"state": "closed"}),
+    ]
+
+
+def test_close_pull_request_failure_never_echoes_the_token(monkeypatch):
+    token = "ghp_" + "t" * 36
+    monkeypatch.setenv("GH_TOKEN", token)
+
+    def refuse(url, headers, body, **_):
+        raise RuntimeError("PATCH %s -> 403 bad credentials %s" % (url, token))
+
+    monkeypatch.setattr(gitops, "_http_patch_json", refuse)
+    with pytest.raises(RuntimeError) as excinfo:
+        gitops.close_pull_request("https://github.com/acme/widgets.git", 9)
+    assert token not in str(excinfo.value)
 
 
 def test_required_status_check_contexts_is_unknown_without_credentials(monkeypatch):
@@ -700,222 +975,6 @@ def test_agent_pull_request_reports_forge_errors_without_the_token(tmp_path, mon
 
 
 # ---------------------------------------------------------------------------
-# Merge safety: the queue serializes the merges, and the fallback says so.
-# ---------------------------------------------------------------------------
-
-
-def test_merge_queue_enqueues_instead_of_merging_directly(cp, tmp_path, monkeypatch):
-    remote, source, main_head, task_head = build_repo(tmp_path)
-    forge = FakeForge(remote, tmp_path / "forge", queue=True)
-    install_forge(monkeypatch, forge)
-    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-
-    with pytest.raises(ValidationError) as excinfo:
-        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    assert "merge queue" in str(excinfo.value)
-    assert getattr(excinfo.value, "publication_failure_kind", "") == ("pull_request_queued")
-    assert getattr(excinfo.value, "publication_retry_after_seconds", 0) > 0
-    # Enqueued, pinned to the reviewed head -- and never merged directly.
-    assert forge.enqueued == [{"number": 101, "sha": task_head}]
-    assert forge.merges == []
-    # main is untouched and the task is not complete until the queue lands it.
-    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
-    assert cp.get_task(task.id).state != TaskState.COMPLETED.value
-
-
-def test_publication_completes_once_the_merge_queue_lands_the_pull_request(
-    cp, tmp_path, monkeypatch
-):
-    remote, source, main_head, task_head = build_repo(tmp_path)
-    forge = FakeForge(remote, tmp_path / "forge", queue=True)
-    install_forge(monkeypatch, forge)
-    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-
-    with pytest.raises(ValidationError):
-        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    # The queue tests the projected merge and lands it, asynchronously.
-    landed = forge.land_from_queue(task_head)
-
-    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    assert publication.status == "published"
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    # Observed, not merged a second time.
-    assert forge.merges == []
-    assert len(forge.enqueued) == 1
-    detail = published_detail(cp, task.id)
-    assert detail["final_sha"] == landed
-    assert detail["merge_serialization"] == "merge_queue"
-    serialization = next(
-        item for item in detail["commands"] if item["name"] == "merge_serialization"
-    )
-    assert serialization["merge_queue"] is True
-    assert "what was tested is what lands" in serialization["guarantee"]
-
-
-def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp_path, monkeypatch):
-    """No FORGE queue means mac's own queue serializes, and it still refuses.
-
-    The checks ran against a merge candidate built from one canonical tip. If
-    the branch advances before the merge executes, the landed tree was never
-    tested. This repository has no forge merge queue (GitHub's is
-    organization-only), so `mac_native_queue` owns the landing -- and its land
-    gate compares the canonical tip's TREE with the tree the entry was tested on
-    top of, which is strictly stronger than the SHA comparison it replaced.
-    The stale projection is rejected and re-projected instead of merged blind.
-    """
-    remote, source, main_head, task_head = build_repo(tmp_path)
-    forge = FakeForge(remote, tmp_path / "forge")
-    install_forge(monkeypatch, forge)
-    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    queue = cp._native_merge_queue()
-    reaper_calls: list[tuple[str, str]] = []
-
-    def reap_stalled(repository, branch):
-        reaper_calls.append((repository, branch))
-        return ["mergeq_stalled"]
-
-    monkeypatch.setattr(queue, "evict_exhausted", reap_stalled)
-    monkeypatch.setattr(cp, "_native_merge_queue", lambda: queue)
-
-    # Someone else lands on main between the gate and the merge -- exactly once,
-    # so the second attempt projects onto the tip that is really there.
-    moved: list[str] = []
-
-    def advance_main_once(url, branch):
-        if not moved:
-            other = tmp_path / "other"
-            subprocess.run(
-                ["git", "clone", "--branch", "main", str(remote), str(other)],
-                check=True,
-                capture_output=True,
-            )
-            git(other, "config", "user.email", "other@example.com")
-            git(other, "config", "user.name", "Other Agent")
-            (other / "other.txt").write_text("other\n", encoding="utf-8")
-            git(other, "add", "other.txt")
-            git(other, "commit", "-m", "someone else landed first")
-            git(other, "push", "origin", "HEAD:refs/heads/main")
-            moved.append(git(other, "rev-parse", "HEAD"))
-        return ("sanity",)
-
-    monkeypatch.setattr(gitops, "required_status_check_contexts", advance_main_once)
-
-    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
-
-    assert publication.status == "published"
-    detail = published_detail(cp, task.id)
-    assert reaper_calls
-    assert next(
-        item for item in detail["commands"] if item["name"] == "merge_queue_stalled_reaper"
-    )["evicted_entry_ids"] == ["mergeq_stalled"]
-    # The first attempt refused to merge a projection that was already stale.
-    assert detail["attempt"] == 2
-    assert [item["sha"] for item in forge.merges] == [task_head]
-    # ``commands`` is per-attempt, so this is the second attempt's own land
-    # gate -- the first attempt's raised before it could merge.
-    land_gates = [item for item in detail["commands"] if item["name"] == "merge_queue_land_gate"]
-    assert len(land_gates) == 1
-    assert land_gates[0]["allowed"] is True
-    serialization = next(
-        item for item in detail["commands"] if item["name"] == "merge_serialization"
-    )
-    assert serialization["merge_queue"] is True
-    assert serialization["mode"] == "mac_native_queue"
-    assert "what was tested is what lands" in serialization["guarantee"]
-    assert detail["merge_serialization"] == "mac_native_queue"
-    # What landed is a squash of the reviewed head onto the tip that really was
-    # main when the merge was requested.
-    final = git(source, "ls-remote", "origin", "refs/heads/main").split()[0]
-    git(source, "fetch", "origin", "main")
-    parents = git(source, "rev-list", "--parents", "-n", "1", final).split()
-    assert parents[1:] == [moved[0]]
-
-
-def test_merge_queue_enabled_reads_the_branch_ruleset(monkeypatch):
-    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
-    monkeypatch.setattr(
-        gitops,
-        "_http_get_json",
-        lambda *a, **k: [
-            {"type": "pull_request", "parameters": {}},
-            {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}},
-        ],
-    )
-    assert gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is True
-    monkeypatch.setattr(gitops, "_http_get_json", lambda *a, **k: [{"type": "pull_request"}])
-    assert gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is False
-
-
-def test_merge_queue_enabled_is_unknown_without_credentials_or_on_gitea(monkeypatch):
-    for name in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN", "GITEA_TOKEN"):
-        monkeypatch.delenv(name, raising=False)
-    assert gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is None
-    monkeypatch.setenv("GITEA_TOKEN", "gt_" + "x" * 36)
-    # gitea has no merge queue: unknown, so the caller records the weaker
-    # guarantee rather than assuming serialization it will not get.
-    assert gitops.merge_queue_enabled("https://gitea.invalid/acme/widgets.git", "main") is None
-
-
-def test_enqueue_pins_the_reviewed_head_and_classifies_refusals(monkeypatch):
-    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
-    sent: list[dict] = []
-
-    def fake_graphql(url, headers, query, variables, token):
-        sent.append(dict(variables))
-        if "enqueuePullRequest" in query:
-            return {}, ""
-        return (
-            {"repository": {"pullRequest": {"id": "PR_1", "merged": False}}},
-            "",
-        )
-
-    monkeypatch.setattr(gitops, "_graphql", fake_graphql)
-    result = gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
-    assert result.queued is True
-    assert result.merged is False
-    assert result.serialization == "merge_queue"
-    assert sent[-1]["expectedHeadOid"] == "a" * 40
-
-    def refuse(url, headers, query, variables, token):
-        if "enqueuePullRequest" in query:
-            return {}, "Pull request is not mergeable: required status check pending"
-        return {"repository": {"pullRequest": {"id": "PR_1", "merged": False}}}, ""
-
-    monkeypatch.setattr(gitops, "_graphql", refuse)
-    blocked = gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
-    assert blocked.blocked is True
-    assert blocked.queued is False
-
-    def explode(url, headers, query, variables, token):
-        if "enqueuePullRequest" in query:
-            return {}, "internal server error"
-        return {"repository": {"pullRequest": {"id": "PR_1", "merged": False}}}, ""
-
-    monkeypatch.setattr(gitops, "_graphql", explode)
-    with pytest.raises(RuntimeError, match="internal server error"):
-        gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
-
-
-def test_enqueue_failures_never_echo_the_token(monkeypatch):
-    token = "ghp_" + "q" * 36
-    monkeypatch.setenv("GH_TOKEN", token)
-    captured: list[str] = []
-
-    def reflecting_http(url, headers, query, variables, token_arg):
-        captured.append(token_arg)
-        return {}, gitops._scrub_secret("bad credentials for token %s" % token, token_arg)
-
-    monkeypatch.setattr(gitops, "_graphql", reflecting_http)
-    with pytest.raises(RuntimeError) as excinfo:
-        gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
-    assert token not in str(excinfo.value)
-    assert captured == [token]
-
-
-# ---------------------------------------------------------------------------
 # The credential: the agent's environment first, the hub's secret store second.
 # ---------------------------------------------------------------------------
 
@@ -1059,7 +1118,6 @@ def test_merge_is_not_requested_until_required_checks_actually_passed(cp, tmp_pa
     # It asked about the reviewed head, and asked for nothing else.
     assert forge.verified == [{"sha": task_head, "contexts": ["sanity"]}]
     assert forge.merges == []
-    assert forge.enqueued == []
     assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
 
@@ -1117,9 +1175,6 @@ def test_no_required_contexts_is_recorded_distinctly_from_pending(cp, tmp_path, 
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge, checks=())
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    ran: list[str] = []
-    cp._publication_merge_test_runner = lambda *a, **k: ran.append("gate") or (0, "suite passed")
-
     cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     detail = published_detail(cp, task.id)
@@ -1128,10 +1183,9 @@ def test_no_required_contexts_is_recorded_distinctly_from_pending(cp, tmp_path, 
     )
     assert verification["case"] == "none_configured"
     assert verification["contexts"] == []
-    # The local contract gate is what protected this one, and it really ran.
-    gate = next(item for item in detail["commands"] if item["name"] == "publication_contract_gate")
-    assert gate.get("skipped") is not True
-    assert ran == ["gate"]
+    # The worker's verifier run is this repository's gate; the hub runs none.
+    assert detail["test_gate"] == "worker_verifier"
+    assert not any(item["name"] == "publication_contract_gate" for item in detail["commands"])
 
 
 def test_required_check_verdicts_classifies_each_context(monkeypatch):

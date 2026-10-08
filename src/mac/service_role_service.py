@@ -98,7 +98,7 @@ class ServiceRoleService:
     def get_role_by_slug(self, slug: str, *, tenant_id: Optional[str] = None) -> ServiceRole:
         # ``tenant_id IS ?`` is a SQLite null-safe comparison; Postgres rejects
         # it outright ("syntax error at or near $N"). Split into IS NULL / = ?,
-        # matching provisioning_service and workflow_service.
+        # matching workflow_service.
         if tenant_id is None:
             row = self.store.query_one(
                 "SELECT * FROM service_roles WHERE slug = ? AND tenant_id IS NULL",

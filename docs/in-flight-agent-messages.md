@@ -194,7 +194,7 @@ to tasks and leases and audited into `action_events`, none of which a standalone
 message server provides. What was adopted is the *delivery mode*, which is the
 part they measured.
 
-Worth measuring on this fleet before believing it. `mac task generator-yield`
-already reports completion yield by origin, and MAC's own data is a caution:
+Worth measuring on this fleet before believing it. MAC's own completion yield
+by task origin (measured in September 2026) is a caution:
 `direct_task` (plain human free text) completes at 20.0% while machine-originated
 work runs 0–9.6%, so communication mode may not be the binding constraint here.

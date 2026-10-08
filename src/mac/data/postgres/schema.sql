@@ -3033,3 +3033,348 @@ DROP FUNCTION IF EXISTS trg_work_package_wip_lifecycle() CASCADE;
 DROP FUNCTION IF EXISTS trg_work_packages_current_epoch_coherent() CASCADE;
 DROP FUNCTION IF EXISTS trg_work_packages_initial_state() CASCADE;
 DROP FUNCTION IF EXISTS trg_work_packages_state_transition() CASCADE;
+-- Drop the tables of the autonomy features removed on 2026-09-30: the
+-- scientific optimizer, dreaming, and nap consolidation. No code reads or
+-- writes them any longer.
+--
+-- Children are dropped before the tables they reference, so no CASCADE is
+-- needed. Without CASCADE an object nobody declared here (an operator's view,
+-- say) makes the migration fail and roll back instead of being dropped
+-- silently along with the table. Their indexes go with them. IF EXISTS keeps
+-- this a no-op for a table that was never created.
+
+DROP TABLE IF EXISTS scientific_decisions;
+DROP TABLE IF EXISTS scientific_observations;
+DROP TABLE IF EXISTS scientific_assignments;
+DROP TABLE IF EXISTS scientific_experiments;
+DROP TABLE IF EXISTS scientific_policies;
+DROP TABLE IF EXISTS scientific_optimizer_events;
+DROP TABLE IF EXISTS scientific_optimizer_locks;
+
+DROP TABLE IF EXISTS dream_candidate_entries;
+DROP TABLE IF EXISTS dream_runs;
+
+DROP TABLE IF EXISTS nap_runs;
+DROP TABLE IF EXISTS nap_schedules;
+-- Drop mac's native speculative merge queue. Approved work now lands through a
+-- serial land loop per repository (ControlPlane._publish_git_target_if_needed),
+-- which keeps no queue state of its own: the canonical tip and the task's
+-- metadata.landing budget are the whole record. No code reads or writes these
+-- tables any longer.
+--
+-- No CASCADE, as in 0004: an object nobody declared here makes the migration
+-- fail and roll back instead of being dropped silently with the table. The
+-- indexes go with their table. IF EXISTS keeps this a no-op for a table that
+-- was never created.
+
+DROP TABLE IF EXISTS merge_queue_entries;
+DROP TABLE IF EXISTS merge_queue_windows;
+-- Drop the rollout and deploy tables. The rollout service, the deploy
+-- service's environment deployments, and the sandbox-image rollout were never
+-- used: the live hub holds no rows in any of these tables, and no code reads
+-- or writes them any longer. managed_task_publication_rollout was already
+-- unreferenced by any code.
+--
+-- Kept on purpose: environments (fleet_desired_source_states references it and
+-- the source-release service reads it), artifacts (AgentBus artifact
+-- publication records into it), and the runtime_environment* and runtime_runs
+-- tables (the runtime environment registry is live).
+--
+-- The unified events view read rollout_events and environment_events, so it is
+-- replaced first with the same columns minus those two sources; otherwise
+-- dropping them would fail on the dependent view.
+--
+-- No CASCADE, as in 0004: an object nobody declared here makes the migration
+-- fail and roll back instead of being dropped silently with the table. The
+-- indexes go with their table. IF EXISTS keeps this a no-op for a table that
+-- was never created.
+
+CREATE OR REPLACE VIEW events AS
+    SELECT
+        id,
+        'task' AS subject_type,
+        task_id AS subject_id,
+        event_type,
+        actor,
+        (
+            -- jsonb_set is STRICT — a NULL replacement collapses the
+            -- whole expression to NULL. SQLite json_set encodes NULL as
+            -- JSON null instead, which is the behavior the rest of the
+            -- code expects. Wrap to_jsonb() in COALESCE so a SQL NULL
+            -- from_state/to_state lands as `null` inside the object.
+            jsonb_set(
+                jsonb_set(
+                    COALESCE(NULLIF(detail, '')::jsonb, '{}'::jsonb),
+                    '{from_state}',
+                    COALESCE(to_jsonb(from_state), 'null'::jsonb),
+                    true
+                ),
+                '{to_state}',
+                COALESCE(to_jsonb(to_state), 'null'::jsonb),
+                true
+            )
+        )::text AS detail,
+        created_at
+    FROM task_history
+    UNION ALL
+    SELECT id, 'eval_set' AS subject_type, eval_set_id AS subject_id,
+           event_type, actor, detail, created_at
+    FROM eval_set_events
+    UNION ALL
+    SELECT
+        id,
+        'secret' AS subject_type,
+        secret_id AS subject_id,
+        'secret.' || result AS event_type,
+        accessor_agent_id AS actor,
+        jsonb_build_object(
+            'purpose', purpose,
+            'expires_at', expires_at,
+            'revealed_at', revealed_at
+        )::text AS detail,
+        created_at
+    FROM secret_access_audit
+    UNION ALL
+    SELECT id, 'project' AS subject_type, project_id AS subject_id,
+           event_type, actor, detail, created_at
+    FROM project_events
+    UNION ALL
+    SELECT id, 'fleet' AS subject_type, fleet_id AS subject_id,
+           event_type, actor, detail, created_at
+    FROM fleet_events
+    UNION ALL
+    SELECT id, 'agent' AS subject_type, agent_id AS subject_id,
+           event_type, actor, detail, created_at
+    FROM agent_lifecycle_events
+    UNION ALL
+    SELECT id, 'agent' AS subject_type, agent_id AS subject_id,
+           event_type, actor, detail, created_at
+    FROM agent_events
+    UNION ALL
+    SELECT
+        id,
+        CASE WHEN task_id IS NOT NULL THEN 'task' ELSE 'agent' END AS subject_type,
+        COALESCE(task_id, agent_id) AS subject_id,
+        'command.' || phase AS event_type,
+        agent_id AS actor,
+        jsonb_build_object(
+            'command_id', command_id,
+            'agent_id', agent_id,
+            'argv0', json_extract(argv, '$[0]'),
+            'argv_redacted', true,
+            'cwd', cwd,
+            'task_id', task_id,
+            'lease_id', lease_id,
+            'started_at', started_at,
+            'completed_at', completed_at,
+            'duration_ms', duration_ms,
+            'returncode', returncode,
+            'stdout_sha256', stdout_sha256,
+            'stderr_sha256', stderr_sha256,
+            'stdout_bytes', stdout_bytes,
+            'stderr_bytes', stderr_bytes,
+            'metadata',
+                CASE WHEN metadata IS NULL OR metadata = ''
+                     THEN NULL
+                     ELSE metadata::jsonb END
+        )::text AS detail,
+        created_at
+    FROM command_audit
+    UNION ALL
+    SELECT
+        event_id AS id,
+        COALESCE(NULLIF(subject_type, ''), 'action_event') AS subject_type,
+        COALESCE(subject_id, event_id) AS subject_id,
+        'action.' || action_type || '.' || action_name AS event_type,
+        actor,
+        jsonb_build_object(
+            'schema', 'mac.action_event.v1',
+            'agent_id', agent_id,
+            'hermes_instance_id', hermes_instance_id,
+            'task_id', task_id,
+            'session_id', session_id,
+            'sandbox_id', sandbox_id,
+            'action_type', action_type,
+            'action_name', action_name,
+            'outcome', outcome,
+            'severity', severity,
+            'policy_id', policy_id,
+            'policy_version', policy_version,
+            'command_id', command_id,
+            'parent_event_id', parent_event_id,
+            'redaction_state', redaction_state,
+            'attributes',
+                CASE WHEN attributes IS NULL OR attributes = ''
+                     THEN '{}'::jsonb
+                     ELSE attributes::jsonb END
+        )::text AS detail,
+        timestamp AS created_at
+    FROM action_events
+    UNION ALL
+    SELECT
+        id,
+        'conversation_thread' AS subject_type,
+        id AS subject_id,
+        'gateway.thread_tracked' AS event_type,
+        'gateway' AS actor,
+        jsonb_build_object(
+            'platform_binding_id', platform_binding_id,
+            'external_thread_id', external_thread_id,
+            'latest_task_id', latest_task_id,
+            'summary', summary
+        )::text AS detail,
+        last_seen_at AS created_at
+    FROM conversation_threads
+    UNION ALL
+    SELECT
+        id,
+        'vector_ref' AS subject_type,
+        memory_id AS subject_id,
+        'vector.indexed' AS event_type,
+        created_by AS actor,
+        jsonb_build_object(
+            'vector_db', vector_db,
+            'collection', collection,
+            'point_id', point_id,
+            'embedding_model', embedding_model
+        )::text AS detail,
+        created_at
+    FROM vector_refs;
+
+DROP TABLE IF EXISTS rollout_events;
+DROP TABLE IF EXISTS rollouts;
+DROP TABLE IF EXISTS deployments;
+DROP TABLE IF EXISTS environment_events;
+DROP TABLE IF EXISTS managed_task_publication_rollout;
+-- Drop the agent provisioning request ledger. Its only consumer was the HGX
+-- elastic-capacity autoscaler, which is deleted together with the k8s runner;
+-- dispatch and service-role reconciliation no longer write demand rows, and
+-- the /provisioning/requests API is gone. No code reads or writes the table
+-- any longer.
+--
+-- No CASCADE, as in 0004 and 0005: an object nobody declared here makes the
+-- migration fail and roll back instead of being dropped silently with the
+-- table. Its indexes go with it. IF EXISTS keeps this a no-op for a table that
+-- was never created.
+
+DROP TABLE IF EXISTS agent_provisioning_requests;
+-- Drop the hub self-upgrade, release epoch and source convergence tables.
+-- scripts/fleet-update, run by a human, replaced all three: in the 90 days
+-- before it, release epochs aborted 62% of the time and hub self-upgrade never
+-- succeeded. The services that owned these tables (fleet_upgrade_service,
+-- hub_upgrade_supervisor, fleet_release_epoch_service, source_release_service,
+-- source_convergence_service) are deleted, and no code reads or writes the
+-- tables any longer.
+--
+-- environments goes too. 0006 kept it only because fleet_desired_source_states
+-- referenced it and the source-release service read it; both are gone here.
+--
+-- No CASCADE, as in 0004 to 0007: an object nobody declared here makes the
+-- migration fail and roll back instead of being dropped silently with the
+-- table. Children are dropped before the tables they reference. Indexes and
+-- triggers go with their table; the two trigger functions do not, so they are
+-- dropped explicitly afterwards. IF EXISTS keeps this a no-op for an object
+-- that was never created.
+
+DROP TABLE IF EXISTS fleet_upgrade_events;
+DROP TABLE IF EXISTS fleet_upgrades;
+DROP TABLE IF EXISTS source_convergence_nodes;
+DROP TABLE IF EXISTS source_convergence_controller_leases;
+DROP TABLE IF EXISTS fleet_release_attestation_candidates;
+DROP TABLE IF EXISTS fleet_release_epoch_agents;
+DROP TABLE IF EXISTS fleet_release_epochs;
+DROP TABLE IF EXISTS fleet_release_admission_episodes;
+DROP TABLE IF EXISTS fleet_desired_source_idempotency;
+DROP TABLE IF EXISTS fleet_desired_source_transitions;
+DROP TABLE IF EXISTS fleet_desired_source_states;
+DROP TABLE IF EXISTS source_releases;
+DROP TABLE IF EXISTS environments;
+
+DROP FUNCTION IF EXISTS _trg_source_releases_sha_immutable();
+DROP FUNCTION IF EXISTS _trg_fleet_desired_source_gen_monotonic();
+-- Slim worker credentials to one hashed bearer token per worker.
+-- `mac admin worker-token` issues, rotates, installs and lists those tokens;
+-- the deploy protocol that pinned a credential to a source commit, runtime
+-- digest and capability set, recorded install receipts, and flipped the fleet
+-- between compatibility and enforced identity modes is gone. The hub always
+-- ran in compatibility mode, which is now the only behaviour.
+--
+-- worker_credential_events was written but never read, and
+-- worker_credential_policy_state only held the identity mode. The dropped
+-- worker_credentials columns are the deploy-time pinning (fleet, environment,
+-- expected_source_commit, expected_runtime_digest, required_capabilities,
+-- package_capable) and the install destination. Every row keeps its id, agent, hash, fingerprint,
+-- scopes, state, version, timestamps and supersession link, so active tokens
+-- keep authenticating unchanged.
+--
+-- No CASCADE, as in 0004 to 0008: an object nobody declared here makes the
+-- migration fail and roll back instead of being dropped silently. A column's
+-- CHECK constraint goes with it. IF EXISTS keeps this a no-op for an object
+-- that was never created.
+
+DROP TABLE IF EXISTS worker_credential_events;
+DROP TABLE IF EXISTS worker_credential_policy_state;
+
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS fleet;
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS environment;
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS expected_source_commit;
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS expected_runtime_digest;
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS required_capabilities;
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS package_capable;
+ALTER TABLE worker_credentials DROP COLUMN IF EXISTS destination;
+-- Per-task inference tokens. A worker mints one for each task sandbox so the
+-- coding CLI inside it can call the hub's model router (POST
+-- /v1/chat/completions and /v1/embeddings) and nothing else. The worker's own
+-- token never enters the sandbox: it can claim tasks and write the ledger.
+--
+-- A separate table rather than rows in worker_credentials: activating a worker
+-- token supersedes every other live row for the agent, which would cut off a
+-- running task's inference, and one row per task would bloat the worker's
+-- credential versions and `mac admin worker-token list`.
+--
+-- Only the sha256 hash of a token is stored. Timestamps are fixed-width UTC
+-- text (YYYY-MM-DDTHH:MM:SS.ffffffZ), so `expires_at > ?` compares correctly.
+-- Rows past expiry no longer authenticate and are pruned when the next token
+-- is minted.
+
+CREATE TABLE IF NOT EXISTS inference_tokens (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_fingerprint TEXT NOT NULL,
+    task_id TEXT NOT NULL DEFAULT '',
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inference_tokens_expiry
+    ON inference_tokens (expires_at);
+CREATE INDEX IF NOT EXISTS idx_inference_tokens_agent
+    ON inference_tokens (agent_id, expires_at);
+-- The task board: one ordered conversation per task between the coding agent
+-- running it, the people watching it, and the hub. It is how a running agent
+-- receives a human's direction, a teammate's answer or a status nudge without
+-- its session being stopped, and how the console shows what the agent is doing
+-- while it does it.
+--
+-- `id` is the read cursor. A reader asks for messages after the last id it
+-- saw, so nothing posted while it was busy is skipped.
+--
+-- author_kind says who wrote a row, author says which one: an agent id, a
+-- human's name, or "hub". kind is what the row is for (see mac.task_board).
+-- metadata is a JSON object as TEXT, like every other JSON column here.
+
+CREATE TABLE IF NOT EXISTS task_messages (
+    id BIGSERIAL PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    author_kind TEXT NOT NULL CHECK (author_kind IN ('agent', 'human', 'hub')),
+    author TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    body TEXT NOT NULL,
+    reply_to BIGINT REFERENCES task_messages(id) ON DELETE SET NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_messages_task
+    ON task_messages (task_id, id);

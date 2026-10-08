@@ -232,50 +232,6 @@ def test_real_locked_install_refuses_incompatible_restored_tool(locked_project, 
     assert inventory(home / "venv/bin/python")["mac-test-core"] == "1.0"
 
 
-def test_deployment_capture_reads_real_old_venv_before_rename(native_worker, tmp_path):
-    import shlex
-
-    worker, home, wheels = native_worker
-    wheel(wheels, "mac-test-compatible", "1.0", ["mac-test-core==1.0"])
-    assert worker.ensure_pip(["mac-test-compatible==1.0"])["ok"]
-    script = (Path(__file__).resolve().parents[1] / "deploy/fleet-node-install.sh").read_text()
-    function = (
-        "capture_native_runtime() {"
-        + script.split("capture_native_runtime() {", 1)[1].split(
-            "\ninstall_agent_footprint() {", 1
-        )[0]
-    )
-    log = home / "logs"
-    log.mkdir()
-    env_file = home / "mac.env"
-    env_file.write_text("")
-    values = {
-        "PY": sys.executable,
-        "VENV": str(home / "venv"),
-        "MAC_HOME": str(home),
-        "ENV_FILE": str(env_file),
-        "LOG_DIR": str(log),
-        "DEPLOY_TS": "test",
-    }
-    shell = "set -eu\n" + "\n".join(
-        name + "=" + shlex.quote(value) for name, value in values.items()
-    )
-    result = subprocess.run(
-        ["bash", "-c", shell + "\ndie() { exit 1; }\n" + function + "\ncapture_native_runtime\n"],
-        text=True,
-        capture_output=True,
-    )
-    assert result.returncode == 0, result.stderr
-    saved_path = log / "native-runtime-packages-test.json"
-    saved = json.loads(saved_path.read_text())
-    assert {p["name"] for p in saved["packages"]} >= {"mac-test-core", "mac-test-compatible"}
-    assert saved["footprint"]["pip"][0]["name"] == "mac-test-compatible"
-    assert saved_path.stat().st_mode & 0o777 == 0o600
-    assert script.index("\ncapture_native_runtime\n") < script.index(
-        "\nbackup_existing_artifacts\n"
-    )
-
-
 def test_broken_native_venv_does_not_redirect_install_to_callers_python(native_worker):
     worker, home, _ = native_worker
     (home / "venv/bin/python").unlink()

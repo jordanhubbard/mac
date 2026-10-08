@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-55 administrative commands live under `mac admin` (`mac admin help` lists them).
+48 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -97,9 +97,9 @@ Execution:
   reopen   recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation
 
 Review and evidence:
-  evidence        attach evidence to a task: the record a review and auto-land read
+  evidence        attach evidence to a task: the record a review reads
   submit-review   hand a running task to the adversarial reviewer (to NEEDS_REVIEW)
-  force-complete  BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.
+  force-complete  BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial review and publication gates; audited). Not the normal path — adversarial review plus the contract gate is.
   audit           read-only reconciliation of every task's history, evidence, dependencies, replacements, and git ancestry
 
 Human input:
@@ -118,11 +118,10 @@ Break-glass:
   break-glass-revoke  admin-only: revoke an unclaimed host authorization
 
 Reporting:
-  throughput       task-to-main KPIs, stage dwell, stranded work, and resource collisions
-  generator-yield  show each task origin's completion yield and whether the yield gate is letting it file
-  outcome          inspect tests, acceptance, publication and deployment separately
-  outcomes         measure a bounded cohort by task creation time
-  accept           record operator acceptance of the current executor evidence
+  throughput  task-to-main KPIs, stage dwell, stranded work, and resource collisions
+  outcome     inspect tests, acceptance, publication and deployment separately
+  outcomes    measure a bounded cohort by task creation time
+  accept      record operator acceptance of the current executor evidence
 
 Migration:
   detect-beads       inspect a repo for .beads/ artifacts (read-only)
@@ -136,6 +135,8 @@ Other:
   export      emit one task whole (record, history, coding-CLI session) as JSON
   transcript  the coding-CLI session for a task, in order
   preflight   would a task with these requirements ever be claimed?
+  say         post to a task's board; the agent running it sees it before its next step
+  messages    show a task's board: what the agent and people have said, oldest first
   edit        answer a parked task in $EDITOR; saving submits it back to the queue
   select      preview the group of tasks a selector expression names
   batch       apply one operation to every task a selector names (dry by default)
@@ -216,10 +217,8 @@ Communication:
   tell  send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction
 
 Administration:
-  attestation-recover      admin-only conditional recovery for a missing/stale worker signing key
   report-executor-approve  approve the exact current startup-attested OpenShell report executor
   report-executor-revoke   revoke report-repository dispatch eligibility for an agent
-  migrate                  move an agent (soul + memory) to a new host; dry-run unless --execute
 
 Run `mac agent help <subcommand>` for the arguments one takes.
 ```
@@ -250,15 +249,12 @@ Getting started:
 Fleet and machines:
   fleet          deploy, inspect and maintain the fleet as a whole
   machine        hosts that agents run on
-  hgx            HGX / GPU capacity management
   openshell      sandboxed execution environments for agents
   mcp            serve the ledger to coding agents as Model Context Protocol tools
   plugin         install mac skills and MCP into Claude, Codex, Cursor, OpenCode
   cli-session    auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)
-  sandbox-image  the sandbox IMAGE: its bill of materials and its rollout
+  sandbox-image  the sandbox IMAGE: its bill of materials
   runtime        runtime images and environment definitions
-  rollout        staged rollout of a runtime or configuration
-  env            environment variables projected onto fleet hosts
   secret         secret storage, rotation and access audit
   database       control-plane database maintenance
   migrate        schema and data migrations
@@ -266,12 +262,10 @@ Fleet and machines:
 Getting work done:
   dispatch      the loop that matches ready tasks to eligible agents
   review        adversarial review of completed work
-  judgement     hourly process-quality authority over lifecycle gates
   publish       publish reviewed work to its destination
   pull-request  pull requests raised from task work
   workflow      multi-step workflow definitions and runs
   eval          evaluation runs over agent output
-  optimizer     model and routing optimization
   repo          repositories that tasks execute against
   artifact      durable artifacts produced by task work
 
@@ -279,9 +273,6 @@ What agents know:
   memory           durable cross-session knowledge
   journal          per-agent narrative history
   mood             agent temperament and its effect on execution
-  nap              consolidation cycles that summarize recent work
-  dream            offline pattern-finding over past work
-  curiosity        quarantined self-proposed experiments awaiting judgment
   human-interface  port an agent profile between Hermes and OpenClaw
   persona          Hermes personas and their memory scopes
 
@@ -298,10 +289,11 @@ Talking to people and systems:
   integrations      third-party integrations
 
 Who can do what:
-  tenant  tenant boundaries
-  human   people who own agents and file tasks
-  user    tenant-scoped user identities
-  client  API clients and their principals
+  tenant        tenant boundaries
+  human         people who own agents and file tasks
+  user          tenant-scoped user identities
+  client        API clients and their principals
+  worker-token  long-lived worker bearer tokens: issue, rotate, list
 
 Seeing what happened:
   events         the unified event stream

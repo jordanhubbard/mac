@@ -19,13 +19,6 @@ class RepositoryRefReconcileRequest(BaseModel):
 class SystemRouteServices:
     repository_ref_reconciler: Any
     github_ingestor: Any
-    cicd_monitor: Any
-    backlog_groomer: Any
-    nap_ticker: Any
-    curiosity_reviewer: Any
-    self_healing_sentinel: Any
-    judgement_process: Any
-    model_selection_service: Any
 
 
 def build_system_router(
@@ -46,11 +39,15 @@ def build_system_router(
 
     @router.get("/startup-attestation")
     def startup_attestation() -> Dict[str, str]:
-        """Secret-free process identity consumed by the host swap supervisor."""
+        """Secret-free identity of the running hub process.
+
+        mac-service exports MAC_SOURCE_COMMIT from the checkout it starts, and
+        scripts/fleet-update waits for ``source_commit`` to equal the commit it
+        just deployed before it calls the hub updated.
+        """
         return {
             "schema": "mac.hub_startup_attestation.v1",
             "source_commit": os.environ.get("MAC_SOURCE_COMMIT", "").strip(),
-            "generation_id": os.environ.get("MAC_HUB_GENERATION_ID", "").strip(),
         }
 
     @router.get("/repository-refs/reconciler")
@@ -80,35 +77,5 @@ def build_system_router(
             return controller.run_once(trigger="operator")
 
     controller_routes("github-ingest", services.github_ingestor)
-    controller_routes("cicd-monitor", services.cicd_monitor)
-    controller_routes("backlog-groom", services.backlog_groomer)
-    controller_routes("nap-tick", services.nap_ticker)
-    controller_routes("curiosity-review", services.curiosity_reviewer)
-    controller_routes("self-heal", services.self_healing_sentinel)
-    controller_routes("judgement", services.judgement_process)
-
-    @router.get("/model-selection/status")
-    def model_selection_status() -> Dict[str, Any]:
-        return services.model_selection_service.status()
-
-    @router.post("/model-selection/refresh")
-    def model_selection_refresh(
-        principal: Any = Depends(get_principal),
-    ) -> Dict[str, Any]:
-        refuse_tenant_bound(principal)
-        return services.model_selection_service.run_once(trigger="operator")
-
-    @router.post("/model-selection/promote")
-    def model_selection_promote(
-        principal: Any = Depends(get_principal),
-    ) -> Dict[str, Any]:
-        refuse_tenant_bound(principal)
-        return services.model_selection_service.promote(actor="operator")
-
-    @router.get("/.well-known/acp")
-    def acp_manifest_route() -> Dict[str, Any]:
-        from mac.acp.capabilities import acp_manifest
-
-        return acp_manifest()
 
     return router

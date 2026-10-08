@@ -443,7 +443,7 @@ def test_secondary_artifact_redaction_preserves_input_and_hashes_captured_bytes(
             "token_count": 42,
         }
     ).encode()
-    source = tmp_path / "executor-task.json"
+    source = tmp_path / "repository-worktree.json"
     source.write_bytes(raw)
     result = tmp_path / "worker-result.json"
     result.write_text('{"returncode":0}')
@@ -458,112 +458,6 @@ def test_secondary_artifact_redaction_preserves_input_and_hashes_captured_bytes(
     assert artifact["sha256"] == "sha256:" + hashlib.sha256(content).hexdigest()
     assert artifact["metadata"]["source_sha256"] == "sha256:" + hashlib.sha256(raw).hexdigest()
     assert artifact["metadata"]["redacted"] is True
-
-
-def test_review_redacts_durable_evidence_and_keeps_signed_verdict(
-    tmp_path: Path, semantic_reviewer_on
-):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-    task = cp.create_task(
-        "Reviewable repo task",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://publish"},
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-            "remote_ref": "origin/main",
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["src/example.py"],
-        },
-        "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    assert first["reviewer_agent_id"] == reviewer.id
-    client = TestClient(create_app(control_plane=cp))
-    secret = "opaque-credential-fixture"
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        assert context["task_id"] == task.id
-        assert context["review_id"] == first["review_id"]
-        assert context["executor_evidence_id"] == evidence.id
-        assert context["review_claim"]["review_id"] == first["review_id"]
-        assert context["review_claim"]["reviewer_agent_id"] == reviewer.id
-        assert context["review_claim"]["executor_evidence_id"] == evidence.id
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": dict(executor_manifest["repo"]),
-            "checks": [{"name": "reviewer independent verification", "returncode": 0}],
-            "worktree_digest": "sha256:" + ("0" * 64),
-            "findings": [f"review completed with CURSOR_AUTH_TOKEN={secret}"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(
-            0,
-            f"review approved with CURSOR_AUTH_TOKEN={secret}",
-            stdout=f"approved\nMAC_ATTESTATION_KEY={secret}\n",
-            stderr=f"Authorization: Bearer {secret}\n",
-        )
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path,
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    verdict_evidence = cp.list_evidence(task.id)[-1]
-    manifest = verdict_evidence.metadata["verification"]
-    assert verdict_evidence.kind == "review"
-    assert manifest["evidence_type"] == "review_verdict"
-    assert manifest["signed_by"] == reviewer.id
-    assert manifest["reviewed_evidence_id"] == evidence.id
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    assert cp.get_agent(reviewer.id).status == "idle"
-    task_metadata = cp.get_task(task.id).metadata
-    assert task_metadata["review_claims"][first["review_id"]]["reviewer_agent_id"] == reviewer.id
-    assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
-    assert_secret_absent(
-        secret,
-        persisted_task_state(cp, task.id),
-        path="review.persistence",
-    )
 
 
 def test_disabling_artifact_upload_does_not_invalidate_manifest(tmp_path, monkeypatch):

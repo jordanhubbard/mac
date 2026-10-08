@@ -20,17 +20,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from mac.fleet_learning import (
-    RepositoryAccessError,
-    build_repository_access_learning,
-    build_repository_access_memory_payload,
-    classify_repository_access_failure,
-    resolve_git_remote_access,
-)
-from mac.repository_contract import (
-    remote_branch_from_ref as _remote_branch_from_ref,
-    resolve_task_repository_branch,
-)
+from mac.repository_contract import resolve_task_repository_branch
 from mac.models import (
     REPORT_REPOSITORY_ACCESS_SCHEMA,
     REPORT_REPOSITORY_READ_ONLY_MODE,
@@ -156,6 +146,60 @@ def _is_disk_full_error(text: str) -> bool:
     return any(marker in low for marker in _DISK_FULL_MARKERS)
 
 
+CONTINUATION_SCHEMA = "mac.repository_continuation.v1"
+
+
+def _published_head_directive(task: JsonDict) -> Optional[JsonDict]:
+    """The open pull request this task's next attempt must build on, if any.
+
+    A task sent back to fix its failed required checks
+    (``metadata.fix_failed_checks``) lands through the SAME pull request: the
+    hub moves that PR's head branch to the new attempt's head. The directive
+    outlives ``mac task reopen``, so it also names the published work a
+    reopened attempt has to keep. A later ``rebase_onto_tip`` send-back
+    supersedes it (the hub closed that pull request).
+    """
+
+    from mac.worker import _validate_git_ref  # noqa: PLC0415
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not isinstance(metadata, dict):
+        return None
+    directive = metadata.get("fix_failed_checks")
+    if not isinstance(directive, dict):
+        return None
+    rebase = metadata.get("rebase_onto_tip")
+    if isinstance(rebase, dict):
+        mine = str(directive.get("requested_at") or "")
+        theirs = str(rebase.get("requested_at") or "")
+        if mine and theirs and theirs > mine:
+            return None
+    try:
+        number = int(directive.get("pull_request_number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+    head_branch = str(directive.get("head_branch") or "").strip()
+    if number <= 0 or not head_branch:
+        return None
+    try:
+        _validate_git_ref(head_branch)
+    except ValueError:
+        return None
+    try:
+        round_number = int(directive.get("check_fix") or 0)
+    except (TypeError, ValueError):
+        round_number = 0
+    return {
+        "schema": CONTINUATION_SCHEMA,
+        "source": "fix_failed_checks",
+        "pull_request_number": number,
+        "pull_request_url": str(directive.get("pull_request_url") or ""),
+        "head_branch": head_branch,
+        "reviewed_head_sha": str(directive.get("reviewed_head_sha") or "").strip(),
+        "round": round_number,
+    }
+
+
 class RepoPrepMixin:
     """Mixin that provides repository-worktree preparation to MacWorker.
 
@@ -207,11 +251,10 @@ class RepoPrepMixin:
             )
         if origin is None:
             return None
-        # K8s mode: when there is no usable local source on disk, fall
-        # back to ``git clone <remote>`` into the task workspace. The
-        # local-path branch is preferred when both are available (host
-        # workers continue to use their pre-existing checkout). See
-        # CLAUDE.md fork-audit notes for context.
+        # When there is no usable local source on disk, fall back to
+        # ``git clone <remote>`` into the task workspace. The local-path
+        # branch is preferred when both are available (host workers
+        # continue to use their pre-existing checkout).
         repository_path = str(origin.get("repository_path") or "").strip()
         local_source: Optional[Path] = None
         if repository_path:
@@ -310,6 +353,13 @@ class RepoPrepMixin:
             )
         )
         _validate_git_ref(canonical_branch)
+        # Asked before the lock: the forge round trip must not hold every other
+        # worker preparing this repository.
+        continuation = (
+            None
+            if metadata_declares_read_only_report_repository(task.get("metadata"))
+            else self._resolve_published_head(task, canonical_remote)
+        )
 
         # Determine the per-lease fetch ref name before acquiring the lock so the
         # finally clause can reference it unconditionally.
@@ -643,6 +693,15 @@ class RepoPrepMixin:
                     "could not create repository task worktree: %s"
                     % ((add.stderr or add.stdout or "").strip() or worktree_dir)
                 )
+            if continuation is not None:
+                continuation = self._start_from_published_head(
+                    task,
+                    worktree_dir,
+                    continuation,
+                    fetch_remote=fetch_remote,
+                    canonical_tip=base_sha,
+                    lease_id=lease_id,
+                )
             context: JsonDict = {
                 "schema": "mac.repository_task_worktree.v1",
                 "checkout_policy": "task_owned_git_worktree",
@@ -660,6 +719,8 @@ class RepoPrepMixin:
                 "repository_behind": behind_count,
                 "repository_origin_remote": canonical_remote_display,
             }
+            if continuation is not None:
+                context["repository_continuation"] = continuation
             self._observe_log(
                 "worker.repository.worktree_prepared",
                 subject_type="task",
@@ -703,6 +764,133 @@ class RepoPrepMixin:
                     project=pending_bus_event["project"],
                     payload=pending_bus_event["payload"],
                 )
+
+    def _resolve_published_head(self, task: JsonDict, repo_url: str) -> Optional[JsonDict]:
+        """Decide whether this attempt continues from the task's open pull request.
+
+        Returns ``None`` when the task has no published head to continue, and
+        otherwise the continuation record: ``status == "pending"`` when the
+        pull request is still open and unmerged (the caller then fetches its
+        head), or ``"fallback_canonical"`` with the reason the attempt starts
+        from the canonical branch as before (merged, closed, retargeted or
+        unknowable pull request). Network only -- no repository is touched.
+        """
+
+        from mac import gitops  # noqa: PLC0415
+
+        candidate = _published_head_directive(task)
+        if candidate is None:
+            return None
+        try:
+            observed = gitops.pull_request_state(repo_url, candidate["pull_request_number"])
+        except Exception as exc:  # noqa: BLE001 - unknown state falls back to canonical
+            observed = {"known": False, "error": str(exc)[:300]}
+        observed = observed if isinstance(observed, dict) else {"known": False}
+        state = str(observed.get("state") or "")
+        head_ref = str(observed.get("head_ref") or "")
+        reason = ""
+        if not observed.get("known"):
+            reason = "pull request state unknown: %s" % (observed.get("error") or "no answer")
+        elif observed.get("merged"):
+            reason = "pull request merged"
+        elif state != "open":
+            reason = "pull request %s" % (state or "not open")
+        elif head_ref and head_ref != candidate["head_branch"]:
+            reason = "pull request head is %s, not %s" % (head_ref, candidate["head_branch"])
+        candidate["pull_request_state"] = state
+        candidate["pull_request_head_sha"] = str(observed.get("head_sha") or "")
+        if reason:
+            candidate.update({"status": "fallback_canonical", "reason": reason})
+        else:
+            candidate["status"] = "pending"
+        return candidate
+
+    def _start_from_published_head(
+        self,
+        task: JsonDict,
+        worktree: Path,
+        continuation: JsonDict,
+        *,
+        fetch_remote: str,
+        canonical_tip: str,
+        lease_id: str,
+    ) -> JsonDict:
+        """Move a freshly prepared task worktree onto the task's published head.
+
+        The worktree is on the task branch at the canonical tip. Fetch the open
+        pull request's head branch, reset the task branch to it, and rebase it
+        onto the tip with the finalizer's own rebase. A conflicting rebase is
+        aborted and the attempt starts from the published head un-rebased; the
+        prompt tells the agent to integrate the canonical branch. A missing
+        branch falls back to the canonical tip the worktree is already on.
+        """
+
+        from mac import gitops  # noqa: PLC0415
+        from mac.worker import (  # noqa: PLC0415
+            _redact_git_remote_auth_in_text,
+            _run_git,
+            _safe_path_component,
+        )
+
+        record = dict(continuation)
+        record["canonical_tip"] = canonical_tip
+        if record.get("status") != "pending":
+            return record
+        ref = "refs/mac/published/%s" % _safe_path_component(lease_id or "lease")
+        fetch_args = ["fetch", "--no-tags", "--no-write-fetch-head"]
+        shallow = _run_git(worktree, ["rev-parse", "--is-shallow-repository"])
+        if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+            # A depth-1 clone has no merge base with the published head.
+            fetch_args.append("--unshallow")
+        fetch_args += [fetch_remote, "+refs/heads/%s:%s" % (record["head_branch"], ref)]
+        try:
+            fetch = _run_git(worktree, fetch_args)
+            published = _run_git(worktree, ["rev-parse", "--verify", "%s^{commit}" % ref])
+            if fetch.returncode != 0 or published.returncode != 0:
+                record.update(
+                    {
+                        "status": "fallback_canonical",
+                        "reason": "published branch unavailable: %s"
+                        % _redact_git_remote_auth_in_text(
+                            (fetch.stderr or fetch.stdout or published.stderr or "").strip()
+                        )[:300],
+                    }
+                )
+                return record
+            published_sha = published.stdout.strip()
+            reset = _run_git(worktree, ["reset", "--hard", published_sha])
+            if reset.returncode != 0:
+                _run_git(worktree, ["reset", "--hard", canonical_tip])
+                record.update(
+                    {
+                        "status": "fallback_canonical",
+                        "reason": "could not check out published head: %s"
+                        % (reset.stderr or reset.stdout or "").strip()[:300],
+                    }
+                )
+                return record
+            record["published_head_sha"] = published_sha
+            on_tip = _run_git(worktree, ["merge-base", "--is-ancestor", canonical_tip, "HEAD"])
+            if on_tip.returncode == 0:
+                record["status"] = "continued"
+            else:
+                conflict = gitops.rebase_worktree_onto(worktree, canonical_tip)
+                if conflict is None:
+                    record["status"] = "rebased"
+                else:
+                    record.update({"status": "conflict", "reason": conflict})
+            head = _run_git(worktree, ["rev-parse", "HEAD"])
+            record["head_sha"] = head.stdout.strip() if head.returncode == 0 else ""
+            return record
+        finally:
+            _run_git(worktree, ["update-ref", "-d", ref])
+            self._observe_log(
+                "worker.repository.published_head_continuation",
+                level="warning" if record.get("status") == "conflict" else "info",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail=record,
+            )
 
     def _reclaim_disk_for_worktree(self, *, task_id: str, worktree_dir: Path) -> bool:
         """Free workspace disk just-in-time after a full-disk worktree failure.
@@ -824,7 +1012,7 @@ class RepoPrepMixin:
         origin: JsonDict,
         remote_url: str,
     ) -> JsonDict:
-        """K8s-mode repository preparation: clone the remote into a
+        """Remote repository preparation: clone the remote into a
         per-lease directory and check out a task branch.
 
         This produces the same ``mac.repository_task_worktree.v1`` context
@@ -973,6 +1161,16 @@ class RepoPrepMixin:
                 "could not create task branch in cloned repository: %s"
                 % ((checkout.stderr or checkout.stdout or "").strip() or branch)
             )
+        continuation = self._resolve_published_head(task, remote_url)
+        if continuation is not None:
+            continuation = self._start_from_published_head(
+                task,
+                worktree_dir,
+                continuation,
+                fetch_remote=auth_url,
+                canonical_tip=base_sha,
+                lease_id=str(lease.get("id") or ""),
+            )
         # Exactly one event per branch actually created, emitted from the call
         # site that creates it.
         self._emit_bus_event(
@@ -989,7 +1187,7 @@ class RepoPrepMixin:
 
         # Mirror the local-worktree context shape exactly; downstream
         # readers (evidence validators, _load_repository_context) treat
-        # the K8s clone identically to a host-mode git worktree.
+        # the remote clone identically to a host-mode git worktree.
         context: JsonDict = {
             "schema": "mac.repository_task_worktree.v1",
             "checkout_policy": "k8s_task_owned_clone",
@@ -1004,6 +1202,8 @@ class RepoPrepMixin:
             "repository_canonical_remote": remote_display,
             "repository_origin_remote": remote_display,
         }
+        if continuation is not None:
+            context["repository_continuation"] = continuation
         self._observe_log(
             "worker.repository.worktree_prepared",
             subject_type="task",
@@ -1011,483 +1211,3 @@ class RepoPrepMixin:
             detail=context,
         )
         return context
-
-    def _prepare_review_workspace(
-        self,
-        task_id: str,
-        review_id: str,
-        executor_evidence_id: str,
-        task_detail: JsonDict,
-        message: JsonDict,
-        claim_result: Optional[JsonDict] = None,
-    ) -> Path:
-        from mac.worker import (  # noqa: PLC0415
-            _review_claim_identity,
-            _review_input_task,
-            _safe_path_component,
-            _task_detail_evidence,
-            ensure_json_object,
-        )
-
-        task_dir = self.workspace / "_reviews" / _safe_path_component(review_id)
-        task_dir.mkdir(parents=True, exist_ok=True)
-        claim = ensure_json_object(claim_result)
-        review_repository_context = self._prepare_review_repository_worktree(
-            task_dir,
-            task_detail,
-            executor_evidence_id,
-            review_id,
-        )
-        # Write the specific evidence and the original task as discrete workspace
-        # files so the hermes executor can read them on demand.  This keeps the
-        # review_context — and therefore the hermes --query prompt — to IDs only,
-        # avoiding ARG_MAX blowup as evidence accumulates over a task's lifetime.
-        executor_evidence = _task_detail_evidence(task_detail, executor_evidence_id)
-        (task_dir / "executor-evidence.json").write_text(
-            json.dumps(executor_evidence, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        original_task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
-        review_input_task = _review_input_task(original_task)
-        (task_dir / "executor-task.json").write_text(
-            json.dumps(review_input_task, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        review_context: JsonDict = {
-            "task_id": task_id,
-            "review_id": review_id,
-            "executor_evidence_id": executor_evidence_id,
-            "nudge_message_id": message.get("id"),
-            "review_claim": _review_claim_identity(
-                claim.get("claim") if isinstance(claim.get("claim"), dict) else {}
-            ),
-        }
-        if review_repository_context is not None:
-            review_context["review_repository_worktree"] = review_repository_context
-        review_metadata = ensure_json_object(review_input_task.get("metadata"))
-        original_metadata = ensure_json_object(original_task.get("metadata"))
-        for key in ("review_model", "review_model_strength"):
-            if original_metadata.get(key) not in (None, ""):
-                review_metadata[key] = original_metadata[key]
-        review_metadata["review_context"] = review_context
-        task = {
-            "id": "review_%s" % review_id,
-            "title": "Review task %s" % task_id,
-            "description": (
-                "Review the executor evidence for task %s and write a signed "
-                "review_verdict manifest." % task_id
-            ),
-            "required_capabilities": ["review"],
-            "metadata": review_metadata,
-        }
-        if review_repository_context is not None:
-            task["metadata"]["runtime"] = review_repository_context
-        (task_dir / "task.json").write_text(
-            json.dumps({"task": task}, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return task_dir
-
-    def _prepare_review_repository_worktree(
-        self,
-        task_dir: Path,
-        task_detail: JsonDict,
-        executor_evidence_id: str,
-        review_id: str,
-    ) -> Optional[JsonDict]:
-        from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
-            _redact_git_remote_auth_in_text,
-            _run_git,
-            _task_detail_canonical_remote_url,
-            _task_detail_evidence,
-            _validate_git_ref,
-            _validate_git_remote_url,
-            ensure_json_object,
-            strip_git_remote_auth,
-        )
-
-        evidence = _task_detail_evidence(task_detail, executor_evidence_id)
-        manifest = ensure_json_object(
-            ensure_json_object(evidence.get("metadata")).get("verification")
-        )
-        original_task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
-        if metadata_declares_read_only_report_repository(original_task.get("metadata")):
-            return self._prepare_read_only_review_repository_worktree(
-                task_dir=task_dir,
-                task_detail=task_detail,
-                manifest=manifest,
-                executor_evidence_id=executor_evidence_id,
-                review_id=review_id,
-            )
-        repo = ensure_json_object(manifest.get("repo"))
-        head_sha = str(repo.get("head_sha") or "").strip()
-        if not GIT_SHA_RE.match(head_sha):
-            return None
-        # Carry the executor's TRUE base so the review can compute a non-empty
-        # diff. Without this the review base defaulted to head_sha, making
-        # base==head and files_changed always []. (mac admin review-worktree fix)
-        base_sha = str(repo.get("base_sha") or "").strip()
-        if base_sha and not GIT_SHA_RE.match(base_sha):
-            base_sha = ""
-        remote_ref = str(repo.get("remote_ref") or "").strip()
-        # The task contract is the authoritative credential-free repository
-        # identity.  Executor evidence can legitimately contain a display URL
-        # with literal ``<redacted>`` userinfo, especially when it was produced
-        # by an older fleet worker.  Prefer the contract and strip any HTTP
-        # userinfo before validation so the reviewer injects its own credential
-        # instead of attempting to clone a display-only value.
-        remote_url = _task_detail_canonical_remote_url(task_detail)
-        if not remote_url:
-            remote_url = str(
-                repo.get("remote_url") or repo.get("origin_url") or repo.get("clone_url") or ""
-            ).strip()
-        if not remote_url:
-            repo_path_raw = str(repo.get("path") or "").strip()
-            repo_path = Path(repo_path_raw).expanduser() if repo_path_raw else None
-            if repo_path is not None and repo_path.exists():
-                remote = _run_git(repo_path, ["remote", "get-url", "origin"])
-                if remote.returncode == 0:
-                    remote_url = remote.stdout.strip()
-        if not remote_url:
-            return None
-        remote_url = strip_git_remote_auth(remote_url)
-
-        # mac-raud: reject hostile remote_url before it reaches git argv.
-        try:
-            remote_url = _validate_git_remote_url(remote_url)
-        except ValueError as exc:
-            raise RuntimeError("refusing review clone: %s" % exc) from None
-        if remote_ref:
-            try:
-                remote_ref = _validate_git_ref(remote_ref)
-            except ValueError as exc:
-                raise RuntimeError("refusing review clone: %s" % exc) from None
-
-        task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
-        task_id = str(task.get("id") or "").strip()
-        project = str(task.get("project") or "default").strip() or "default"
-        access = resolve_git_remote_access(remote_url)
-
-        def fail_repository_access(action: str, result: subprocess.CompletedProcess[str]) -> None:
-            detail = _redact_git_remote_auth_in_text(
-                (result.stderr or result.stdout or "non-zero exit").strip()
-            )
-            message = "%s %s: %s" % (action, access.display, detail)
-            failure_class = classify_repository_access_failure(message)
-            # A failed clone may leave a partial .git/config containing the
-            # command-only credential. Remove the incomplete checkout before
-            # writing or reporting anything about the failure.
-            if review_repo.exists():
-                shutil.rmtree(review_repo, ignore_errors=True)
-            self._record_repository_access_learning(
-                project=project,
-                task_id=task_id,
-                review_id=review_id,
-                remote=remote_url,
-                credential_source=access.credential_source,
-                outcome="failure",
-                error=message,
-                failure_class=failure_class,
-            )
-            raise RepositoryAccessError(message, failure_class=failure_class)
-
-        review_repo = task_dir / "review-repo"
-        if review_repo.exists():
-            shutil.rmtree(review_repo)
-        # `--` separator means a remote_url that survives validation
-        # still cannot be parsed as a git option.
-        clone = subprocess.run(
-            ["git", "clone", "--no-checkout", "--", access.remote, str(review_repo)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        if clone.returncode != 0:
-            fail_repository_access("could not clone review repository", clone)
-
-        # ``git clone`` persists its source as origin. Scrub the command-only
-        # credential immediately, then pass the authenticated URL explicitly
-        # to later fetches so no token survives in the review checkout.
-        scrub_origin = _run_git(review_repo, ["remote", "set-url", "origin", remote_url])
-        if scrub_origin.returncode != 0:
-            fail_repository_access("could not sanitize review repository origin", scrub_origin)
-
-        branch = _remote_branch_from_ref(remote_ref)
-        if branch:
-            fetch = _run_git(
-                review_repo,
-                [
-                    "fetch",
-                    access.remote,
-                    "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch),
-                ],
-            )
-        elif remote_ref:
-            # remote_ref was validated above; `--` guards against any
-            # ref that pattern-matched a flag (mac-raud).
-            fetch = _run_git(review_repo, ["fetch", access.remote, "--", remote_ref])
-        else:
-            fetch = _run_git(review_repo, ["fetch", access.remote])
-        if fetch.returncode != 0:
-            fail_repository_access(
-                "could not fetch reviewed ref %s from" % (remote_ref or "origin"), fetch
-            )
-
-        checkout = _run_git(review_repo, ["checkout", "--detach", head_sha])
-        if checkout.returncode != 0:
-            fail_repository_access("could not checkout reviewed head %s from" % head_sha, checkout)
-
-        self._record_repository_access_learning(
-            project=project,
-            task_id=task_id,
-            review_id=review_id,
-            remote=remote_url,
-            credential_source=access.credential_source,
-            outcome="success",
-        )
-        context: JsonDict = {
-            "schema": "mac.review_repository_worktree.v1",
-            "checkout_policy": "review_git_worktree",
-            "repository_worktree": str(review_repo),
-            "repository_source_path": str(repo.get("path") or ""),
-            "repository_branch": remote_ref or branch or "",
-            "repository_base_sha": base_sha or head_sha,
-            "repository_origin_remote": remote_url,
-            "repository_review_id": review_id,
-            "repository_executor_evidence_id": executor_evidence_id,
-            "repository_reviewed_head_sha": head_sha,
-            "repository_reviewed_remote_ref": remote_ref,
-        }
-        (task_dir / "repository-worktree.json").write_text(
-            json.dumps(context, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        self._observe_log(
-            "worker.review.repository_worktree_prepared",
-            subject_type="task",
-            subject_id=str((task_detail.get("task") or {}).get("id") or ""),
-            detail=context,
-        )
-        return context
-
-    def _prepare_read_only_review_repository_worktree(
-        self,
-        *,
-        task_dir: Path,
-        task_detail: JsonDict,
-        manifest: JsonDict,
-        executor_evidence_id: str,
-        review_id: str,
-    ) -> JsonDict:
-        """Prepare a second credential-free exact-base clone for report review."""
-
-        from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
-            _redact_git_remote_auth_in_text,
-            _run_git,
-            _run_git_in,
-            _validate_git_ref,
-            _validate_git_remote_url,
-            strip_git_remote_auth,
-        )
-
-        access_manifest = manifest.get("repository_access")
-        if not isinstance(access_manifest, dict) or (
-            access_manifest.get("schema") != REPORT_REPOSITORY_ACCESS_SCHEMA
-            or access_manifest.get("mode") != REPORT_REPOSITORY_READ_ONLY_MODE
-        ):
-            raise RuntimeError(
-                "read-only report review lacks host-stamped repository_access evidence"
-            )
-        base_sha = str(access_manifest.get("base_sha") or "").strip()
-        base_tree = str(access_manifest.get("base_tree") or "").strip()
-        refs_digest = str(access_manifest.get("refs_digest") or "").strip()
-        content_digest = str(access_manifest.get("content_digest") or "").strip()
-        if not GIT_SHA_RE.match(base_sha) or not all((base_tree, refs_digest, content_digest)):
-            raise RuntimeError("read-only report review repository_access proof is incomplete")
-
-        original_task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
-        task_id = str(original_task.get("id") or "").strip()
-        project = str(original_task.get("project") or "default").strip() or "default"
-        contract = _current_read_only_repository_contract(original_task)
-        remote_url = str(contract.get("canonical_remote_url") or "").strip()
-        if not remote_url:
-            raise RuntimeError(
-                "read-only report review current execution contract has no "
-                "authoritative canonical remote"
-            )
-        remote_url = _validate_git_remote_url(strip_git_remote_auth(remote_url))
-        canonical_branch = _read_only_contract_default_branch(original_task, {})
-        try:
-            canonical_branch = _validate_git_ref(canonical_branch)
-        except ValueError as exc:
-            raise RuntimeError(
-                "read-only report review current execution contract has an invalid canonical branch"
-            ) from exc
-        evidence_remote = str(access_manifest.get("canonical_remote_url") or "").strip()
-        if not evidence_remote or strip_git_remote_auth(evidence_remote) != remote_url:
-            raise RuntimeError(
-                "read-only report repository_access remote does not match current contract"
-            )
-        if str(access_manifest.get("canonical_branch") or "").strip() != canonical_branch:
-            raise RuntimeError(
-                "read-only report repository_access branch does not match current contract"
-            )
-        access = resolve_git_remote_access(remote_url)
-        review_repo = task_dir / "review-repo"
-        if review_repo.exists():
-            shutil.rmtree(review_repo)
-
-        def fail(action: str, result: subprocess.CompletedProcess[str]) -> None:
-            detail = _redact_git_remote_auth_in_text(
-                (result.stderr or result.stdout or "non-zero exit").strip()
-            )
-            message = "%s %s: %s" % (action, access.display, detail)
-            failure_class = classify_repository_access_failure(message)
-            shutil.rmtree(review_repo, ignore_errors=True)
-            self._record_repository_access_learning(
-                project=project,
-                task_id=task_id,
-                review_id=review_id,
-                remote=remote_url,
-                credential_source=access.credential_source,
-                outcome="failure",
-                error=message,
-                failure_class=failure_class,
-            )
-            raise RepositoryAccessError(message, failure_class=failure_class)
-
-        initialize = _run_git_in(task_dir, ["init", "--quiet", "--", str(review_repo)])
-        if initialize.returncode != 0:
-            fail("could not initialize read-only review repository", initialize)
-        temporary_ref = "refs/mac/read-only/review-base"
-        fetch = _run_git(
-            review_repo,
-            [
-                "fetch",
-                "--no-write-fetch-head",
-                "--no-tags",
-                "--",
-                access.remote,
-                "+%s:%s" % (base_sha, temporary_ref),
-            ],
-        )
-        if fetch.returncode != 0:
-            fail("could not fetch exact read-only report base", fetch)
-        fetched = _run_git(review_repo, ["rev-parse", "--verify", "%s^{commit}" % temporary_ref])
-        if fetched.returncode != 0 or fetched.stdout.strip() != base_sha:
-            fail("read-only review fetch did not resolve exact executor base", fetched)
-        observed_tree, observed_refs, observed_content = _finish_read_only_checkout(
-            review_repo,
-            base_sha=base_sha,
-            temporary_ref=temporary_ref,
-            forbidden_values=(access.remote,),
-        )
-        if (
-            observed_tree != base_tree
-            or observed_refs != refs_digest
-            or observed_content != content_digest
-        ):
-            shutil.rmtree(review_repo, ignore_errors=True)
-            raise RuntimeError(
-                "independent read-only review clone does not match executor base proof"
-            )
-        self._record_repository_access_learning(
-            project=project,
-            task_id=task_id,
-            review_id=review_id,
-            remote=remote_url,
-            credential_source=access.credential_source,
-            outcome="success",
-        )
-        context: JsonDict = {
-            "schema": "mac.review_repository_worktree.v1",
-            "checkout_policy": "review_read_only_clone",
-            "repository_worktree": str(review_repo),
-            "repository_source_path": str(review_repo),
-            "repository_branch": "",
-            "repository_base_sha": base_sha,
-            "repository_base_tree": base_tree,
-            "repository_refs_digest": refs_digest,
-            "repository_content_digest": content_digest,
-            "repository_canonical_remote_url": remote_url,
-            "repository_canonical_branch": canonical_branch,
-            "repository_access_schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
-            "repository_access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
-            "repository_review_id": review_id,
-            "repository_executor_evidence_id": executor_evidence_id,
-        }
-        (task_dir / "repository-worktree.json").write_text(
-            json.dumps(context, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        self._observe_log(
-            "worker.review.read_only_repository_worktree_prepared",
-            subject_type="task",
-            subject_id=task_id,
-            detail=context,
-        )
-        return context
-
-    def _record_repository_access_learning(
-        self,
-        *,
-        project: str,
-        task_id: str,
-        review_id: str,
-        remote: str,
-        credential_source: str,
-        outcome: str,
-        error: str = "",
-        failure_class: str = "",
-    ) -> Optional[JsonDict]:
-
-        learning = build_repository_access_learning(
-            project=project,
-            remote=remote,
-            operation="review_clone",
-            agent_id=self.agent_id,
-            outcome=outcome,
-            credential_source=credential_source,
-            task_id=task_id or None,
-            review_id=review_id or None,
-            error=error,
-            failure_class=failure_class or None,
-        )
-        try:
-            result = self.client.post(
-                "/memory",
-                build_repository_access_memory_payload(learning),
-            )
-        except Exception as exc:  # noqa: BLE001 - learning is best-effort.
-            self._observe_log(
-                "worker.repository_access_learning.failed",
-                level="warning",
-                subject_type="task" if task_id else None,
-                subject_id=task_id or None,
-                detail={
-                    "schema": learning["schema"],
-                    "operation": learning["operation"],
-                    "outcome": outcome,
-                    "repository_host": learning["repository_host"],
-                    "error": str(exc),
-                },
-            )
-            return None
-        self._observe_log(
-            "worker.repository_access_learning.recorded",
-            level="info" if outcome == "success" else "warning",
-            subject_type="task" if task_id else None,
-            subject_id=task_id or None,
-            detail={
-                "schema": learning["schema"],
-                "memory_id": result.get("id") if isinstance(result, dict) else None,
-                "operation": learning["operation"],
-                "outcome": outcome,
-                "failure_class": learning["failure_class"],
-                "repository_host": learning["repository_host"],
-                "credential_source": learning["credential_source"],
-            },
-        )
-        return result if isinstance(result, dict) else None

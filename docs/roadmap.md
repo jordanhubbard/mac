@@ -53,32 +53,21 @@ transaction or equivalent durable evidence.
 
 ## Fleet and self-upgrade
 
-- [ ] OpenClaw can submit authenticated human upgrade intent without receiving
-  deployment authority.
-- [ ] An admin can issue an `upgrade yourself` or critical roll-forward request
-  through OpenClaw, and OpenClaw can report durable progress and outcome.
-- [ ] Upgrade credentials are independently revocable, human-bound,
-  least-privilege, and projected through the fenced secret channel; neither
-  OpenClaw nor the supervisor receives general deploy or keystore authority.
+Hub self-upgrade, release epochs and source convergence are deleted. In 90 days
+release epochs aborted 62% of the time and hub self-upgrade never succeeded.
+The fleet is updated by a human with
+[`scripts/fleet-update`](operations/fleet-update.md).
+
 - [ ] Keystore operations are scope-aware and auditable so each service can read
   only the named credentials required for its finite role.
-- [ ] The hub accepts only approved immutable releases with remote CI and local
-  contract-test evidence.
-- [ ] A host-native supervisor can swap the hub generation, prove health, and
-  roll back through a finite transaction without an LLM, arbitrary coding, or
-  arbitrary command execution.
 - [ ] Critical hub recovery has a break-glass path that remains usable when the
   current hub or OpenClaw generation is stale, while preserving authorization,
   audit, health proof, and rollback.
-- [ ] The restarted hub resumes the durable release epoch and rolls workers
-  forward or back by bounded cohorts.
-- [ ] Crash recovery, authorization failures, failed health proofs, and cohort
-  rollback are covered and proven in the live fleet.
 - [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
   Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and
-  gpu-worker after typed cohort `20260827T060057Z` (`make deploy HUB=<hub>`
-  with hold-adoptions after a retained roll-forward). Hub `/health` ok;
+  gpu-worker after typed cohort `20260827T060057Z` (the since-deleted
+  `make deploy HUB=<hub>` with hold-adoptions after a retained roll-forward). Hub `/health` ok;
   workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
 - [x] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
@@ -122,6 +111,25 @@ transaction or equivalent durable evidence.
 - [ ] Fleet configuration and credential environment files are written
   atomically and preserve real line boundaries, permissions, and scoped token
   names across retries.
+- [ ] Hub and workers renegotiate their session credentials before expiry,
+  authenticated by the still-valid credential, rather than going mutually deaf
+  at the expiry instant. Renewal is unattended, idempotent under retry and
+  races, installed atomically, and loud on failure while the old credential
+  still works. Hard expiry stays enforced; the goal is to make short lifetimes
+  practical instead of pushing operators toward effectively infinite ones in
+  self-defence. Design: `docs/peer-repair-design.md` §7.3, §8b (C4).
+- [ ] Credential expiry is a reported condition, not a silent cliff: a
+  `credential-expiry` diagnostics check warns ahead of a configurable horizon,
+  and an expired credential reports itself as expired rather than as an
+  `unknown bearer token`. Credential lifetime is fleet-configured rather than a
+  hardcoded argparse default. Design: `docs/peer-repair-design.md` §7.2, §8b
+  (C1–C3). Observed 2026-09-23: three live principals already expired
+  (a UI client, a laptop, a workstation) and a fleet-upgrade principal
+  within 26 hours, none reported anywhere.
+- [ ] Agents detect a hub they cannot reach and surface it locally, so the
+  process that notices failure does not live exclusively on the process that
+  failed. Observability only — no authority change, no automatic failover
+  (see `docs/hub-availability.md`). Design: `docs/peer-repair-design.md` §7.1.
 - [ ] Dream-cycle analysis uses a current authoritative data source and produces
   useful, deduplicated output. This is a nice-to-have and must not block core
   autonomous-work or fleet-upgrade milestones.
@@ -138,15 +146,16 @@ transaction or equivalent durable evidence.
 5. Repair the MAC CLI, verify deterministic plugin generation, and migrate the
    fleet to plugin-based CLI installation.
 6. Implement hierarchical sandbox ACL feedback and profile placement.
-7. Revisit dream-cycle analysis only after the higher-priority proofs are
-   durable.
+7. ~~Revisit dream-cycle analysis only after the higher-priority proofs are
+   durable.~~ Dreaming was removed on 2026-09-30.
 
 ## Known defects from the v1.3.0 capabilities deck (slide 12)
 
 Source: [MAC capabilities at `d8d491d6`](https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit?slide=id.p12),
 captured 2026-08-28. Items stay unchecked until they meet the completion rule
-above. Large ADRs are held `--no-dispatch` until hub-verify can land
-repository work (`task_321b8e8d`).
+above. Large ADRs were held `--no-dispatch` until hub-verify could land
+repository work (`task_321b8e8d`); hub-verify was deleted on 2026-10-01 and the
+worker's verifier run is now the review verdict.
 
 - [ ] Default `mac --help` reports the real `mac admin` subcommand count, not
       zero. Ledger `task_2d33cc69`.
@@ -167,7 +176,7 @@ repository work (`task_321b8e8d`).
 - [ ] ADR 0012 (native steward + containerized execution) stays deferred until
       a fleet measurement exists. ADR 0015 already narrowed the containerized
       half to Linux. Ledger `task_3a48fd75`.
-- [ ] Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
-      (not the live hub database) so a repository canary can complete.
-      Ledger `task_321b8e8d`. Blocked the v1.3.1 canary `task_d894080c` /
-      PR #681.
+- [x] ~~Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
+      (not the live hub database) so a repository canary can complete.~~
+      Hub-verify was deleted on 2026-10-01; verifier sandboxes start their own
+      PostgreSQL. Ledger `task_321b8e8d`.

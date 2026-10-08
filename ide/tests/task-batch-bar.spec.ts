@@ -67,7 +67,6 @@ function dashboardState() {
     runtimes: [],
     runtime_deltas: [],
     runtime_runs: [],
-    rollouts: [],
     secrets: [],
     secret_audits: [],
     service_links: [],

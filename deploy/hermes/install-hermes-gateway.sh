@@ -50,7 +50,8 @@ release_command() {
     --launcher "$HOME/.local/bin/hermes" \
     --home "$HERMES_HOME" --markdown "$RUNTIME_CONTEXT_MARKDOWN" \
     --manifest "$SCRIPT_DIR/python314-source.json" \
-    --manifest "$SCRIPT_DIR/runtime-context-source.json"
+    --manifest "$SCRIPT_DIR/runtime-context-source.json" \
+    --manifest "$SCRIPT_DIR/cron-routing-source.json"
 }
 
 hermes_python_bin() {
@@ -98,6 +99,14 @@ print("Hermes active runtime prompt includes MAC context and existing persona co
 PY
 }
 
+sync_chat_config() {
+  local mac_python="$MAC_HOME/venv/bin/python"
+  [ -x "$mac_python" ] || die "MAC deployment Python is unavailable: $mac_python"
+  "$mac_python" -m mac.hermes_chat_config \
+    --hermes-home "$HERMES_HOME" --mac-env "$MAC_HOME/mac.env" \
+    || die "Hermes chat provider config could not be synchronized"
+}
+
 qualify_staged_runtime() {
   local stage="${1:-}" active="" mac_python="$MAC_HOME/venv/bin/python"
   [ -n "$stage" ] && [ -d "$stage" ] && git -C "$stage" rev-parse --git-dir >/dev/null 2>&1 \
@@ -109,6 +118,7 @@ qualify_staged_runtime() {
   "$mac_python" -m mac.hermes_patch "$stage" \
     "$SCRIPT_DIR/python314-source.json" \
     "$SCRIPT_DIR/runtime-context-source.json" \
+    "$SCRIPT_DIR/cron-routing-source.json" \
     || die "staged Hermes reviewed patch qualification failed"
   [ -x "$stage/.venv/bin/python" ] \
     || die "staged Hermes runtime has no managed interpreter"
@@ -454,10 +464,8 @@ PY_VERIFY
 
 ensure_chat_gateway_impl_env() {
   # mac-agent's own startup self-test derives its OpenClaw-required-or-not
-  # branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env (see
-  # deploy/fleet-node-install.sh's embedded self-test:
-  # `openclaw_required = MAC_CHAT_GATEWAY_IMPL == "openclaw"`) -- but only
-  # fleet-node-install.sh's own full deploy path ever wrote that variable.
+  # branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env -- but only the
+  # old fleet installer's full deploy path ever wrote that variable.
   # A cutover run through this standalone installer (as every node's Hermes
   # cutover was, this session) never touched it, so mac.env kept claiming
   # "openclaw" after the gateway was gone. Confirmed live: mac-agent then
@@ -503,6 +511,10 @@ prepare() {
   ensure_user_allowlist
   ensure_home_channel_env
   ensure_chat_gateway_impl_env
+  # The standalone Hermes installer is also used for fleet cutovers. Mirror
+  # the deploy-authoritative router endpoint and bearer into Hermes before its
+  # CLI reads or starts the gateway; readiness alone does not exercise turns.
+  sync_chat_config
   configure_gateway
   install_service
 }

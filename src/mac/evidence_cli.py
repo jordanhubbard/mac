@@ -1,6 +1,6 @@
 """Tiny CLI for signing mac worker_evidence manifests.
 
-This module exists so the bash stubs under ``deploy/codex-runner``
+This module exists so the bash stubs under ``deploy/task-runner``
 do not have to re-implement ``mac.services.sign_verification_manifest``
 in a Python heredoc. The Job pod has the mac wheel installed already,
 so a real entry point keeps the canonicalisation + HMAC logic in
@@ -97,8 +97,7 @@ def cmd_sign(args: argparse.Namespace) -> int:
     if not key:
         sys.stderr.write(
             "[mac-evidence] %s is unset; refusing to write an unsigned manifest. "
-            "Set the HMAC key on the environment (e.g. via MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS).\n"
-            % key_env
+            "Set the HMAC key on the environment.\n" % key_env
         )
         return 2
     manifest = _read_manifest(args)

@@ -145,19 +145,6 @@ def _forbidden_wildcard_model(model: str) -> bool:
 
 
 def _strong_wildcard_default(env: Dict[str, str]) -> str:
-    # Prefer the dynamically-selected powerhouse model (periodic web-search of
-    # what's currently leading, moderated by what the gateway can actually
-    # route) over the hard-coded constant, so the fleet tracks the current best
-    # model instead of a weeks-stale pin. Falls through to the env/constant when
-    # no selection has been persisted yet (fresh fleet / refresher not run).
-    try:
-        from mac.model_selection import selected_models
-
-        for value in selected_models(env):
-            if value and value != "*" and not _forbidden_wildcard_model(value):
-                return value
-    except Exception:  # noqa: BLE001 - selection is best-effort; never break routing.
-        pass
     for key in ("MAC_HERMES_GATEWAY_MODEL", "HERMES_INFERENCE_MODEL", "ACC_LLM_MODEL"):
         value = (env.get(key) or "").strip()
         if value and value != "*" and not _forbidden_wildcard_model(value):
@@ -484,6 +471,13 @@ class ProviderProxy:
         last_provider = ""
         retried_401 = False  # per-request: at most one transient-401 retry
         route_attempts = []
+        # A provider-health failure applies to the route for the lifetime of
+        # this request, not merely to one model candidate.  Keep it out of all
+        # later selections even when its global breaker threshold is greater
+        # than one.  Model-level 404/422 responses do not enter this set: the
+        # provider is healthy and may legitimately serve the next candidate.
+        failed_providers = set()
+        failure_attempts = []
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
             outgoing = _ensure_max_tokens_floor(
@@ -491,17 +485,28 @@ class ProviderProxy:
             )
             attempts = []
             provider_answered = False
-            # Bounded: one try per provider (+1 so a half-open probe can be
-            # re-selected after another provider is tried).
-            for _ in range(len(self._router.provider_names()) + 1):
-                provider = self._router.select(model)
+            attempted_providers = set()
+            # Bounded: each provider/model route is attempted at most once.
+            # A provider that failed at transport/provider level is excluded
+            # for the remainder of this request, across model candidates.
+            for _ in range(len(self._router.provider_names())):
+                provider = self._router.select(
+                    model,
+                    exclude=failed_providers | attempted_providers,
+                )
                 if provider is None:
                     break
-                status, obj = forward(provider, path, outgoing, timeout=timeout)
+                attempted_providers.add(provider.name)
+                upstream = provider.upstream_model(model)
+                sent = outgoing if upstream == model else {**outgoing, "model": upstream}
+                status, obj = forward(provider, path, sent, timeout=timeout)
                 route_attempts.append({"provider": provider.name, "model": model, "status": status})
                 if _is_provider_failure(status):
                     self._router.record_failure(provider.name)
-                    attempts.append({"provider": provider.name, "status": status})
+                    failed_providers.add(provider.name)
+                    failure = {"provider": provider.name, "model": model, "status": status}
+                    attempts.append(failure)
+                    failure_attempts.append(failure)
                     route_attempts[-1]["outcome"] = "provider_failure"
                     logger.info(
                         "route model=%s provider=%s status=%s failover",
@@ -527,7 +532,7 @@ class ProviderProxy:
                         model,
                         provider.name,
                     )
-                    status, obj = forward(provider, path, outgoing, timeout=timeout)
+                    status, obj = forward(provider, path, sent, timeout=timeout)
                     route_attempts.append(
                         {
                             "provider": provider.name,
@@ -538,7 +543,10 @@ class ProviderProxy:
                     )
                     if _is_provider_failure(status):
                         self._router.record_failure(provider.name)
-                        attempts.append({"provider": provider.name, "status": status})
+                        failed_providers.add(provider.name)
+                        failure = {"provider": provider.name, "model": model, "status": status}
+                        attempts.append(failure)
+                        failure_attempts.append(failure)
                         route_attempts[-1]["outcome"] = "provider_failure_after_retry"
                         logger.info(
                             "route model=%s provider=%s status=%s failover",
@@ -565,10 +573,12 @@ class ProviderProxy:
                     attempts=route_attempts,
                 )
             if not provider_answered:
-                # Every eligible provider failed or is open for this model. The
-                # same providers serve the other models, so fail fast rather than
-                # walk the rest of the ladder against dead providers.
-                body = self._failfast_body(model, attempts)
+                # Every eligible provider failed or is open for this candidate.
+                # A wildcard ladder can bind later models to different providers,
+                # so continue without retrying any provider that already failed.
+                if not is_last:
+                    continue
+                body = self._failfast_body(model, failure_attempts)
                 return self._observed_return(
                     503,
                     body,
@@ -1315,11 +1325,8 @@ def mount_router(
     route_observer: Optional[RouteObserver] = None,
     media_agent_table_provider: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> bool:
-    """Mount the OpenAI chat, Responses, and embeddings surfaces on ``app``.
+    """Mount the OpenAI chat-completions and embeddings surfaces on ``app``.
 
-    ``/v1/responses`` is translated onto the configured Chat Completions
-    upstream because current Codex requires the Responses wire protocol while
-    several MAC providers expose only the older OpenAI-compatible chat API.
     The routes are mounted only when ``MAC_ROUTER_BACKEND=inproc``. Returns True
     if anything mounted.
     Default backend is 'tokenhub' → no-op, so an existing fleet is unchanged until
@@ -1341,18 +1348,18 @@ def mount_router(
         agent_table_provider=media_agent_table_provider,
     ):
         mounted = True
+    # Claude Code's Anthropic-shaped front door, served by the configured
+    # Anthropic provider (mac.anthropic_passthrough).
+    from mac.anthropic_passthrough import mount_anthropic_messages
+
+    if mount_anthropic_messages(app, env=env, secret_resolver=secret_resolver):
+        mounted = True
     proxy = proxy or build_proxy_from_env(
         env, secret_resolver=secret_resolver, route_observer=route_observer
     )
     if proxy is None:
         return mounted
     from fastapi.responses import JSONResponse, StreamingResponse
-    from mac.responses_adapter import (
-        buffered_chat_to_responses_stream,
-        chat_response_to_responses,
-        chat_stream_to_responses,
-        responses_request_to_chat,
-    )
 
     # Evaluate once at mount time so the gate is consistent for the lifetime of
     # the process (no per-request os.environ lookups; flipping the env var
@@ -1394,30 +1401,6 @@ def mount_router(
             return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
         status, out = proxy.complete("/chat/completions", body, route_context=route_context)
         return JSONResponse(out, status_code=status)
-
-    @app.post("/v1/responses")
-    def _responses(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
-        route_context = _route_context_from_request(request, body)
-        mismatch = _mismatch_response(route_context)
-        if mismatch is not None:
-            return mismatch
-        responses_body = _strip_internal_route_context(body)
-        chat_body = responses_request_to_chat(responses_body)
-        if responses_body.get("stream"):
-            status, obj = proxy.stream_complete(
-                "/chat/completions", chat_body, route_context=route_context
-            )
-            if status == 200:
-                if isinstance(obj, dict):
-                    stream = buffered_chat_to_responses_stream(obj, responses_body)
-                else:
-                    stream = chat_stream_to_responses(obj, responses_body)
-                return StreamingResponse(stream, media_type="text/event-stream")
-            return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
-        status, out = proxy.complete("/chat/completions", chat_body, route_context=route_context)
-        if 200 <= status < 300 and isinstance(out, dict):
-            out = chat_response_to_responses(out, responses_body)
-        return JSONResponse(out if isinstance(out, dict) else {}, status_code=status)
 
     @app.post("/v1/embeddings")
     def _embeddings(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401

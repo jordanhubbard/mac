@@ -84,7 +84,7 @@ Neither root has a single honored resolver, which is the root cause:
 - **`.mac`** — `MAC_HOME` is a **leaky knob**. The canonical `mac_home()`
   (`src/mac/client_principals.py:62`) honors it, but dozens of hot-path modules
   re-implement the path and hard-code `~/.mac` *ignoring* `MAC_HOME`: the ledger
-  (`src/mac/dispatch.py:2811`), fleets registry (`src/mac/fleet_creds.py:121`),
+  (`src/mac/dispatch.py:2811`), fleets registry (`src/mac/fleet_ssh.py`),
   journal, most of `src/mac/cli.py`, OpenShell. Setting `MAC_HOME` today would
   relocate *some* data and orphan the rest — a data-loss trap.
 
@@ -154,6 +154,12 @@ drop the legacy subtree entirely and remove the compat symlinks.
   **read-old / write-new / symlink-bridge** mode so no worker breaks mid-fleet.
 
 ## 5b. Dream-cycle learning: two systems, one orphan (executed)
+
+> **Update 2026-09-30:** MAC's nap/dream pipeline, `dream_log_import.py` and
+> `mac_paths.dream_logs_dir()` described below were removed, and migration
+> `0004_drop_removed_feature_tables` drops the `nap_runs`, `nap_schedules`,
+> `dream_runs` and `dream_candidate_entries` tables. The historical `dream:*`
+> and `nap_summary` records stay in `memory_records`.
 
 Investigation of the dream/learning capability found **two** dream systems:
 

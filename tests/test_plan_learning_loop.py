@@ -423,7 +423,6 @@ def _patch_run_executor_planning(monkeypatch, *, tmp_path: Path) -> Dict[str, li
         lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []},
     )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
     monkeypatch.setattr(
         te,
         "record_plan_outcome",
@@ -447,7 +446,6 @@ def _patch_run_executor_planning(monkeypatch, *, tmp_path: Path) -> Dict[str, li
         },
     )
     monkeypatch.setattr(te, "_manifest_is_complete", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "_review_experiment_assignment", lambda t: {})
 
     return state
 
@@ -469,8 +467,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_rec_001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["plan_outcome_calls"]) == 1, (
@@ -496,8 +492,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_recall_001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(plan_recall_calls) >= 1, (
@@ -519,8 +513,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_inject_001",
-            review_context=None,
-            is_review=False,
         )
 
         assert len(state["prompts"]) == 1
@@ -552,8 +544,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_small_nop",
-            review_context=None,
-            is_review=False,
         )
 
         assert state["plan_outcome_calls"] == [], (
@@ -579,8 +569,6 @@ class TestRunExecutorPlanLearningIntegration:
             task=task,
             task_workspace=tmp_path,
             task_id="task_plan_nomanifest",
-            review_context=None,
-            is_review=False,
         )
 
         assert state["plan_outcome_calls"] == [], (

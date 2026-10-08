@@ -127,12 +127,13 @@ no-ops with a `workflow.default_review.skipped` observation. The first step is
 to make that per-task opt-out the *project default* for one project — an
 `agent_initiated` (opt-in) review mode — so the mandatory controller stands
 down for that project and review runs only when an agent asks for it. This
-mirrors the opt-in shape of `MAC_REVIEW_HUB_VERIFY` (`_hub_review_verify_enabled`,
-off by default, one flag): a single, revertible switch.
+mirrors the opt-in shape of the former `MAC_REVIEW_HUB_VERIFY` flag (off by
+default, one flag; hub-verify was deleted on 2026-10-01): a single, revertible
+switch.
 
 Then compare completion rate and tokens-per-completed-task between the two paths
 on the same project over a few hundred tasks (the arms already tracked by the
-scientific optimizer). If peer-to-peer wins, there is evidence to dismantle the
+scientific optimizer, since removed on 2026-09-30). If peer-to-peer wins, there is evidence to dismantle the
 ringmaster incrementally. If it loses, one flag is reverted and the mandatory
 path is unchanged.
 

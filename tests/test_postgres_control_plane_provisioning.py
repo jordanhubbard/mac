@@ -1,13 +1,8 @@
-"""Behavioral contract for auto-provisioning the hub's PostgreSQL database.
+"""Behavioral contract for deploy/install-postgres-service.sh and its unit.
 
-mac.store accepts only postgres:// / postgresql:// DSNs -- there is no
-SQLite fallback -- but nothing in the deploy pipeline ever provisioned one.
-A from-scratch --first-hub-bootstrap crashed at "creating/updating mac
-environment file" because MAC_DATABASE_URL was never set and the
-deploy_env.py default MAC_DB (a SQLite path) is dead code the store layer
-rejects. This mirrors the existing Qdrant/Firecrawl auto-install pattern:
-default to auto-provisioning a local Postgres on the control-plane node,
-never overriding an operator-configured DSN.
+mac.store accepts only postgres:// / postgresql:// DSNs. The installer
+provisions a local Postgres for the hub and never rotates an existing password
+or binds all interfaces.
 """
 
 from __future__ import annotations
@@ -17,108 +12,8 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
 INSTALL_SCRIPT = ROOT / "deploy" / "install-postgres-service.sh"
 SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "mac-postgres.service"
-
-
-def _text() -> str:
-    return NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
-
-
-def _function(name: str) -> str:
-    match = re.search(
-        r"^%s\(\) \{\n.*?^}$" % re.escape(name),
-        _text(),
-        re.MULTILINE | re.DOTALL,
-    )
-    assert match is not None, f"function {name} not found"
-    return match.group(0)
-
-
-def _run_postgres_install_enabled(
-    *,
-    postgres_url_configured: str = "",
-    postgres_install: str = "auto",
-    agent: str = "rocky",
-    shared_services_manager_agent: str = "rocky",
-) -> subprocess.CompletedProcess[str]:
-    snippet = "\n".join(
-        [
-            "log() { printf '%s\\n' \"$*\" >&2; }",
-            f"POSTGRES_URL_CONFIGURED={postgres_url_configured!r}",
-            f"POSTGRES_INSTALL={postgres_install!r}",
-            f"AGENT={agent!r}",
-            f"SHARED_SERVICES_MANAGER_AGENT={shared_services_manager_agent!r}",
-            _function("control_plane_enabled"),
-            _function("postgres_install_enabled"),
-            "postgres_install_enabled",
-        ]
-    )
-    return subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
-
-
-def test_operator_configured_dsn_always_wins_over_auto_install() -> None:
-    result = _run_postgres_install_enabled(
-        postgres_url_configured="postgresql://mac:secret@10.0.0.5:5432/mac",
-        postgres_install="1",
-    )
-    assert result.returncode != 0, (
-        "an explicit MAC_DEPLOY_DATABASE_URL must never be overridden by "
-        "auto-install, even when MAC_DEPLOY_POSTGRES_INSTALL=1"
-    )
-
-
-def test_auto_mode_installs_only_on_the_control_plane_node() -> None:
-    hub = _run_postgres_install_enabled(agent="rocky", shared_services_manager_agent="rocky")
-    worker = _run_postgres_install_enabled(agent="natasha", shared_services_manager_agent="rocky")
-
-    assert hub.returncode == 0, hub.stderr
-    assert worker.returncode != 0
-
-
-def test_explicit_off_is_honored_even_with_no_dsn_configured() -> None:
-    result = _run_postgres_install_enabled(postgres_install="0")
-    assert result.returncode != 0
-
-
-def test_unsupported_install_value_fails_closed() -> None:
-    result = _run_postgres_install_enabled(postgres_install="sometimes")
-    assert result.returncode != 0
-    assert "unsupported MAC_DEPLOY_POSTGRES_INSTALL value" in result.stderr
-
-
-def test_database_provisioning_precedes_the_mac_env_write() -> None:
-    text = _text()
-    assert text.index("install_or_validate_control_plane_database") < text.index(
-        'log "creating/updating mac environment file"'
-    ), (
-        "MAC_DATABASE_URL must exist before `mac.deploy_env write-mac-env` "
-        "runs, or the freshly written mac.env has no working DSN"
-    )
-
-
-def test_non_control_plane_nodes_never_require_a_local_database() -> None:
-    function = _function("install_or_validate_control_plane_database")
-    assert function.index("control_plane_enabled || return 0") < function.index(
-        "postgres_install_enabled"
-    )
-
-
-def test_existing_operator_database_is_preserved_before_auto_install() -> None:
-    function = _function("install_or_validate_control_plane_database")
-    assert "preserving existing operator-managed control-plane database" in function
-    assert function.index("existing_database_url=") < function.index(
-        "installing hub-managed PostgreSQL control-plane database"
-    )
-    assert 'export MAC_DEPLOY_DATABASE_URL="$existing_database_url"' in function
-
-
-def test_install_script_forwards_the_dsn_back_to_the_caller() -> None:
-    function = _function("install_or_validate_control_plane_database")
-    assert "POSTGRES_DSN_OUT_FILE" in function
-    assert "export MAC_DEPLOY_DATABASE_URL" in function
-    assert 'die "install-postgres-service.sh did not report a database DSN"' in function
 
 
 def test_install_script_exists_and_is_valid_bash() -> None:
@@ -145,6 +40,33 @@ def test_systemd_unit_template_exists() -> None:
     assert SYSTEMD_UNIT.exists()
     text = SYSTEMD_UNIT.read_text(encoding="utf-8")
     assert "POSTGRES_BIND_ADDR=127.0.0.1" in text
+    assert text.count("@POSTGRES_CONTAINER_RUNTIME@") == 3
+
+
+def test_systemd_unit_uses_the_selected_container_runtime(tmp_path: Path) -> None:
+    function = _extract_function(INSTALL_SCRIPT, "render_systemd_unit")
+    for runtime in ("/usr/bin/docker", "/usr/bin/podman"):
+        rendered = tmp_path / (Path(runtime).name + ".service")
+        result = subprocess.run(
+            ["bash", "-c", function + '\nrender_systemd_unit "$OUTPUT"'],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "UNIT_TEMPLATE": str(SYSTEMD_UNIT),
+                "ENV_DEST": "/etc/ovswarm/postgres.env",
+                "CONTAINER_CMD_ABS": runtime,
+                "OUTPUT": str(rendered),
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        text = rendered.read_text(encoding="utf-8")
+        assert "@POSTGRES_CONTAINER_RUNTIME@" not in text
+        assert text.count(runtime) == 3
+        assert "EnvironmentFile=-/etc/ovswarm/postgres.env" in text
+        other_runtime = "/usr/bin/podman" if runtime.endswith("docker") else "/usr/bin/docker"
+        assert other_runtime not in text
 
 
 def test_native_package_fallback_uses_noninteractive_apt() -> None:
@@ -191,6 +113,60 @@ def test_get_env_key_does_not_die_on_a_first_run_with_no_password_yet() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok:[]"
+
+
+def test_get_env_key_reads_an_existing_protected_env_through_privilege_boundary(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "postgres.env"
+    env_file.write_text("POSTGRES_PASSWORD=existing-volume-authority\n", encoding="utf-8")
+    env_file.chmod(0)
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            # Model passwordless sudo without requiring elevated privileges in
+            # the test process. The fixture is owner-unreadable, so reaching
+            # this function proves get_env_key chose its protected-file path.
+            'maybe_sudo() { chmod 600 "$PROTECTED_ENV"; "$@"; }',
+            _extract_function(INSTALL_SCRIPT, "get_env_key"),
+            'value="$(get_env_key "$PROTECTED_ENV" POSTGRES_PASSWORD)"',
+            'printf "value:[%s]\\n" "$value"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "PROTECTED_ENV": str(env_file)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "value:[existing-volume-authority]"
+    assert result.stderr == ""
+
+
+def test_get_env_key_fails_closed_when_protected_env_cannot_be_read(tmp_path: Path) -> None:
+    env_file = tmp_path / "postgres.env"
+    env_file.write_text("POSTGRES_PASSWORD=must-not-be-replaced\n", encoding="utf-8")
+    env_file.chmod(0)
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            "maybe_sudo() { return 1; }",
+            _extract_function(INSTALL_SCRIPT, "get_env_key"),
+            'get_env_key "$PROTECTED_ENV" POSTGRES_PASSWORD',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "PROTECTED_ENV": str(env_file)},
+    )
+    assert result.returncode != 0
+    assert "could not read existing protected environment file" in result.stderr
+    assert "must-not-be-replaced" not in result.stdout + result.stderr
 
 
 def _extract_function(path: Path, name: str) -> str:

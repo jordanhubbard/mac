@@ -7,8 +7,8 @@ sit underneath a human-facing agent runtime such as OpenClaw under OpenShell, Ne
 
 The human-facing runtime owns conversation, personality, adaptive memory,
 skills, and messaging gateways. `mac` owns durable operational truth: tasks,
-leases, routing, reviews, evidence, secrets, runtime manifests, rollout state,
-and audit trails. The fleet registry selects the human-channel runtime; the committed fleet
+leases, routing, reviews, evidence, secrets, runtime manifests, and audit
+trails. The fleet registry selects the human-channel runtime; the committed fleet
 default is Hermes (`gateway_impl: hermes`). OpenClaw is another deployment
 option. Internal agents may share a stable public identity.
 
@@ -50,12 +50,11 @@ integration or protocol influence is not mistaken for copied source:
   OpenShell policy for always-on chat channels while MAC remains the durable
   task and fleet control plane. See
   [OpenClaw public identities](docs/openclaw-identities.md).
-- **[OpenAI Codex](https://github.com/openai/codex) — coding executor:** MAC
-  installs and invokes the Codex CLI for repository-editing workers inside its
-  evidence and sandbox gates.
 - **[OpenCode](https://github.com/anomalyco/opencode) — coding executor and
-  reviewer:** MAC's Kubernetes runner includes OpenCode build and independent
-  review paths, wrapped by MAC-owned test, evidence, and publication gates.
+  reviewer:** OpenCode is MAC's only coding CLI. It runs inside MAC's sandbox
+  and evidence gates and takes its model from the hub router; MAC also ships
+  OpenCode build and independent review executors, wrapped by MAC-owned test,
+  evidence, and publication gates.
 - **[NVIDIA NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) — optional
   observability:** MAC maps request, task, tool, and model activity into Relay
   scopes when the `relay` extra is enabled.
@@ -112,17 +111,17 @@ This project provides durable contracts for coordinating a fleet:
 - Tenant-scoped secret handles with audit records and redacted API/CLI output.
 - Reproducible runtime manifests with stable digests and secret-value checks.
 - Tenant, user, Persona, Hermes instance, and platform binding records for multi-user expansion.
-- Project bridge, operational memory/provenance records, and gated rollout/rescue workflows.
+- Project bridge and operational memory/provenance records.
 - Repository runtime contract enforcement for registered project checkouts so
   agents can bootstrap and test work on macOS, Linux, WSL2, or narrower
   declared host families without relying on accidental local state.
 - Managed repository-ref lifecycles that distinguish superseded work from
   deferred or failed attempts, plus a hub-owned recurring reconciler that
   retires only exact-SHA eligible refs after a grace period.
-- Role catalog, role assignment, provisioning requests, and data-driven DAG
+- Role catalog, role assignment, and data-driven DAG
   workflows that turn multi-step plans into durable tasks with per-node role
   requirements and run history.
-- Evaluation contract: named `eval_sets` (scoring direction, baseline, regression threshold) and `eval_runs` against rollout versions, runtime environments, or agent builds; rollouts can require a passing `eval_run` before `promote`.
+- Evaluation contract: named `eval_sets` (scoring direction, baseline, regression threshold) and `eval_runs` against runtime environments or agent builds.
 - FastAPI REST API and `mac` CLI.
 - Hermes-side `mac-hermes` adapter for registration, sanitized task creation, status replies, and memory write-back payloads.
 
@@ -137,7 +136,7 @@ With the default Hermes gateway, Hermes owns interaction:
 
 `mac` deliberately does not implement agent souls or personal memory. Its
 `memory_records` are for operational provenance: imports, task evidence,
-decisions, rollout events, and durable facts needed to audit work. User memory
+decisions, and durable facts needed to audit work. User memory
 and personality memory stay in Hermes.
 
 Shared long-term recall is hub-managed infrastructure. The hub runs Qdrant for
@@ -244,8 +243,8 @@ Use `make install-cli` or `make install-gui` when only one surface is needed.
 Installation requires Python 3.14.7 (pinned in `.python-version`), `uv`, Git,
 GitHub CLI (`gh`), and npm. `uv python install` provisions the reviewed Python
 version. See [the Python baseline](docs/python-baseline.md) for environment
-updates. Fleet configuration/deployment is intentionally
-separate under `make setup` and `make deploy`.
+updates. Fleet provisioning and updates are separate: see
+[Updating the fleet with fleet-update](docs/operations/fleet-update.md).
 
 For local control-plane/API development after installation:
 
@@ -399,47 +398,26 @@ a named hub plus the workers that join it. A fleet is a first-class object —
 `~/.mac/fleets.yaml` holds as many as you like, each with its own hub URL and
 token, selected with `--fleet <name>` or `$MAC_FLEET`.
 
-**Before you start**, have SSH key access working to every host you intend to
-use, from the machine you are running the wizard on. The wizard configures; it
-does not fix SSH. You also need at least one upstream LLM provider API key
-(nvidia / openai / anthropic / perplexity) — the wizard will not finish without
-one, because a fleet with no provider cannot execute a task.
+### 1. Provision the hub and workers
 
-### 1. Create the fleet and its hub
+Each host runs MAC from a git checkout at `~/.mac/src/mac`. Provision the hub
+and each worker by hand with the "Provision a new host" checklist in
+[Updating the fleet with fleet-update](docs/operations/fleet-update.md). You
+need SSH key access from the hub to every worker and at least one upstream LLM
+provider API key (nvidia / openai / anthropic / perplexity).
 
-Run the wizard on the machine that will be the hub, or point it at one:
+`~/.mac/fleets.yaml`, `~/.mac/fleet-hosts` and the env files are not in this
+repository, and should never be committed: fleet topology and provider keys
+are yours, not the product's.
 
-```bash
-bash setup.sh
-```
+### 2. Update it
 
-It asks two questions before anything else — whether you are on the machine
-being configured, and whether this is a **hub** or a **worker**. Choose `hub`.
-It then collects the fleet name, supervisor (`auto` picks launchd on macOS,
-systemd on Linux), network provider (Tailscale by default), and your provider
-key, writes `~/.mac/fleets.yaml` and `~/.mac/.env`, and deploys.
-
-To write the config without deploying yet:
+From the hub, move the hub and every worker to a commit, one host at a time:
 
 ```bash
-bash setup.sh --configure-only
+scripts/fleet-update --dry-run all <sha>
+scripts/fleet-update all <sha>
 ```
-
-Neither file is in this repository, and neither should ever be committed:
-fleet topology and provider keys are yours, not the product's.
-
-### 2. Add workers
-
-Run the wizard again for each additional host and choose `worker`. It looks up
-the existing fleet by hub name and asks only what is new — the worker's name,
-SSH target, OS, supervisor, and mode:
-
-```bash
-bash setup.sh
-```
-
-Workers do not need a checkout of this repository. Deploy ships the source to
-each host and installs it.
 
 ### 3. Watch it work
 
@@ -470,7 +448,7 @@ tables.
 ### If something does not come up
 
 ```bash
-mac --fleet <name> admin fleet doctor      # what the hub thinks is wrong
+mac --fleet <name> admin diagnostics      # what the hub thinks is wrong
 mac --fleet <name> task why-unclaimed <id> # why a specific task is not moving
 mac --fleet <name> task preflight ...      # before filing: could this ever be claimed?
 ```
@@ -504,10 +482,10 @@ API token rules as the REST API.
 
 It is READ-ONLY, and that is the point rather than a limitation. It answers
 what the fleet is doing — tasks and agents moving through states — with views
-for live movement, stuck work, agents, projects, pipelines, dream & nap cycles,
-telemetry, the merge queue, and a per-task drill-down. The live view charts
-state transitions per time bucket, because a count tells you 360 tasks are
-blocked and only a series tells you whether they are arriving or draining.
+for live movement, stuck work, agents, projects, pipelines, telemetry, the
+merge queue, and a per-task drill-down. The live view charts state transitions
+per time bucket, because a count tells you 360 tasks are blocked and only a
+series tells you whether they are arriving or draining.
 
 Two properties it will not trade away:
 
@@ -535,7 +513,6 @@ Key route groups:
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`
 - `/roles`, `/agents/{id}/role`, `/agents/{id}/identity`
-- `/provisioning/requests`
 - `/workflows`, `/workflows/import-yaml`, `/workflows/seed`, `/workflows/{id}/start`, `/workflows/runs`, `/workflows/runs/tick`
 - `/messages`
 - `/agentbus`, `/agentbus/streams`, `/agentbus/streams/{id}/chunks`, `/agentbus/streams/{id}/events`
@@ -544,12 +521,10 @@ Key route groups:
 - `/secrets`, `/secrets/{id}/access`, `/secrets/{id}/reveal`, `/secret-audits`
 - `/runtimes`, `/runtime-runs`
 - `/artifacts`, `/artifacts/{id_or_digest}` — canonical record for deliverables (kind, digest, uri, sbom_uri, signers); re-registering the same digest augments signers/metadata
-- `/environments`, `/environments/{id}/deploy|current|deployments` — environment registry + artifact→environment deployment edges; deploy atomically retires the prior active deployment
 - `/fleet/build-distribution` — aggregate live agents by `running_digest`; agents declare their build via `heartbeat`
 - `/bridge/items`, `/memory`
-- `/rollouts`, `/rollouts/{id}/artifact`, `/rollouts/{id}/health`, `/rollouts/{id}/rescue`
 - `/eval-sets`, `/eval-sets/{id}/baseline`, `/eval-sets/{id}/events`, `/eval-runs`
-- `/events` — unified audit stream across task/agent/project/fleet/rollout/eval_set/secret/environment/conversation_thread/vector_ref surfaces; filter by `subject_type`, `subject_id`, `actor`, `event_type`, `event_type_prefix`, `since`, `until`, `limit`
+- `/events` — unified audit stream across task/agent/project/fleet/eval_set/secret/conversation_thread/vector_ref surfaces; filter by `subject_type`, `subject_id`, `actor`, `event_type`, `event_type_prefix`, `since`, `until`, `limit`
 - `/observability`, `/observability/metrics`, `/observability/logs`, `/observability/summary`, `/observability/stream` — low-level metric/log ingestion, query, summary, and NDJSON subscription across API, control-plane, worker, Hermes, deploy, and external-agent layers
 - `/notifications`, `/notifications/{id}/delivered`
 - `/integrations/findings`, `/integrations/observations`
@@ -703,9 +678,7 @@ For repository-backed work, the production path is:
    release blockers. Independent build and test checks may still veto an
    approval. Review nudges are capped by durable delivered attempts, so a
    verifier that cannot produce a verdict is retracted instead of being
-   nudged indefinitely. The hub's hourly judgement process
-   (`mac admin judgement`) watches gate quality and task-state pile-ups and
-   can stop tasks, hold agents, or stop and redeploy the fleet.
+   nudged indefinitely.
 8. Publication completes the mac task. Failed tasks are reopened with a bounded
    retry policy; exhausted retries remain failed and visible.
 
@@ -799,43 +772,26 @@ echo -n "$GH_TOKEN" | mac --db "$MAC_DB" secret set github-token \
 mac --db "$MAC_DB" secret set release-key --from-file ./release.key \
     --scopes '{"capabilities":["deploy"]}' --created-by human
 
-# Rollouts require a pinned runtime and verified sha256 artifact before install.
+# Runtime manifests must pin images and dependencies.
 mac --db "$MAC_DB" runtime create mac-runtime \
     --manifest '{"image":"python:3.12@sha256:abc123","dependencies":["fastapi==0.111.0"]}' \
     --created-by human
-mac --db "$MAC_DB" rollout create 1.2.0 canary --runtime runtime_... \
-    --artifact-uri artifact://mac/1.2.0 --artifact-hash sha256:abc123 \
-    --health-policy '{"required_checks":["runtime","canary"]}' \
-    --created-by human
-mac --db "$MAC_DB" rollout advance rollout_... start_canary --actor human
-mac --db "$MAC_DB" rollout health rollout_... \
-    --checks '{"runtime":"healthy","canary":"ok"}' --actor monitor
 
-# Evaluation: define a scored eval set, record runs against rollout versions,
-# and gate promotion on a passing run.
+# Evaluation: define a scored eval set and record runs against a runtime.
 mac --db "$MAC_DB" eval set create task-success-rate \
     --scoring higher_is_better --baseline-score 0.90 --regression-threshold 0.02
-mac --db "$MAC_DB" eval run record evalset_... rollout_version 1.2.0 0.93
-mac --db "$MAC_DB" rollout create 1.3.0 canary --runtime runtime_... \
-    --artifact-uri artifact://mac/1.3.0 --artifact-hash sha256:def456 \
-    --required-eval-set-id evalset_... --created-by human
-mac --db "$MAC_DB" rollout advance rollout_... start_canary --actor human
-# promote refused until a passing eval run exists for version 1.3.0
-mac --db "$MAC_DB" rollout advance rollout_... promote --actor human
+mac --db "$MAC_DB" eval run record evalset_... runtime_environment runtime_... 0.93
 
-# Unified audit stream: one query across task/agent/project/fleet/rollout/eval_set/secret/environment events.
+# Unified audit stream: one query across task/agent/project/fleet/eval_set/secret events.
 mac --db "$MAC_DB" events list --limit 50
-mac --db "$MAC_DB" events list --subject-type rollout --subject-id rollout_...
-mac --db "$MAC_DB" events list --prefix rollout. --since 2026-05-17T00:00:00+00:00
-mac --db "$MAC_DB" events list --actor monitor --event-type rollout.health_failure_during_rescue
+mac --db "$MAC_DB" events list --subject-type eval_set --subject-id evalset_...
+mac --db "$MAC_DB" events list --prefix task. --since 2026-05-17T00:00:00+00:00
+mac --db "$MAC_DB" events list --actor monitor --event-type eval_set.baseline_changed
 mac --db "$MAC_DB" observability list --layer control_plane --subject-type fleet
 
-# Artifact registry + environment deployments + fleet build inventory.
+# Artifact registry + fleet build inventory.
 mac --db "$MAC_DB" artifact register image sha256:abc... artifact://mac/v1.2.0 \
     --created-by ci --sbom-uri sbom://mac/v1.2.0.spdx --signers ci,release-manager
-mac --db "$MAC_DB" env register staging --channel release --created-by human
-mac --db "$MAC_DB" env deploy staging sha256:abc... --actor release-bot
-mac --db "$MAC_DB" env current staging
 mac --db "$MAC_DB" agent heartbeat agent_... --running-digest <runtime-digest>
 mac --db "$MAC_DB" fleet build-distribution
 
@@ -884,10 +840,9 @@ mac-hermes --url http://127.0.0.1:8789 reply task_...
 mac-hermes --url http://127.0.0.1:8789 writeback hermes_... task_...
 ```
 
-Fleet deployment reads generic defaults from `deploy/fleet/config.yaml` and
-real topology from the home-scoped registry `~/.mac/fleets.yaml`. Run
-`make setup` to create `~/.mac/fleets.yaml` and `~/.mac/.env`. Each fleet is
-keyed by its hub node name; deploy with `make deploy HUB=<hub-node>`.
+Clients read fleet topology from the home-scoped registry `~/.mac/fleets.yaml`;
+each fleet is keyed by its hub node name. Hosts are provisioned and updated as
+described in [Updating the fleet with fleet-update](docs/operations/fleet-update.md).
 Fleet mesh networking is selected in that registry with `network.provider`;
 `tailscale` is the default, while `headscale` is advanced opt-in and requires an
 explicit login server, enrollment-key source, DNS assumption, and health check.
@@ -898,13 +853,12 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Hermes Boundary](docs/hermes-boundary.md)
 - [Hermes Integration](docs/hermes-integration.md)
 - [Production Deployment](docs/production-deployment.md)
-- [Fleet Node Onboarding Checklist](docs/fleet-node-onboarding-checklist.md)
+- [Updating the fleet with fleet-update](docs/operations/fleet-update.md)
 - [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
 - [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md)
 - [Fleet Operational Learning](docs/fleet-operational-learning.md)
 - [OpenClaw public identities](docs/openclaw-identities.md)
-- [Review-strategy experiments](docs/review-strategy-experiments.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
 - [Scaling Plan](docs/archive/field-notes/scaling-plan.md) (historical)

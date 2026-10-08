@@ -215,12 +215,9 @@ Once all hosts are migrated:
    - `deploy/hermes/mac-provider-decision.patch`
    - `deploy/hermes/post-snapshot-mac-fixes.patch`
    - `deploy/hermes/disable-shutdown-chat-notices.patch`
-   - The hermes gateway service from `deploy/deploy-mac-fleet.sh` install path.
+   - The hermes gateway service install path.
 
-2. **Update fleet config defaults**: set `hermes.gateway_impl: nemoclaw` as
-   the default in `deploy/fleet/config.yaml`.
-
-3. **Update this runbook** with final per-host migration timestamps.
+2. **Update this runbook** with final per-host migration timestamps.
 
 ---
 

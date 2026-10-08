@@ -6,29 +6,18 @@ reference material and is not invoked by this path.
 
 Task execution is a separate MAC worker role. It uses an authenticated coding
 agent inside the task OpenShell sandbox and fails closed when no verified route
-exists. Reflection and ACP agent turns enter this OpenClaw sandbox through the
-host `openclaw-agent` wrapper; no path falls back to Hermes chat.
+exists. Reflection agent turns enter this OpenClaw sandbox through the host
+`openclaw-agent` wrapper; no path falls back to Hermes chat.
 
 ## Pinned runtime
 
 - OpenClaw: `2026.6.11`
 
-The authoritative, machine-readable target of record for every fleet role
-lives in `deploy/openclaw/fleet-target.json` (schema `mac.fleet_target.v1`).
-Read or update it with `mac admin fleet target show|get|list|set` (see
-`src/mac/fleet_target.py`). It pins, per role, the MAC source revision (git
-commit) and — for the gateway role — the OpenClaw `version` and image
-`revision`. Prefer the manifest over hardcoded numbers below; the values
-here are illustrative of the current pin.
-
 - Source image: `ghcr.io/openclaw/openclaw:2026.6.11`
 - Manifest digest: `sha256:3814fb1f62f9cfc5944de088c5817c68c88b5d721feebe36420b666a90a61ce7`
-- Local image: built from the pinned OpenClaw `version` + image `revision`
-  recorded in the authoritative target of record
-  (`deploy/openclaw/fleet-target.json`, role `gateway`), e.g.
-  `localhost/mac-openclaw:<version>-mac.<revision>`. Live hosts carry
-  commit-hash image revisions; the manifest records the numeric build
-  `revision` that produced the pinned image.
+- Local image: built from the pinned OpenClaw `version` and image `revision`,
+  e.g. `localhost/mac-openclaw:<version>-mac.<revision>`. Live hosts carry
+  commit-hash image revisions.
 - OpenShell: the MAC fleet pin installed by `deploy/openshell/bootstrap-openshell.sh`
 
 The official image is extended only with OpenShell's required non-root
@@ -169,16 +158,17 @@ state; differing files are retained under `~/.mac/openclaw/backups/`.
 
 ## Fleet deployment
 
-Set `hermes.gateway_impl: openclaw` in the fleet configuration and deploy in
-this order:
+The fleet deploy script that automated this cutover has been deleted; hosts
+are now updated with `scripts/fleet-update` (see
+`docs/operations/fleet-update.md`), which does not switch chat gateways. Cut
+over by hand, host by host, in this order:
 
 1. One non-hub physical worker as the canary.
 2. The remaining non-hub physical workers.
 3. Containerized worker and hub nodes.
 4. The primary fleet hub last.
 
-`deploy/deploy-mac-fleet.sh` supports systemd, supervisord, and launchd. It
-starts OpenClaw, then requires all of these checks before disabling Hermes:
+Start OpenClaw and confirm all of these before disabling Hermes:
 
 - `openclaw config validate --json`;
 - runtime import of `mac-continuity`, all seven continuity/curiosity tools, and its
@@ -189,7 +179,7 @@ starts OpenClaw, then requires all of these checks before disabling Hermes:
 - authenticated in-sandbox `openclaw health --verbose --json` RPC health;
 - live Slack and Telegram channel probes.
 
-After those positive probes, deploy disables Hermes and NemoClaw and runs a
+After those positive probes, disable Hermes and NemoClaw and run the
 second, supervisor-specific finalization gate. That gate proves OpenClaw is
 active and both legacy gateways are inactive. A service advertisement is not
 published until this negative exclusivity proof passes.
@@ -271,10 +261,7 @@ Update all pins together:
 
 1. official tag and manifest digest in `OpenClaw.Containerfile`;
 2. `OPENCLAW_VERSION` in `install-openclaw-gateway.sh`;
-3. the authoritative target of record via
-   `mac admin fleet target set gateway <source-commit> --openclaw-version <v> --openclaw-revision <r>`
-   (writes `deploy/openclaw/fleet-target.json`);
-4. this runbook.
+3. this runbook.
 
 Run the focused deployment tests, stock OpenClaw config validation, a canary,
 and the full repository contract before fleet promotion. Never replace the

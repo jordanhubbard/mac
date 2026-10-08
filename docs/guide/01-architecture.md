@@ -25,13 +25,13 @@ graph TB
         DB[("PostgreSQL<br/>the ledger")]
         SWEEP["publication worker<br/>review → publish"]
         RET["retention loop"]
-        MQ["native merge queue"]
+        LAND["serial land loop<br/>one landing per repository"]
     end
 
     subgraph Workers["Worker agents (many)"]
         W1["mac-agent<br/>claim · lease · execute"]
         SB["OpenShell sandbox"]
-        CA["coding agent CLI<br/>claude / codex / cursor"]
+        CA["coding agent CLI<br/>opencode"]
     end
 
     FORGE["GitHub"]
@@ -42,7 +42,7 @@ graph TB
     API --- DB
     SWEEP --- DB
     RET --- DB
-    MQ --- DB
+    LAND --- DB
     W1 -->|heartbeat, claim-next| API
     W1 --> SB --> CA
     SWEEP -->|open / merge PR| FORGE
@@ -79,7 +79,6 @@ erDiagram
     MACHINE ||--o{ AGENT : hosts
     AGENT ||--o{ LEASE : holds
     FLEET ||--o{ AGENT : registers
-    TASK ||--o{ MERGE_QUEUE_ENTRY : "lands through"
 ```
 
 ## Actors
@@ -96,9 +95,9 @@ because authority differs:
   describe what remains outside that control.
 - **Worker agent** (`mac-agent`) — registers, heartbeats, claims one task at a
   time under a lease, executes it, submits evidence.
-- **Coding agent** — the CLI (Claude Code, Codex, Cursor) the worker spawns
-  *inside* a sandbox to do the actual work. It is not a mac principal; the
-  worker is.
+- **Coding agent** — opencode, the one CLI the worker spawns *inside* a
+  sandbox to do the actual work. It takes its model from the hub router with a
+  per-task inference token. It is not a mac principal; the worker is.
 - **Reviewer** — an agent or the default review workflow, producing a verdict
   that gates publication.
 
@@ -113,6 +112,8 @@ stateDiagram-v2
     open --> claimed
     claimed --> running
     running --> needs_review
+    needs_review --> completed
+    needs_review --> open
     needs_review --> reviewing
     reviewing --> completed
 
@@ -137,10 +138,17 @@ Two properties surprise people, and both are deliberate:
 
 - **`completed` is the only truly terminal state.** `failed` and `cancelled`
   both allow `-> open`, because a task that died is often a task to retry.
-- **You cannot jump to `completed`.** It is reachable only from `reviewing`,
-  and only with durable canonical integration proof — a merged commit on the
-  canonical branch. `mac task force-complete` exists as audited break-glass and
-  still refuses without that proof.
+- **You cannot jump to `completed`.** It is reachable only from review
+  (`needs_review`, or `reviewing`), only with an approved review, and only with
+  durable canonical integration proof — a merged commit on the canonical
+  branch. `mac task force-complete` exists as audited break-glass and still
+  refuses without that proof.
+
+The default workflow never enters `reviewing`: the hub-reviewer approves from
+the worker's verified evidence and the land loop publishes straight from
+`needs_review` (a rejection or a rebase send-back reopens the task). Only a
+human-requested review (`POST /tasks/{id}/reviews`) moves a task to
+`reviewing`; older rows in that state still complete through the land loop.
 
 ## How work actually flows
 
@@ -168,29 +176,31 @@ The lease is the concurrency primitive: one live lease per task, renewed by
 heartbeat, reclaimed on expiry. A worker that dies mid-task loses its lease and
 the task returns to the pool rather than being stranded.
 
-## Publication and the merge queue
+## Publication: the serial land loop
 
-GitHub merge queues are an **organization-only** feature, so a personal
-repository gets no forge-side serialization. mac provides its own
-(`src/mac/native_merge_queue.py`): an ordered queue per
-`(repository, canonical branch)` with an AIMD speculation window.
+Approved work lands one change at a time per `(repository, canonical branch)`,
+under a PostgreSQL advisory lock. One test gate decides each landing: the
+repository's required status checks where it has them, otherwise the worker's
+own verifier run. The hub runs no tests itself.
 
-The safety property is structural rather than bookkeeping: each entry records
-the *tree* it was tested against, and the land gate refuses unless the
-canonical tip's tree is byte-identical. Trees rather than SHAs is what survives
-a squash merge.
+Without required checks, the worker's result covers the landed tree only while
+the canonical tip is still the base it verified. A moved tip, or a conflict
+with it, sends the same task back to its worker to rebase and retest, at most
+twice before the task blocks.
 
 ```mermaid
 graph LR
-    A["approved task"] --> B["claim_slot"]
-    B --> C{"window has room?"}
-    C -->|no| D["defer<br/>keeps its place"]
-    C -->|yes| E["test on projected base"]
-    E --> F{"tree matches tip?"}
-    F -->|no| G["evict, with a reason"]
-    F -->|yes| H["merge → landed"]
-    H --> I["window += 1"]
-    G --> J["window ÷ 2"]
+    A["approved task"] --> L["land lock<br/>per repository"]
+    L --> C{"conflicts with tip?"}
+    C -->|yes| R["send back:<br/>rebase + retest"]
+    C -->|no| K{"required checks?"}
+    K -->|yes| P{"checks"}
+    P -->|pending| W["wait"]
+    P -->|failed| B["blocked"]
+    P -->|passed| M["squash merge → landed"]
+    K -->|no| T{"tip = verified base?"}
+    T -->|no| R
+    T -->|yes| M
 ```
 
 ## Sandboxing

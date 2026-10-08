@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated compatibility shim. The former implementation emitted an
-# unconditional approval without inspecting executor evidence or a checkout.
-set -euo pipefail
-
-echo "mac-task-executor-codex-review is disabled: use mac-task-executor-opencode-review" >&2
-exit 64

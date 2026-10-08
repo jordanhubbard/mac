@@ -121,8 +121,6 @@ FORMER_STARTUP_ENSURE_COLUMNS = frozenset(
         ("agents", "installed_packages"),
         ("agents", "attestation_key_prev_ciphertext"),
         ("agents", "attestation_key_history_ciphertext"),
-        ("fleet_release_epoch_agents", "prior_report_executor_projection_sha256"),
-        ("fleet_release_epochs", "abort_disposition"),
         ("tasks", "human_assignees"),
         ("tasks", "created_by_human"),
         ("tasks", "idempotency_key"),
@@ -133,20 +131,6 @@ FORMER_STARTUP_ENSURE_COLUMNS = frozenset(
         ("agents", "last_control_stream_published_at"),
         ("agents", "last_control_stream_consumed_at"),
         ("reviews", "findings"),
-        ("fleet_release_admission_episodes", "project"),
-        ("fleet_release_admission_episodes", "barrier_resource_digest"),
-        ("fleet_release_admission_episodes", "owner_kind"),
-        ("fleet_release_admission_episodes", "owner_id"),
-        ("fleet_release_admission_episodes", "waiter_kind"),
-        ("fleet_release_admission_episodes", "waiter_id"),
-        ("fleet_release_admission_episodes", "waiting_publishers"),
-        ("fleet_release_admission_episodes", "waiting_epoch_openers"),
-        ("fleet_release_admission_episodes", "queue_depth"),
-        ("fleet_release_admission_episodes", "wait_started_at"),
-        ("fleet_release_admission_episodes", "wait_ended_at"),
-        ("fleet_release_admission_episodes", "wait_seconds"),
-        ("fleet_release_admission_episodes", "outcome"),
-        ("fleet_release_admission_episodes", "metadata"),
     }
 )
 AUTHORITY_DDL = """
@@ -230,9 +214,18 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         "0002_dream_candidate_store",
         _load_sql(MIGRATION_PATH / "0002_dream_candidate_store.sql"),
+        # 0004 drops these tables again. Every applied postcondition is
+        # re-proved on each verification, so this one holds either while the
+        # tables exist or once the migration that removed them is recorded.
         """
-        SELECT to_regclass(current_schema() || '.dream_runs') IS NOT NULL
-           AND to_regclass(current_schema() || '.dream_candidate_entries') IS NOT NULL
+        SELECT (
+                   to_regclass(current_schema() || '.dream_runs') IS NOT NULL
+               AND to_regclass(current_schema() || '.dream_candidate_entries') IS NOT NULL
+               )
+            OR EXISTS (
+                   SELECT 1 FROM schema_migrations
+                   WHERE migration_id = '0004_drop_removed_feature_tables'
+               )
         """,
     ),
     Migration(
@@ -245,6 +238,117 @@ MIGRATIONS: tuple[Migration, ...] = (
            AND to_regprocedure(
                    current_schema() || '.trg_work_package_expiry_task_detach_guard()'
                ) IS NULL
+        """,
+    ),
+    Migration(
+        "0004_drop_removed_feature_tables",
+        _load_sql(MIGRATION_PATH / "0004_drop_removed_feature_tables.sql"),
+        """
+        SELECT bool_and(to_regclass(current_schema() || '.' || name) IS NULL)
+        FROM unnest(ARRAY[
+            'scientific_decisions',
+            'scientific_observations',
+            'scientific_assignments',
+            'scientific_experiments',
+            'scientific_policies',
+            'scientific_optimizer_events',
+            'scientific_optimizer_locks',
+            'dream_candidate_entries',
+            'dream_runs',
+            'nap_runs',
+            'nap_schedules'
+        ]) AS name
+        """,
+    ),
+    Migration(
+        "0005_drop_native_merge_queue_tables",
+        _load_sql(MIGRATION_PATH / "0005_drop_native_merge_queue_tables.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.merge_queue_entries') IS NULL
+           AND to_regclass(current_schema() || '.merge_queue_windows') IS NULL
+        """,
+    ),
+    Migration(
+        "0006_drop_rollout_and_deploy_tables",
+        _load_sql(MIGRATION_PATH / "0006_drop_rollout_and_deploy_tables.sql"),
+        """
+        SELECT bool_and(to_regclass(current_schema() || '.' || name) IS NULL)
+        FROM unnest(ARRAY[
+            'rollout_events',
+            'rollouts',
+            'deployments',
+            'environment_events',
+            'managed_task_publication_rollout'
+        ]) AS name
+        """,
+    ),
+    Migration(
+        "0007_drop_agent_provisioning_requests",
+        _load_sql(MIGRATION_PATH / "0007_drop_agent_provisioning_requests.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.agent_provisioning_requests') IS NULL
+        """,
+    ),
+    Migration(
+        "0008_drop_self_upgrade_and_release_epoch_tables",
+        _load_sql(MIGRATION_PATH / "0008_drop_self_upgrade_and_release_epoch_tables.sql"),
+        """
+        SELECT bool_and(to_regclass(current_schema() || '.' || name) IS NULL)
+           AND to_regprocedure(current_schema() || '._trg_source_releases_sha_immutable()')
+               IS NULL
+           AND to_regprocedure(current_schema() || '._trg_fleet_desired_source_gen_monotonic()')
+               IS NULL
+        FROM unnest(ARRAY[
+            'fleet_upgrade_events',
+            'fleet_upgrades',
+            'source_convergence_nodes',
+            'source_convergence_controller_leases',
+            'fleet_release_attestation_candidates',
+            'fleet_release_epoch_agents',
+            'fleet_release_epochs',
+            'fleet_release_admission_episodes',
+            'fleet_desired_source_idempotency',
+            'fleet_desired_source_transitions',
+            'fleet_desired_source_states',
+            'source_releases',
+            'environments'
+        ]) AS name
+        """,
+    ),
+    Migration(
+        "0009_slim_worker_credentials",
+        _load_sql(MIGRATION_PATH / "0009_slim_worker_credentials.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.worker_credential_events') IS NULL
+           AND to_regclass(current_schema() || '.worker_credential_policy_state') IS NULL
+           AND NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema()
+                     AND table_name = 'worker_credentials'
+                     AND column_name IN (
+                         'fleet',
+                         'environment',
+                         'expected_source_commit',
+                         'expected_runtime_digest',
+                         'required_capabilities',
+                         'package_capable',
+                         'destination'
+                     )
+               )
+        """,
+    ),
+    Migration(
+        "0010_inference_tokens",
+        _load_sql(MIGRATION_PATH / "0010_inference_tokens.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.inference_tokens') IS NOT NULL
+        """,
+    ),
+    Migration(
+        "0011_task_messages",
+        _load_sql(MIGRATION_PATH / "0011_task_messages.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.task_messages') IS NOT NULL
         """,
     ),
 )
@@ -295,20 +399,74 @@ def _column_names(body: str) -> set[str]:
     return columns
 
 
-def _expected_inventory(sql: str) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    tables = {table: _column_names(body) for table, body in _table_bodies(sql).items()}
+def _dropped_tables(sql: str) -> set[str]:
+    """Tables a later statement drops and nothing after it creates again."""
+
+    final: dict[str, bool] = {}
     for match in re.finditer(
-        r"ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)", sql, re.IGNORECASE
+        r"\b(?:(?P<create>CREATE TABLE(?: IF NOT EXISTS)?)|DROP TABLE(?: IF EXISTS)?)\s+(?P<name>\w+)",
+        sql,
+        re.IGNORECASE,
     ):
-        if match.group(1) in tables:
-            tables[match.group(1)].add(match.group(2))
+        final[match.group("name")] = match.group("create") is None
+    return {table for table, dropped in final.items() if dropped}
+
+
+def _dropped_functions(sql: str) -> set[str]:
+    """Functions a later statement drops and nothing after it creates again.
+
+    Unlike a trigger, a function does not go with the table it served, so a
+    migration that retires one drops it explicitly.
+    """
+
+    final: dict[str, bool] = {}
+    for match in re.finditer(
+        r"\b(?:(?P<create>CREATE OR REPLACE FUNCTION)|DROP FUNCTION(?: IF EXISTS)?)\s+(?P<name>\w+)\s*\(",
+        sql,
+        re.IGNORECASE,
+    ):
+        final[match.group("name")] = match.group("create") is None
+    return {function for function, dropped in final.items() if dropped}
+
+
+def _expected_inventory(sql: str) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    dropped = _dropped_tables(sql)
+    tables = {
+        table: _column_names(body)
+        for table, body in _table_bodies(sql).items()
+        if table not in dropped
+    }
+    # Column changes apply in file order, so a column a later migration drops
+    # is not expected to exist.
+    for match in re.finditer(
+        r"ALTER TABLE\s+(\w+)\s+(ADD|DROP) COLUMN IF (?:NOT )?EXISTS\s+(\w+)",
+        sql,
+        re.IGNORECASE,
+    ):
+        table, action, column = match.groups()
+        if table in tables:
+            if action.upper() == "ADD":
+                tables[table].add(column)
+            else:
+                tables[table].discard(column)
+    # An index or trigger goes with its table, so one declared on a table a
+    # later migration dropped is not expected to exist.
     objects = {
-        "indexes": set(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+(\w+)", sql)),
-        "triggers": set(re.findall(r"CREATE TRIGGER\s+(\w+)", sql)),
+        "indexes": {
+            match.group(1)
+            for match in re.finditer(
+                r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+(\w+)\s+ON\s+(\w+)", sql
+            )
+            if match.group(2) not in dropped
+        },
+        "triggers": {
+            match.group(1)
+            for match in re.finditer(r"CREATE TRIGGER\s+(\w+)\s.*?\bON\s+(\w+)", sql, re.DOTALL)
+            if match.group(2) not in dropped
+        },
         "views": set(re.findall(r"CREATE OR REPLACE VIEW\s+(\w+)", sql)),
-        "functions": set(
-            re.findall(r"CREATE OR REPLACE FUNCTION\s+(\w+)\s*\(", sql, re.IGNORECASE)
-        ),
+        "functions": set(re.findall(r"CREATE OR REPLACE FUNCTION\s+(\w+)\s*\(", sql, re.IGNORECASE))
+        - _dropped_functions(sql),
     }
     return tables, objects
 

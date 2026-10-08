@@ -40,14 +40,17 @@ from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
 from mac.worker import (
+    CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS,
     MacWorker,
     SubprocessExecutor,
     WorkerExecution,
+    _coding_route_probe_delay,
     _detect_command_inventory,
     _openshell_containerfile_changed,
     build_parser,
     register_worker,
 )
+from tests.conftest import verifier_test_item
 
 
 def api_transport(client: TestClient):
@@ -281,7 +284,7 @@ def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: P
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
     reviewed = cp.get_task(task.id)
-    assert reviewed.state == TaskState.REVIEWING.value
+    assert reviewed.state == TaskState.NEEDS_REVIEW.value
     assert reviewed.owner_agent_id is None
     assert reviewed.lease_id is None
     assert cp.get_task(skipped.id).state == TaskState.OPEN.value
@@ -322,7 +325,7 @@ def test_mac_worker_executes_assignment_already_claimed_by_dispatcher(tmp_path: 
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
     assert any(
         row.name == "worker.routing.resumed" and row.subject_id == task.id
         for row in cp.list_observability(
@@ -456,553 +459,7 @@ def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-
-
-def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
-    tmp_path: Path, semantic_reviewer_on
-):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-    task = cp.create_task(
-        "Reviewable repo task",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://publish"},
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-            "remote_ref": "origin/main",
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["src/example.py"],
-        },
-        "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    assert first["reviewer_agent_id"] == reviewer.id
-    client = TestClient(create_app(control_plane=cp))
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        assert context["task_id"] == task.id
-        assert context["review_id"] == first["review_id"]
-        assert context["executor_evidence_id"] == evidence.id
-        assert context["review_claim"]["review_id"] == first["review_id"]
-        assert context["review_claim"]["reviewer_agent_id"] == reviewer.id
-        assert context["review_claim"]["executor_evidence_id"] == evidence.id
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": dict(executor_manifest["repo"]),
-            "checks": [{"name": "reviewer independent verification", "returncode": 0}],
-            "worktree_digest": "sha256:" + ("0" * 64),
-            "findings": ["executor evidence is signed and tests passed"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path,
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    verdict_evidence = cp.list_evidence(task.id)[-1]
-    manifest = verdict_evidence.metadata["verification"]
-    assert verdict_evidence.kind == "review"
-    assert manifest["evidence_type"] == "review_verdict"
-    assert manifest["signed_by"] == reviewer.id
-    assert manifest["reviewed_evidence_id"] == evidence.id
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    assert cp.get_agent(reviewer.id).status == "idle"
-    task_metadata = cp.get_task(task.id).metadata
-    assert task_metadata["review_claims"][first["review_id"]]["reviewer_agent_id"] == reviewer.id
-    assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
-
-
-def test_review_nudge_prepares_review_worktree_and_git_main_publication(
-    tmp_path: Path, semantic_reviewer_on
-):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-    _seed, repo = _git_fixture(tmp_path)
-    _git(repo, "config", "user.email", "mac-tests@example.invalid")
-    _git(repo, "config", "user.name", "mac tests")
-    remote_url = _git(repo, "remote", "get-url", "origin")
-    branch = "mac/review-proof"
-    _git(repo, "checkout", "-b", branch)
-    (repo / "README.md").write_text("reviewed change\n", encoding="utf-8")
-    _git(repo, "add", "README.md")
-    _git(repo, "commit", "-m", "reviewed change")
-    _git(repo, "push", "-u", "origin", branch)
-    reviewed_head = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "checkout", "main")
-    hub_checkout_head = _git(repo, "rev-parse", "HEAD")
-
-    metadata = _repository_task_metadata(repo)
-    metadata["publication_target"] = "git://main"
-    task = cp.create_task(
-        "Reviewable pushed branch",
-        project="repo-beads-mac",
-        required_capabilities=["python"],
-        metadata=metadata,
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": reviewed_head,
-            "remote_ref": "refs/heads/%s" % branch,
-            "remote_url": remote_url,
-            "path": str(repo),
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["README.md"],
-        },
-        "checks": [{"name": "executor tests", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    client = TestClient(create_app(control_plane=cp))
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        runtime = task_payload["metadata"]["runtime"]
-        assert context["review_claim"]["reviewer_agent_id"] == reviewer.id
-        assert context["review_claim"]["executor_evidence_id"] == evidence.id
-        assert "project" not in context["review_claim"]
-        assert "repository_worktree" not in context["review_claim"]
-        assert "repository_files_changed" not in context["review_claim"]
-        review_worktree = Path(runtime["repository_worktree"])
-        assert review_worktree.is_dir()
-        assert _git(review_worktree, "rev-parse", "HEAD") == reviewed_head
-        assert _git(review_worktree, "remote", "get-url", "origin") == remote_url
-        assert context["review_repository_worktree"]["repository_worktree"] == str(review_worktree)
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": {
-                "head_sha": reviewed_head,
-                "pushed": True,
-                "dirty": False,
-                "files_changed": ["README.md"],
-            },
-            "checks": [
-                {
-                    "name": "reviewer checkout head",
-                    "command": "git rev-parse HEAD",
-                    "returncode": 0,
-                    "status": "pass",
-                }
-            ],
-            "worktree_digest": "sha256:" + ("1" * 64),
-            "findings": ["review worktree checked out pushed executor branch"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path / "workspaces",
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-    publication_gate_calls: list[tuple[str, str, str, str]] = []
-
-    def publication_gate(
-        repo_dir: str, projected_branch: str, projected_sha: str, command: str
-    ) -> tuple[int, str]:
-        publication_gate_calls.append((repo_dir, projected_branch, projected_sha, command))
-        return 0, "projected full contract passed"
-
-    cp._publication_merge_test_runner = publication_gate
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    verdict_manifest = cp.list_evidence(task.id)[-1].metadata["verification"]
-    assert verdict_manifest["repo"]["remote_ref"] == "refs/heads/%s" % branch
-    assert len(publication_gate_calls) == 1
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    assert cp.list_publications(task.id)[0].target == "git://main"
-    # Publication is isolated from the long-lived hub checkout. The remote
-    # canonical branch advances, while this checkout stays untouched.
-    assert _git(repo, "rev-parse", "HEAD") == hub_checkout_head
-    assert _git(repo, "ls-remote", "origin", "refs/heads/main").split()[0] == reviewed_head
-    _git(repo, "fetch", "origin", "main")
-    assert _git(repo, "rev-parse", "origin/main") == reviewed_head
-    learnings = cp.search_memory(
-        subject_type="agent",
-        subject_id=reviewer.id,
-        record_type=REPOSITORY_ACCESS_RECORD_TYPE,
-    )
-    parsed = [parse_repository_access_learning(item.content) for item in learnings]
-    assert [item["outcome"] for item in parsed if item is not None] == ["success"]
-    assert parsed[0] is not None and parsed[0]["credential_source"] == "local"
-
-
-def test_private_review_clone_uses_env_token_but_persists_only_clean_remote(
-    tmp_path: Path,
-    monkeypatch,
-):
-    remote_url = "https://github.com/acme/private.git"
-    token = "review-token-secret"
-    head_sha = "abc123abc123abc123abc123abc123abc123abcd"
-    task_detail = {
-        "task": {"id": "task-private", "project": "demo"},
-        "evidence": [
-            {
-                "id": "ev-private",
-                "metadata": {
-                    "verification": {
-                        "repo": {
-                            "head_sha": head_sha,
-                            "base_sha": "def456def456def456def456def456def456def4",
-                            "remote_ref": "refs/heads/mac/private-review",
-                            "remote_url": remote_url,
-                        }
-                    }
-                },
-            }
-        ],
-    }
-
-    class RecordingClient:
-        def __init__(self):
-            self.posts = []
-
-        def post(self, path, payload):
-            self.posts.append((path, payload))
-            return {"id": "mem-private"} if path == "/memory" else {}
-
-    client = RecordingClient()
-    worker = MacWorker(client, "agent-reviewer", tmp_path, lambda *_args: None)
-    commands = []
-
-    def successful_git(argv, *args, **kwargs):
-        command = list(argv)
-        commands.append(command)
-        if command[:3] == ["git", "clone", "--no-checkout"]:
-            Path(command[-1]).mkdir(parents=True)
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setenv("GH_TOKEN", token)
-    monkeypatch.setattr("mac.worker.subprocess.run", successful_git)
-    task_dir = tmp_path / "review"
-    task_dir.mkdir()
-
-    context = worker._prepare_review_repository_worktree(
-        task_dir,
-        task_detail,
-        "ev-private",
-        "review-private",
-    )
-
-    clone = next(
-        command for command in commands if command[:3] == ["git", "clone", "--no-checkout"]
-    )
-    assert "x-access-token:%s@github.com" % token in clone[4]
-    scrub = next(command for command in commands if "set-url" in command)
-    assert scrub[-1] == remote_url
-    fetch = next(command for command in commands if "fetch" in command)
-    assert any("x-access-token:%s@github.com" % token in arg for arg in fetch)
-    assert context is not None and context["repository_origin_remote"] == remote_url
-    serialized_context = (task_dir / "repository-worktree.json").read_text(encoding="utf-8")
-    assert token not in serialized_context
-    memory_payload = next(payload for path, payload in client.posts if path == "/memory")
-    assert token not in json.dumps(memory_payload, sort_keys=True)
-    learning = parse_repository_access_learning(memory_payload["content"])
-    assert learning is not None
-    assert learning["outcome"] == "success"
-    assert learning["credential_source"] == "env:GH_TOKEN"
-
-
-def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
-    tmp_path: Path,
-    monkeypatch,
-    semantic_reviewer_on,
-):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    failing_reviewer = cp.register_agent(machine.id, "a-failing", capabilities=["review"])
-    successful_reviewer = cp.register_agent(machine.id, "b-success", capabilities=["review"])
-    remote_url = "https://github.com/acme/private.git"
-    contract = {
-        "schema": "mac.repository_contract.v1",
-        "project": "demo",
-        "canonical_remote_url": remote_url,
-    }
-    task = cp.create_task(
-        "Review private repository",
-        project="demo",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://publish",
-            "execution_contract": {
-                "type": "repository",
-                "repository_contract": contract,
-            },
-            "origin": {
-                "repository_url": remote_url,
-                "repository_contract": contract,
-            },
-        },
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-            "base_sha": "def456def456def456def456def456def456def4",
-            "remote_ref": "refs/heads/mac/review-proof",
-            "remote_url": remote_url,
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["src/example.py"],
-        },
-        "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "0")
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-
-    known_success = build_repository_access_learning(
-        project="demo",
-        remote=remote_url,
-        operation="review_clone",
-        agent_id=successful_reviewer.id,
-        outcome="success",
-        credential_source="env:GH_TOKEN",
-    )
-    cp.add_memory(**build_repository_access_memory_payload(known_success))
-    first_review = cp.request_review(
-        task.id,
-        failing_reviewer.id,
-        actor="test",
-    )
-    first_tick = cp.advance_default_review_workflow(task.id)
-    assert first_tick["review_id"] == first_review.id
-    assert first_tick["executor_evidence_id"] == evidence.id
-
-    client = TestClient(create_app(control_plane=cp))
-    real_run = subprocess.run
-
-    def fail_private_clone(argv, *args, **kwargs):
-        if list(argv[:3]) == ["git", "clone", "--no-checkout"]:
-            return subprocess.CompletedProcess(
-                argv,
-                128,
-                "",
-                "fatal: could not read Username for 'https://github.com': "
-                "No such device or address",
-            )
-        return real_run(argv, *args, **kwargs)
-
-    monkeypatch.setattr("mac.worker.subprocess.run", fail_private_clone)
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        failing_reviewer.id,
-        tmp_path / "workspaces",
-        lambda *_args: pytest.fail("review executor must not run after clone failure"),
-        attestation_key=cp._agent_attestation_key(failing_reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_failed"
-    assert "could not read Username" in (result.error or "")
-    assert not (tmp_path / "workspaces" / "_reviews" / first_review.id / "review-repo").exists()
-    reviews = cp.list_reviews(task.id)
-    assert [review.status for review in reviews] == [
-        ReviewStatus.RETRACTED.value,
-        ReviewStatus.PENDING.value,
-    ]
-    assert reviews[0].reviewer_agent_id == failing_reviewer.id
-    assert "reviewer_repository_access_authentication:github.com" in (reviews[0].reason or "")
-    assert reviews[1].reviewer_agent_id == successful_reviewer.id
-    memories = cp.search_memory(
-        subject_type="agent",
-        subject_id=failing_reviewer.id,
-        record_type=REPOSITORY_ACCESS_RECORD_TYPE,
-    )
-    failure = parse_repository_access_learning(memories[-1].content)
-    assert failure is not None
-    assert failure["outcome"] == "failure"
-    assert failure["failure_class"] == "authentication"
-    assert "No such device or address" in failure["error_signature"]
-
-
-def test_mac_worker_skips_stale_review_nudge_and_processes_next(
-    tmp_path: Path, semantic_reviewer_on
-):
-    from tests.conftest import submit_review_verdict
-
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-
-    def create_reviewable_task(title: str):
-        task = cp.create_task(
-            title,
-            required_capabilities=["python"],
-            metadata={"publication_target": "test://publish"},
-        )
-        cp.claim_task(task.id, executor_agent.id)
-        cp.start_task(task.id, executor_agent.id)
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "repo_change",
-            "repo": {
-                "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-                "remote_ref": "origin/main",
-                "pushed": True,
-                "dirty": False,
-                "files_changed": ["src/example.py"],
-            },
-            "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-            "signed_by": executor_agent.id,
-        }
-        manifest["signature"] = sign_verification_manifest(
-            cp._agent_attestation_key(executor_agent.id), manifest
-        )
-        evidence = cp.add_evidence(
-            task.id,
-            "log",
-            "file:///tmp/executor-result.json",
-            "executor completed",
-            executor_agent.id,
-            metadata={"returncode": 0, "verification": manifest},
-        )
-        cp.submit_for_review(task.id, executor_agent.id)
-        review_tick = cp.advance_default_review_workflow(task.id)
-        return task, evidence, review_tick, manifest
-
-    stale_task, stale_evidence, stale_tick, _ = create_reviewable_task("Stale review")
-    stale_verdict_id = submit_review_verdict(cp, stale_task.id, reviewer.id, stale_evidence.id)
-    cp.submit_review(
-        stale_tick["review_id"],
-        ReviewStatus.APPROVED.value,
-        reviewer.id,
-        evidence_id=stale_verdict_id,
-    )
-    current_task, current_evidence, current_tick, executor_manifest = create_reviewable_task(
-        "Current review"
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        context = task_payload["metadata"]["review_context"]
-        assert context["task_id"] == current_task.id
-        assert context["review_id"] == current_tick["review_id"]
-        assert context["executor_evidence_id"] == current_evidence.id
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": "approved",
-            "review_id": context["review_id"],
-            "reviewed_evidence_id": context["executor_evidence_id"],
-            "repo": dict(executor_manifest["repo"]),
-            "checks": [{"name": "reviewer independent verification", "returncode": 0}],
-            "worktree_digest": "sha256:" + ("0" * 64),
-            "findings": ["executor evidence is signed and tests passed"],
-        }
-        (task_dir / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        reviewer.id,
-        tmp_path,
-        review_executor,
-        attestation_key=cp._agent_attestation_key(reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_recorded"
-    assert cp.list_reviews(current_task.id)[0].status == ReviewStatus.APPROVED.value
-    assert cp.get_task(current_task.id).state == TaskState.COMPLETED.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
@@ -1251,7 +708,7 @@ def test_mac_worker_accepts_operator_result_without_repository_anchor(tmp_path: 
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
     assert manifest["evidence_type"] == "operator_result"
     assert manifest["signed_by"] == agent.id
@@ -1812,12 +1269,15 @@ def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
     assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(seed, "rev-parse", "HEAD")
 
 
-def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
+def test_mac_worker_publishes_stale_base_on_conflicting_canonical_advance(
     tmp_path: Path,
     monkeypatch,
 ):
-    """A CONFLICTING canonical advance must still fail closed: the sync aborts
-    its rebase (work intact) and the freshness gate reports precisely."""
+    """A CONFLICTING canonical advance is never merged by the worker (the sync
+    aborts its rebase, work intact), but the tested head is still published,
+    marked stale_base, and the task reaches review: landing sends it back to
+    rebase with the conflict as context. Stranding it here (pushed=false ->
+    BLOCKED/manual repair -> FAILED) lost finished work on 2026-10-03."""
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)
@@ -1845,13 +1305,17 @@ def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
 
     result = worker.run_once()
 
-    assert result.status == "blocked"
+    assert result.status == "submitted_for_review"
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
     assert manifest["repo"]["canonical_sync"]["status"] == "conflict"
-    assert manifest["repo"]["pushed"] is False
-    assert manifest["repo"]["freshness"]["ok"] is False
-    assert "not an ancestor" in manifest["repo"]["freshness"]["error"]
-    assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]) == ""
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["freshness"]["ok"] is True
+    assert manifest["repo"]["freshness"]["state"] == "stale_base"
+    assert manifest["repo"]["files_changed"] == ["README.md"]
+    assert manifest["repo"]["base_sha"] == manifest["repo"]["freshness"]["prepared_base_sha"]
+    assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]).startswith(
+        manifest["repo"]["head_sha"]
+    )
 
 
 def test_mac_worker_publishes_after_merging_new_canonical_tip(tmp_path: Path, monkeypatch):
@@ -2176,7 +1640,7 @@ def test_mac_worker_adopts_agent_pushed_branch_when_worktree_matches(tmp_path: P
 
 def test_openshell_containerfile_changed_detects_sandbox_image_drift(tmp_path: Path):
     """The drift detector flags a pull that changed the sandbox Containerfile (so
-    refresh-source rebuilds the image) and ignores unrelated changes / no-ops."""
+    a repo update rebuilds the image) and ignores unrelated changes / no-ops."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init")
@@ -2489,7 +1953,7 @@ def test_source_remediation_repo_change_allows_empty_files_changed_in_worker(tmp
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_mac_worker_renews_lease_while_executor_runs(tmp_path: Path):
@@ -3313,7 +2777,7 @@ def test_worker_generation_barrier_heartbeats_draining_until_authorized(
 
 
 def test_worker_generation_barrier_self_releases_past_its_max_age(monkeypatch, tmp_path: Path):
-    # deploy-mac-fleet.sh's REMOTE_TYPED_BARRIER_RELEASE step removes this
+    # The deleted deploy-mac-fleet.sh's REMOTE_TYPED_BARRIER_RELEASE step removed this
     # file once it is safe to rejoin dispatch, but that release is not
     # atomic with the barrier's creation: an interrupted deploy (observed
     # live 2026-09-03, natasha stuck draining for hours after a deploy
@@ -3418,7 +2882,7 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
     assert result.task["id"] == task.id
     assert cp.get_agent(registered["id"]).name == "rocky"
     assert cp.get_agent(registered["id"]).capabilities == ["python"]
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_register_worker_reports_command_inventory_without_command_capability(
@@ -3459,126 +2923,237 @@ def test_register_worker_reports_command_inventory_without_command_capability(
     assert heartbeat_resources["coding_clis"]["schema"] == "mac.coding_clis.v2"
 
 
-def test_worker_publishes_matching_sandbox_route_verification(
+_HUB_ROUTE_ENV = {
+    "MAC_HUB_URL": "https://hub.example",
+    "MAC_WORKER_TOKEN": "secret-not-reported",
+}
+
+
+def _route_worker(tmp_path: Path, monkeypatch, name: str = "worker", resources=None):
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("%s-host" % name)
+    agent = cp.register_agent(machine.id, name, resources=resources or {})
+    for key, value in _HUB_ROUTE_ENV.items():
+        monkeypatch.setenv(key, value)
+    return MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+
+
+def _sandbox_report(candidate, *, verified: bool, failure_class: str = ""):
+    return {
+        **candidate.observable(),
+        "schema": "mac.coding_agent.verification.v1",
+        "agent": candidate.agent,
+        "binary": candidate.binary,
+        "execution_binary": candidate.binary,
+        "binary_status": "present",
+        "route_fingerprint": candidate.route_fingerprint(),
+        "verified": verified,
+        "checked_at": "2026-07-28T00:00:00+00:00",
+        "failure_class": failure_class,
+    }
+
+
+def test_worker_publishes_the_sandbox_verified_opencode_route(
     tmp_path: Path,
     monkeypatch,
 ):
+    """The task image's opencode is probed and advertised, not the host's."""
     from mac import coding_agent, task_executor
 
+    attempted = []
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setattr(
+        coding_agent,
+        "_service_augmented_which",
+        lambda _env, _home: lambda _name: None,
+    )
+
+    def verify_for_test(candidate):
+        attempted.append(candidate.agent)
+        return _sandbox_report(candidate, verified=True)
+
+    monkeypatch.setattr(task_executor, "coding_agent_sandbox_verification", verify_for_test)
+    worker = _route_worker(tmp_path, monkeypatch)
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    clis = resources["coding_clis"]["clis"]
+    assert attempted == ["opencode"]
+    assert set(clis) == {"opencode"}
+    opencode = clis["opencode"]
+    assert opencode["on_path"] is True
+    assert opencode["host_on_path"] is False
+    assert opencode["configured"] is True
+    assert opencode["verified"] is True
+    assert opencode["provider"] == "mac-router"
+    assert opencode["protocol"] == "openai-chat-completions"
+    assert worker._coding_route_report["agent"] == "opencode"
+    assert "secret-not-reported" not in json.dumps(resources)
+
+
+def test_worker_publishes_a_failed_sandbox_probe_with_its_class(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from mac import task_executor
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setattr(
+        task_executor,
+        "coding_agent_sandbox_verification",
+        lambda candidate: _sandbox_report(
+            candidate, verified=False, failure_class="authentication_failed"
+        ),
+    )
+    worker = _route_worker(tmp_path, monkeypatch)
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    report = worker._coding_route_report
+    assert report["verified"] is False
+    assert report["agent"] == ""
+    assert report["failure_class"] == "authentication_failed"
+    opencode = resources["coding_clis"]["clis"]["opencode"]
+    assert opencode["verified"] is False
+    assert opencode["verification_status"] == "failed"
+    assert opencode["verification"]["failure_class"] == "authentication_failed"
+
+
+def test_worker_keeps_completed_coding_route_proof_visible_during_refresh(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A scheduled refresh must not advertise a healthy route as absent."""
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
     api = MacApiClient("http://mac.test", transport=api_transport(client))
     machine = cp.register_machine("worker-host")
     agent = cp.register_agent(machine.id, "worker", resources={})
-    choice = coding_agent.CodingAgentChoice(
-        agent="codex",
-        available=True,
-        binary="/usr/local/bin/codex",
-        auth_source="MAC_CODEX_TOKEN",
-        provider="mac-router",
-        protocol="responses",
-        auth_kind="bearer_env",
-        endpoint="https://hub.example/v1",
-        model="*",
-    )
-    report = {
-        "schema": "mac.coding_agent.verification.v1",
-        "agent": "codex",
-        "provider": "mac-router",
-        "protocol": "responses",
-        "auth_kind": "bearer_env",
-        "auth_source": "MAC_CODEX_TOKEN",
-        "endpoint": "https://hub.example/v1",
-        "model": "*",
-        "route_fingerprint": choice.route_fingerprint(),
+    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    completed = {
+        "schema": "mac.coding_agent.verifications.v1",
+        "agent": "opencode",
         "verified": True,
-        "checked_at": "2026-07-08T00:00:00+00:00",
-        "returncode": 0,
+        "checked_at": "2026-09-22T00:00:00+00:00",
         "failure_class": "",
+        "reports": {
+            "opencode": {
+                "schema": "mac.coding_agent.verification.v1",
+                "agent": "opencode",
+                "verified": True,
+                "returncode": 0,
+            }
+        },
     }
+    worker._coding_route_report = completed
+    worker._coding_route_report_dirty = False
+    started = threading.Event()
+    release = threading.Event()
 
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        assert accept is not None
-        assert which is task_executor.coding_agent_sandbox_which
-        assert verify_all is True
-        if accept(choice):
-            return choice
-        return coding_agent.CodingAgentChoice(agent="", available=False)
+    def blocked_refresh():
+        started.set()
+        release.wait(timeout=5)
 
-    # The sandboxed branch is what this test covers, so state its premise: a
-    # Linux node that has opted into the managed sandbox. Neither is a default.
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        task_executor,
-        "coding_agent_sandbox_verification",
-        lambda selected: report,
-    )
+    monkeypatch.setattr(worker, "_probe_coding_route", blocked_refresh)
+    worker._maybe_start_coding_route_probe()
+    assert started.wait(timeout=1)
+    try:
+        assert worker._coding_route_report == completed
+        assert worker._coding_route_report_dirty is False
+    finally:
+        release.set()
+        assert worker._coding_route_probe_thread is not None
+        worker._coding_route_probe_thread.join(timeout=1)
+
+
+def test_fifty_workers_stagger_their_first_coding_route_probe(tmp_path: Path, monkeypatch):
+    """A fleet restart must not turn into fifty simultaneous provider calls."""
+    now = 10_000.0
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    workers = [
+        MacWorker(
+            object(),  # type: ignore[arg-type]
+            "agent_ovswarm_worker_%02d" % index,
+            tmp_path / ("worker-%02d" % index),
+            lambda _task, _directory: WorkerExecution(0, "unused"),
+        )
+        for index in range(1, 51)
+    ]
+
+    for worker in workers:
+        worker._maybe_start_coding_route_probe()
+
+    offsets = [worker._next_coding_route_probe_at - now for worker in workers]
+    assert all(worker._coding_route_probe_thread is None for worker in workers)
+    assert len(set(offsets)) == 50
+    assert min(offsets) >= 0
+    assert max(offsets) <= CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS
+    assert max(offsets) - min(offsets) > 45
+
+
+def test_fifty_failed_workers_back_off_without_reforming_a_herd(monkeypatch):
+    """Long provider outages spread retries even after the backoff reaches its cap."""
+    monkeypatch.delenv("MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS", raising=False)
+    agent_ids = ["agent_ovswarm_worker_%02d" % index for index in range(1, 51)]
+    generations = [
+        [
+            _coding_route_probe_delay(
+                agent_id,
+                verified=False,
+                consecutive_failures=failure_count,
+            )
+            for agent_id in agent_ids
+        ]
+        for failure_count in range(1, 9)
+    ]
+
+    for delays in generations:
+        assert len(set(delays)) == 50
+        assert max(delays) > min(delays)
+        assert max(delays) <= 3600
+    for previous, current in zip(generations[:5], generations[1:6]):
+        assert min(current) > max(previous)
+    # Once capped, stable phase remains instead of every worker collapsing
+    # onto exactly the same one-hour boundary.
+    assert max(generations[-1]) - min(generations[-1]) > 500
+
+
+def test_successful_route_refreshes_remain_staggered(monkeypatch):
+    monkeypatch.delenv("MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS", raising=False)
+    delays = [
+        _coding_route_probe_delay(
+            "agent_ovswarm_worker_%02d" % index,
+            verified=True,
+            consecutive_failures=0,
+        )
+        for index in range(1, 51)
+    ]
+
+    assert len(set(delays)) == 50
+    assert min(delays) >= 600
+    assert max(delays) <= 720
+
+
+def _stub_host_probe(monkeypatch, binary: str) -> list:
+    """Host-probe premises: opencode at ``binary``, a minted token, a sentinel."""
+    from mac import coding_agent, task_executor
+
+    revoked: list = []
     monkeypatch.setattr(
         coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "codex": lambda *_args: (
-                True,
-                choice.binary,
-                choice.auth_source,
-                "codex: configured for test",
-            ),
-        },
+        "_service_augmented_which",
+        lambda _env, _home: lambda name: binary if name == "opencode" else None,
     )
-    monkeypatch.setenv("MAC_CODEX_TOKEN", "secret-not-reported")
-    monkeypatch.setenv("MAC_CODEX_BASE_URL", choice.endpoint)
-    monkeypatch.setenv("MAC_CODEX_PROVIDER", choice.provider)
-
-    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
-    worker._probe_coding_route()
-    resources = worker._maybe_command_inventory_resources()
-
-    codex = resources["coding_clis"]["clis"]["codex"]
-    assert codex["configured"] is True
-    assert codex["verified"] is True
-    assert codex["provider"] == "mac-router"
-    assert codex["protocol"] == "responses"
-    assert "secret-not-reported" not in json.dumps(resources)
-
-
-def test_worker_verifies_darwin_host_route_without_openshell(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent
-
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("darwin-host")
-    agent = cp.register_agent(
-        machine.id,
-        "darwin-worker",
-        resources={"openshell_required": False},
+    monkeypatch.setattr(
+        task_executor,
+        "host_opencode_router_env",
+        lambda directory, **_kw: ({"MAC_INFERENCE_TOKEN": "inference"}, "tok_probe"),
     )
-    choice = coding_agent.CodingAgentChoice(
-        agent="opencode",
-        available=True,
-        binary="/Users/test/.mac/bin/opencode",
-        auth_source="~/.local/share/opencode/auth.json",
-        provider="opencode",
-        protocol="opencode-run",
-        auth_kind="api_key_file",
-    )
-
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        assert accept is not None
-        assert which is None
-        assert verify_all is True
-        return (
-            choice if accept(choice) else coding_agent.CodingAgentChoice(agent="", available=False)
-        )
-
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(task_executor, "_revoke_inference_token", revoked.append)
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -3586,33 +3161,29 @@ def test_worker_verifies_darwin_host_route_without_openshell(
             args[0], 0, coding_agent.PREFLIGHT_SENTINEL, ""
         ),
     )
-    monkeypatch.setattr(
-        coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "opencode": lambda *_args: (
-                True,
-                choice.binary,
-                choice.auth_source,
-                "opencode: configured for test",
-            ),
-        },
-    )
+    return revoked
 
-    worker = MacWorker(
-        api,
-        agent.id,
-        tmp_path,
-        lambda _t, _d: WorkerExecution(0, "ok"),
+
+def test_worker_verifies_darwin_host_route_without_openshell(
+    tmp_path: Path,
+    monkeypatch,
+):
+    binary = "/Users/test/.opencode/bin/opencode"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
+    revoked = _stub_host_probe(monkeypatch, binary)
+    worker = _route_worker(
+        tmp_path, monkeypatch, "darwin-worker", resources={"openshell_required": False}
     )
     worker._probe_coding_route()
     resources = worker._maybe_command_inventory_resources()
 
     opencode = resources["coding_clis"]["clis"]["opencode"]
     assert opencode["verified"] is True
-    assert opencode["verification"]["execution_binary"] == choice.binary
+    assert opencode["verification"]["execution_binary"] == binary
     assert worker._coding_route_report["agent"] == "opencode"
+    # The probe's inference token is revoked as soon as the probe ends.
+    assert revoked == ["tok_probe"]
 
 
 @pytest.mark.parametrize(
@@ -3634,40 +3205,10 @@ def test_worker_route_probe_stays_on_the_host_unless_the_sandbox_is_opted_into(
     platform: str,
     requested_sandbox: Optional[str],
 ):
-    from mac import coding_agent, task_executor
+    from mac import task_executor
 
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("host-install")
-    agent = cp.register_agent(
-        machine.id,
-        "host-install-worker",
-        resources={"openshell_required": False},
-    )
-    choice = coding_agent.CodingAgentChoice(
-        agent="opencode",
-        available=True,
-        binary="/Users/test/.mac/bin/opencode",
-        auth_source="~/.local/share/opencode/auth.json",
-        provider="opencode",
-        protocol="opencode-run",
-        auth_kind="api_key_file",
-    )
-
-    # The probe swallows exceptions to keep a bad route from killing the
-    # worker, so record what it reached for and assert afterwards instead of
-    # raising from inside a stub.
-    resolver_kinds: list[str] = []
+    binary = "/Users/test/.opencode/bin/opencode"
     sandbox_verifications: list[str] = []
-
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        # A `which` resolver is what selects the sandbox image inventory; the
-        # host branch resolves binaries on the host and passes None.
-        resolver_kinds.append("host" if which is None else "sandbox")
-        return (
-            choice if accept(choice) else coding_agent.CodingAgentChoice(agent="", available=False)
-        )
 
     def record_sandbox_verification(verified_choice):
         sandbox_verifications.append(verified_choice.agent)
@@ -3681,208 +3222,20 @@ def test_worker_route_probe_stays_on_the_host_unless_the_sandbox_is_opted_into(
     monkeypatch.setattr(
         task_executor, "coding_agent_sandbox_verification", record_sandbox_verification
     )
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, coding_agent.PREFLIGHT_SENTINEL, ""
-        ),
-    )
-    monkeypatch.setattr(
-        coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "opencode": lambda *_args: (
-                True,
-                choice.binary,
-                choice.auth_source,
-                "opencode: configured for test",
-            ),
-        },
-    )
-
-    worker = MacWorker(
-        api,
-        agent.id,
-        tmp_path,
-        lambda _t, _d: WorkerExecution(0, "ok"),
+    _stub_host_probe(monkeypatch, binary)
+    worker = _route_worker(
+        tmp_path, monkeypatch, "host-install-worker", resources={"openshell_required": False}
     )
     worker._probe_coding_route()
 
     assert sandbox_verifications == []
-    assert resolver_kinds == ["host"]
     report = worker._coding_route_report
     assert report["failure_class"] == ""
     assert report["verified"] is True
     assert report["agent"] == "opencode"
     verification = report["reports"]["opencode"]
     assert verification["verified"] is True
-    assert verification["execution_binary"] == choice.binary
-
-
-def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent, task_executor
-
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("worker-host")
-    agent = cp.register_agent(machine.id, "worker", resources={})
-    choices = [
-        coding_agent.CodingAgentChoice(
-            agent="claude",
-            available=True,
-            binary="/usr/local/bin/claude",
-            auth_source="ANTHROPIC_API_KEY",
-            provider="anthropic",
-            protocol="anthropic-messages",
-            auth_kind="api_key",
-            endpoint="https://api.anthropic.com",
-        ),
-        coding_agent.CodingAgentChoice(
-            agent="codex",
-            available=True,
-            binary="/usr/local/bin/codex",
-            auth_source="OPENAI_API_KEY",
-            provider="openai",
-            protocol="responses",
-            auth_kind="bearer_env",
-            endpoint="https://api.openai.com/v1",
-        ),
-    ]
-    attempted = []
-
-    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
-        assert accept is not None
-        assert which is task_executor.coding_agent_sandbox_which
-        assert verify_all is True
-        for candidate in choices:
-            if accept(candidate):
-                return candidate
-        return coding_agent.CodingAgentChoice(agent="", available=False)
-
-    def verify_for_test(candidate):
-        attempted.append(candidate.agent)
-        return {
-            **candidate.observable(),
-            "schema": "mac.coding_agent.verification.v1",
-            "agent": candidate.agent,
-            "route_fingerprint": candidate.route_fingerprint(),
-            "verified": candidate.agent == "codex",
-            "checked_at": "2026-07-16T00:00:00+00:00",
-            "failure_class": "" if candidate.agent == "codex" else "probe_failed",
-        }
-
-    # Route fall-through is exercised through the sandboxed verifier, so state
-    # its premise: a Linux node that has opted into the managed sandbox.
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
-    monkeypatch.setattr(
-        task_executor,
-        "coding_agent_sandbox_verification",
-        verify_for_test,
-    )
-    monkeypatch.setattr(
-        coding_agent,
-        "_DETECTORS",
-        {
-            **coding_agent._DETECTORS,
-            "claude": lambda *_args: (
-                True,
-                choices[0].binary,
-                choices[0].auth_source,
-                "claude: configured for test",
-            ),
-            "codex": lambda *_args: (
-                True,
-                choices[1].binary,
-                choices[1].auth_source,
-                "codex: configured for test",
-            ),
-        },
-    )
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-not-reported")
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-not-reported")
-
-    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
-    worker._probe_coding_route()
-    resources = worker._maybe_command_inventory_resources()
-
-    clis = resources["coding_clis"]["clis"]
-    assert attempted == ["claude", "codex"]
-    assert clis["claude"]["verification_status"] == "failed"
-    assert clis["claude"]["verification"]["failure_class"] == "probe_failed"
-    assert clis["codex"]["verification_status"] == "verified"
-    assert clis["codex"]["verified"] is True
-    assert worker._coding_route_report["agent"] == "codex"
-    assert worker._coding_route_report["verified"] is True
-    assert "secret-not-reported" not in json.dumps(resources)
-
-
-def test_worker_probes_and_advertises_cursor_from_task_image_not_host_path(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from mac import coding_agent, task_executor
-
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    machine = cp.register_machine("worker-host")
-    agent = cp.register_agent(machine.id, "worker", resources={})
-    attempted = []
-
-    # Resolving the CLI from the task image rather than the host is only
-    # meaningful on a node that runs the sandbox, so state that premise.
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setenv("MAC_CODING_AGENT", "cursor")
-    monkeypatch.setenv("CURSOR_API_KEY", "secret-not-reported")
-    monkeypatch.setattr(
-        coding_agent,
-        "_service_augmented_which",
-        lambda _env, _home: lambda _name: None,
-    )
-
-    def verify_for_test(candidate):
-        attempted.append(candidate.agent)
-        return {
-            **candidate.observable(),
-            "schema": "mac.coding_agent.verification.v1",
-            "agent": candidate.agent,
-            "binary": candidate.binary,
-            "execution_binary": candidate.binary,
-            "binary_status": "present",
-            "route_fingerprint": candidate.route_fingerprint(),
-            "verified": True,
-            "checked_at": "2026-07-28T00:00:00+00:00",
-            "failure_class": "",
-        }
-
-    monkeypatch.setattr(
-        task_executor,
-        "coding_agent_sandbox_verification",
-        verify_for_test,
-    )
-
-    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
-    worker._probe_coding_route()
-    resources = worker._maybe_command_inventory_resources()
-
-    cursor = resources["coding_clis"]["clis"]["cursor"]
-    assert attempted == ["cursor"]
-    assert cursor["on_path"] is True
-    assert cursor["host_on_path"] is False
-    assert cursor["configured"] is True
-    assert cursor["verified"] is True
-    assert cursor["binary_status"] == "present"
-    assert "secret-not-reported" not in json.dumps(resources)
+    assert verification["execution_binary"] == binary
 
 
 def test_command_inventory_explicitly_probes_cargo_when_scan_truncated(
@@ -4131,7 +3484,7 @@ def test_mac_worker_completes_task_even_if_observability_writes_fail(tmp_path: P
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_self_install_name_parsers():

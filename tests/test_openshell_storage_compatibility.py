@@ -11,7 +11,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "deploy" / "openshell" / "storage-compatibility.py"
-CONTROLLER = ROOT / "deploy" / "deploy-mac-fleet.sh"
 
 
 def _module():
@@ -208,36 +207,6 @@ def test_compatible_database_with_legacy_backup_requires_receipt_recovery(
     receipt = module.receipt_path(home)
     assert receipt.stat().st_mode & 0o777 == 0o600
     assert module.preflight(home, database, "linux", "a" * 64)["status"] == "ready"
-
-
-def test_controller_keeps_storage_repair_outside_the_cohort_transaction() -> None:
-    text = CONTROLLER.read_text(encoding="utf-8")
-    cohort = text.split("run_typed_cohort() {", 1)[1].split("\n}\n\n", 1)[0]
-    assert cohort.index("classify_reviewed_openshell_cli_prerequisites") < cohort.index(
-        "classify_openshell_storage_prerequisites"
-    )
-    assert cohort.index("classify_openshell_storage_prerequisites") < cohort.index(
-        "phase1-prepare-start"
-    )
-    assert "prepare_openshell_storage_prerequisites" not in cohort
-    main = text.split("main() {", 1)[1]
-    explicit = main.split('if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ]; then', 1)[1]
-    explicit = explicit.split("\n  fi", 1)[0]
-    assert explicit.index("prepare_reviewed_openshell_cli_prerequisites") < explicit.index(
-        "prepare_openshell_storage_prerequisites"
-    )
-
-
-def test_optional_execution_does_not_skip_existing_storage_classification() -> None:
-    text = CONTROLLER.read_text(encoding="utf-8")
-    helper = text.split("run_remote_openshell_storage_helper() {", 1)[1].split("\n}\n", 1)[0]
-    assert "openshell_not_required" not in helper
-    assert 'command="python3 - ' in helper
-    assert helper.index('helper_sha256="$(sha256_file') < helper.index('command="python3 - ')
-    preparation = text.split("prepare_openshell_storage_prerequisites() {", 1)[1].split("\n}\n", 1)[
-        0
-    ]
-    assert '[ "$status" = proof_required ]' in preparation
 
 
 def test_helper_is_repository_owned_and_executable() -> None:

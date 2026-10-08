@@ -33,12 +33,17 @@ def _schema_text() -> str:
 
 
 def _create_table_names(text: str) -> set:
-    """Every ``CREATE TABLE IF NOT EXISTS <name> (`` in a schema source.
+    """Every ``CREATE TABLE IF NOT EXISTS <name> (`` a schema source leaves standing.
 
     Requiring the opening paren excludes prose like "CREATE TABLE IF NOT EXISTS
-    skips already-present tables" that appears in comments.
+    skips already-present tables" that appears in comments. schema.sql is the
+    concatenation of immutable migrations, so a table a later migration drops
+    with ``DROP TABLE IF EXISTS <name>;`` is still created earlier in the text
+    and is excluded here.
     """
-    return set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
+    created = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
+    dropped = set(re.findall(r"^DROP TABLE IF EXISTS\s+(\w+);", text, re.MULTILINE))
+    return created - dropped
 
 
 _SQL_NON_COLUMN_LEADERS = {
@@ -127,7 +132,6 @@ EXPECTED_TABLES = [
     "agent_deploy_configs",
     "agent_events",
     "agent_lifecycle_events",
-    "agent_provisioning_requests",
     "agent_roles",
     "agentbus_chunks",
     "agentbus_consumer_cursors",
@@ -138,13 +142,8 @@ EXPECTED_TABLES = [
     "communication_accounts",
     "communication_identities",
     "conversation_threads",
-    "deployments",
     "dispatch_mismatch_state",
     "dispatch_rounds",
-    "dream_candidate_entries",
-    "dream_runs",
-    "environment_events",
-    "environments",
     "eval_runs",
     "eval_set_events",
     "eval_sets",
@@ -153,9 +152,6 @@ EXPECTED_TABLES = [
     "evidence_reuse_records",
     "fleet_agent_observations",
     "fleet_agents",
-    "fleet_desired_source_idempotency",
-    "fleet_desired_source_states",
-    "fleet_desired_source_transitions",
     "fleet_directive_acks",
     "fleet_directive_activations",
     "fleet_directive_approvals",
@@ -166,30 +162,20 @@ EXPECTED_TABLES = [
     "fleet_directive_waivers",
     "fleet_directives",
     "fleet_events",
-    "fleet_release_admission_episodes",
-    "fleet_release_attestation_candidates",
-    "fleet_release_epoch_agents",
-    "fleet_release_epochs",
-    "fleet_upgrade_events",
-    "fleet_upgrades",
     "fleets",
     "gateway_identity_leases",
     "hub_authority_identity",
     "human_groups",
     "human_message_deliveries",
     "humans",
+    "inference_tokens",
     "integration_findings",
     "integration_observations",
     "leases",
     "machines",
-    "managed_task_publication_rollout",
     "memory_records",
-    "merge_queue_entries",
-    "merge_queue_windows",
     "messages",
     "mood_overlays",
-    "nap_runs",
-    "nap_schedules",
     "notifier_channels",
     "observability_events",
     "openclaw_conversation_executions",
@@ -210,26 +196,14 @@ EXPECTED_TABLES = [
     "reconciliation_state",
     "representation_bindings",
     "reviews",
-    "rollout_events",
-    "rollouts",
     "runtime_environment_deltas",
     "runtime_environments",
     "runtime_runs",
     "schema_migration_receipts",
-    "scientific_assignments",
-    "scientific_decisions",
-    "scientific_experiments",
-    "scientific_observations",
-    "scientific_optimizer_events",
-    "scientific_optimizer_locks",
-    "scientific_policies",
     "secret_access_audit",
     "secrets",
     "service_claims",
     "service_roles",
-    "source_convergence_controller_leases",
-    "source_convergence_nodes",
-    "source_releases",
     "task_agent_transcripts",
     "task_break_glass_authorizations",
     "task_completions",
@@ -241,6 +215,7 @@ EXPECTED_TABLES = [
     "task_flow_spans",
     "task_groups",
     "task_history",
+    "task_messages",
     "task_resource_contentions",
     "task_stranding_episodes",
     "task_transition_outbox",
@@ -249,8 +224,6 @@ EXPECTED_TABLES = [
     "tenants",
     "users",
     "vector_refs",
-    "worker_credential_events",
-    "worker_credential_policy_state",
     "worker_credentials",
     "workflow_drafts",
     "workflow_run_history",
@@ -348,12 +321,15 @@ def test_live_schema_has_every_column_the_ddl_declares(postgres_store, schema_sq
     for row in rows:
         live.setdefault(row["table_name"], set()).add(row["column_name"])
 
+    # schema.sql concatenates immutable migrations, so a column a later
+    # migration drops is still declared in its table's CREATE block.
+    dropped = set(re.findall(r"ALTER TABLE\s+(\w+)\s+DROP COLUMN IF EXISTS\s+(\w+)", schema_sql))
     missing = []
     for table, body in _create_table_bodies(schema_sql).items():
         if table not in live:
             continue
         for column in _declared_column_names(body):
-            if column not in live[table]:
+            if column not in live[table] and (table, column) not in dropped:
                 missing.append("%s.%s" % (table, column))
     assert not missing, "declared in schema.sql but not on the live table: %s" % sorted(missing)
 
@@ -500,6 +476,14 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0001_postgresql_authority_baseline",
         "0002_dream_candidate_store",
         "0003_drop_leftover_work_package_triggers",
+        "0004_drop_removed_feature_tables",
+        "0005_drop_native_merge_queue_tables",
+        "0006_drop_rollout_and_deploy_tables",
+        "0007_drop_agent_provisioning_requests",
+        "0008_drop_self_upgrade_and_release_epoch_tables",
+        "0009_slim_worker_credentials",
+        "0010_inference_tokens",
+        "0011_task_messages",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -510,6 +494,30 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0003_drop_leftover_work_package_triggers": (
             "bde53a11681f213e107703925e690b2694dc7a95d242b0df943f442be53f0a1d"
+        ),
+        "0004_drop_removed_feature_tables": (
+            "c225e99d45d394c89efb02d71b3e186eb9b6460aa553715187397868ce431b98"
+        ),
+        "0005_drop_native_merge_queue_tables": (
+            "3cfc5b4536aee2fa783c2ad90ac3f84b1c52db7f33a4062c42eedf679d9e9d0f"
+        ),
+        "0006_drop_rollout_and_deploy_tables": (
+            "f2969fbd949f44ba0525df8e95c58aeb76329c411aded84e0a68d5e0672e8fbe"
+        ),
+        "0007_drop_agent_provisioning_requests": (
+            "e78a3705bc9b36b8993626794672ca2c8f7ed19eed1b63a5e4e4cfed2067ea91"
+        ),
+        "0008_drop_self_upgrade_and_release_epoch_tables": (
+            "3585d4c4e4b7bdb8acec991e4cea94983bc2adc1f1b14733490bab3ba56a3fac"
+        ),
+        "0009_slim_worker_credentials": (
+            "7ef6348425012dec2d5872a8d845ac07ce14b5050659b615ec5b6f73a0b1e7e8"
+        ),
+        "0010_inference_tokens": (
+            "fef5787c0a7c0f6ac8987d572760c11e463fa59d0cd95d76066a79561a6545bd"
+        ),
+        "0011_task_messages": (
+            "1a94bf85e74d55ef23056c0fb8fbdf2eb8faf96cf5bdedbe2f28cecc81e08309"
         ),
     }
     for migration in MIGRATIONS:
@@ -548,7 +556,6 @@ def test_additive_columns_are_present_in_schema(
 ) -> None:
     """Guard the columns that exposed drift during the live migration rehearsal."""
     for table, column in (
-        ("fleet_release_epochs", "abort_disposition"),
         ("tasks", "human_assignees"),
         ("tasks", "created_by_human"),
         ("tasks", "idempotency_key"),

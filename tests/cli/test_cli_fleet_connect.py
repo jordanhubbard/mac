@@ -84,9 +84,9 @@ def test_the_token_is_masked_unless_asked_for(fleet_home, text_output):
 
 
 def test_the_token_is_read_from_the_env_file_not_only_the_environment(fleet_home):
-    """setup.sh WRITES the token without exporting it, so the shell you are in
-    seconds after building a hub does not have it. That is precisely when this
-    command is used."""
+    """~/.mac/.env holds the token without exporting it, so the shell you are
+    in seconds after building a hub does not have it. That is precisely when
+    this command is used."""
     _rc, out = _run("--json", "admin", "fleet", "connect", "--show-token")
 
     assert json.loads(out)["token"] == TOKEN

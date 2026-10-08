@@ -30,7 +30,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import AbstractSet, Callable, Dict, List, Optional, Tuple
 
 __all__ = ["BreakerState", "Provider", "ProviderRouter", "AllProvidersDownError"]
 
@@ -53,6 +53,17 @@ class Provider:
     models: Tuple[str, ...] = ("*",)  # which model ids it serves; "*" = any
     enabled: bool = True
     api_key_env: str = ""  # env var holding this provider's bearer key
+    # logical model id -> the id this provider expects for it. Lets several
+    # providers (separate keys and quotas) serve one logical model even though
+    # each names it differently, so exhausting one key fails over to the next.
+    model_aliases: Tuple[Tuple[str, str], ...] = ()
+
+    def upstream_model(self, model: str) -> str:
+        """The model id to send this provider for logical ``model``."""
+        for logical, upstream in self.model_aliases:
+            if logical == model:
+                return upstream
+        return model
 
 
 @dataclass
@@ -122,12 +133,25 @@ class ProviderRouter:
             return False
         return True  # CLOSED
 
-    def select(self, model: str = "*") -> Optional[Provider]:
+    def select(
+        self,
+        model: str = "*",
+        *,
+        exclude: Optional[AbstractSet[str]] = None,
+    ) -> Optional[Provider]:
         """Return the preferred eligible provider for ``model``, or None when
-        every eligible provider is open (fail-fast — never hang)."""
+        every eligible provider is open (fail-fast — never hang).
+
+        ``exclude`` is request-local routing state.  It lets a caller walk the
+        provider set exactly once without mutating global breaker state merely
+        to make progress to the next provider.
+        """
+        excluded = exclude or frozenset()
         with self._lock:
             for provider in self._order:
                 if not provider.enabled:
+                    continue
+                if provider.name in excluded:
                     continue
                 if not self._serves(provider, model):
                     continue
@@ -165,11 +189,11 @@ class ProviderRouter:
 
         ``immediate`` opens the breaker on this one failure instead of waiting
         for ``failure_threshold``. ``cooldown_seconds`` overrides the router's
-        default dwell time for this provider until it next succeeds. Both exist
-        for the coding-route ladder (ADR 0029), where the failure *class* is
-        known: an account quota cap is proven by one response and should not be
-        re-proven for an hour, while a transient transport error should still
-        need a run of failures before it costs the route its place.
+        default dwell time for this provider until it next succeeds. Both are
+        for a caller that knows the failure *class*: an account quota cap is
+        proven by one response and should not be re-proven for an hour, while a
+        transient transport error should still need a run of failures before it
+        costs the provider its place.
         """
         with self._lock:
             st = self._status.get(name)
@@ -236,6 +260,10 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
 
     Format (semicolon-separated providers, comma-separated fields):
       ``name=base_url[,priority][,models=a|b|*][,key=ENV_VAR]``
+
+    A ``models`` entry may be ``logical=upstream``: the provider serves the
+    logical id but is sent ``upstream`` (e.g.
+    ``models=azure/anthropic/claude-sonnet-4-6=anthropic/claude-sonnet-4.6``).
     e.g. ``nvidia=https://inference-api.nvidia.com/v1,0,key=NVIDIA_API_KEY;`` +
            ``openai=https://api.openai.com/v1,1,models=*,key=OPENAI_API_KEY``
     """
@@ -253,10 +281,15 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
         base_url = fields[0]
         priority = 0
         models: Tuple[str, ...] = ("*",)
+        aliases: Tuple[Tuple[str, str], ...] = ()
         api_key_env = ""
         for f in fields[1:]:
             if f.startswith("models="):
-                models = tuple(m for m in f[len("models=") :].split("|") if m) or ("*",)
+                entries = [m for m in f[len("models=") :].split("|") if m]
+                models = tuple(m.partition("=")[0] for m in entries) or ("*",)
+                aliases = tuple(
+                    (m.partition("=")[0], m.partition("=")[2]) for m in entries if "=" in m
+                )
             elif f.startswith("key="):
                 api_key_env = f[len("key=") :].strip()
             elif f.isdigit():
@@ -268,6 +301,7 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
                 priority=priority,
                 models=models,
                 api_key_env=api_key_env,
+                model_aliases=aliases,
             )
         )
     return providers

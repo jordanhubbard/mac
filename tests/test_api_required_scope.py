@@ -10,8 +10,13 @@ def test_v1_router_requires_agent_scope_any_method():
     # Inference is an agent action: the OpenAI front door requires agent scope
     # (not the broad `write`), regardless of HTTP method, so it is never an open
     # proxy when the API is bound to a network interface.
-    assert _required_scope("POST", "/v1/chat/completions") == "agent"
-    assert _required_scope("POST", "/v1/embeddings") == "agent"
+    # Chat completions and embeddings need only `inference`, which `agent`
+    # implies; a per-task inference token carries nothing else
+    # (tests/test_inference_tokens.py).
+    assert _required_scope("POST", "/v1/chat/completions") == "inference"
+    assert _required_scope("POST", "/v1/embeddings") == "inference"
+    assert _required_scope("GET", "/v1/chat/completions") == "agent"
+    assert _required_scope("POST", "/v1/responses") == "agent"
     assert _required_scope("GET", "/v1/models") == "agent"
     assert _required_scope("GET", "/v1") == "agent"
 
@@ -31,9 +36,6 @@ def test_non_v1_paths_unchanged():
     assert (
         _required_scope("POST", "/agents/agent_1/directive-activations/activation_1/ack") == "agent"
     )
-    assert _required_scope("GET", "/optimizer/status") == "read"
-    assert _required_scope("POST", "/optimizer/tick") == "admin"
-    assert _required_scope("POST", "/optimizer/policies") == "admin"
 
 
 def test_secret_resolve_requires_secret_scope():
@@ -45,22 +47,6 @@ def test_secret_resolve_requires_secret_scope():
 def test_evidence_artifact_content_requires_secret_scope():
     assert _required_scope("GET", "/evidence/ev_123/artifacts") == "read"
     assert _required_scope("GET", "/evidence/ev_123/artifacts/eva_456") == "secret"
-
-
-def test_memory_rewrite_routes_are_admin_not_agent():
-    """The two memory routes that rewrite the vector store are admin-gated.
-
-    They sit under /v1 with the rest of the memory surface, where the blanket
-    /v1 rule would give them the same `agent` scope as model inference. But
-    promotion can retire medium-tier points and reconciliation re-embeds an
-    entire collection, so an ordinary bound agent token must not be able to
-    fire either one.
-    """
-    assert _required_scope("POST", "/v1/memory/promote") == "admin"
-    assert _required_scope("POST", "/v1/memory/reconcile-embeddings") == "admin"
-    # The read-only neighbours keep the surrounding /v1 behaviour.
-    assert _required_scope("GET", "/v1/memory/health") == "agent"
-    assert _required_scope("GET", "/v1/memory/recall") == "agent"
 
 
 def test_review_tick_requires_review_advance_not_bare_admin():

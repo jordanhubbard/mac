@@ -274,103 +274,10 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
     assert "did not authorise decomposition" in str(result.error)
 
 
-def test_executor_verification_manifest_shapes(tmp_path) -> None:
-    path = tmp_path / "executor-evidence.json"
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
-    path.write_text("not-json")
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
-    path.write_text("[]")
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
-    path.write_text(json.dumps({"metadata": {"verification": {"repo": {"head_sha": "a"}}}}))
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path)["repo"] == {
-        "head_sha": "a"
-    }
-    path.write_text(json.dumps({"verification": {"repo": {"head_sha": "b"}}}))
-    assert worker._executor_verification_manifest_from_review_workspace(tmp_path)["repo"] == {
-        "head_sha": "b"
-    }
-
-
-def test_prepare_review_workspace_hides_executor_treatment_from_blind_pass(
-    monkeypatch, tmp_path
-) -> None:
-    instance = object.__new__(worker.MacWorker)
-    instance.workspace = tmp_path
-    monkeypatch.setattr(
-        instance,
-        "_prepare_review_repository_worktree",
-        lambda *_args: {
-            "schema": "mac.review_repository_worktree.v1",
-            "repository_worktree": "/review/repo",
-            "repository_base_sha": "a" * 40,
-            "repository_reviewed_head_sha": "b" * 40,
-        },
-    )
-    task_detail = {
-        "task": {
-            "id": "task_1",
-            "title": "Review safely",
-            "description": "Preserve the original acceptance criteria.",
-            "state": "reviewing",
-            "owner_agent_id": "executor-agent",
-            "metadata": {
-                "custom_acceptance": {"must_preserve": True},
-                "model": "executor/model",
-                "review_model": "reviewer/model",
-                "activity": [{"summary": "executor changed secret.py"}],
-                "latest_review_claim": {"tests": [{"status": "pass"}]},
-                "review_claims": {"review_1": {"repository_files_changed": ["secret.py"]}},
-                "runtime": {"repository_head_sha": "b" * 40},
-                "target_agent_id": "executor-agent",
-            },
-        },
-        "evidence": [{"id": "ev_1", "metadata": {"verification": {"status": "complete"}}}],
-    }
-    claim = {
-        "claim": {
-            "schema": "mac.review_claim.detail.v1",
-            "task_id": "task_1",
-            "review_id": "review_1",
-            "reviewer_agent_id": "reviewer-agent",
-            "executor_evidence_id": "ev_1",
-            "checks": [{"name": "tests", "status": "pass"}],
-            "repository_files_changed": ["secret.py"],
-            "work_summary": "executor explanation",
-        }
-    }
-
-    task_dir = instance._prepare_review_workspace(
-        "task_1", "review_1", "ev_1", task_detail, {"id": "msg_1"}, claim
-    )
-
-    original = json.loads((task_dir / "executor-task.json").read_text())
-    review_task = json.loads((task_dir / "task.json").read_text())["task"]
-    serialized = json.dumps({"original": original, "review": review_task})
-    assert original["metadata"]["custom_acceptance"] == {"must_preserve": True}
-    assert review_task["metadata"]["review_model"] == "reviewer/model"
-    assert review_task["metadata"]["review_context"]["review_claim"] == {
-        "executor_evidence_id": "ev_1",
-        "review_id": "review_1",
-        "reviewer_agent_id": "reviewer-agent",
-        "schema": "mac.review_claim.detail.v1",
-        "task_id": "task_1",
-    }
-    assert "executor/model" not in serialized
-    assert "secret.py" not in serialized
-    assert "executor explanation" not in serialized
-    assert "latest_review_claim" not in serialized
-
-
-def test_task_iteration_override_separates_executor_and_reviewer_budgets() -> None:
+def test_task_iteration_override_bounds_executor_budget() -> None:
     metadata = {"max_iterations": 30, "review_max_iterations": "12"}
 
     assert worker._task_iteration_override({"metadata": metadata}) == 30
-    assert (
-        worker._task_iteration_override(
-            {"metadata": {**metadata, "review_context": {"review_id": "review_1"}}}
-        )
-        == 12
-    )
     assert worker._task_iteration_override({"metadata": {"max_iterations": 0}}) is None
     assert worker._task_iteration_override({"metadata": {"max_iterations": 501}}) is None
 
@@ -434,17 +341,6 @@ def test_subprocess_executor_does_not_inherit_task_scoped_overrides(monkeypatch,
 
     assert "MAC_TASK_MODEL" not in captured["env"]
     assert "MAC_TASK_MAX_ITERATIONS" not in captured["env"]
-
-
-def test_review_verdict_compares_executor_changed_files(tmp_path) -> None:
-    assert worker._worker_review_verdict_executor_repo_problems(tmp_path, {}) == []
-    (tmp_path / "executor-evidence.json").write_text(
-        json.dumps({"verification": {"repo": {"files_changed": ["./src//a.py", "b.py"]}}})
-    )
-    problems = worker._worker_review_verdict_executor_repo_problems(
-        tmp_path, {"repo": {"files_changed": ["other.py"]}}
-    )
-    assert "must match executor evidence" in problems[0]
 
 
 def test_repository_head_push_checks_remote_url_origin_and_branch(monkeypatch, tmp_path) -> None:
@@ -539,7 +435,7 @@ def test_run_git_timeout_fallbacks(monkeypatch, tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# hub-verify deferred mode: _repository_finalizer_prepush_problems
+# pre-push gate: _repository_finalizer_prepush_problems
 # ---------------------------------------------------------------------------
 
 
@@ -552,27 +448,21 @@ def _valid_repo(sha: str = "a" * 40) -> dict:
     }
 
 
-def test_finalizer_prepush_blocks_deferred_code_even_with_hub_review() -> None:
-    """Independent review does not replace the passing pre-push code gate."""
-    deferred_item = worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh")
-    assert worker._is_hub_verify_deferred_item(deferred_item)
+def test_finalizer_prepush_blocks_a_deferred_code_test() -> None:
+    """Nothing downstream runs a deferred test, so it can never authorize a push."""
+    deferred_item = {
+        "name": "repository contract test",
+        "command": "scripts/run-contract-tests.sh",
+        "returncode": None,
+        "status": "deferred",
+        "execution_environment": "hub_verify_pending",
+    }
 
-    problems = worker._repository_finalizer_prepush_problems(
-        {},
-        _valid_repo(),
-        deferred_item,
-        hub_verify=True,
-    )
-    test_gate_problems = [p for p in problems if "passing test" in p]
-    assert test_gate_problems
+    problems = worker._repository_finalizer_prepush_problems({}, _valid_repo(), deferred_item)
+    assert [p for p in problems if "passing test" in p]
 
 
-def test_finalizer_prepush_blocks_when_hub_verify_off_and_no_sandbox_result(tmp_path) -> None:
-    """Option A (MAC_REVIEW_HUB_VERIFY unset): when no mac-sandbox-verification.json
-    is present, the sandbox helper returns None → caller falls back to running the
-    contract test locally.  If the local run also fails, the prepush gate must block
-    with a test-failure problem."""
-    # Simulate a failing/missing local test by building a fail-status item directly.
+def test_finalizer_prepush_blocks_a_failing_test() -> None:
     fail_item = {
         "name": "repository contract test",
         "command": "scripts/run-contract-tests.sh",
@@ -581,36 +471,11 @@ def test_finalizer_prepush_blocks_when_hub_verify_off_and_no_sandbox_result(tmp_
         "stdout": "",
         "stderr": "3 failed",
     }
-    problems = worker._repository_finalizer_prepush_problems(
-        {},
-        _valid_repo(),
-        fail_item,
-        hub_verify=False,
-    )
-    assert any("passing test" in p for p in problems), (
-        "Option A: a failing test item must produce a blocking problem when hub_verify=False; "
-        "got problems: %s" % problems
-    )
+    problems = worker._repository_finalizer_prepush_problems({}, _valid_repo(), fail_item)
+    assert any("passing test" in p for p in problems), problems
 
 
-def test_sandbox_repository_verification_item_returns_deferred_when_hub_verify_and_no_file(
-    tmp_path,
-) -> None:
-    """_sandbox_repository_verification_item must return the deferred sentinel when
-    hub_verify=True and mac-sandbox-verification.json is absent — not None."""
-    command = "scripts/run-contract-tests.sh"
-    item = worker._sandbox_repository_verification_item(tmp_path, command, hub_verify=True)
-    assert item is not None, "expected deferred sentinel, got None"
-    assert worker._is_hub_verify_deferred_item(item), "expected deferred sentinel, got: %s" % item
-    assert item["command"] == command
-
-
-def test_sandbox_repository_verification_item_returns_none_when_hub_verify_off_and_no_file(
-    tmp_path,
-) -> None:
-    """Option A: with hub_verify=False and no sandbox file, the helper returns None
-    so the worker falls back to running the contract test locally."""
-    item = worker._sandbox_repository_verification_item(
-        tmp_path, "scripts/run-contract-tests.sh", hub_verify=False
-    )
-    assert item is None, "Option A: expected None when no sandbox file and hub_verify=False"
+def test_sandbox_repository_verification_item_returns_none_without_a_file(tmp_path) -> None:
+    """With no sandbox file the helper returns None, never a deferred placeholder."""
+    item = worker._sandbox_repository_verification_item(tmp_path, "scripts/run-contract-tests.sh")
+    assert item is None

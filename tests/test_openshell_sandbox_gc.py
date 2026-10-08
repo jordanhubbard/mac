@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from mac.openshell_sandbox_gc import (
+    _process_identity,
     reconcile_stale_sandboxes,
+    run_sandbox_list,
     stale_sandbox_candidates,
 )
 
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def test_current_process_has_stable_reuse_safe_identity():
+    first = _process_identity(os.getpid())
+    second = _process_identity(os.getpid())
+
+    assert first == second
+    assert first[0] == "present"
+    assert first[1].count(":") == 1
+    assert all(first[1].split(":"))
 
 
 def _sandbox(name: str, *, age_hours: int = 48, labels=None, phase="Ready"):
@@ -457,3 +470,105 @@ def test_a_working_sandbox_still_gets_the_full_stale_window():
     candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: True)
 
     assert candidates == []
+
+
+def test_the_short_hub_verifier_family_is_fully_managed():
+    """The 30-char ``mac-hubverify-<16 hex>`` name was shortened to
+    ``mac-hv-<10 hex>`` (17 chars) for OpenShell 0.1.2. Both the name regex and
+    the kind set must accept the new family, and must keep accepting the old
+    one so pre-rename sandboxes are still collected.
+    """
+    from mac.openshell_sandbox_gc import (
+        MANAGED_KINDS,
+        MANAGED_NAME_RE,
+        classify_orphan_task_sandbox,
+    )
+
+    assert MANAGED_NAME_RE.fullmatch("mac-hv-0123456789")
+    assert MANAGED_NAME_RE.fullmatch("mac-hubverify-1059c4c10c254")
+    assert "hv" in MANAGED_KINDS
+    assert "hubverify" in MANAGED_KINDS
+
+    for name, kind in (
+        ("mac-hv-0123456789", "hv"),
+        ("mac-hubverify-1059c4c10c254", "hubverify"),
+    ):
+        record = classify_orphan_task_sandbox(
+            _sandbox(
+                name,
+                labels={
+                    "mac.owner": "mac",
+                    "mac.kind": kind,
+                    "mac.keep": "false",
+                    "mac.pid": "424242",
+                },
+            ),
+            pid_is_alive=lambda _pid: False,
+        )
+        assert record["reap"] is True, record
+
+
+# --- OpenShell 0.1.2 removed ``sandbox list --limit`` ------------------------
+
+
+def test_sandbox_list_retries_without_limit_when_the_flag_was_removed():
+    """0.1.2 rejects ``--limit``; a bounded listing must degrade to an
+    unbounded one rather than failing every GC/reconcile sweep."""
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        if "--limit" in argv:
+            return SimpleNamespace(
+                returncode=2,
+                stdout="",
+                stderr="error: unexpected argument '--limit' found",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([_sandbox("mac-task-old")]),
+            stderr="",
+        )
+
+    listed = run_sandbox_list("openshell", run=fake_run)
+
+    assert listed.returncode == 0
+    assert calls[0][3:5] == ["--limit", "1000"]
+    assert "--limit" not in calls[-1]
+    assert len(calls) == 2
+
+
+def test_sandbox_list_does_not_retry_unrelated_listing_failures():
+    """A real gateway failure must surface unchanged, never be retried as if
+    the CLI had changed."""
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=1, stdout="", stderr="gateway unreachable")
+
+    listed = run_sandbox_list("openshell", run=fake_run)
+
+    assert listed.returncode == 1
+    assert len(calls) == 1
+
+
+def test_reap_orphaned_task_sandboxes_survives_limit_flag_removal(monkeypatch):
+    rows = [_orphan("mac-task-dead", pid="10")]
+
+    def fake_run(argv, **_kwargs):
+        if "--limit" in argv:
+            return SimpleNamespace(
+                returncode=2,
+                stdout="",
+                stderr="error: unexpected argument '--limit' found",
+            )
+        if argv[2] == "list":
+            return SimpleNamespace(returncode=0, stdout=json.dumps(rows), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("mac.openshell_sandbox_gc.subprocess.run", fake_run)
+
+    report = reap_orphaned_task_sandboxes(apply=True, pid_is_alive=lambda _p: False)
+
+    assert report["deleted"] == ["mac-task-dead"]

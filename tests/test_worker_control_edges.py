@@ -720,10 +720,10 @@ def _managed_markers(monkeypatch, tmp_path):
 def test_managed_image_adopts_the_published_digest_for_the_target_revision(
     monkeypatch, tmp_path
 ) -> None:
-    """refresh-source must be able to advance a digest-managed worker.
+    """A repo update must be able to advance a digest-managed worker.
 
-    Only fleet-node-install.sh ever wrote these markers, so `mac fleet
-    refresh-source` could not move a worker to ANY new commit without a full
+    Only the (since deleted) fleet-node-install.sh ever wrote these markers, so
+    a source refresh could not move a worker to ANY new commit without a full
     deploy -- every pod sat five commits behind main for two days.
     """
     instance = _instance(tmp_path)

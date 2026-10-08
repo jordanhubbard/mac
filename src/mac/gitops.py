@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import sys
 from urllib.parse import quote as _quote, urlparse, urlsplit, urlunsplit
 
@@ -43,23 +43,13 @@ class PullRequestMergeResult:
     the PR is fine) from a hard error (raised, never returned).
 
     ``serialization`` names WHICH landing mechanism produced this outcome, so
-    the guarantee behind a merge is recorded rather than assumed:
-
-    ``merge_queue``
-        The forge's merge queue owns the landing.  It builds a speculative
-        merge candidate, tests the projected post-merge tree, and merges in
-        order — the property :mod:`mac.merge_queue` models (bors' "Not Rocket
-        Science Rule").  The tree that was tested IS the tree that lands.
-    ``direct_squash``
-        A plain squash merge.  Required status checks ran against a merge
-        candidate built from *some* canonical tip; nothing stops the canonical
-        branch from advancing between the checks finishing and the merge
-        executing, so the landed tree may never have been tested as such.
-        Callers must re-validate the canonical tip immediately before asking
-        for this merge; ``queued`` is False and the evidence says so.
-
-    ``queued`` is True when the PR was accepted into the merge queue but has
-    not landed yet: not a failure, and not yet a success.
+    the guarantee behind a merge is recorded rather than assumed.  The forge
+    side is always ``direct_squash``: a plain squash merge.  Required status
+    checks ran against a merge candidate built from *some* canonical tip;
+    nothing stops the canonical branch from advancing between the checks
+    finishing and the merge executing, so the caller must serialize the
+    landing itself (the hub's serial land loop) or re-validate the canonical tip
+    immediately before asking for this merge.
     """
 
     merged: bool
@@ -68,7 +58,6 @@ class PullRequestMergeResult:
     blocked: bool = False
     reason: str = ""
     serialization: str = ""
-    queued: bool = False
 
 
 _GIT_REMOTE_URL_RE = re.compile(
@@ -143,6 +132,14 @@ class CanonicalFreshnessResult:
     push_stdout: str = ""
     push_stderr: str = ""
     remote_verified: bool = False
+    # The canonical tip moved forward past the base the task built on (it is
+    # not an ancestor of task HEAD, but it descends from the prepared base, so
+    # nothing the task started from was rewritten). Set whether or not the
+    # caller allowed publishing such a head; ``ok`` says which.
+    stale_base: bool = False
+    # merge-base(canonical tip, task HEAD): the base the task's own change is
+    # measured against. Equals the tip when the head is current.
+    merge_base_sha: str = ""
 
     def evidence(self) -> dict[str, object]:
         target = self.target
@@ -152,9 +149,11 @@ class CanonicalFreshnessResult:
             "canonical_branch": target.canonical_branch if target else "",
             "prepared_base_sha": target.prepared_base_sha if target else "",
             "canonical_tip_sha": self.canonical_tip_sha,
+            "merge_base_sha": self.merge_base_sha,
             "task_head_sha": self.head_sha or (target.task_head_sha if target else ""),
             "isolated_ref": target.isolated_ref if target else "",
-            "ancestry_valid": self.ok,
+            "ancestry_valid": self.ok and not self.stale_base,
+            "state": "stale_base" if self.stale_base else ("current" if self.ok else "invalid"),
             "error": self.error,
         }
 
@@ -562,10 +561,109 @@ def _isolated_publication_ref(common_key: str) -> str:
     return "refs/mac/publication/%s-%s" % (safe, nonce)
 
 
+def _classify_canonical_freshness(
+    target: CanonicalPublicationTarget,
+    head_sha: str,
+    canonical_tip: str,
+    *,
+    allow_stale_base: bool,
+) -> CanonicalFreshnessResult:
+    """Judge task HEAD against the fetched canonical tip.
+
+    Three outcomes. CURRENT: the tip is an ancestor of HEAD. STALE BASE: the
+    tip moved forward from the prepared base after the task built on it --
+    another task landed first. That is not a safety problem: landing checks the
+    head against the then-current tip and sends the task back to rebase
+    (``_LandingRebaseRequiredError``), and required checks re-run on the pull
+    request. It is publishable when the caller allows it, never onto the
+    canonical branch itself. INVALID: the tip does not descend from the
+    prepared base (canonical history was rewritten under the task), so the
+    task's view of canonical history cannot be trusted; that stays fail-closed.
+
+    ``files_changed`` is always the task's own change, ``merge-base..HEAD``,
+    whether or not the head is publishable, so evidence stays honest.
+    """
+    worktree = target.worktree
+    merge_base = _run_git(worktree, ["merge-base", canonical_tip, head_sha])
+    merge_base_sha = merge_base.stdout.strip()
+    if merge_base.returncode != 0 or not _GIT_SHA_RE.fullmatch(merge_base_sha):
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            error="task HEAD %s shares no history with canonical tip %s"
+            % (head_sha[:12], canonical_tip[:12]),
+        )
+    diff = _run_git(worktree, ["diff", "--name-only", "%s..%s" % (merge_base_sha, head_sha)])
+    if diff.returncode != 0:
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            error="could not compute canonical diff: %s" % _git_failure(diff, "non-zero exit"),
+        )
+    files_changed = tuple(line for line in diff.stdout.splitlines() if line.strip())
+    if merge_base_sha == canonical_tip:
+        return CanonicalFreshnessResult(
+            True,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            files_changed=files_changed,
+        )
+    stale_error = (
+        "canonical tip %s is not an ancestor of task HEAD %s; rebase or merge %s before publication"
+        % (canonical_tip[:12], head_sha[:12], target.canonical_branch)
+    )
+    moved_forward = (
+        _run_git(
+            worktree, ["merge-base", "--is-ancestor", target.prepared_base_sha, canonical_tip]
+        ).returncode
+        == 0
+    )
+    if not moved_forward:
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            files_changed=files_changed,
+            error="%s (canonical history was rewritten: prepared base %s is not an "
+            "ancestor of the canonical tip)" % (stale_error, target.prepared_base_sha[:12]),
+        )
+    if target.destination_branch == target.canonical_branch:
+        return CanonicalFreshnessResult(
+            False,
+            target,
+            head_sha=head_sha,
+            canonical_tip_sha=canonical_tip,
+            merge_base_sha=merge_base_sha,
+            files_changed=files_changed,
+            stale_base=True,
+            error="%s (a stale head is never published onto the canonical branch)" % stale_error,
+        )
+    return CanonicalFreshnessResult(
+        allow_stale_base,
+        target,
+        head_sha=head_sha,
+        canonical_tip_sha=canonical_tip,
+        merge_base_sha=merge_base_sha,
+        files_changed=files_changed,
+        stale_base=True,
+        error="" if allow_stale_base else stale_error,
+    )
+
+
 def _canonical_freshness_locked(
     target: CanonicalPublicationTarget,
     *,
     push: bool,
+    allow_stale_base: bool = False,
 ) -> CanonicalFreshnessResult:
     worktree = target.worktree
     head = _run_git(worktree, ["rev-parse", "--verify", "HEAD^{commit}"])
@@ -631,42 +729,9 @@ def _canonical_freshness_locked(
                 % _git_failure(resolve, "invalid SHA"),
             )
         else:
-            ancestor = _run_git(worktree, ["merge-base", "--is-ancestor", canonical_tip, head_sha])
-            if ancestor.returncode != 0:
-                result = CanonicalFreshnessResult(
-                    False,
-                    target,
-                    head_sha=head_sha,
-                    canonical_tip_sha=canonical_tip,
-                    error=(
-                        "canonical tip %s is not an ancestor of task HEAD %s; "
-                        "rebase or merge %s before publication"
-                    )
-                    % (canonical_tip[:12], head_sha[:12], target.canonical_branch),
-                )
-            else:
-                diff = _run_git(
-                    worktree, ["diff", "--name-only", "%s..%s" % (canonical_tip, head_sha)]
-                )
-                if diff.returncode != 0:
-                    result = CanonicalFreshnessResult(
-                        False,
-                        target,
-                        head_sha=head_sha,
-                        canonical_tip_sha=canonical_tip,
-                        error="could not compute canonical diff: %s"
-                        % _git_failure(diff, "non-zero exit"),
-                    )
-                else:
-                    result = CanonicalFreshnessResult(
-                        True,
-                        target,
-                        head_sha=head_sha,
-                        canonical_tip_sha=canonical_tip,
-                        files_changed=tuple(
-                            line for line in diff.stdout.splitlines() if line.strip()
-                        ),
-                    )
+            result = _classify_canonical_freshness(
+                target, head_sha, canonical_tip, allow_stale_base=allow_stale_base
+            )
 
     cleanup = _run_git(worktree, ["update-ref", "-d", fetch_ref])
     if cleanup.returncode != 0:
@@ -676,6 +741,8 @@ def _canonical_freshness_locked(
             head_sha=head_sha,
             canonical_tip_sha=(result.canonical_tip_sha if result else ""),
             files_changed=(result.files_changed if result else ()),
+            stale_base=(result.stale_base if result else False),
+            merge_base_sha=(result.merge_base_sha if result else ""),
             error="could not clean isolated canonical fetch ref %s: %s"
             % (fetch_ref, _git_failure(cleanup, "non-zero exit")),
         )
@@ -692,6 +759,8 @@ def _canonical_freshness_locked(
             head_sha=result.head_sha,
             canonical_tip_sha=result.canonical_tip_sha,
             files_changed=result.files_changed,
+            stale_base=result.stale_base,
+            merge_base_sha=result.merge_base_sha,
             error="git push to %s failed: %s"
             % (target.remote_display, _git_failure(pushed, "non-zero exit")),
             push_returncode=int(pushed.returncode),
@@ -707,6 +776,8 @@ def _canonical_freshness_locked(
             head_sha=result.head_sha,
             canonical_tip_sha=result.canonical_tip_sha,
             files_changed=result.files_changed,
+            stale_base=result.stale_base,
+            merge_base_sha=result.merge_base_sha,
             error="push completed but remote branch verification failed for %s" % destination_ref,
             push_returncode=0,
             push_stdout=redact_git_remote_auth_in_text(pushed.stdout or ""),
@@ -718,6 +789,8 @@ def _canonical_freshness_locked(
         head_sha=result.head_sha,
         canonical_tip_sha=result.canonical_tip_sha,
         files_changed=result.files_changed,
+        stale_base=result.stale_base,
+        merge_base_sha=result.merge_base_sha,
         push_returncode=0,
         push_stdout=redact_git_remote_auth_in_text(pushed.stdout or ""),
         push_stderr=redact_git_remote_auth_in_text(pushed.stderr or ""),
@@ -762,20 +835,45 @@ def sync_worktree_with_canonical(
         return {"status": "fetch_failed", "reason": "FETCH_HEAD did not resolve to a commit"}
     if _run_git(worktree, ["merge-base", "--is-ancestor", tip, "HEAD"]).returncode == 0:
         return {"status": "fresh", "canonical_tip": tip}
+    conflict = rebase_worktree_onto(worktree, tip)
+    if conflict is not None:
+        return {"status": "conflict", "canonical_tip": tip, "reason": conflict}
+    return {"status": "rebased", "canonical_tip": tip}
+
+
+def rebase_worktree_onto(worktree: Path, tip: str) -> Optional[str]:
+    """Rebase HEAD onto ``tip``; ``None`` on success, else the conflict reason.
+
+    A conflicting rebase is aborted, so the worktree is left exactly where it
+    was. Shared by the finalizer's canonical sync and the worker continuing a
+    task from its previously published head.
+    """
     rebase = _run_git(
         worktree,
         ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet", "rebase", tip],
     )
-    if rebase.returncode != 0:
-        _run_git(worktree, ["rebase", "--abort"])
-        return {
-            "status": "conflict",
-            "canonical_tip": tip,
-            "reason": redact_git_remote_auth_in_text(
-                ((rebase.stderr or rebase.stdout) or "rebase failed").strip()
-            )[:500],
-        }
-    return {"status": "rebased", "canonical_tip": tip}
+    if rebase.returncode == 0:
+        return None
+    _run_git(worktree, ["rebase", "--abort"])
+    return redact_git_remote_auth_in_text(
+        ((rebase.stderr or rebase.stdout) or "rebase failed").strip()
+    )[:500]
+
+
+def canonical_sync_selection_base(canonical_sync: Any, fallback: str = "") -> str:
+    """The base a scoped test gate should diff against after canonical sync.
+
+    After a clean ``fresh``/``rebased`` sync HEAD contains the canonical tip,
+    so ``tip..HEAD`` is exactly the task's change. Any other outcome leaves
+    no trustworthy tip and the caller's *fallback* (the prepared base) is
+    used; the selector itself escalates to the full suite when that base is
+    unusable.
+    """
+    if isinstance(canonical_sync, dict) and canonical_sync.get("status") in {"fresh", "rebased"}:
+        tip = str(canonical_sync.get("canonical_tip") or "").strip()
+        if _GIT_SHA_RE.fullmatch(tip):
+            return tip
+    return str(fallback or "").strip()
 
 
 @_git_timeout_scoped
@@ -792,22 +890,30 @@ def check_canonical_freshness(
 def guarded_push(
     target: CanonicalPublicationTarget,
     *,
+    allow_stale_base: bool = False,
     timeout: Optional[float] = None,
 ) -> CanonicalFreshnessResult:
     """Re-fetch canonical state and push only when task HEAD contains it.
+
+    With *allow_stale_base* a head whose base the canonical tip has merely
+    moved past (another task landed first) is published too, marked
+    ``stale_base``: landing re-checks it against the tip and sends it back to
+    rebase. Rewritten canonical history and the canonical branch itself as
+    destination stay refused (see ``_classify_canonical_freshness``).
 
     Validation, canonical fetch, ancestry checking, temporary-ref cleanup,
     publication, and remote verification all happen under the repository's
     shared git-common-dir lock. The authenticated URL checked here is the exact
     URL passed to both ``git push`` and ``git ls-remote``.
     """
-    return _canonical_publication_operation(target, push=True)
+    return _canonical_publication_operation(target, push=True, allow_stale_base=allow_stale_base)
 
 
 def _canonical_publication_operation(
     target: CanonicalPublicationTarget,
     *,
     push: bool,
+    allow_stale_base: bool = False,
 ) -> CanonicalFreshnessResult:
     try:
         lock = target.lock_path.open("a+", encoding="utf-8")
@@ -846,7 +952,7 @@ def _canonical_publication_operation(
                 head_sha=target.task_head_sha,
                 error="could not acquire publication lock: %s" % exc,
             )
-        result = _canonical_freshness_locked(target, push=push)
+        result = _canonical_freshness_locked(target, push=push, allow_stale_base=allow_stale_base)
         try:
             fcntl.flock(lock, fcntl.LOCK_UN)
         except OSError as exc:
@@ -856,6 +962,8 @@ def _canonical_publication_operation(
                 head_sha=result.head_sha,
                 canonical_tip_sha=result.canonical_tip_sha,
                 files_changed=result.files_changed,
+                stale_base=result.stale_base,
+                merge_base_sha=result.merge_base_sha,
                 error="could not release publication lock: %s" % exc,
             )
         return result
@@ -899,6 +1007,24 @@ def _http_post_json(url: str, headers: dict, body: dict, timeout: float = 20.0) 
         body_text = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(
             "POST %s -> %d %s: %s" % (url, exc.code, exc.reason, body_text[:500])
+        ) from exc
+
+
+def _http_patch_json(url: str, headers: dict, body: dict, timeout: float = 20.0) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", **headers},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read().decode("utf-8")
+            return json.loads(data) if data else {}
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            "PATCH %s -> %d %s: %s" % (url, exc.code, exc.reason, body_text[:500])
         ) from exc
 
 
@@ -996,9 +1122,8 @@ def _mac_task_id(title: str, body: str) -> str:
     marker (see ``agent_pull_request`` / the hub's own publish body) naming
     the task that actually owns this PR, so that marker is checked first.
     Falling back to the first task-id-shaped token anywhere in title+body
-    misidentifies a conflict-integration task's PR: its title deliberately
-    names the ORIGINAL task it is repairing (see
-    ``_handoff_conflict_to_integration``) before its own id, e.g. "Integrate
+    misidentifies a PR whose title names ANOTHER task before its own id (the
+    retired conflict-integration repair tasks did exactly that), e.g. "Integrate
     conflicting approved task task_A onto current main (task_B)" -- a bare
     first-match search returns task_A, so the reuse lookup below finds and
     silently "reuses" task_A's already-open, unrelated PR. That PR's head
@@ -1193,7 +1318,36 @@ def required_status_check_contexts(
     Returns ``None`` when the answer is unknown (unsupported forge, API error,
     insufficient scope).  Callers must treat ``None`` and ``()`` as "the forge
     is not gating this merge for us" and keep their own gate.
+    """
+    policy = required_status_check_policy(
+        repo_url, branch, github_token=github_token, gitea_token=gitea_token
+    )
+    return None if policy is None else policy.contexts
 
+
+@dataclass(frozen=True)
+class RequiredStatusChecks:
+    """The forge's required-checks rule for a branch.
+
+    ``strict`` is GitHub's "require branches to be up to date before merging"
+    (``strict_required_status_checks_policy``): a pull request that falls
+    behind the base cannot merge until it is updated and its checks re-run.
+    """
+
+    contexts: Tuple[str, ...]
+    strict: bool = False
+
+
+def required_status_check_policy(
+    repo_url: str,
+    branch: str,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Optional[RequiredStatusChecks]:
+    """Required status checks for ``branch``, and whether they are strict.
+
+    ``None`` means unknown, exactly as for ``required_status_check_contexts``.
     Uses GitHub's ``/rules/branches/{branch}`` endpoint rather than the branch
     protection API because it needs no admin scope and reports rulesets, which
     is how this repository's ``main`` is actually protected.
@@ -1219,6 +1373,7 @@ def required_status_check_contexts(
     if not isinstance(rules, list):
         return None
     contexts: list[str] = []
+    strict = False
     for rule in rules:
         if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
             continue
@@ -1227,7 +1382,9 @@ def required_status_check_contexts(
         for check in checks or []:
             if isinstance(check, dict) and str(check.get("context") or "").strip():
                 contexts.append(str(check["context"]).strip())
-    return tuple(dict.fromkeys(contexts))
+        if isinstance(params, dict) and params.get("strict_required_status_checks_policy") is True:
+            strict = True
+    return RequiredStatusChecks(contexts=tuple(dict.fromkeys(contexts)), strict=strict)
 
 
 def _http_put_json(
@@ -1402,9 +1559,8 @@ def required_check_verdicts(
 
     So the party requesting the merge verifies first, instead of assuming a
     refusal will arrive if the checks have not passed. This holds whether or
-    not the identity has a bypass, and it composes with a merge queue rather
-    than duplicating it: the queue serializes and tests the candidate, this
-    makes sure nobody asks for a merge that was never validated.
+    not the identity has a bypass: the hub's serial land loop orders the
+    landings, this makes sure nobody asks for a merge that was never validated.
 
     Returns ``passed``/``pending``/``failed`` lists plus ``known``.  ``known``
     is False when the forge could not be asked, which callers must treat as
@@ -1463,162 +1619,205 @@ def required_check_verdicts(
     passed: list[str] = []
     pending: list[str] = []
     failed: list[str] = []
+    missing: list[str] = []
     for context in contexts:
-        outcome = latest.get(context, "")
+        outcome = latest.get(context)
         if outcome == "success":
             passed.append(context)
         elif outcome in _CHECK_FAILED_CONCLUSIONS or outcome == "failure":
             failed.append(context)
         else:
             pending.append(context)
-    verdict.update({"known": True, "passed": passed, "pending": pending, "failed": failed})
+            if outcome is None:
+                # Not reported at all for this head (no status, no check
+                # run) -- as opposed to reported and still running. A
+                # required context is guaranteed to report; a task's own
+                # acceptance check is not, so callers may need the
+                # distinction.
+                missing.append(context)
+    verdict.update(
+        {
+            "known": True,
+            "passed": passed,
+            "pending": pending,
+            "failed": failed,
+            "missing": missing,
+        }
+    )
     return verdict
 
 
 # ----------------------------------------------------------------------
-# Merge queue: serialize the merges without serializing the test runs.
+# Why a required check failed: what a worker needs to fix it.
 # ----------------------------------------------------------------------
 
+# Bounds on what a failed-check send-back carries into the next prompt.
+FAILED_CHECK_LOG_LINES = 150
+FAILED_CHECK_LOG_TOTAL_BYTES = 8 * 1024
+_FAILED_CHECK_MAX_CHECKS = 10
+# Only the end of a job log is kept; reading stops buffering past this.
+_FAILED_CHECK_LOG_READ_WINDOW = 256 * 1024
+# GitHub Actions prefixes each log line with an RFC 3339 timestamp.
+_ACTIONS_LOG_TIMESTAMP_RE = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?")
+# Token shapes GitHub issues. Actions masks registered secrets as ``***``
+# itself; this catches a token a test printed that was never registered.
+_GITHUB_TOKEN_TEXT_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})")
 
-def merge_queue_enabled(
-    repo_url: str,
-    branch: str,
-    *,
-    github_token: Optional[str] = None,
-    gitea_token: Optional[str] = None,
-) -> Optional[bool]:
-    """Whether ``branch`` is landed through the forge's merge queue.
 
-    ``True``/``False`` are answers; ``None`` means "unknown" (a forge with no
-    merge queue at all, an API error, or insufficient scope).  Callers must
-    treat ``None`` exactly like ``False`` *and say so in their evidence*: a
-    repository without a queue gets a plain squash merge, which does not carry
-    the queue's guarantee, and silently assuming otherwise just relocates the
-    hole.
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Surface a redirect as an ``HTTPError`` instead of following it."""
 
-    Reuses the same ``/rules/branches/{branch}`` endpoint as
-    :func:`required_status_check_contexts` — no admin scope, and it reports
-    rulesets, which is how protection is actually configured here.
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _read_tail(resp: Any, window: int) -> bytes:
+    buffer = b""
+    while True:
+        chunk = resp.read(64 * 1024)
+        if not chunk:
+            return buffer
+        buffer = (buffer + chunk)[-window:]
+
+
+def _fetch_actions_job_log(
+    api_base: str, owner: str, repo: str, job_id: int, headers: Dict[str, str]
+) -> str:
+    """The end of one GitHub Actions job's log, as text.
+
+    The logs endpoint answers with a redirect to a short-lived signed download
+    URL. The redirect is followed by hand so the forge credential is never sent
+    to the storage host the URL points at.
     """
+    url = "%s/repos/%s/%s/actions/jobs/%d/logs" % (api_base, owner, repo, int(job_id))
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        host_kind, owner, repo, api_base, headers, _token = _forge_api_context(
-            repo_url, github_token=github_token, gitea_token=gitea_token
-        )
-    except ValueError:
-        return None
-    if host_kind != "github":
-        # gitea has no merge-queue equivalent. "Unknown" rather than False so
-        # the caller records "this forge cannot serialize merges for us".
-        return None
-    url = "%s/repos/%s/%s/rules/branches/%s" % (
-        api_base,
-        owner,
-        repo,
-        _quote(str(branch or ""), safe=""),
-    )
-    try:
-        rules = _http_get_json(url, headers)
-    except Exception:  # noqa: BLE001 - an unknown answer must not block publication
-        return None
-    if not isinstance(rules, list):
-        return None
-    for rule in rules:
-        if isinstance(rule, dict) and rule.get("type") == "merge_queue":
-            return True
-    return False
-
-
-def _graphql_url(host_kind: str, repo_url: str) -> str:
-    parsed = urlparse(repo_url if "://" in repo_url else "https://" + repo_url)
-    if host_kind == "github" and (parsed.hostname or "").lower() in {
-        "github.com",
-        "api.github.com",
-        "www.github.com",
-    }:
-        return "https://api.github.com/graphql"
-    scheme = parsed.scheme or "https"
-    port = (":" + str(parsed.port)) if parsed.port else ""
-    return "%s://%s%s/api/graphql" % (scheme, parsed.hostname or "", port)
-
-
-def _graphql(url: str, headers: dict, query: str, variables: dict, token: str) -> Tuple[dict, str]:
-    """POST a GraphQL document; return ``(data, error_text)`` without raising.
-
-    GitHub answers a rejected mutation with HTTP 200 and an ``errors`` array,
-    so errors are data here in exactly the way the merge endpoint's 4xx is.
-    """
-    body = {"query": query, "variables": variables}
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", **headers},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30.0) as resp:
-            raw = resp.read().decode("utf-8")
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=30.0) as resp:
+            return _read_tail(resp, _FAILED_CHECK_LOG_READ_WINDOW).decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        return {}, _scrub_secret("HTTP %d %s: %s" % (exc.code, exc.reason, raw[:500]), token)
-    except urllib.error.URLError as exc:
-        return {}, _scrub_secret(str(exc.reason), token)
+        location = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else ""
+        if not location:
+            raise
+    request = urllib.request.Request(location, headers={"User-Agent": "mac-gitops"})
+    with urllib.request.urlopen(request, timeout=30.0) as resp:
+        return _read_tail(resp, _FAILED_CHECK_LOG_READ_WINDOW).decode("utf-8", "replace")
+
+
+def failed_log_tail(text: str, max_lines: int = FAILED_CHECK_LOG_LINES) -> str:
+    """The failing part of a job log: up to its last error, last ``max_lines``.
+
+    Approximates ``gh run view --log-failed`` for one job: the step that failed
+    is the last one to emit ``##[error]``; everything after it is post-job
+    cleanup that says nothing about the failure.
+    """
+    lines = [_ACTIONS_LOG_TIMESTAMP_RE.sub("", line) for line in str(text or "").splitlines()]
+    last_error = max((i for i, line in enumerate(lines) if "##[error]" in line), default=-1)
+    if last_error >= 0:
+        lines = lines[: last_error + 1]
+    return "\n".join(lines[-max(1, int(max_lines)) :])
+
+
+def scrub_check_log(text: str, *secrets: Optional[str]) -> str:
+    """``_scrub_secret`` plus any GitHub-token-shaped string in CI output."""
+    return _GITHUB_TOKEN_TEXT_RE.sub("***", _scrub_secret(text, *secrets))
+
+
+def _clip_to_tail_bytes(text: str, budget: int) -> str:
+    """The end of ``text`` in at most ``budget`` UTF-8 bytes, on a line break."""
+    if budget <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= budget:
+        return text
+    clipped = encoded[-budget:].decode("utf-8", "ignore")
+    newline = clipped.find("\n")
+    return clipped[newline + 1 :] if 0 <= newline < len(clipped) - 1 else clipped
+
+
+def failed_check_details(
+    repo_url: str,
+    sha: str,
+    failed: Tuple[str, ...],
+    *,
+    max_log_lines: int = FAILED_CHECK_LOG_LINES,
+    max_total_bytes: int = FAILED_CHECK_LOG_TOTAL_BYTES,
+    github_token: Optional[str] = None,
+) -> list:
+    """Name, conclusion, details URL and a bounded log tail per failed check.
+
+    What a worker sent back to fix a red CI needs: not just that ``test``
+    failed, but how. Never raises -- a forge that cannot be read still yields
+    one entry per failed name, so the send-back states what is known. Log
+    tails share ``max_total_bytes`` and are scrubbed of credentials.
+    """
+    names = [str(name) for name in failed if str(name or "")][:_FAILED_CHECK_MAX_CHECKS]
+    details: list = [
+        {"name": name, "conclusion": "failure", "details_url": "", "log_tail": ""} for name in names
+    ]
+    if not names:
+        return details
     try:
-        decoded = json.loads(raw) if raw else {}
-    except ValueError:
-        return {}, _scrub_secret("unparseable GraphQL response", token)
-    if not isinstance(decoded, dict):
-        return {}, _scrub_secret("unexpected GraphQL response", token)
-    errors = decoded.get("errors")
-    if errors:
-        messages = [str(err.get("message") or "") for err in errors if isinstance(err, dict)]
-        return _ensure_mapping(decoded.get("data")), _scrub_secret(
-            "; ".join(m for m in messages if m)[:500] or "GraphQL error", token
+        host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+            repo_url, github_token=github_token
         )
-    return _ensure_mapping(decoded.get("data")), ""
-
-
-def _ensure_mapping(value: object) -> dict:
-    """Return ``value`` when it is a dict, otherwise an empty dict."""
-    return value if isinstance(value, dict) else {}
-
-
-_PULL_REQUEST_NODE_QUERY = """
-query($owner:String!,$name:String!,$number:Int!){
-  repository(owner:$owner,name:$name){
-    pullRequest(number:$number){
-      id state merged headRefOid
-      mergeCommit{ oid }
-    }
-  }
-}
-"""
-
-_ENQUEUE_MUTATION = """
-mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){
-  enqueuePullRequest(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid}){
-    mergeQueueEntry{ id position state }
-  }
-}
-"""
-
-# GraphQL refusals that mean "the PR is fine, it is simply not landable yet".
-_ENQUEUE_BLOCKED_MARKERS = (
-    "not mergeable",
-    "is not in a mergeable state",
-    "required status check",
-    "checks have not",
-    "review is required",
-    "changes requested",
-    "already queued",
-    "already in the merge queue",
-    "pull request is in an unstable",
-    "merge queue is not enabled",
-    "base branch modified",
-    "head sha",
-    "expected head",
-    "waiting on code owner",
-    "protected branch",
-)
+    except ValueError:
+        return details
+    if host_kind != "github":
+        return details
+    runs: Dict[str, Dict[str, Any]] = {}
+    statuses: Dict[str, Dict[str, Any]] = {}
+    try:
+        listed = _http_get_json(
+            "%s/repos/%s/%s/commits/%s/check-runs?per_page=100"
+            % (api_base, owner, repo, _quote(sha, safe="")),
+            headers,
+        )
+        for run in (listed or {}).get("check_runs") or []:
+            if isinstance(run, dict) and str(run.get("name") or ""):
+                runs.setdefault(str(run["name"]), run)
+    except Exception:  # noqa: BLE001 - details are best-effort
+        pass
+    try:
+        combined = _http_get_json(
+            "%s/repos/%s/%s/commits/%s/status" % (api_base, owner, repo, _quote(sha, safe="")),
+            headers,
+        )
+        for status in (combined or {}).get("statuses") or []:
+            if isinstance(status, dict) and str(status.get("context") or ""):
+                statuses.setdefault(str(status["context"]), status)
+    except Exception:  # noqa: BLE001
+        pass
+    remaining = max(0, int(max_total_bytes))
+    for item in details:
+        run = runs.get(item["name"])
+        status = statuses.get(item["name"])
+        if run is not None:
+            item["conclusion"] = str(run.get("conclusion") or run.get("status") or "failure")
+            item["details_url"] = str(run.get("details_url") or run.get("html_url") or "")
+        elif status is not None:
+            item["conclusion"] = str(status.get("state") or "failure")
+            item["details_url"] = str(status.get("target_url") or "")
+            item["description"] = scrub_check_log(str(status.get("description") or ""), token)[:300]
+        item["details_url"] = scrub_check_log(item["details_url"], token)[:500]
+        app = run.get("app") if isinstance(run, dict) else None
+        if (
+            run is None
+            or remaining <= 0
+            or not isinstance(app, dict)
+            or str(app.get("slug") or "") != "github-actions"
+        ):
+            continue
+        try:
+            raw = _fetch_actions_job_log(api_base, owner, repo, int(run.get("id") or 0), headers)
+        except Exception as exc:  # noqa: BLE001 - a missing log is reported, not fatal
+            item["log_error"] = scrub_check_log(str(exc), token)[:200]
+            continue
+        tail = _clip_to_tail_bytes(
+            scrub_check_log(failed_log_tail(raw, max_log_lines), token), remaining
+        )
+        item["log_tail"] = tail
+        remaining -= len(tail.encode("utf-8"))
+    return details
 
 
 def pull_request_state(
@@ -1630,10 +1829,10 @@ def pull_request_state(
 ) -> Dict[str, object]:
     """Current forge state of PR ``number``: merged, its SHA, and its head.
 
-    Publication is retried, and between attempts a queued PR may have landed
-    on its own.  Asking the forge first is what makes "the merge queue merged
-    it while we were backing off" a success rather than a second merge
-    attempt.
+    Publication is retried, and between attempts the PR may have been merged
+    by a human or by an earlier attempt that died before recording it.
+    Asking the forge first is what makes that a success rather than a second
+    merge attempt.
     """
     host_kind, owner, repo, api_base, headers, token = _forge_api_context(
         repo_url, github_token=github_token, gitea_token=gitea_token
@@ -1668,89 +1867,90 @@ def pull_request_state(
         "state": str(pr.get("state") or ""),
         "head_sha": str((head or {}).get("sha") or "").strip(),
         "head_ref": str((head or {}).get("ref") or "").strip(),
+        # GitHub's "behind" means a strict ruleset will not let it merge until
+        # the branch is updated with the base.
+        "mergeable_state": str(pr.get("mergeable_state") or "").strip(),
         "host": host_kind,
     }
 
 
-def enqueue_pull_request(
+def update_pull_request_branch(
     repo_url: str,
     number: int,
     *,
-    sha: str,
+    expected_head_sha: Optional[str] = None,
     github_token: Optional[str] = None,
     gitea_token: Optional[str] = None,
-) -> PullRequestMergeResult:
-    """Add PR ``number`` to the forge's merge queue, pinned to ``sha``.
+) -> Dict[str, object]:
+    """Merge the base into PR ``number``'s branch (GitHub's update-branch).
 
-    ``sha`` is the reviewed head, passed as ``expectedHeadOid``: the forge
-    refuses the enqueue if the branch moved underneath us.  That is the same
-    safety property the direct merge gets from its ``sha`` parameter and the
-    direct-push path gets from ``--force-with-lease``.
+    A strict required-checks ruleset refuses to merge a pull request that is
+    behind its base, and nothing else will ever update it. ``expected_head_sha``
+    pins the head we observed, so a branch that moved under us is refused
+    rather than updated.
 
-    The queue lands the PR asynchronously, so a *successful* enqueue returns
-    ``merged=False, queued=True``: the caller defers through its existing
-    retry backoff and observes the merge on a later attempt.  A refusal that
-    names the forge's own gates comes back ``blocked=True``; anything else
-    raises.
+    Returns ``updated`` (the forge accepted; checks re-run on a new head),
+    ``conflict`` (the base does not merge cleanly: the change must be rebased
+    by its author) and ``reason``. Other failures come back with both False.
     """
-    if int(number) <= 0:
-        raise ValueError("pull request number is required to enqueue")
-    if not str(sha or "").strip():
-        raise ValueError("a reviewed head sha is required to enqueue")
-    host_kind, owner, repo, _api_base, headers, token = _forge_api_context(
+    try:
+        host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+            repo_url, github_token=github_token, gitea_token=gitea_token
+        )
+    except ValueError as exc:
+        return {"updated": False, "conflict": False, "reason": str(exc)[:300]}
+    if host_kind != "github":
+        return {"updated": False, "conflict": False, "reason": "update-branch is GitHub-only"}
+    body: Dict[str, object] = {}
+    if expected_head_sha:
+        body["expected_head_sha"] = expected_head_sha
+    status, _decoded, error = _http_put_json(
+        "%s/repos/%s/%s/pulls/%d/update-branch" % (api_base, owner, repo, int(number)),
+        headers,
+        body,
+    )
+    reason = _scrub_secret(error or ("HTTP %d" % status), token)[:300]
+    if 200 <= status < 300:
+        return {"updated": True, "conflict": False, "reason": ""}
+    return {
+        "updated": False,
+        "conflict": status == 422 and "conflict" in reason.lower(),
+        "reason": reason,
+    }
+
+
+def close_pull_request(
+    repo_url: str,
+    number: int,
+    *,
+    comment: str = "",
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> None:
+    """Close PR ``number``, leaving ``comment`` on it first when given.
+
+    Raises on failure; callers that must not be blocked by a forge hiccup
+    catch and log.
+    """
+    host_kind, owner, repo, api_base, headers, token = _forge_api_context(
         repo_url, github_token=github_token, gitea_token=gitea_token
     )
-    if host_kind != "github":
-        raise ValueError("merge queue enqueue is only supported on github")
-    url = _graphql_url(host_kind, repo_url)
-    data, error = _graphql(
-        url,
-        headers,
-        _PULL_REQUEST_NODE_QUERY,
-        {"owner": owner, "name": repo, "number": int(number)},
-        token,
-    )
-    pull = _ensure_mapping(
-        _ensure_mapping(_ensure_mapping(data).get("repository")).get("pullRequest")
-    )
-    if error or not pull.get("id"):
+    try:
+        if comment:
+            _http_post_json(
+                "%s/repos/%s/%s/issues/%d/comments" % (api_base, owner, repo, int(number)),
+                headers,
+                {"body": comment},
+            )
+        _http_patch_json(
+            "%s/repos/%s/%s/pulls/%d" % (api_base, owner, repo, int(number)),
+            headers,
+            {"state": "closed"},
+        )
+    except Exception as exc:  # noqa: BLE001 - re-raised without the credential
         raise RuntimeError(
-            "could not resolve pull request #%d for the merge queue: %s"
-            % (int(number), error or "no pull request node")
-        )
-    if bool(pull.get("merged")):
-        return PullRequestMergeResult(
-            merged=True,
-            number=int(number),
-            sha=str(_ensure_mapping(pull.get("mergeCommit")).get("oid") or "").strip(),
-            serialization="merge_queue",
-        )
-
-    _data, error = _graphql(
-        url,
-        headers,
-        _ENQUEUE_MUTATION,
-        {"pullRequestId": str(pull["id"]), "expectedHeadOid": str(sha).strip()},
-        token,
-    )
-    if not error:
-        return PullRequestMergeResult(
-            merged=False,
-            number=int(number),
-            queued=True,
-            serialization="merge_queue",
-            reason="enqueued into the merge queue",
-        )
-    lowered = error.lower()
-    if any(marker in lowered for marker in _ENQUEUE_BLOCKED_MARKERS):
-        return PullRequestMergeResult(
-            merged=False,
-            number=int(number),
-            blocked=True,
-            serialization="merge_queue",
-            reason=error,
-        )
-    raise RuntimeError("enqueue of pull request #%d failed: %s" % (int(number), error))
+            "could not close pull request #%d: %s" % (int(number), _scrub_secret(str(exc), token))
+        ) from None
 
 
 def request_pull_request_merge(
@@ -1762,49 +1962,19 @@ def request_pull_request_merge(
     method: str = "squash",
     commit_title: Optional[str] = None,
     commit_message: Optional[str] = None,
-    queue_enabled: Optional[bool] = None,
     github_token: Optional[str] = None,
     gitea_token: Optional[str] = None,
 ) -> PullRequestMergeResult:
-    """Ask the forge to land PR ``number``, through its merge queue if there is one.
+    """Ask the forge to squash-merge PR ``number``, pinned to the reviewed ``sha``.
 
-    THE GUARANTEE, written down rather than assumed:
-
-    * **With a merge queue** (``queue_enabled`` True): the queue builds a
-      speculative merge candidate, runs the required checks against the
-      *projected post-merge* tree, and merges in order.  What was tested is
-      what lands — the property :mod:`mac.merge_queue` relies on, restored
-      without the serial-rebase cost of ``strict`` required status checks
-      (the queue serializes the merges, not the test runs).
-    * **Without one** (``None`` or False — a repo with no queue configured,
-      gitea, or an unreadable ruleset): a plain squash merge.  Required
-      checks alone do NOT guarantee the landed tree was tested, because the
-      canonical branch can advance between the checks finishing and the merge
-      executing.  The caller must re-validate the canonical tip immediately
-      before calling this, and the returned ``serialization`` says
-      ``direct_squash`` so the weaker guarantee is visible in the evidence.
-
-    Already-merged PRs (the queue landed it between attempts) return
-    ``merged=True`` rather than being merged twice.
+    THE GUARANTEE, written down rather than assumed: a plain squash merge.
+    Required checks alone do NOT guarantee the landed tree was tested, because
+    the canonical branch can advance between the checks finishing and the merge
+    executing.  The caller serializes the landing (the hub's land loop) or
+    re-validates the canonical tip immediately before calling this, and the
+    returned ``serialization`` says ``direct_squash`` so the mechanism the
+    forge itself used is visible in the evidence.
     """
-    if queue_enabled:
-        observed = pull_request_state(
-            repo_url, number, github_token=github_token, gitea_token=gitea_token
-        )
-        if observed.get("known") and observed.get("merged"):
-            return PullRequestMergeResult(
-                merged=True,
-                number=int(number),
-                sha=str(observed.get("sha") or ""),
-                serialization="merge_queue",
-            )
-        return enqueue_pull_request(
-            repo_url,
-            number,
-            sha=sha,
-            github_token=github_token,
-            gitea_token=gitea_token,
-        )
     result = merge_pull_request(
         repo_url,
         number,

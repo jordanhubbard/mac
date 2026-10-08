@@ -57,7 +57,7 @@ import urllib.request
 from pathlib import Path
 
 from mac import mac_paths
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 from urllib.parse import quote, urlencode
 
 from mac.fleet_env import resolve as resolve_env_var
@@ -151,10 +151,8 @@ class LocalDispatch:
             "convert_ticketing_source",
             "create_interaction_task",
             "create_task",
-            "evaluate_rollout_health",
             "import_project_item",
             "register_project",
-            "rescue_rollout",
             "start_workflow",
         }
     )
@@ -480,9 +478,6 @@ class RemoteDispatch:
     ) -> Dict[str, Any]:
         return self._get("/tasks/stats", project=project, tenant_id=tenant_id)
 
-    def generator_yield_report(self) -> Dict[str, Any]:
-        return self._get("/tasks/generator-yield")
-
     def recover_stranded_dependents(
         self,
         *,
@@ -655,89 +650,6 @@ class RemoteDispatch:
             )
         )
 
-    def assign_review_experiment(
-        self,
-        task_id: str,
-        *,
-        experiment_id: str,
-        arm: Optional[str] = None,
-        arms: Optional[Dict[str, Any]] = None,
-        assignment_probability: Optional[float] = None,
-        blind: bool = False,
-        blind_arms: Optional[List[str]] = None,
-        policy_version: str = "v1",
-        hypothesis: str = "",
-        stratum: str = "",
-        actor: str = "human",
-    ) -> _Dictish:
-        body = _drop_none(
-            {
-                "experiment_id": experiment_id,
-                "arm": arm,
-                "arms": arms,
-                "assignment_probability": assignment_probability,
-                "blind": blind,
-                "blind_arms": blind_arms or None,
-                "policy_version": policy_version,
-                "hypothesis": hypothesis,
-                "stratum": stratum,
-                "actor": actor,
-            }
-        )
-        return _Dictish(
-            self._post(
-                "/tasks/%s/review-experiment" % quote(task_id, safe=""),
-                body,
-            )
-        )
-
-    def review_observation(self, task_id: str) -> _Dictish:
-        return _Dictish(self._get("/tasks/%s/review-observation" % quote(task_id, safe="")))
-
-    def record_review_outcome(
-        self,
-        task_id: str,
-        *,
-        kind: str,
-        status: str,
-        finding_id: str = "",
-        severity_weight: float = 1.0,
-        source: str = "operator",
-        detail: Optional[Dict[str, Any]] = None,
-        actor: str = "human",
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/tasks/%s/review-outcomes" % quote(task_id, safe=""),
-                {
-                    "kind": kind,
-                    "status": status,
-                    "finding_id": finding_id,
-                    "severity_weight": severity_weight,
-                    "source": source,
-                    "detail": detail or {},
-                    "actor": actor,
-                },
-            )
-        )
-
-    def review_experiment_report(
-        self,
-        experiment_id: str,
-        *,
-        project: Optional[str] = None,
-        min_tasks_per_arm: int = 5,
-        min_validated_outcomes_per_arm: int = 3,
-    ) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/review-experiments/%s" % quote(experiment_id, safe=""),
-                project=project,
-                min_tasks_per_arm=min_tasks_per_arm,
-                min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
-            )
-        )
-
     def claim_task(
         self,
         task_id: str,
@@ -827,6 +739,37 @@ class RemoteDispatch:
     ) -> _Dictish:
         body = _drop_none({"questions": list(questions or []), "actor": actor, "why": why or None})
         return _Dictish(self._post("/tasks/%s/ask" % quote(task_id, safe=""), body))
+
+    def post_task_message(
+        self,
+        task_id: str,
+        *,
+        author_kind: str,
+        author: str,
+        kind: str,
+        body: str,
+        reply_to: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        # The hub decides author_kind and author from the token; they are
+        # accepted here only so local and remote dispatch share a signature.
+        payload = _drop_none(
+            {"kind": kind, "body": body, "reply_to": reply_to, "metadata": metadata, "author": author}
+        )
+        return self._post("/tasks/%s/messages" % quote(task_id, safe=""), payload)
+
+    def list_task_messages(
+        self,
+        task_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> Any:
+        params: Dict[str, Any] = {"after": int(after or 0), "limit": int(limit)}
+        if kinds:
+            params["kinds"] = ",".join(kinds)
+        return self._get("/tasks/%s/messages" % quote(task_id, safe=""), **params)
 
     def answer_task_input(
         self,
@@ -998,147 +941,6 @@ class RemoteDispatch:
 
     def github_ingest_run(self) -> _Dictish:
         return _Dictish(self._post("/github-ingest/run", {}))
-
-    def backlog_groom_status(self) -> _Dictish:
-        return _Dictish(self._get("/backlog-groom/status"))
-
-    def backlog_groom_run(self) -> _Dictish:
-        return _Dictish(self._post("/backlog-groom/run", {}))
-
-    def judgement_status(self) -> _Dictish:
-        return _Dictish(self._get("/judgement/status"))
-
-    def judgement_run(self) -> _Dictish:
-        return _Dictish(self._post("/judgement/run", {}))
-
-    def model_selection_status(self) -> _Dictish:
-        return _Dictish(self._get("/model-selection/status"))
-
-    def model_selection_refresh(self) -> _Dictish:
-        return _Dictish(self._post("/model-selection/refresh", {}))
-
-    # -- Autonomous scientific optimizer ---------------------------------
-
-    def optimizer_status(self) -> _Dictish:
-        return _Dictish(self._get("/optimizer/status"))
-
-    def optimizer_tick(self) -> _Dictish:
-        return _Dictish(self._post("/optimizer/tick", {}))
-
-    def create_scientific_policy(
-        self,
-        name: str,
-        project: str,
-        parameters: Dict[str, Any],
-        **kw: Any,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/policies",
-                _drop_none(
-                    {
-                        "name": name,
-                        "project": project,
-                        "parameters": parameters,
-                        **kw,
-                    }
-                ),
-            )
-        )
-
-    def list_scientific_policies(
-        self,
-        *,
-        project: Optional[str] = None,
-        status: Optional[str] = None,
-    ) -> List[_Dictish]:
-        return _wrap_list(self._get("/optimizer/policies", project=project, status=status))
-
-    def get_scientific_policy(self, policy_id: str) -> _Dictish:
-        return _Dictish(self._get("/optimizer/policies/%s" % quote(policy_id, safe="")))
-
-    def promote_scientific_policy(self, policy_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/policies/%s/promote" % quote(policy_id, safe=""),
-                _drop_none(kw),
-            )
-        )
-
-    def rollback_scientific_policy(self, project: str, policy_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/projects/%s/rollback/%s"
-                % (quote(project, safe=""), quote(policy_id, safe="")),
-                _drop_none(kw),
-            )
-        )
-
-    def create_scientific_experiment(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/optimizer/experiments", _drop_none(kw)))
-
-    def list_scientific_experiments(
-        self,
-        *,
-        project: Optional[str] = None,
-        state: Optional[str] = None,
-    ) -> List[_Dictish]:
-        return _wrap_list(self._get("/optimizer/experiments", project=project, state=state))
-
-    def get_scientific_experiment(self, experiment_id: str) -> _Dictish:
-        return _Dictish(self._get("/optimizer/experiments/%s" % quote(experiment_id, safe="")))
-
-    def scientific_experiment_evidence(self, experiment_id: str, *, limit: int = 500) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/optimizer/experiments/%s/evidence" % quote(experiment_id, safe=""),
-                limit=limit,
-            )
-        )
-
-    def start_scientific_experiment(self, experiment_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/experiments/%s/start" % quote(experiment_id, safe=""),
-                _drop_none(kw),
-            )
-        )
-
-    def pause_scientific_experiment(self, experiment_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/experiments/%s/pause" % quote(experiment_id, safe=""),
-                _drop_none(kw),
-            )
-        )
-
-    def promote_scientific_experiment(self, experiment_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/experiments/%s/promote" % quote(experiment_id, safe=""),
-                _drop_none(kw),
-            )
-        )
-
-    def observe_scientific_task(self, experiment_id: str, task_id: str) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/experiments/%s/observe/%s"
-                % (quote(experiment_id, safe=""), quote(task_id, safe="")),
-                {},
-            )
-        )
-
-    def analyze_scientific_experiment(self, experiment_id: str) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/optimizer/experiments/%s/analyze" % quote(experiment_id, safe=""),
-                {},
-            )
-        )
-
-    def model_selection_promote(self) -> _Dictish:
-        return _Dictish(self._post("/model-selection/promote", {}))
 
     def register_project(
         self,
@@ -1359,46 +1161,11 @@ class RemoteDispatch:
     def clear_agent_dispatch_hold(self, agent_id: str) -> _Dictish:
         return _Dictish(self._delete("/agents/%s/dispatch-hold" % quote(agent_id, safe="")))
 
-    def list_curiosity_candidates(self, status: Optional[str] = None) -> _Dictish:
-        """Quarantined curiosity candidates, read through the hub.
-
-        The ledger lives inside the agent's OpenClaw sandbox, which a task
-        sandbox cannot reach; the hub can, so this is the route that works from
-        anywhere (task_3a4503f0).
-        """
-        params = {} if status is None else {"status": status}
-        return _Dictish(self._get("/curiosity/candidates", **params))
-
-    def decide_curiosity_candidate(
-        self,
-        candidate_id: str,
-        decision: str,
-        *,
-        actor: str,
-        reason: str,
-        approval_id: str,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/curiosity/candidates/%s/%s"
-                % (quote(candidate_id, safe=""), quote(decision, safe="")),
-                {"actor": actor, "reason": reason, "approval_id": approval_id},
-            )
-        )
-
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 
     def get_agent(self, agent_id: str) -> _Dictish:
         return _Dictish(self._get("/agents/%s" % quote(agent_id, safe="")))
-
-    def recover_agent_attestation_key(self, agent_id: str, probe: Mapping[str, Any]) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/agents/%s/attestation-key/recover" % quote(agent_id, safe=""),
-                {"probe": dict(probe)},
-            )
-        )
 
     def approve_agent_report_repository_executor(
         self,
@@ -1531,117 +1298,6 @@ class RemoteDispatch:
         return _wrap_list(
             self._get("/agents/%s/mood/history" % quote(agent_id, safe=""), limit=limit)
         )
-
-    # -- Nap (per-agent consolidation) --------------------------------------
-
-    def configure_nap(self, agent_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post("/agents/%s/nap-schedule" % quote(agent_id, safe=""), _drop_none(kw))
-        )
-
-    def get_nap_schedule(self, agent_id: str) -> Optional[_Dictish]:
-        resp = self._get("/agents/%s/nap-schedule" % quote(agent_id, safe=""))
-        return _Dictish(resp) if resp else None
-
-    def next_nap_window(self, agent_id: str) -> _Dictish:
-        return _Dictish(self._get("/agents/%s/nap-schedule/next" % quote(agent_id, safe="")))
-
-    def begin_nap(self, agent_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post("/agents/%s/nap-runs" % quote(agent_id, safe=""), _drop_none(kw))
-        )
-
-    def complete_nap(self, run_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post("/nap-runs/%s/complete" % quote(run_id, safe=""), _drop_none(kw))
-        )
-
-    def fail_nap(self, run_id: str, reason: str, *, actor: Optional[str] = None) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/nap-runs/%s/fail" % quote(run_id, safe=""),
-                _drop_none({"reason": reason, "actor": actor}),
-            )
-        )
-
-    def list_nap_runs(self, agent_id: Optional[str] = None) -> List[_Dictish]:
-        return _wrap_list(self._get("/nap-runs", agent_id=agent_id))
-
-    def list_due_nap_agents(self, *, as_of: Optional[str] = None) -> List[_Dictish]:
-        return _wrap_list(self._get("/nap-due", as_of=as_of))
-
-    def run_nap_cycle(
-        self,
-        agent_id: str,
-        *,
-        actor: Optional[str] = None,
-        vector_writer: Any = None,
-        embed_into_medium: bool = True,
-        emit_dream_artifacts: bool = True,
-        qdrant_url: Optional[str] = None,
-    ) -> _Dictish:
-        if vector_writer is not None:
-            raise DispatchError("hub mode builds the nap vector writer on the hub")
-        body = _drop_none(
-            {
-                "actor": actor,
-                "embed_into_medium": embed_into_medium,
-                "emit_dream_artifacts": emit_dream_artifacts,
-                "qdrant_url": qdrant_url,
-            }
-        )
-        return _Dictish(self._post("/agents/%s/nap-cycle" % quote(agent_id, safe=""), body))
-
-    def import_dream_logs(
-        self,
-        *,
-        dream_logs_dir: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        created_by: str = "dream-log-import",
-        embed: bool = True,
-        dry_run: bool = False,
-        qdrant_url: Optional[str] = None,
-        vector_writer: Any = None,
-    ) -> _Dictish:
-        if vector_writer is not None:
-            raise DispatchError("hub mode builds the dream vector writer on the hub")
-        body = _drop_none(
-            {
-                "dream_logs_dir": dream_logs_dir,
-                "agent_id": agent_id,
-                "created_by": created_by,
-                "embed": embed,
-                "dry_run": dry_run,
-                "qdrant_url": qdrant_url,
-            }
-        )
-        return _Dictish(self._post("/dream/import-logs", body))
-
-    def consolidate_nap(
-        self,
-        agent_id: str,
-        *,
-        since: Optional[str] = None,
-        nap_run_id: Optional[str] = None,
-        embed_into_medium: bool = True,
-        emit_dream_artifacts: bool = True,
-        vector_writer: Any = None,
-        created_by: Optional[str] = None,
-        qdrant_url: Optional[str] = None,
-    ) -> _Dictish:
-        if vector_writer is not None:
-            raise DispatchError("hub mode builds the nap vector writer on the hub")
-        body = _drop_none(
-            {
-                "since": since,
-                "nap_run_id": nap_run_id,
-                "embed_into_medium": embed_into_medium,
-                "emit_dream_artifacts": emit_dream_artifacts,
-                "created_by": created_by,
-                "qdrant_url": qdrant_url,
-            }
-        )
-        return _Dictish(self._post("/agents/%s/nap-consolidate" % quote(agent_id, safe=""), body))
 
     # -- Dispatch -----------------------------------------------------------
 
@@ -1987,7 +1643,7 @@ class RemoteDispatch:
     def list_secret_audits(self, secret_id: str) -> List[_Dictish]:
         return _wrap_list(self._get("/secret-audits", secret_id=secret_id))
 
-    # -- Runtime / Artifact / Environment / Deployment ----------------------
+    # -- Runtime / Artifact -------------------------------------------------
 
     def create_runtime(self, name: str, manifest: Dict[str, Any], created_by: str) -> _Dictish:
         return _Dictish(
@@ -2086,34 +1742,6 @@ class RemoteDispatch:
     def delete_artifact(self, artifact: str, actor: Optional[str] = None) -> _Dictish:
         return _Dictish(self._delete("/artifacts/%s" % quote(artifact, safe="")))
 
-    def register_environment(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/environments", _drop_none(kw)))
-
-    def list_environments(
-        self,
-        tenant_id: Optional[str] = None,
-        channel: Optional[str] = None,
-    ) -> List[_Dictish]:
-        return _wrap_list(self._get("/environments", tenant_id=tenant_id, channel=channel))
-
-    def get_environment(self, environment: str) -> _Dictish:
-        return _Dictish(self._get("/environments/%s" % quote(environment, safe="")))
-
-    def deploy_artifact(self, environment: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/environments/%s/deploy" % quote(environment, safe=""),
-                _drop_none(kw),
-            )
-        )
-
-    def current_deployment(self, environment: str) -> Optional[_Dictish]:
-        resp = self._get("/environments/%s/current" % quote(environment, safe=""))
-        return _Dictish(resp) if resp else None
-
-    def list_deployments(self, environment: str) -> List[_Dictish]:
-        return _wrap_list(self._get("/environments/%s/deployments" % quote(environment, safe="")))
-
     # -- Bridge (project items) ---------------------------------------------
     # beads bridge endpoints removed: beads is no longer a read/write source.
 
@@ -2193,194 +1821,6 @@ class RemoteDispatch:
                 "/memory/remembered/%s%s" % (quote(key, safe=""), _query({"project": project}))
             )
         )
-
-    # mem-10: memory-tier health snapshot.
-    def memory_health(
-        self,
-        *,
-        nap_interval_hours: float = 1.0,
-        vector_ingestion_max_age_hours: float = 24.0,
-        **_extra: Any,
-    ) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/v1/memory/health",
-                nap_interval_hours=nap_interval_hours,
-                vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
-            )
-        )
-
-    # mem-09: recall over the vector tier.
-    def recall_memory(
-        self,
-        query: str,
-        *,
-        tier: str = "medium",
-        limit: int = 5,
-        min_score: Optional[float] = None,
-        project: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        **_extra: Any,
-    ) -> List[_Dictish]:
-        return _wrap_list(
-            self._get(
-                "/v1/memory/recall",
-                q=query,
-                tier=tier,
-                limit=limit,
-                min_score=min_score,
-                project=project,
-                tenant_id=tenant_id,
-            )
-        )
-
-    # The long tier's writer. ``vector_writer``/``qdrant_url`` are accepted and
-    # dropped: a locally built writer cannot cross the wire, and the hub
-    # resolves its own Qdrant endpoint anyway.
-    def promote_memory_tier(
-        self,
-        *,
-        min_age_days: Optional[float] = None,
-        limit: Optional[int] = None,
-        drop_medium: bool = False,
-        dry_run: bool = False,
-        **_extra: Any,
-    ) -> _Dictish:
-        path = "/v1/memory/promote"
-        path += _query(
-            {
-                "min_age_days": min_age_days,
-                "limit": limit,
-                "drop_medium": bool(drop_medium),
-                "dry_run": bool(dry_run),
-            }
-        )
-        return _Dictish(self._post(path))
-
-    def reconcile_memory_embedding_spaces(
-        self,
-        *,
-        tier: str = "medium",
-        limit: Optional[int] = None,
-        scan_limit: Optional[int] = None,
-        dry_run: bool = False,
-        report_only: bool = False,
-        **_extra: Any,
-    ) -> _Dictish:
-        path = "/v1/memory/reconcile-embeddings"
-        path += _query(
-            {
-                "tier": tier,
-                "limit": limit,
-                "scan_limit": scan_limit,
-                "dry_run": bool(dry_run),
-                "report_only": bool(report_only),
-            }
-        )
-        return _Dictish(self._post(path))
-
-    def recall_dream_artifacts(
-        self,
-        query: str,
-        *,
-        tier: str = "medium",
-        limit: int = 5,
-        min_score: Optional[float] = None,
-        project: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        scope: Optional[str] = None,
-        kind: Optional[str] = None,
-        min_confidence: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        **_extra: Any,
-    ) -> List[_Dictish]:
-        return _wrap_list(
-            self._get(
-                "/v1/memory/dreams/recall",
-                q=query,
-                tier=tier,
-                limit=limit,
-                min_score=min_score,
-                project=project,
-                agent_id=agent_id,
-                scope=scope,
-                kind=kind,
-                min_confidence=min_confidence,
-                tenant_id=tenant_id,
-            )
-        )
-
-    # -- Rollout ------------------------------------------------------------
-
-    def create_rollout(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/rollouts", _drop_none(kw)))
-
-    def list_rollouts(
-        self,
-        tenant_id: Optional[str] = None,
-        channel: Optional[str] = None,
-    ) -> List[_Dictish]:
-        return _wrap_list(self._get("/rollouts", tenant_id=tenant_id, channel=channel))
-
-    def advance_rollout(
-        self,
-        rollout_id: str,
-        action: str,
-        actor: str,
-        detail: Optional[Dict[str, Any]] = None,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/rollouts/%s/advance" % quote(rollout_id, safe=""),
-                _drop_none({"action": action, "actor": actor, "detail": detail or {}}),
-            )
-        )
-
-    def verify_rollout_artifact(
-        self,
-        rollout_id: str,
-        artifact_uri: str,
-        artifact_hash: str,
-        actor: str,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/rollouts/%s/artifact" % quote(rollout_id, safe=""),
-                {
-                    "artifact_uri": artifact_uri,
-                    "artifact_hash": artifact_hash,
-                    "actor": actor,
-                },
-            )
-        )
-
-    def evaluate_rollout_health(
-        self,
-        rollout_id: str,
-        checks: Dict[str, Any],
-        actor: str,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/rollouts/%s/health" % quote(rollout_id, safe=""),
-                {"checks": checks, "actor": actor},
-            )
-        )
-
-    def rescue_rollout(
-        self,
-        rollout_id: str,
-        actor: str,
-        reason: str,
-        detail: Optional[Dict[str, Any]] = None,
-    ) -> tuple:  # type: ignore[type-arg]
-        resp = self._post(
-            "/rollouts/%s/rescue" % quote(rollout_id, safe=""),
-            _drop_none({"actor": actor, "reason": reason, "detail": detail or {}}),
-        )
-        rollout = resp.get("rollout") if isinstance(resp, dict) else None
-        task = resp.get("task") if isinstance(resp, dict) else None
-        return _Dictish(rollout or {}), _Dictish(task or {})
 
     # -- Eval ---------------------------------------------------------------
 
@@ -2564,26 +2004,6 @@ class RemoteDispatch:
     def list_human_messages(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/communication/deliveries", **kw))
 
-    def roll_out_sandbox_image(
-        self,
-        image_ref: str,
-        *,
-        bom: Optional[Dict[str, Any]] = None,
-        actor: str = "human",
-        project: Optional[str] = None,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/sandbox/rollout",
-                {
-                    "image": image_ref,
-                    "bom": bom or {},
-                    "actor": actor,
-                    "project": project,
-                },
-            )
-        )
-
     def stream_events(self, **kw: Any) -> Any:
         """Follow /events/stream, yielding each record as it arrives.
 
@@ -2612,13 +2032,6 @@ class RemoteDispatch:
 
     def list_events(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/events", **kw))
-
-    def list_news(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._get("/news", **kw))
-
-    def stream_news(self, **kw: Any) -> Any:
-        lines = self._client.stream_lines("/news/stream" + _query(kw))
-        return self._decode_event_lines(lines)
 
     def list_command_audit(self, **kw: Any) -> List[_Dictish]:
         agent_id = kw.pop("agent_id", None)
@@ -2979,8 +2392,6 @@ def _task_producing_cli_operation(args: Any) -> Optional[str]:
         return "bridge task import"
     if command == "workflow" and getattr(args, "workflow_command", None) == "start":
         return "workflow start"
-    if command == "rollout" and getattr(args, "rollout_command", None) in {"health", "rescue"}:
-        return "rollout %s" % getattr(args, "rollout_command")
     if command == "migrate":
         migrate_command = getattr(args, "migrate_command", None)
         if migrate_command == "import":
@@ -3033,8 +2444,8 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     token = resolve_env_var("MAC_API_TOKEN", fleet=fleet, env=env)
     if token:
         return token
-    # K8s Job pods carry MAC_WORKER_TOKEN (set by the runner); accept it
-    # as a fallback so wrappers can call ``mac admin pull-request open`` etc.
+    # Workers carry MAC_WORKER_TOKEN; accept it as a fallback so wrappers
+    # can call ``mac admin pull-request open`` etc.
     # without an extra env-export shim.
     return env.get("MAC_WORKER_TOKEN") or None
 

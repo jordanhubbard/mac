@@ -76,8 +76,7 @@ before you edit.
 **`git.merged` carries a `tree_sha`, and that is the field you match on.**
 Every merge in this fleet is a *squash*: the commit sha in the event was minted
 at merge time and matches nothing you ever held. Tree identity survives the
-squash — it is what `native_merge_queue.landing_is_safe` gates on, and it is
-why the terminal events carry it.
+squash, which is why the terminal events carry it.
 
 **Your own echo is not news.** Events you emitted come back with
 `self_emitted: true`. The worker filters them out before you see them; if you

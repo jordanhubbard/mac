@@ -103,39 +103,6 @@ export interface PipelinesSection {
   leases: Record<string, number>;
 }
 
-export interface NapRow {
-  id: string;
-  agent_id: string | null;
-  status: string;
-  started_at: string | null;
-  completed_at: string | null;
-  age_seconds: number | null;
-}
-
-export interface CyclesSection {
-  naps_by_status: Record<string, number>;
-  recent_naps: NapRow[];
-  schedules_total: number;
-  schedules_enabled: number;
-}
-
-export interface DreamRow {
-  id: string;
-  agent_id: string | null;
-  project: string | null;
-  status: string;
-  state: string;
-  created_at: string | null;
-  promoted_at: string | null;
-  age_seconds: number | null;
-}
-
-export interface DreamsSection {
-  by_status: Record<string, number>;
-  by_state: Record<string, number>;
-  recent: DreamRow[];
-}
-
 export interface AgentBusSection {
   streams_by_status: Record<string, number>;
   messages_by_status: Record<string, number>;
@@ -165,39 +132,6 @@ export interface TranscriptCoverage {
   commands_audited: number;
 }
 
-export interface MergeQueueRow {
-  repository: string;
-  branch: string;
-  depth: number;
-  by_state: Record<string, number>;
-  /** null when the queue has never sized its window -- NOT the floor. */
-  window_size: number | null;
-  landed_count: number;
-  failure_count: number;
-  speculation_discarded: number;
-  last_event: string;
-  updated_at: string | null;
-}
-
-export interface MergeQueueEviction {
-  repository: string;
-  branch: string;
-  task_id: string;
-  pull_request_number: number;
-  eviction_reason: string;
-  updated_at: string | null;
-}
-
-export interface MergeQueueSection {
-  queues: MergeQueueRow[];
-  queue_count: number;
-  total_depth: number;
-  total_landed: number;
-  total_failed: number;
-  recent_evictions: MergeQueueEviction[];
-  live_states: string[];
-}
-
 export interface Snapshot {
   schema: string;
   server_time: string;
@@ -212,9 +146,6 @@ export interface Snapshot {
   transitions?: TransitionRow[];
   agents?: AgentsSection;
   pipelines?: PipelinesSection;
-  cycles?: CyclesSection;
-  dreams?: DreamsSection;
-  merge_queue?: MergeQueueSection;
   agentbus?: AgentBusSection;
   telemetry?: TelemetrySection;
   transcripts?: TranscriptCoverage;
@@ -439,40 +370,38 @@ export interface ProjectGraphResponse {
   graph?: ProjectGraph;
 }
 
+export interface BoardMessage {
+  id: number;
+  task_id: string;
+  author_kind: "agent" | "human" | "hub";
+  author: string;
+  kind: string;
+  body: string;
+  reply_to: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  task_title?: string;
+  task_project?: string | null;
+  task_state?: string;
+}
+
+export interface BoardFeed {
+  schema: string;
+  messages: BoardMessage[];
+  open_questions: BoardMessage[];
+  cursor: number;
+}
+
+export interface TaskBoardPage {
+  task_id: string;
+  messages: BoardMessage[];
+  cursor: number;
+}
+
 export interface StreamEvent {
   event: "connected" | "updated" | "heartbeat" | string;
   server_time: string;
   observability_sequence: number;
-}
-
-export interface NewsItem {
-  sequence: number;
-  created_at: string;
-  kind: "task" | "agent" | string;
-  event_type: string;
-  actor: string;
-  summary: string;
-  task_id: string | null;
-  task_title: string | null;
-  project: string | null;
-  from_state: string | null;
-  to_state: string | null;
-  failure_class: string | null;
-  attempt_refunded: boolean;
-  agent_id: string | null;
-  agent_name: string | null;
-  previous_status: string | null;
-  status: string | null;
-  previous_health_status: string | null;
-  health_status: string | null;
-  changed_fields: string[];
-}
-
-export interface NewsFeed {
-  schema: "mac.news.v1" | string;
-  server_time: string;
-  cursor: number;
-  items: NewsItem[];
 }
 
 export class ConsoleClient {
@@ -510,14 +439,22 @@ export class ConsoleClient {
     return (await response.json()) as ProjectGraphResponse;
   }
 
-  async news(limit = 100): Promise<NewsFeed> {
+  /** Every task's board after `after` (the newest page on a first read). */
+  async board(after = 0, includeActivity = false): Promise<BoardFeed> {
     const response = await this.get(
-      `/news?limit=${encodeURIComponent(limit)}`,
-      {
-        timeoutMs: 20_000,
-      },
+      `/dashboard/board?after=${encodeURIComponent(after)}&include_activity=${includeActivity}`,
+      { timeoutMs: 15_000 },
     );
-    return (await response.json()) as NewsFeed;
+    return (await response.json()) as BoardFeed;
+  }
+
+  /** One task's board after `after`, oldest first. */
+  async taskBoard(taskId: string, after = 0): Promise<TaskBoardPage> {
+    const response = await this.get(
+      `/tasks/${encodeURIComponent(taskId)}/messages?after=${encodeURIComponent(after)}&limit=500`,
+      { timeoutMs: 15_000 },
+    );
+    return (await response.json()) as TaskBoardPage;
   }
 
   /** One transcript turn's text. Fetched only when a turn is expanded. */

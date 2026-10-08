@@ -8,6 +8,7 @@ shared across the control-plane services.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -44,14 +45,6 @@ class ValidationError(MACError):
 
 class TransitionError(MACError):
     """Raised when a state transition is not allowed."""
-
-
-class PublicationDeferredError(MACError):
-    """Raised when publication must retry after a temporary control-plane barrier."""
-
-    def __init__(self, message: str, *, barrier: Optional[JsonDict] = None) -> None:
-        super().__init__(message)
-        self.barrier = dict(barrier or {})
 
 
 class AuthorizationError(MACError):
@@ -122,6 +115,11 @@ class TaskState(StrEnum):
     #: allocator only considers OPEN tasks -- so nothing has to remember to
     #: skip it.
     STOPPED = "stopped"
+    #: A named reviewer was assigned and has not decided yet. Only a
+    #: human-requested review (``POST /tasks/{id}/reviews``) enters it now: the
+    #: default workflow approves from worker evidence and lands straight from
+    #: NEEDS_REVIEW. Kept so those reviews and older rows keep working; the land
+    #: loop completes a legacy REVIEWING task exactly like a NEEDS_REVIEW one.
     REVIEWING = "reviewing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -217,6 +215,7 @@ def read_only_report_repository_executor_attestation(
     executor_script_sha256: str,
     source_root: str,
     source_bundle_sha256: str,
+    runtime_config_sha256: str = "",
 ) -> JsonDict:
     """Return the exact worker-side claim used to request hub admission.
 
@@ -225,6 +224,19 @@ def read_only_report_repository_executor_attestation(
     directly mint the marker that dispatch and review routing consume.
     """
 
+    if not runtime_config_sha256:
+        runtime_config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json_dumps(
+                    {
+                        "runtime_image_ref": runtime_image_ref,
+                        "policy_sha256": policy_sha256,
+                        "source_bundle_sha256": source_bundle_sha256,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+        )
     return {
         "schema": REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA,
         "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
@@ -244,6 +256,7 @@ def read_only_report_repository_executor_attestation(
         "executor_script_sha256": executor_script_sha256,
         "source_root": source_root,
         "source_bundle_sha256": source_bundle_sha256,
+        "runtime_config_sha256": runtime_config_sha256,
         "verified": True,
     }
 
@@ -272,6 +285,7 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
         "executor_script_sha256",
         "source_root",
         "source_bundle_sha256",
+        "runtime_config_sha256",
         "verified",
     }
     if set(value) != expected_keys:
@@ -295,6 +309,7 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
         "python_sha256",
         "executor_script_sha256",
         "source_bundle_sha256",
+        "runtime_config_sha256",
     ]
     path_keys = [
         "executor_path",
@@ -361,9 +376,23 @@ def read_only_report_repository_executor_approval(
     executor_script_sha256: str,
     source_root: str,
     source_bundle_sha256: str,
+    runtime_config_sha256: str = "",
 ) -> JsonDict:
     """Return the admin/deployment-owned tuple allowed to reach dispatch."""
 
+    if not runtime_config_sha256:
+        runtime_config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json_dumps(
+                    {
+                        "runtime_image_ref": runtime_image_ref,
+                        "policy_sha256": policy_sha256,
+                        "source_bundle_sha256": source_bundle_sha256,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+        )
     return {
         "schema": REPORT_REPOSITORY_EXECUTOR_APPROVAL_SCHEMA,
         "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
@@ -383,6 +412,7 @@ def read_only_report_repository_executor_approval(
         "executor_script_sha256": executor_script_sha256,
         "source_root": source_root,
         "source_bundle_sha256": source_bundle_sha256,
+        "runtime_config_sha256": runtime_config_sha256,
         "approved": True,
     }
 
@@ -410,6 +440,7 @@ def valid_read_only_report_repository_executor_approval(value: Any) -> bool:
         "executor_script_sha256",
         "source_root",
         "source_bundle_sha256",
+        "runtime_config_sha256",
         "approved",
     }
     if set(value) != expected_keys or value.get("approved") is not True:
@@ -448,6 +479,7 @@ def report_repository_executor_approval_matches_attestation(
             "executor_script_sha256",
             "source_root",
             "source_bundle_sha256",
+            "runtime_config_sha256",
         )
     )
 
@@ -468,9 +500,23 @@ def read_only_report_repository_executor_resource(
     executor_script_sha256: str,
     source_root: str,
     source_bundle_sha256: str,
+    runtime_config_sha256: str = "",
 ) -> JsonDict:
     """Return the exact controller-owned dispatch marker."""
 
+    if not runtime_config_sha256:
+        runtime_config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json_dumps(
+                    {
+                        "runtime_image_ref": runtime_image_ref,
+                        "policy_sha256": policy_sha256,
+                        "source_bundle_sha256": source_bundle_sha256,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+        )
     return {
         "schema": REPORT_REPOSITORY_EXECUTOR_SCHEMA,
         "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
@@ -490,6 +536,7 @@ def read_only_report_repository_executor_resource(
         "executor_script_sha256": executor_script_sha256,
         "source_root": source_root,
         "source_bundle_sha256": source_bundle_sha256,
+        "runtime_config_sha256": runtime_config_sha256,
         "verified": True,
     }
 
@@ -526,6 +573,7 @@ def agent_has_read_only_report_repository_executor(resources: Any) -> bool:
         "executor_script_sha256",
         "source_root",
         "source_bundle_sha256",
+        "runtime_config_sha256",
         "verified",
     }
     if set(marker) != expected_keys:
@@ -767,18 +815,24 @@ TASK_TRANSITIONS = {
         TaskState.FAILED.value,
         TaskState.CANCELLED.value,
     },
+    # The default workflow decides and lands from NEEDS_REVIEW: a rejection or
+    # a land-loop send-back reopens the task (OPEN) and publication completes it
+    # (COMPLETED). REVIEWING is entered only by a human-requested review.
     TaskState.NEEDS_REVIEW.value: {
         TaskState.NEEDS_INPUT.value,
         TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
+        TaskState.OPEN.value,
         TaskState.REVIEWING.value,
         TaskState.RUNNING.value,
+        TaskState.COMPLETED.value,
         TaskState.FAILED.value,
         TaskState.CANCELLED.value,
     },
     TaskState.REVIEWING.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.NEEDS_REVIEW.value,
         TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
@@ -858,12 +912,6 @@ class RuntimeDeltaStatus(StrEnum):
     PROMOTED = "promoted"
 
 
-class DeploymentStatus(StrEnum):
-    ACTIVE = "active"
-    RETIRED = "retired"
-    FAILED = "failed"
-
-
 class MoodMode(StrEnum):
     """Agent-self-reported emotional state.
 
@@ -886,22 +934,6 @@ class MoodMode(StrEnum):
 MOOD_MODES: frozenset = frozenset(m.value for m in MoodMode)
 
 
-class NapStatus(StrEnum):
-    """Lifecycle states for one nap_run."""
-
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-# Nap offset is computed deterministically from the agent's name so the fleet
-# spreads itself across each hourly cycle (md5_u64(name) %% 60 minutes after
-# the top of the hour).
-NAP_WINDOW_MINUTES = 60
-NAP_DEFAULT_DURATION_MINUTES = 15
-
-
 # Canonical evidence-kind registry — the single source of truth every
 # validation path consults, so no surface can accept a kind that another rejects.
 #
@@ -910,7 +942,7 @@ NAP_DEFAULT_DURATION_MINUTES = 15
 #   * ``_STORED_EVIDENCE_KINDS``  — kinds the CLI/API historically accept and store
 #     (``test``/``review``/``artifact``/``publication``/``log``/``eval``).
 #   * ``_INTERNAL_EVIDENCE_KINDS`` — kinds the runtime itself writes via
-#     ``add_evidence`` (auto-land bookkeeping + human notifications). These are
+#     ``add_evidence`` (human notifications). These are
 #     already persisted, so the registry must keep accepting them.
 #   * ``_VALIDATOR_EVIDENCE_KINDS`` — the verification ``evidence_type`` tokens the
 #     validator registry (``mac.evidence_validators.VALIDATORS``) advertises, e.g.
@@ -921,8 +953,6 @@ NAP_DEFAULT_DURATION_MINUTES = 15
 #     registry is a subset of this set, so the two can never drift apart again.
 _STORED_EVIDENCE_KINDS = {"test", "review", "artifact", "publication", "log", "eval"}
 _INTERNAL_EVIDENCE_KINDS = {
-    "auto_land_ready",
-    "auto_land_decision",
     "mac_notify_human",
 }
 _VALIDATOR_EVIDENCE_KINDS = {
@@ -1015,66 +1045,6 @@ class SecretAuditResult(StrEnum):
     GRANTED = "granted"
     DENIED = "denied"
     ROTATED = "rotated"
-
-
-class RolloutStrategy(StrEnum):
-    CANARY = "canary"
-    FULL = "full"
-    RESCUE = "rescue"
-
-
-class RolloutStatus(StrEnum):
-    PLANNED = "planned"
-    CANARYING = "canarying"
-    PROMOTED = "promoted"
-    PAUSED = "paused"
-    RESCUING = "rescuing"
-    ROLLED_BACK = "rolled_back"
-    FAILED = "failed"
-
-
-ROLLOUT_ACTIONS = {
-    "start_canary": {
-        "from": {RolloutStatus.PLANNED.value},
-        "to": RolloutStatus.CANARYING.value,
-    },
-    "promote": {
-        "from": {
-            RolloutStatus.PLANNED.value,
-            RolloutStatus.CANARYING.value,
-            RolloutStatus.PAUSED.value,
-        },
-        "to": RolloutStatus.PROMOTED.value,
-        "target_percent": 100,
-    },
-    "pause": {
-        "from": {RolloutStatus.PLANNED.value, RolloutStatus.CANARYING.value},
-        "to": RolloutStatus.PAUSED.value,
-    },
-    "resume": {
-        "from": {RolloutStatus.PAUSED.value},
-        "to": RolloutStatus.CANARYING.value,
-    },
-    "rollback": {
-        "from": {
-            RolloutStatus.CANARYING.value,
-            RolloutStatus.PAUSED.value,
-            RolloutStatus.PROMOTED.value,
-            RolloutStatus.RESCUING.value,
-        },
-        "to": RolloutStatus.ROLLED_BACK.value,
-        "target_percent": 0,
-    },
-    # mac-24f4: a successful rescue had no exit — RESCUING was a
-    # one-way trap that only allowed rollback. ``complete_rescue``
-    # returns the rollout to PAUSED so an operator can re-evaluate
-    # health, decide whether to resume the canary or roll back, and
-    # the rescue task closure can hook into a clean transition.
-    "complete_rescue": {
-        "from": {RolloutStatus.RESCUING.value},
-        "to": RolloutStatus.PAUSED.value,
-    },
-}
 
 
 class PersonaInstanceStatus(StrEnum):
@@ -1516,7 +1486,7 @@ class Agent:
     deleted_at: Optional[str] = None
     # Static agents are durable named installations such as Rocky, Natasha,
     # and Bullwinkle. Fungible agents may be rebound to replacement compute
-    # instances (for example HGX-created headless workers) after re-attestation.
+    # instances after re-attestation.
     # This is independent of resources.ephemeral, which controls identity TTL.
     instance_kind: str = AgentInstanceKind.STATIC.value
     #: WHO owns this agent, and who the hub may talk to about it. This is a
@@ -1588,55 +1558,6 @@ class RoleLevel(StrEnum):
 
 
 ROLE_LEVELS = {value.value for value in RoleLevel}
-
-
-@dataclass
-class AgentProvisioningRequest:
-    """Signal that the swarm needs an agent it doesn't have.
-
-    Emitted by the dispatcher and the default-review workflow when no
-    eligible agent can be selected for a task. A future provisioner (k8s
-    operator, nomad job, local spawner) polls these rows and fulfills
-    them by registering the requested agent. For now the actual
-    provisioning is unimplemented — requests sit in ``pending`` until an
-    operator hand-fulfills or cancels them, and the observability log
-    plus this table are the signal.
-    """
-
-    id: str
-    status: str
-    reason: str
-    role_slug: Optional[str]
-    capabilities: List[str]
-    hardware: JsonDict
-    task_id: Optional[str]
-    tenant_id: Optional[str]
-    detail: JsonDict
-    fulfilled_agent_id: Optional[str]
-    created_at: str
-    updated_at: str
-    closed_at: Optional[str]
-    # mac-1oi4: who requested this agent, so fulfill_request can enforce
-    # a two-party check (the same actor cannot both ask and approve).
-    requested_by: Optional[str] = None
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this AgentProvisioningRequest."""
-        return asdict(self)
-
-
-class ProvisioningStatus(StrEnum):
-    PENDING = "pending"
-    FULFILLED = "fulfilled"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-PROVISIONING_TERMINAL_STATES = {
-    ProvisioningStatus.FULFILLED.value,
-    ProvisioningStatus.FAILED.value,
-    ProvisioningStatus.CANCELLED.value,
-}
 
 
 @dataclass
@@ -2280,127 +2201,6 @@ class VectorRef:
         return asdict(self)
 
 
-# mem-06: typed payload + tier enum + collection registry for the
-# vector memory tier. The vector writer (mem-07), nap consolidator
-# (mem-08), and recall API (mem-09) all build against these. See
-# docs/memory-tier-schema.md for the ADR-level rationale.
-
-
-MAC_MEMORY_PAYLOAD_SCHEMA = "mac.memory.v1"
-
-
-class MacMemoryTier(StrEnum):
-    MEDIUM = "medium"
-    LONG = "long"
-
-
-# Concept → Qdrant collection. Single point of truth so the writer,
-# reader, and the install script all agree.
-MAC_MEMORY_COLLECTIONS: Dict[str, str] = {
-    MacMemoryTier.MEDIUM.value: "mac_memory_medium",
-    MacMemoryTier.LONG.value: "mac_memory_long",
-}
-
-
-# Default embedding model (overridable by MAC_MEMORY_EMBEDDING_MODEL +
-# MAC_MEMORY_EMBEDDING_DIM at install / runtime; the model name still
-# lands on every payload so cross-model recalls are filterable).
-MAC_MEMORY_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-MAC_MEMORY_DEFAULT_EMBEDDING_DIM = 1536
-
-
-@dataclass
-class MacVectorPayload:
-    """Per-point payload stored alongside the vector in Qdrant.
-
-    Mirrors the schema in docs/memory-tier-schema.md. `to_dict()` is
-    what gets sent to Qdrant's `payload` field; `from_dict()` parses
-    a hit back into typed form for the recall API.
-    """
-
-    tier: str
-    subject_type: str
-    subject_id: str
-    memory_id: str
-    summary: str
-    created_at: str
-    embedded_at: str
-    embedding_model: str
-    task_id: Optional[str] = None
-    project: Optional[str] = None
-    agent_id: Optional[str] = None
-    tenant_id: Optional[str] = None
-    evidence_type: Optional[str] = None
-    record_type: Optional[str] = None
-    dream_kind: Optional[str] = None
-    dream_scope: Optional[str] = None
-    dream_confidence: Optional[str] = None
-    dream_confidence_score: Optional[float] = None
-    tags: List[str] = field(default_factory=list)
-    schema: str = MAC_MEMORY_PAYLOAD_SCHEMA
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this MacVectorPayload."""
-        # Drop None values to keep the Qdrant payload tight. Schema +
-        # required fields always pass through.
-        data = asdict(self)
-        return {k: v for k, v in data.items() if v is not None}
-
-    @classmethod
-    def from_dict(cls, raw: JsonDict) -> "MacVectorPayload":
-        """Construct a MacVectorPayload from its serialized dict form."""
-        if not isinstance(raw, dict):
-            raise ValidationError("vector payload must be an object")
-        if str(raw.get("schema") or "") != MAC_MEMORY_PAYLOAD_SCHEMA:
-            raise ValidationError(
-                "vector payload schema %r does not match %r"
-                % (raw.get("schema"), MAC_MEMORY_PAYLOAD_SCHEMA)
-            )
-        tier = str(raw.get("tier") or "").strip().lower()
-        if tier not in {t.value for t in MacMemoryTier}:
-            raise ValidationError("vector payload tier must be one of medium / long")
-        required_fields = (
-            "subject_type",
-            "subject_id",
-            "memory_id",
-            "summary",
-            "created_at",
-            "embedded_at",
-            "embedding_model",
-        )
-        for name in required_fields:
-            if not raw.get(name):
-                raise ValidationError("vector payload missing required field: %s" % name)
-        return cls(
-            schema=MAC_MEMORY_PAYLOAD_SCHEMA,
-            tier=tier,
-            subject_type=str(raw["subject_type"]),
-            subject_id=str(raw["subject_id"]),
-            memory_id=str(raw["memory_id"]),
-            summary=str(raw["summary"]),
-            created_at=str(raw["created_at"]),
-            embedded_at=str(raw["embedded_at"]),
-            embedding_model=str(raw["embedding_model"]),
-            task_id=str(raw["task_id"]) if raw.get("task_id") else None,
-            project=str(raw["project"]) if raw.get("project") else None,
-            agent_id=str(raw["agent_id"]) if raw.get("agent_id") else None,
-            tenant_id=str(raw["tenant_id"]) if raw.get("tenant_id") else None,
-            evidence_type=(str(raw["evidence_type"]) if raw.get("evidence_type") else None),
-            record_type=str(raw["record_type"]) if raw.get("record_type") else None,
-            dream_kind=str(raw["dream_kind"]) if raw.get("dream_kind") else None,
-            dream_scope=str(raw["dream_scope"]) if raw.get("dream_scope") else None,
-            dream_confidence=(
-                str(raw["dream_confidence"]) if raw.get("dream_confidence") else None
-            ),
-            dream_confidence_score=(
-                float(raw["dream_confidence_score"])
-                if raw.get("dream_confidence_score") is not None
-                else None
-            ),
-            tags=list(raw.get("tags") or []),
-        )
-
-
 @dataclass
 class MoodOverlay:
     """One mood transition. Append-only; current mood is the most recent row
@@ -2420,77 +2220,6 @@ class MoodOverlay:
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this MoodOverlay."""
-        return asdict(self)
-
-
-@dataclass
-class NapSchedule:
-    """One row per agent. `offset_minutes` is the per-hour window start;
-    defaults to a stable hash of agent.name to spread the fleet."""
-
-    agent_id: str
-    offset_minutes: int
-    window_minutes: int
-    enabled: bool
-    last_completed_at: Optional[str]
-    updated_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this NapSchedule."""
-        return asdict(self)
-
-
-@dataclass
-class NapRun:
-    """One execution of an agent's nap. mac records the lifecycle and the link
-    to the produced summary evidence; the actual summarization and embedding
-    happens off-process (Hermes / worker / Qdrant indexer)."""
-
-    id: str
-    agent_id: str
-    status: str
-    started_at: str
-    completed_at: Optional[str]
-    summary_evidence_id: Optional[str]
-    detail: JsonDict
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this NapRun."""
-        return asdict(self)
-
-
-@dataclass
-class Environment:
-    id: str
-    name: str
-    tenant_id: Optional[str]
-    channel: str
-    promotes_from: Optional[str]
-    metadata: JsonDict
-    created_by: str
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this Environment."""
-        return asdict(self)
-
-
-@dataclass
-class Deployment:
-    id: str
-    environment_id: str
-    artifact_id: str
-    status: str
-    deployed_by: str
-    deployed_at: str
-    retired_at: Optional[str]
-    metadata: JsonDict
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this Deployment."""
         return asdict(self)
 
 
@@ -2680,30 +2409,6 @@ class MemoryRecord:
 
 
 @dataclass
-class Rollout:
-    id: str
-    version: str
-    strategy: str
-    status: str
-    target_percent: int
-    tenant_id: Optional[str]
-    channel: str
-    runtime_environment_id: Optional[str]
-    artifact_uri: Optional[str]
-    artifact_hash: Optional[str]
-    health_policy: JsonDict
-    required_eval_set_id: Optional[str]
-    deploy_environment_id: Optional[str]
-    created_by: str
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this Rollout."""
-        return asdict(self)
-
-
-@dataclass
 class EvalSet:
     id: str
     name: str
@@ -2747,172 +2452,6 @@ def validate_transition(current: str, target: str) -> None:
     allowed = TASK_TRANSITIONS.get(current, set())
     if target not in allowed:
         raise TransitionError("cannot transition task from %s to %s" % (current, target))
-
-
-# ---------------------------------------------------------------------------
-# Source release and fleet desired-source models (mac.source_release.v1 and
-# mac.fleet_desired_source.v1). These underpin the source-convergence system:
-# SourceRelease records an immutable, reviewed, published commit; FleetDesired
-# SourceState records which release a fleet/environment should run next.
-# ---------------------------------------------------------------------------
-
-_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-_BRANCH_NAME_RE = re.compile(r"^refs/heads/")
-
-
-def _validate_commit_sha(sha: str) -> None:
-    """Reject anything that is not a 40-hex character SHA."""
-    if not _SHA_RE.match(sha):
-        raise ValidationError(
-            "commit_sha must be a 40-character lowercase hex string; got %r" % sha
-        )
-
-
-def _reject_branch_ref(canonical_ref: str) -> None:
-    """Reject refs/heads/* branch names – only tags and full SHAs are allowed."""
-    if _BRANCH_NAME_RE.match(canonical_ref):
-        raise ValidationError(
-            "canonical_ref must not be a branch name (refs/heads/*); "
-            "use a tag ref (refs/tags/*) or the bare SHA. Got %r" % canonical_ref
-        )
-
-
-@dataclass
-class SourceRelease:
-    """Immutable record of a reviewed and published source commit.
-
-    Schema: mac.source_release.v1
-    """
-
-    id: str
-    # Repository identity
-    repository_id: str
-    repository_name: str
-    # Secret-free canonical remote (no embedded credentials)
-    canonical_remote_url: str
-    # Immutable 40-char commit SHA – enforced at construction
-    commit_sha: str
-    # Canonical ref (tag or bare SHA; never a branch)
-    canonical_ref: str
-    # Content digest of the source tree (e.g. sha256:<hex>)
-    tree_digest: str
-    # Optional build artifact and OCI image digests
-    artifact_digest: Optional[str]
-    image_digest: Optional[str]
-    # Creation provenance
-    created_by: str  # actor (agent_id or human principal)
-    created_by_task_id: Optional[str]  # task that produced this release
-    # Review and publication evidence references
-    review_evidence_id: Optional[str]
-    publication_evidence_id: Optional[str]
-    # Status: draft | reviewed | published | retracted
-    status: str
-    metadata: JsonDict
-    created_at: str
-    updated_at: str
-
-    def __post_init__(self) -> None:
-        _validate_commit_sha(self.commit_sha)
-        _reject_branch_ref(self.canonical_ref)
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this SourceRelease."""
-        return asdict(self)
-
-
-class DesiredSourcePolicy(StrEnum):
-    """Rollout policy for fleet desired-source transitions."""
-
-    IMMEDIATE = "immediate"
-    CANARY = "canary"
-    MANUAL = "manual"
-
-
-@dataclass
-class FleetDesiredSourceState:
-    """Desired-source state for a fleet or environment scope.
-
-    Schema: mac.fleet_desired_source.v1
-
-    Generation is monotonically increasing; each accepted update produces a
-    new generation. Prior generation is recorded for optimistic-concurrency
-    guards at the application layer.
-    """
-
-    id: str
-    # Scope: fleet_id XOR environment_id (one must be non-None)
-    fleet_id: Optional[str]
-    environment_id: Optional[str]
-    # Monotonic generation counter (starts at 1)
-    generation: int
-    # The release this scope should run
-    release_id: str
-    # Rollout policy applied for this transition
-    rollout_policy: str
-    # Actor and reason for this desired state
-    actor: str
-    reason: str
-    # Prior generation for optimistic-concurrency validation
-    prior_generation: Optional[int]
-    # Pause flag: when True the rollout controller must not act on this state
-    paused: bool
-    # Idempotency key: caller-supplied request_id so double-submits are safe
-    request_id: Optional[str]
-    created_at: str
-    updated_at: str
-
-    def __post_init__(self) -> None:
-        if self.generation < 1:
-            raise ValidationError("generation must be >= 1; got %d" % self.generation)
-        if self.fleet_id is None and self.environment_id is None:
-            raise ValidationError("FleetDesiredSourceState requires fleet_id or environment_id")
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this FleetDesiredSourceState."""
-        return asdict(self)
-
-
-@dataclass
-class DesiredSourceTransition:
-    """Append-only history record for a desired-source state change.
-
-    Schema: mac.fleet_desired_source_transition.v1
-    """
-
-    id: str
-    desired_source_state_id: str
-    from_generation: Optional[int]
-    to_generation: int
-    release_id: str
-    rollout_policy: str
-    actor: str
-    reason: str
-    request_id: Optional[str]
-    created_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this DesiredSourceTransition."""
-        return asdict(self)
-
-
-@dataclass
-class DesiredSourceIdempotencyRecord:
-    """Idempotency record for desired-source state requests.
-
-    Prevents double-application of the same request_id within a scope.
-    Schema: mac.fleet_desired_source_idempotency.v1
-    """
-
-    id: str
-    scope_key: str  # e.g. "fleet:<fleet_id>" or "env:<environment_id>"
-    request_id: str  # caller-supplied idempotency key
-    desired_source_state_id: str
-    generation: int
-    created_at: str
-
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this DesiredSourceIdempotencyRecord."""
-        return asdict(self)
 
 
 @dataclass

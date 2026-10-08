@@ -92,53 +92,24 @@ def test_observer_spool_is_mode_0600_and_replayed(monkeypatch, tmp_path):
     assert not path.exists()
 
 
-def test_every_deployment_supervisor_uses_external_crash_observer():
-    deploy = (
-        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-        + "\n"
-        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-    )
-    assert "ulimit -c unlimited" in deploy
-    assert "export PYTHONFAULTHANDLER=1" in deploy
-    for supervisor in ("systemd", "supervisord", "launchd"):
-        assert (
-            "--supervisor %s" % supervisor in deploy
-            or ("<string>--supervisor</string><string>%s</string>" % supervisor) in deploy
-        )
-    assert deploy.count("mac-crash-observer") >= 4
-    assert 'CRASH_OBSERVER_PY="$(crash_observer_python_bin)"' in deploy
-    assert (
-        "ExecStart=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor systemd"
-        in deploy
-    )
-    assert (
-        "command=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor supervisord"
-        in deploy
-    )
-    assert (
-        "<string>$CRASH_OBSERVER_PY</string>\n"
-        "    <string>$MAC_HOME/bin/mac-crash-observer</string>" in deploy
-    )
+def test_worker_supervision_uses_external_crash_observer():
+    unit = (ROOT / "deploy" / "systemd" / "mac-agent.service.in").read_text(encoding="utf-8")
+    wrapper = (ROOT / "deploy" / "bin" / "mac-agent-service").read_text(encoding="utf-8")
+    fleet_update = (ROOT / "scripts" / "fleet-update").read_text(encoding="utf-8")
 
-    resolver = deploy.split("crash_observer_python_bin() {", 1)[1].split("\n}", 1)[0]
-    assert '"$MAC_HOME/lib/python"/cpython-' in resolver
-    assert '"$VENV/bin/python"' not in resolver
-    assert "python3.14 python3 python" not in resolver
+    # The observer runs under a python OUTSIDE the MAC venv and wraps the agent.
+    assert (
+        "ExecStart=@PYTHON3@ @HOME@/.mac/bin/mac-crash-observer --supervisor systemd "
+        "-- @HOME@/.mac/bin/mac-agent-service" in unit
+    )
+    assert "LimitCORE=infinity" in unit
+    assert "ulimit -c unlimited" in wrapper
+    assert "export PYTHONFAULTHANDLER=1" in wrapper
+    assert 'put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer"' in fleet_update
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "PYTHONFAULTHANDLER=1" in dockerfile
     assert "deploy/mac-crash-observer.py /usr/local/bin/mac-crash-observer" in dockerfile
-
-    manifest = (ROOT / "deploy" / "k8s" / "mac-runner" / "deployment.yaml").read_text(
-        encoding="utf-8"
-    )
-    assert "/usr/local/bin/mac-crash-observer" in manifest
-    assert "- kubernetes" in manifest
-    assert "MAC_CRASH_SPOOL_DIR" in manifest
-    assert "mountPath: /var/lib/mac/crash-spool" in manifest
-    assert "runAsUser: 10001" in manifest
-    assert "runAsGroup: 10001" in manifest
-    assert "fsGroup: 10001" in manifest
 
 
 def test_filesystem_core_is_retained_with_bounded_permissions(tmp_path):

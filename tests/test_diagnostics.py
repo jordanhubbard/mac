@@ -451,7 +451,7 @@ def test_stale_dispatch_hold_check_only_matches_the_roll_forward_repair_reason()
     interactive = cp.register_agent(machine.id, "interactive-session", capabilities=[])
 
     # A deploy that failed leaves this exact reason string (see
-    # deploy/deploy-mac-fleet.sh's hold_reason=... at "roll-forward repair").
+    # the deleted deploy-mac-fleet.sh's hold_reason=... at "roll-forward repair").
     cp.set_agent_dispatch_hold(
         abandoned.id, "mac admin fleet roll-forward repair retained after 20260901T151713Z"
     )

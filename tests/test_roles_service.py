@@ -617,3 +617,103 @@ def test_seed_defaults_missing_catalog_and_parent_link(monkeypatch, tmp_path) ->
     roles = service.seed_defaults(source=source)
     by_slug = {role.slug: role for role in roles}
     assert service.get_role(by_slug["child"].id).reports_to == by_slug["parent"].id
+
+
+# --- accelerator capability flags (rtx_capable / render_capable) -------------
+#
+# Detection has always emitted these flags; nothing read them, so a workload
+# that needs RTX could not say so. The shapes below are the real reports from
+# a live fifty-worker fleet (A40, render-capable but NOT RTX) and an RTX card.
+
+_A40 = {
+    "kind": "gpu",
+    "vendor": "nvidia",
+    "model": "NVIDIA A40",
+    "count": 1,
+    "memory_gb": 47.98828125,
+    "render_capable": True,
+    "rtx_capable": False,
+}
+_RTX = {
+    "kind": "gpu",
+    "vendor": "nvidia",
+    "model": "NVIDIA RTX 6000 Ada Generation",
+    "count": 1,
+    "memory_gb": 48.0,
+    "render_capable": True,
+    "rtx_capable": True,
+}
+
+
+def test_rtx_requirement_rejects_a_non_rtx_gpu():
+    """The A40 is a real, large, render-capable GPU that is still wrong here.
+
+    This is the case a coarse `gpu` capability tag accepts and should not.
+    """
+    req = {"accelerators": [{"kind": "gpu", "vendor": "nvidia", "rtx_capable": True}]}
+
+    ok, reasons = machine_hardware_satisfies(req, {"accelerators": [_A40]})
+
+    assert ok is False
+    assert reasons
+
+
+def test_rtx_requirement_accepts_an_rtx_gpu():
+    req = {"accelerators": [{"kind": "gpu", "vendor": "nvidia", "rtx_capable": True}]}
+
+    ok, reasons = machine_hardware_satisfies(req, {"accelerators": [_RTX]})
+
+    assert ok is True
+    assert reasons == []
+
+
+def test_flag_requirement_is_satisfied_by_any_matching_accelerator():
+    """A mixed host qualifies on the card that matches, not the first one."""
+    req = {"accelerators": [{"rtx_capable": True}]}
+
+    ok, _ = machine_hardware_satisfies(req, {"accelerators": [_A40, _RTX]})
+
+    assert ok is True
+
+
+def test_unspecified_flag_still_matches_either_card():
+    """Absent constraints match: this must not become an implicit RTX gate."""
+    req = {"accelerators": [{"kind": "gpu", "vendor": "nvidia"}]}
+
+    assert machine_hardware_satisfies(req, {"accelerators": [_A40]})[0] is True
+    assert machine_hardware_satisfies(req, {"accelerators": [_RTX]})[0] is True
+
+
+def test_missing_flag_in_report_fails_closed():
+    """An agent whose report predates the flag must not pass an RTX gate.
+
+    Dispatching to a host that cannot do the work is worse than leaving the
+    task unclaimed, where `unsatisfiable-requirements` will surface it.
+    """
+    legacy = {"kind": "gpu", "vendor": "nvidia", "model": "NVIDIA A40", "count": 1}
+    req = {"accelerators": [{"rtx_capable": True}]}
+
+    ok, _ = machine_hardware_satisfies(req, {"accelerators": [legacy]})
+
+    assert ok is False
+
+
+def test_render_capable_flag_is_honoured():
+    headless = {**_A40, "render_capable": False}
+    req = {"accelerators": [{"render_capable": True}]}
+
+    assert machine_hardware_satisfies(req, {"accelerators": [_A40]})[0] is True
+    assert machine_hardware_satisfies(req, {"accelerators": [headless]})[0] is False
+
+
+def test_explicitly_requiring_a_non_rtx_card_is_exact():
+    """`False` means "must not be RTX", symmetric with kind/vendor/model."""
+    req = {"accelerators": [{"rtx_capable": False}]}
+
+    assert machine_hardware_satisfies(req, {"accelerators": [_A40]})[0] is True
+    assert machine_hardware_satisfies(req, {"accelerators": [_RTX]})[0] is False
+
+
+def test_accelerator_matches_flag_directly():
+    assert _accelerator_matches({"rtx_capable": True}, _RTX) is True
+    assert _accelerator_matches({"rtx_capable": True}, _A40) is False

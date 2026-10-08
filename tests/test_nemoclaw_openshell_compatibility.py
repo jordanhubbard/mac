@@ -8,12 +8,13 @@ the fleet pin.
 Findings (as of 2026-07-05):
 - NemoClaw requires OpenShell == 0.0.72 (documented in
   docs/security/openshell-0.0.72-compatibility-review.mdx).
-- MAC's current fleet pin is 0.0.72 (bootstrap-openshell.sh, openshell_reconcile.py,
-  cli.py -- advanced from 0.0.62 and validated 2026-07-04).
-- Versions match: the pilot can proceed WITHOUT bumping the fleet pin.
+- MAC's fleet pin was 0.0.72 at the time (advanced from 0.0.62, validated
+  2026-07-04).
 
-These tests pin the version facts in code so future pin changes are caught
-before they affect the NemoClaw pilot.
+Update 2026-10-04: the fleet pin moved to OpenShell 0.1.2 (task
+task_5f45058ee332407da79236b32e80c77c, worker canary 2026-10-03). Neither
+NemoClaw nor OpenClaw runs anywhere, so NemoClaw's 0.0.72 requirement no longer
+constrains the fleet pin; the historical review below stays as a record.
 """
 
 from __future__ import annotations
@@ -53,49 +54,39 @@ def test_nemoclaw_compose_enforces_openshell_required():
 # ---------------------------------------------------------------------------
 
 
-def test_mac_fleet_pin_is_0_0_72():
-    """The centralized reviewed-asset registry pins the fleet at 0.0.72."""
+def test_mac_fleet_pin_is_0_1_2():
+    """The centralized reviewed-asset registry pins the fleet at 0.1.2."""
     registry = REVIEWED_ASSETS.read_text(encoding="utf-8")
     bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-    assert 'OPENSHELL_REVIEWED_CLI_VERSION="0.0.72"' in registry
+    assert 'OPENSHELL_REVIEWED_CLI_VERSION="0.1.2"' in registry
     assert 'OPENSHELL_VERSION="${OPENSHELL_VERSION:-$OPENSHELL_REVIEWED_CLI_VERSION}"' in bootstrap
     assert '. "$OPENSHELL_ASSET_REGISTRY"' in bootstrap
 
 
-def test_mac_openshell_reconcile_default_version_is_0_0_72():
+def test_mac_openshell_reconcile_default_version_is_0_1_2():
     """The Python reconcile module's DEFAULT_OPENSHELL_VERSION matches the pin."""
     from mac.openshell_reconcile import DEFAULT_OPENSHELL_VERSION
 
-    assert DEFAULT_OPENSHELL_VERSION == "0.0.72"
+    assert DEFAULT_OPENSHELL_VERSION == "0.1.2"
 
 
-def test_mac_cli_default_openshell_version_is_0_0_72():
+def test_mac_cli_default_openshell_version_is_0_1_2():
     """The CLI's --openshell-version default matches the fleet pin."""
     cli_src = (ROOT / "src" / "mac" / "cli.py").read_text(encoding="utf-8")
     assert '"--openshell-version"' in cli_src
-    assert 'default="0.0.72"' in cli_src
+    assert 'default="0.1.2"' in cli_src
+
+
+def test_bootstrap_reviews_exactly_the_registry_version():
+    """Bootstrap carries gateway digests only for the registry's version."""
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "\n  0.1.2)\n" in bootstrap
+    assert "\n  0.0.72)\n" not in bootstrap
 
 
 # ---------------------------------------------------------------------------
-# 3. Confirm versions match — pilot can proceed without bumping the fleet pin
+# 3. Historical record of the 0.0.62 -> 0.0.72 advance
 # ---------------------------------------------------------------------------
-
-
-def test_nemoclaw_required_version_matches_mac_fleet_pin():
-    """The version NemoClaw requires (0.0.72) equals the current MAC fleet pin.
-
-    If these differ, the pilot either needs a fleet pin bump (NemoClaw requires
-    a newer version) or must document a version override (NemoClaw requires an
-    older version). Either case blocks the pilot until resolved.
-    """
-    from mac.openshell_reconcile import DEFAULT_OPENSHELL_VERSION
-
-    nemoclaw_required = "0.0.72"  # from docs/security/openshell-0.0.72-compatibility-review.mdx
-    assert DEFAULT_OPENSHELL_VERSION == nemoclaw_required, (
-        "Version mismatch: NemoClaw requires OpenShell %s but MAC fleet pin is %s. "
-        "The pilot is BLOCKED until the pin is aligned."
-        % (nemoclaw_required, DEFAULT_OPENSHELL_VERSION)
-    )
 
 
 def test_mac_fleet_pin_was_advanced_from_0_0_62():

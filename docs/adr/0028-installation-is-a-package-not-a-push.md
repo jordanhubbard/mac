@@ -228,17 +228,17 @@ event. `deploy-mac-fleet.sh` shrinks from *the thing that installs mac* to *the
 thing that coordinates when N nodes each run their local upgrade verb* — which
 is a few hundred lines of orchestration, not thirty thousand lines of shell.
 
-### 9. Kubernetes shares the payload, not the installer
+### 9. Containers share the payload, not the installer
 
-`deploy/k8s` runs stateless `mac-api` and `mac-runner` Deployments against an
-externally managed Postgres. Those are OCI images: immutable, no installer, no
-symlink generations, no SSH enrollment.
+The container image (`Dockerfile`) is an OCI image: immutable, no installer, no
+symlink generations, no SSH enrollment. (The `deploy/k8s` Deployments this
+section originally described were deleted on 2026-10-01.)
 
 The rule is that the container image and the host package are **built from the
 same payload at the same version** and are described by the same manifest — one
 artifact family, two delivery mechanisms — but they do not share an installer,
-and the k8s path does not grow one. Host installs get `install.sh`; k8s gets an
-image tag and its own reconciliation.
+and the container path does not grow one. Host installs get `install.sh`; the
+container gets an image tag.
 
 ### 10. The installer menu names all three roles and offers cancel
 

@@ -131,14 +131,14 @@ class MemoryService:
         subject_id:
             Exact match on subject_id.
         record_type:
-            Exact match on record_type (e.g. ``"nap_summary"``).
+            Exact match on record_type (e.g. ``"agent_learning"``).
         record_type_prefix:
-            Prefix match on record_type (e.g. ``"dream:"`` matches
-            ``"dream:reflection"`` and ``"dream:lesson"``).  Ignored when
+            Prefix match on record_type (e.g. ``"deployment_learning:"``
+            matches ``"deployment_learning:mac"``).  Ignored when
             *record_type* is also set (exact match takes priority).
         created_by:
             Exact match on the creator identifier
-            (e.g. ``"nap-consolidator"``, ``"agent_rocky"``).
+            (e.g. ``"agent_rocky"``).
         since:
             ISO-8601 lower bound (inclusive) on ``created_at``.
         until:
@@ -193,10 +193,12 @@ class MemoryService:
         rows = self.store.query_all(sql, tuple(params))
         return [self._memory_from_row(row) for row in rows]
 
-    # dream-04: salience-aware decay / forgetting -----------------------
+    # Salience-aware decay / forgetting ----------------------------------
 
     #: Curated, durable knowledge that decay must never touch. Salience here is
     #: high by construction (these are explicitly-remembered facts/lessons).
+    #: ``dream`` stays protected for the historical records the removed
+    #: dreaming feature wrote.
     PROTECTED_MEMORY_PREFIXES = (
         "beads_memory",
         "deployment_learning",
@@ -215,13 +217,12 @@ class MemoryService:
         limit: int = 500,
         protected_prefixes: Optional[Tuple[str, ...]] = None,
     ) -> Dict[str, Any]:
-        """Forget stale, low-salience memory records (dream-04).
+        """Forget stale, low-salience memory records.
 
         Salience here is a recency-and-kind heuristic: records older than
         ``ttl_days`` whose ``record_type`` is NOT curated knowledge
-        (PROTECTED_MEMORY_PREFIXES) have decayed and are forgettable. This both
-        delivers the dreaming system's "forgetting" + keeps the memory tier from
-        growing unbounded (the observability-bloat problem).
+        (PROTECTED_MEMORY_PREFIXES) have decayed and are forgettable. This keeps
+        memory from growing unbounded (the observability-bloat problem).
 
         **Dry-run by default** — it reports what *would* be forgotten and
         deletes nothing. Pass ``dry_run=False`` to actually prune (bounded by

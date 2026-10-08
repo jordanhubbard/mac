@@ -13,10 +13,8 @@ OUTPUT="$ROOT/.mac-openshell-build-assets"
 GH_VERSION="${GH_VERSION:-2.95.0}"
 NODE_VERSION="${NODE_VERSION:-22.23.1}"
 PNPM_VERSION="${PNPM_VERSION:-11.13.1}"
-CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
-CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.220}"
-CURSOR_VERSION="${CURSOR_VERSION:-2026.07.23-e383d2b}"
 BUILDX_VERSION="${BUILDX_VERSION:-0.30.1}"
+RUST_VERSION="${RUST_VERSION:-1.95.0}"
 LEIN_COMMIT="40227328d4a9c8945362d6d626d19c2449175df6"
 
 while [ "$#" -gt 0 ]; do
@@ -34,10 +32,8 @@ done
 [ "$GH_VERSION" = "2.95.0" ] \
   && [ "$NODE_VERSION" = "22.23.1" ] \
   && [ "$PNPM_VERSION" = "11.13.1" ] \
-  && [ "$CODEX_VERSION" = "0.140.0" ] \
-  && [ "$CLAUDE_VERSION" = "2.1.220" ] \
-  && [ "$CURSOR_VERSION" = "2026.07.23-e383d2b" ] \
-  && [ "$BUILDX_VERSION" = "0.30.1" ] || {
+  && [ "$BUILDX_VERSION" = "0.30.1" ] \
+  && [ "$RUST_VERSION" = "1.95.0" ] || {
     echo "ERROR: runtime tool version is unreviewed; update versions and exact hashes together" >&2
     exit 2
   }
@@ -84,24 +80,18 @@ fetch node-amd64.tar.xz \
 fetch node-arm64.tar.xz \
   0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1 \
   "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.xz"
-fetch claude-amd64.tgz \
-  25d2e2cae6d3d1d5ceeaf0da02e83c45c16455e45efa1ab305395dc05227ad0d \
-  "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-${CLAUDE_VERSION}.tgz"
-fetch claude-arm64.tgz \
-  e38454d73576a08a2e707f26539d73fc9ef33e890228ca5c58a2bbe810ac884d \
-  "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-${CLAUDE_VERSION}.tgz"
-fetch cursor-amd64.tgz \
-  702ad595213bee5df0268be9f80a19f29fcceaa2a42fc55e39f2b5199051f0c4 \
-  "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/x64/agent-cli-package.tar.gz"
-fetch cursor-arm64.tgz \
-  f40b99647cb24e0da885e97620a2048034f1fe8961910d573d827d77c4d26dcb \
-  "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/arm64/agent-cli-package.tar.gz"
 fetch buildx-amd64 \
   c37114fcd034025ec68e224657c8a5a850df472ded3ddcbca75ad3a7ebb9710d \
   "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64"
 fetch buildx-arm64 \
   31d012d52d6df68aef4b55db62330967b562811f0de30cdfaa4505f314797c76 \
   "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-arm64"
+fetch rust-amd64.tar.xz \
+  2e0338f18ecbaa4a0f631b9e80e8b8e26bb6fe77dd5454fba8a70cf96c1e84a1 \
+  "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz"
+fetch rust-arm64.tar.xz \
+  094c9c36531911c5cc7dd6ab2d3069ab8dcd744d6239b0bda1387b243dfc391e \
+  "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-aarch64-unknown-linux-gnu.tar.xz"
 fetch lein \
   f8e1266c0c78c08bd4af6e111889ecc316c9dd56d1e8645bbee6c1703d351bc3 \
   "https://raw.githubusercontent.com/technomancy/leiningen/${LEIN_COMMIT}/bin/lein"

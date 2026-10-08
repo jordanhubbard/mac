@@ -34,9 +34,9 @@ SOURCE_ROOTS = (ROOT / "src/mac", ROOT / "deploy", ROOT / "scripts")
 SOURCE_SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".toml", ".conf", ".service"}
 
 FAMILIES = (
-    ("MAC_SCIENTIFIC_OPTIMIZER_", "scientific-optimizer"),
+    ("MAC_SEMANTIC_RETRY_", "semantic-retry"),
     ("MAC_REPOSITORY_REF_RECONCILER_", "repository-lifecycle"),
-    ("MAC_CODING_ROUTE_", "coding-route-ladder"),
+    ("MAC_CODING_ROUTE_", "coding-route"),
     ("MAC_CODING_AGENT_", "coding-agent-auth"),
     ("MAC_CLIENT_PRINCIPALS_", "client-auth"),
     ("MAC_LOCAL_CONSOLE_", "client-auth"),
@@ -58,17 +58,12 @@ FAMILIES = (
     ("MAC_QDRANT_", "qdrant-memory"),
     ("MAC_TOKENHUB_", "tokenhub-legacy"),
     ("MAC_WEBDAV_", "webdav-publish"),
-    ("MAC_MERGE_QUEUE_", "merge-queue"),
     ("MAC_PUBLISH_", "publication"),
     ("MAC_MEMORY_", "memory"),
-    ("MAC_RUNNER_", "kubernetes-runner"),
-    ("MAC_ACP_", "acp"),
     ("MAC_AGENT_", "agent"),
     ("MAC_HUB_", "hub"),
     ("MAC_API_", "api-auth"),
     ("MAC_GITHUB_", "github-ingest"),
-    ("MAC_BACKLOG_", "backlog-grooming"),
-    ("MAC_JUDGEMENT_", "judgement"),
 )
 
 BOOL_MARKERS = (
@@ -110,19 +105,52 @@ INT_SUFFIXES = (
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 CONSUMER_DEFAULTS = {
+    "MAC_SEMANTIC_RETRY_BASE_SECONDS": "15",
+    "MAC_SEMANTIC_RETRY_CAP_SECONDS": "300",
     "MAC_HUB_VERIFY_PROFILE": "default",
     # The contract runner deliberately bounds its default. Operators may still
     # request ``auto`` or another explicit worker count for a qualified host.
     "MAC_TEST_JOBS": "2",
-    # deploy/fleet-node-install.sh reads ``${MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0}``,
-    # so the non-fatal default is the installer's, not an invented one.
-    "MAC_DEPLOY_GATEWAY_PROBE_FATAL": "0",
-    "MAC_OPENCLAW_READY_LOG_TIMEOUT": "20",
+    "MAC_LANDING_MAX_ATTEMPTS": "8",
+    "MAC_LANDING_DEADLINE_SECONDS": "86400",
+    "MAC_CODING_MODELS": "gpt-5.6-sol",
+    "MAC_CODING_DEFAULT_MODEL": "gpt-5.6-sol",
 }
 # Descriptions an operator cannot derive from the variable name. The generated
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_CODING_AGENT": (
+        "Coding CLI switch. Unset or `opencode` runs opencode through the hub model router, "
+        "MAC's only coding CLI; `off` disables the coding route (the executor fails closed). "
+        "Any other value is ignored."
+    ),
+    "MAC_CODING_MODELS": (
+        "Comma-separated logical model names the generated opencode config declares under "
+        "its one provider, `machub` (the hub router at `$MAC_HUB_URL/v1`). Each must be a "
+        "model the hub's `MAC_ROUTER_PROVIDERS` aliases. The task's own model is always added."
+    ),
+    "MAC_CODING_DEFAULT_MODEL": (
+        "Logical router model opencode runs on (`--model machub/<name>`) when the task does "
+        "not pin one with `MAC_TASK_MODEL`."
+    ),
+    "MAC_INFERENCE_TOKEN": (
+        "Set by the executor inside the task sandbox, never by an operator: a per-task "
+        "token bound to the worker's agent that may call only POST /v1/chat/completions "
+        "and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. "
+        "The worker token never enters the sandbox."
+    ),
+    "MAC_LANDING_MAX_ATTEMPTS": (
+        "Landing attempts (publication retries, unavailable hub verifies) a task may spend "
+        "between review and landing before it moves to BLOCKED with "
+        "`landing_budget_exhausted`. Attempts back off from 5 to 60 minutes."
+    ),
+    "MAC_LANDING_DEADLINE_SECONDS": (
+        "Wall-clock deadline, from the first landing attempt, for every review/landing wait "
+        "(reviewer, hub verify, publication target/evidence, checks pending, release "
+        "barrier). Past it the task moves to BLOCKED with `landing_budget_exhausted`."
+    ),
+    "MAC_HUB_VERIFY_VM_CONFIG": "Private controller configuration for explicitly allowlisted repositories verified in disposable dedicated KVM guests; other repositories retain OpenShell verification.",
     "MAC_HUB_VERIFY_PROFILE": (
         "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "
         "driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB "
@@ -134,39 +162,6 @@ CURATED_DESCRIPTIONS = {
         "including separate read-only verifiers; existing sandbox resources remain unchanged. "
         "Conflicting worker create resource overrides are rejected."
     ),
-    "MAC_HUB_VERIFY_PG_URL": (
-        "Dedicated test Postgres DSN injected into the hub-verify OpenShell "
-        "sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host "
-        "and port, not merely the same database name). Loopback hosts are "
-        "rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / "
-        "`MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the "
-        "hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a "
-        "dedicated port (default 55432) and rewrites that DSN the same way."
-    ),
-    "MAC_HUB_VERIFY_PG_HOST": (
-        "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the "
-        "hub-verify test DSN. Default `host.openshell.internal` (OpenShell's "
-        "host-bridge alias). Does not select the live hub Postgres."
-    ),
-    "MAC_HUB_VERIFY_PG_PORT": (
-        "Port passed to `scripts/start-test-postgres.sh` when hub-verify "
-        "provisions a dedicated test DSN. Default 55432 so the helper does not "
-        "attach to the live hub listener on 5432."
-    ),
-    "MAC_HUB_VERIFY_PG_DATADIR": (
-        "Data directory for the dedicated hub-verify Postgres started by "
-        "`scripts/start-test-postgres.sh`. Defaults to a temp "
-        "`mac-hubverify-pgdata` directory, never the live hub cluster."
-    ),
-    "MAC_DEPLOY_GATEWAY_PROBE_FATAL": (
-        "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, "
-        "and therefore the whole deploy cohort; unset or `0` records the failure, "
-        "retains the failed successor for diagnosis, and continues. Non-fatal by "
-        "default because task execution is OpenShell plus the coding CLI plus "
-        "mac-agent and none of them consult chat, so a node that cannot post is "
-        "degraded for conversation and fully capable of work. Set it for a deploy "
-        "whose purpose is to prove the chat surface."
-    ),
     "MAC_NETWORK_PROVIDER": (
         "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` "
         "or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / "
@@ -174,13 +169,6 @@ CURATED_DESCRIPTIONS = {
         "Not a host firewall by itself; it is the listen-address policy that "
         "makes the overlay the only worker path. Unset means no mesh bind "
         "policy (container/dev)."
-    ),
-    "MAC_OPENCLAW_READY_LOG_TIMEOUT": (
-        "Seconds to wait for `[gateway] ready` in the host log after `verify` "
-        "already proved the gateway reachable. Default 20. This is not the "
-        "Slack `--probe` budget; reusing `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` "
-        "here added 180s of no-op wait on Linux spokes whose journals never "
-        "contain that line."
     ),
 }
 

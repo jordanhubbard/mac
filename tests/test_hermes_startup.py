@@ -98,6 +98,10 @@ def _clear_startup_env(monkeypatch) -> None:
         "TOKENHUB_URL",
     ):
         monkeypatch.delenv(name, raising=False)
+    # Keep startup-report tests isolated from the operator workstation's live
+    # classifier output.  Tests that exercise classifications set an explicit
+    # fixture path below; every other test must start with an empty report.
+    monkeypatch.setenv("MAC_HERMES_LOG_SUMMARY", os.devnull)
 
 
 def _executable(path, content: str = "#!/bin/sh\nexit 0\n") -> None:
@@ -579,6 +583,7 @@ def test_required_firecrawl_endpoint_ready(monkeypatch, tmp_path):
 
 def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch, tmp_path):
     _clear_startup_env(monkeypatch)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     hermes_home = tmp_path / ".hermes"
     agent_dir = tmp_path / "hermes-agent"
     mac_home = tmp_path / ".mac"
@@ -1035,6 +1040,7 @@ def test_required_task_project_runtime_context_blocks_when_prompt_bridge_missing
     tmp_path,
 ):
     _clear_startup_env(monkeypatch)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     hermes_home = tmp_path / ".hermes"
     agent_dir = tmp_path / "hermes-agent"
     context_path = hermes_home / "mac-runtime-context.json"

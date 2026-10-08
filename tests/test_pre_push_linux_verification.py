@@ -17,22 +17,39 @@ def _repo():
 
 def test_deferred_code_test_cannot_authorize_push():
     problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), worker._hub_verify_deferred_test_item("test-project"), hub_verify=True
+        {},
+        _repo(),
+        {
+            "name": "repository contract test",
+            "command": "test-project",
+            "returncode": None,
+            "status": "deferred",
+        },
     )
     assert any("passing test" in p for p in problems)
 
 
+def _verified(returncode=0):
+    return {
+        "name": "repository contract test",
+        "returncode": returncode,
+        "status": "pass" if returncode == 0 else "fail",
+        "execution_environment": "openshell_sandbox",
+        "executed_head_sha": "a" * 40,
+        "executed_tree_sha": "c" * 40,
+        "stdout": "12 passed in 1.0s\n",
+    }
+
+
 @pytest.mark.parametrize("returncode,blocked", [(0, False), (1, True)])
 def test_actual_test_result_controls_prepush(returncode, blocked):
-    problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), {"returncode": returncode}, hub_verify=True
-    )
+    problems = worker._repository_finalizer_prepush_problems({}, _repo(), _verified(returncode))
     assert bool(problems) is blocked
 
 
 def test_stale_head_result_cannot_authorize_push():
     problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), {"returncode": 0, "executed_head_sha": "b" * 40}, hub_verify=True
+        {}, _repo(), {"returncode": 0, "executed_head_sha": "b" * 40}
     )
     assert any("commit being pushed" in p for p in problems)
 
@@ -91,7 +108,7 @@ def test_pre_push_uses_pristine_exact_commit_without_pushing(monkeypatch, commit
         if argv[0] == "test-openshell":
             if "create" in argv:
                 assert "--upload" not in argv
-                assert argv[-3:] == ["--no-tty", "--", "/bin/true"]
+                assert "--" not in argv and argv[-1] == "--detach"
                 return subprocess.CompletedProcess(argv, 0, "sandbox created\n", "")
             if "upload" in argv:
                 upload = argv[-2]
@@ -248,7 +265,6 @@ def test_worker_ignores_workspace_receipt_and_uses_current_contract(
         committed_repo,
         "current-test",
         task_dir=task_dir,
-        hub_verify=True,
         task={
             "metadata": {
                 "execution_contract": {
@@ -285,7 +301,7 @@ def test_pre_push_preserves_trustworthy_affected_scope_and_timeout(
     result = services.verify_unpublished_repository(
         committed_repo,
         "scripts/run-contract-tests.sh",
-        prepared_base_sha=base if known_base else "b" * 40,
+        selection_base_sha=base if known_base else "b" * 40,
     )
     assert result["returncode"] == 0
     assert calls[0][0][3] == (

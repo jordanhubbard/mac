@@ -7,7 +7,7 @@ registry and then allowed OpenSSH to fill the gaps from ambient
 while an otherwise identical client could not reproduce the route.
 
 This module defines the versioned, secret-free route contract used by fleet
-credential recovery, deploy, soul snapshots, migration, the desktop bridge,
+credential recovery, soul snapshots, the desktop bridge,
 and the SSH-first login flow.  Private key *references* may appear in the
 registry; private key bytes never do.
 """
@@ -24,8 +24,6 @@ from pathlib import Path
 from mac import mac_paths
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-from mac.fleet_deploy import parse_ssh_target
-
 
 SCHEMA = "mac.fleet_ssh.v1"
 HOST_KEY_POLICIES = frozenset({"strict", "accept-new", "insecure"})
@@ -33,6 +31,31 @@ HOST_KEY_POLICIES = frozenset({"strict", "accept-new", "insecure"})
 
 class FleetSshError(ValueError):
     """Raised when a fleet route is absent, ambiguous, or unsafe."""
+
+
+@dataclass(frozen=True)
+class SshTarget:
+    user_host: str
+    port: Optional[int] = None
+
+
+def parse_ssh_target(value: str, *, port: Optional[int] = None) -> SshTarget:
+    """Parse an SSH target string into a ``SshTarget``."""
+    text = (value or "").strip()
+    if not text:
+        raise ValueError("SSH target is required")
+    parsed_port = port
+    user_host = text
+    # Accept user@host:2201 and host:2201 for config convenience.
+    # Bracketed IPv6 should be supplied via ~/.ssh/config alias or --ssh-port.
+    if text.count(":") == 1 and not text.endswith(":"):
+        candidate_host, candidate_port = text.rsplit(":", 1)
+        if candidate_port.isdigit():
+            user_host = candidate_host
+            parsed_port = int(candidate_port)
+    if parsed_port is not None and parsed_port <= 0:
+        raise ValueError("SSH port must be positive")
+    return SshTarget(user_host=user_host, port=parsed_port)
 
 
 def _text(value: Any) -> str:

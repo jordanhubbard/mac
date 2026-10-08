@@ -35,10 +35,6 @@ class _RecordingPlane:
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ...]] = []
 
-    def recover_agent_attestation_key(self, agent_id: str, probe: dict[str, Any]) -> str:
-        self.calls.append(("recover", agent_id, probe))
-        return "replacement-attestation-key-" + "x" * 40
-
     def approve_agent_report_repository_executor(
         self,
         agent_id: str,
@@ -68,54 +64,6 @@ class _RecordingPlane:
             "reason": reason,
             "actor": actor,
         }
-
-
-def test_agent_attestation_recover_sends_exact_probe_and_writes_private_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    probe = {
-        "schema": "mac.agent_attestation_key_probe.v1",
-        "state": "missing",
-        "agent_id": "agent_worker",
-        "deployment_id": "deployment-42",
-        "challenge": {},
-        "signature": "",
-    }
-    probe_path = tmp_path / "probe.json"
-    probe_path.write_text(json.dumps(probe), encoding="utf-8")
-    manifest_path = tmp_path / "handoff" / "recovery.json"
-    plane = _RecordingPlane()
-    monkeypatch.setattr("mac.cli._plane", lambda _args: plane)
-
-    rc, result = _run(
-        tmp_path,
-        "agent",
-        "attestation-recover",
-        "agent_worker",
-        "--probe-file",
-        str(probe_path),
-        "--manifest-out",
-        str(manifest_path),
-    )
-
-    assert rc == 0
-    assert plane.calls == [("recover", "agent_worker", probe)]
-    assert result == {
-        "status": "rotation_manifest_written",
-        "agent_id": "agent_worker",
-        "deployment_id": "deployment-42",
-        "manifest": str(manifest_path),
-    }
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest == {
-        "schema": "mac.agent_attestation_key_recovery.v1",
-        "agent_id": "agent_worker",
-        "deployment_id": "deployment-42",
-        "attestation_key": "replacement-attestation-key-" + "x" * 40,
-        "issued_at": manifest["issued_at"],
-    }
-    assert os.stat(manifest_path).st_mode & 0o077 == 0
-    assert "attestation_key" not in result
 
 
 def test_agent_report_executor_approve_sends_exact_controller_cas_request(
@@ -212,16 +160,6 @@ def test_agent_report_executor_revoke_sends_exact_reason_and_actor(
         (
             [
                 "agent",
-                "attestation-recover",
-                "agent_worker",
-                "--probe-file",
-                "probe.json",
-            ],
-            "--manifest-out",
-        ),
-        (
-            [
-                "agent",
                 "report-executor-approve",
                 "agent_worker",
                 "--attestation-file",
@@ -251,7 +189,6 @@ def test_agent_deployment_control_required_arguments_fail_closed(
 @pytest.mark.parametrize(
     ("command", "file_option"),
     [
-        ("attestation-recover", "--probe-file"),
         ("report-executor-approve", "--attestation-file"),
     ],
 )
@@ -266,11 +203,7 @@ def test_agent_deployment_control_rejects_non_object_evidence_before_request(
     malformed.write_text("[]", encoding="utf-8")
     plane = _RecordingPlane()
     monkeypatch.setattr("mac.cli._plane", lambda _args: plane)
-    trailing = (
-        ["--manifest-out", str(tmp_path / "must-not-exist.json")]
-        if command == "attestation-recover"
-        else ["--startup-timestamp", "2026-07-18T12:34:56Z"]
-    )
+    trailing = ["--startup-timestamp", "2026-07-18T12:34:56Z"]
 
     rc, result = _run(
         tmp_path,

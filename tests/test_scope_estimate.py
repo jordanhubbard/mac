@@ -437,7 +437,6 @@ def test_run_executor_calls_scope_estimate_on_attempt_1(monkeypatch, tmp_path):
         lambda *a, **kw: {"outcome": "success", "evidence_type": "operator_result", "signals": []},
     )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
 
     task = _task(attempt_count=1)
     te._run_executor(
@@ -445,42 +444,10 @@ def test_run_executor_calls_scope_estimate_on_attempt_1(monkeypatch, tmp_path):
         task=task,
         task_workspace=tmp_path,
         task_id="task_test123",
-        review_context=None,
-        is_review=False,
     )
 
     assert len(scope_calls) == 1
     assert "scope_estimated" in telemetry_events
-
-
-def test_run_executor_skips_scope_estimate_for_reviews(monkeypatch, tmp_path):
-    """Scope estimate preflight must not fire for review tasks."""
-    scope_calls: List[Dict] = []
-
-    monkeypatch.setattr(
-        te,
-        "maybe_preflight_scope_estimate",
-        lambda task: scope_calls.append(task),
-    )
-    monkeypatch.setattr(te, "build_review_prompt", lambda *a, **kw: "review prompt")
-    monkeypatch.setattr(te, "emit_telemetry", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "_openshell_enabled", lambda: False)
-    monkeypatch.setattr(te, "_review_experiment_assignment", lambda task: {})
-    monkeypatch.setattr(te, "_invoke_agent", lambda *a, **kw: _FakeResult(0))
-    monkeypatch.setattr(te, "run_deterministic_review_verdict", lambda *a, **kw: None)
-    monkeypatch.setattr(te, "write_fallback_evidence_manifest", lambda *a, **kw: None)
-
-    task = _task(attempt_count=1)
-    te._run_executor(
-        runner=_fake_runner,
-        task=task,
-        task_workspace=tmp_path,
-        task_id="task_test123",
-        review_context={"task_id": "task_original"},
-        is_review=True,
-    )
-
-    assert scope_calls == [], "scope estimate must not run for reviews"
 
 
 # ---------------------------------------------------------------------------

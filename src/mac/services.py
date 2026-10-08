@@ -9,21 +9,22 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import functools
 import hashlib
 import json
 import logging
 import os
 import re
-import shlex
 import shutil
-import socket
 import subprocess
 import tempfile
 import threading
 import time
 import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -31,11 +32,13 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Mapping,
     Optional,
     Sequence,
     Tuple,
+    Union,
 )
 
 import yaml
@@ -71,6 +74,11 @@ from mac.repository_contract import (
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
+from mac.requirement_coverage import (
+    STATUS_NOT_REQUIRED as REQUIREMENT_COVERAGE_NOT_REQUIRED,
+    evaluate_requirement_coverage,
+)
+from mac.semantic_acceptance import acceptance_result_problems, evaluate_acceptance
 from mac.task_dependencies import (
     dependency_cycle_path,
     lock_dependency_nodes,
@@ -80,7 +88,6 @@ from mac.task_flow_analytics import TaskFlowAnalyticsService
 from mac.models import (
     Agent,
     AgentInstanceKind,
-    AgentProvisioningRequest,
     AgentRole,
     Workflow,
     WorkflowRun,
@@ -100,12 +107,7 @@ from mac.models import (
     GatewayIdentityLease,
     HumanMessageDelivery,
     MoodOverlay,
-    NapRun,
-    NapSchedule,
-    NAP_WINDOW_MINUTES,
     ConversationThread,
-    Deployment,
-    Environment,
     normalize_evidence_kind,
     EvalRun,
     EvalSet,
@@ -113,7 +115,6 @@ from mac.models import (
     EvidenceArtifact,
     EvidenceReuseRecord,
     Fleet,
-    FleetDesiredSourceState,
     HealthStatus,
     HistoryEvent,
     HermesInstance,
@@ -139,12 +140,10 @@ from mac.models import (
     ProjectRecord,
     ProjectItem,
     Publication,
-    PublicationDeferredError,
     PublicationStatus,
     RepresentationBinding,
     Review,
     ReviewStatus,
-    Rollout,
     RuntimeEnvironment,
     RuntimeEnvironmentDelta,
     RuntimeRun,
@@ -153,7 +152,6 @@ from mac.models import (
     SecretRecord,
     ServiceClaimStatus,
     ServiceRole,
-    SourceRelease,
     REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY,
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
     REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
@@ -187,17 +185,12 @@ from mac.models import (
     utcnow,
     WorkflowDraft,
 )
+
 from mac.repository_hygiene import (
     AUTO_CLEANUP_DISPOSITIONS,
     repository_ref_lifecycle_for_transition,
 )
 from mac.env_config import resolve_hub_agent
-from mac.generator_yield import (
-    GENERATOR_YIELD_SCHEMA,
-    GeneratorSuppressed,
-    GeneratorYieldGate,
-    origin_type_of as generator_origin_type_of,
-)
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.reconciliation import ReconciliationCoordinator
 from mac.ticketing_service import TicketingCoordinator
@@ -210,8 +203,8 @@ from mac.agentbus_control import (
 from mac.action_event_service import ActionEventService
 from mac.agentbus_broadcast import BroadcastService
 from mac.agentbus_service import AgentBusService
+from mac.artifact_registry_service import ArtifactRegistryService
 from mac.canonical_reconcile import expected_head_sha_from_task
-from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
@@ -222,7 +215,6 @@ from mac.fleet_learning import (
     repository_host,
     task_repository_remote,
 )
-from mac.fleet_upgrade_service import FleetUpgradeService
 from mac.identity_service import IdentityService
 from mac.openclaw_direct_execution import OpenClawDirectExecutionService
 from mac.humans_service import HumansService
@@ -231,40 +223,30 @@ from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.communication_service import CommunicationService
 from mac.crash_service import CrashService
-from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
-from mac.memory_tier_probe import (
-    DEFAULT_INGESTION_MAX_AGE_HOURS as _DEFAULT_INGESTION_MAX_AGE_HOURS,
-    evaluate_qdrant_alerts as _evaluate_qdrant_alerts,
-    probe_collections as _probe_qdrant_collections,
-)
 from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH,
     VERIFIER_PROFILE_READY,
+    assert_exec_argv_single_line,
+    openshell_create_keepalive_args,
     openshell_required_for_identity,
+    single_line_shell_script,
     verifier_resource_profile,
 )
 from mac.openshell_service import OpenShellService
-from mac.provisioning_service import ProvisioningService
 from mac.project_repository_service import ProjectRepositoryService
 from mac.retention_service import RetentionPolicy, RetentionService
+from mac.runtime_environment_service import RuntimeEnvironmentService
 from mac.service_role_service import ServiceRoleService
-from mac.source_convergence_service import SourceConvergenceService
-from mac.source_release_service import SourceReleaseService
 from mac.review_service import (
     ReviewService,
     cross_llm_review_problems,
     review_diversity_requirements,
 )
 from mac.roles_service import RolesService
-from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
-from mac.scientific_optimizer import (
-    ScientificOptimizerConfig,
-    ScientificOptimizerService,
-    derive_task_kpis,
-)
 from mac.store import Store, make_store_from_env
+from mac.task_kpis import derive_task_kpis
 from mac.task_batch import (
     TaskBatchService,
     TaskGroupService,
@@ -278,12 +260,6 @@ from mac.sandbox_bom import (
     derive_bom,
     manifest_drift,
     manifest_has_drift,
-)
-from mac.sandbox_rollout import (
-    ROLLOUT_SCHEMA,
-    plan_rollout,
-    scheduled_rollouts,
-    validate_image_ref,
 )
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_lifecycle_bus import TaskLifecycleBusPublisher, lifecycle_outbox_detail
@@ -332,6 +308,17 @@ MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
 DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
 AUTO_QUARANTINE_REASON = "auto_quarantine:consecutive_expiries_no_telemetry"
+# The shapes a deploy's own dispatch hold takes. A worker wearing one was
+# stopped by a deploy rather than by its host going away:
+#   - "fleet-update <sha12>": scripts/fleet-update holds each worker it updates;
+#   - "mac admin fleet deployment ": the per-node hold the deleted deploy-mac-fleet.sh placed;
+#   - "mac:fleet-release:": the hold a release epoch placed. Epochs are gone, but
+#     a worker can still carry one that an aborted epoch left behind.
+DEPLOYMENT_HOLD_REASON_PREFIXES = (
+    "fleet-update ",
+    "mac admin fleet deployment ",
+    "mac:fleet-release:",
+)
 BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 BREAK_GLASS_EXECUTION_BOUNDARY = "host"
 BREAK_GLASS_MIN_TTL_SECONDS = 60
@@ -345,31 +332,6 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     except ValueError:
         value = default
     return max(minimum, value)
-
-
-def _memory_number(name: str, value: Any, *, minimum: float, maximum: float) -> float:
-    """Coerce one memory-facade numeric argument, or reject the request.
-
-    The memory-tier commands take thresholds and scan bounds from HTTP query
-    strings and from operators, so a non-numeric value arrives as a string.
-    Letting ``float()`` raise leaks a ``ValueError`` past the facade, which is
-    an implementation detail rather than a rejected request; the public
-    contract is a ``MACError`` the caller can render.
-    """
-
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValidationError("%s must be numeric" % name) from exc
-    if number != number or not minimum <= number <= maximum:  # NaN or out of range
-        raise ValidationError("%s must be between %s and %s" % (name, minimum, maximum))
-    return number
-
-
-def _memory_count(name: str, value: Any, *, maximum: int) -> int:
-    """Coerce one memory-facade count/limit argument, or reject the request."""
-
-    return int(_memory_number(name, value, minimum=1, maximum=float(maximum)))
 
 
 def _task_flow_tick_since_hours() -> int:
@@ -445,23 +407,6 @@ def _repository_contract_test_command_for_task(task: "Task") -> str:
         ("execution_contract", "repository_contract", "test"),
         ("origin", "repository_contract", "test"),
         ("repository_contract", "test"),
-    ):
-        node = _nested_json_object(metadata, *path)
-        command = str(node.get("command") or "").strip()
-        if command:
-            return command
-    return ""
-
-
-def _repository_contract_bootstrap_command_for_task(task: "Task") -> str:
-    """The repository contract's bootstrap command for a task, or "" if none
-    is declared. Mirrors ``_repository_contract_test_command_for_task``."""
-    metadata = ensure_json_object(task.metadata)
-    for path in (
-        ("execution_contract", "bootstrap"),
-        ("execution_contract", "repository_contract", "bootstrap"),
-        ("origin", "repository_contract", "bootstrap"),
-        ("repository_contract", "bootstrap"),
     ):
         node = _nested_json_object(metadata, *path)
         command = str(node.get("command") or "").strip()
@@ -627,6 +572,16 @@ _DETERMINISTIC_FAILURE_MARKERS = (
     "tests failed",
     "review rejected after max attempts",
 )
+# Failures that belong to the worker node, not to the task: the same task
+# succeeds unchanged on a healthy node. Each entry is (name, markers that must
+# all appear). Keep these unambiguous -- a match benches the node. On
+# 2026-09-23..28 one disk-full node failed 55 tasks and a broken install on two
+# nodes failed 40 more, each charged to the task while the node kept claiming.
+_NODE_FAULT_SIGNATURES = (
+    ("disk_full", ("no space left on device",)),
+    ("broken_worker_install", ("mac-task-executor.py", "no module named 'mac'")),
+)
+NODE_FAULT_QUARANTINE_PREFIX = "auto_quarantine:node_fault:"
 _FAILURE_ID_RE = re.compile(
     r"\b(?:task|agent|lease|ev|review|pub|obs)_[A-Za-z0-9_-]{8,}\b",
     re.IGNORECASE,
@@ -637,6 +592,156 @@ def _is_timeout_blob(text: str) -> bool:
     """Return True when *text* contains a recognisable agent-run-timeout signal."""
     lowered = text.lower()
     return any(marker in lowered for marker in _TIMEOUT_BLOB_MARKERS)
+
+
+# One landing budget per task (metadata.landing). Every wait between "work is
+# in review" and "work has landed" charges it, so no wait can loop forever.
+# Observed live: two approved tasks retried publication ~7,140 times each on
+# "git publication requires evidence repo.head_sha" -- a ValidationError that
+# can never succeed, retried on every tick with no cap and no deadline.
+LANDING_BUDGET_SCHEMA = "mac.landing_budget.v1"
+DEFAULT_LANDING_MAX_ATTEMPTS = 8
+DEFAULT_LANDING_DEADLINE_SECONDS = 86400
+LANDING_BACKOFF_MIN_SECONDS = 300
+LANDING_BACKOFF_MAX_SECONDS = 3600
+# Publication failure kinds that are waits on someone else (forge checks,
+# another landing on the same repository): they count against the deadline,
+# not the attempt cap.
+_LANDING_WAIT_FAILURE_KINDS = frozenset(
+    {
+        "pull_request_checks_pending",
+        "acceptance_checks_not_reported",
+        "pull_request_branch_updated",
+        "landing_serialized",
+    }
+)
+# Failure kinds retrying cannot change: the repository's one test gate (its
+# required checks) failed for this exact head. Re-landing the same head cannot
+# turn them green, so the land step never retries it; the default review
+# workflow sends the task back to its worker to fix the checks
+# (``_send_back_for_check_fix``) and blocks once that is no longer possible.
+_LANDING_PERMANENT_FAILURE_KINDS = frozenset({"pull_request_checks_failed"})
+# How many times one task is sent back to its worker to rebase onto a moved
+# canonical tip (or resolve a conflict with it) before it blocks.
+LANDING_MAX_REBASES = 2
+# How many times one task is sent back to its worker to fix the required
+# checks that failed on its pull request before it blocks.
+LANDING_MAX_CHECK_FIXES = 3
+# A task's own definition of done: ``metadata.acceptance_checks`` names forge
+# checks (exact GitHub check-run / status context names) that must pass on the
+# task's pull request before it lands, in addition to the repository's
+# required checks. Live 2026-10-04: task_bb7a198c said "Done when Memory
+# Sanitizers passes on your PR"; Memory Sanitizers is not a required check, so
+# PR #970 landed on the required checks alone with it red, and the task was
+# marked complete without meeting its stated acceptance.
+ACCEPTANCE_CHECKS_MAX = 20
+ACCEPTANCE_CHECK_NAME_MAX = 200
+# The wait kind for an acceptance check that has not reported for the head at
+# all. Unlike a required context, nothing guarantees it ever will (a typo, a
+# path-filtered workflow), so it waits only until the landing deadline and
+# then blocks naming it, rather than hanging or passing silently.
+ACCEPTANCE_CHECKS_NOT_REPORTED = "acceptance_checks_not_reported"
+
+
+def normalize_acceptance_checks(value: Any) -> List[str]:
+    """Validate ``metadata.acceptance_checks``: a bounded list of check names.
+
+    Names are stripped and de-duplicated in order. Anything else -- a bare
+    string, a non-string entry, an empty name, too many or too-long names --
+    is refused at the door, so the land step never has to guess.
+    """
+    if not isinstance(value, (list, tuple)):
+        raise ValidationError(
+            "metadata.acceptance_checks must be a list of check names, e.g. "
+            '["Memory Sanitizers"]; got %s' % type(value).__name__
+        )
+    if len(value) > ACCEPTANCE_CHECKS_MAX:
+        raise ValidationError(
+            "metadata.acceptance_checks may name at most %d checks; got %d"
+            % (ACCEPTANCE_CHECKS_MAX, len(value))
+        )
+    names: List[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValidationError(
+                "metadata.acceptance_checks entries must be non-empty strings; got %r" % (item,)
+            )
+        name = item.strip()
+        if len(name) > ACCEPTANCE_CHECK_NAME_MAX:
+            raise ValidationError(
+                "metadata.acceptance_checks names may be at most %d characters"
+                % ACCEPTANCE_CHECK_NAME_MAX
+            )
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def task_acceptance_checks(metadata: Any) -> Tuple[str, ...]:
+    """The task's acceptance checks, tolerant of a stored value that predates
+    validation (anything malformed reads as none)."""
+    value = ensure_json_object(metadata).get("acceptance_checks")
+    if value in (None, [], ()):
+        return ()
+    try:
+        return tuple(normalize_acceptance_checks(value))
+    except ValidationError:
+        return ()
+
+
+def _validate_acceptance_checks_metadata(metadata: Dict[str, Any]) -> None:
+    if "acceptance_checks" not in metadata:
+        return
+    if metadata["acceptance_checks"] is None:
+        metadata.pop("acceptance_checks")
+        return
+    metadata["acceptance_checks"] = normalize_acceptance_checks(metadata["acceptance_checks"])
+
+
+# Send-back counts in ``metadata.landing``: they survive new evidence, because
+# the re-run's evidence is exactly what a send-back asks for.
+_LANDING_SEND_BACK_COUNTERS = ("rebases", "check_fixes")
+# A ValidationError normally states a fact retrying cannot change. These
+# markers say the fact was a transport fault (git fetch over a flaky network
+# raises a plain ValidationError), so it consumes the budget instead.
+_LANDING_TRANSIENT_MARKERS = (
+    _SHARED_TRANSIENT_FAILURE_MARKERS
+    + _TIMEOUT_BLOB_MARKERS
+    + (
+        "could not resolve host",
+        "unable to access",
+        "the remote end hung up",
+        "early eof",
+    )
+)
+
+
+def _landing_failure_mode(exc: BaseException) -> str:
+    """Classify a landing failure: ``wait``, ``retry`` or ``permanent``.
+
+    ``wait`` charges only the deadline, ``retry`` charges an attempt, and
+    ``permanent`` blocks the task at once: retrying cannot change the outcome.
+    """
+    if str(getattr(exc, "publication_failure_kind", "") or "") in (
+        _LANDING_PERMANENT_FAILURE_KINDS
+    ):
+        return "permanent"
+    try:
+        retry_after = int(getattr(exc, "publication_retry_after_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        retry_after = 0
+    if retry_after > 0:
+        kind = str(getattr(exc, "publication_failure_kind", "") or "")
+        return "wait" if kind in _LANDING_WAIT_FAILURE_KINDS else "retry"
+    if isinstance(exc, TransitionError):
+        # A concurrent consumer moved the task mid-publish.
+        return "retry"
+    if isinstance(exc, ValidationError):
+        text = str(exc).lower()
+        if any(marker in text for marker in _LANDING_TRANSIENT_MARKERS):
+            return "retry"
+        return "permanent"
+    return "retry"
 
 
 def _nonnegative_int(value: Any, *, default: int = 0) -> int:
@@ -670,6 +775,17 @@ def _is_openshell_verifier_infrastructure_failure(text: str) -> bool:
     return verifier_context and transport_failure
 
 
+def _node_fault(value: Any) -> Optional[str]:
+    """Name the node fault a blocked attempt reports, if it reports one."""
+
+    detail = ensure_json_object(value) if isinstance(value, Mapping) else {}
+    blob = json_dumps(detail).lower() if detail else str(value or "").lower()
+    for name, markers in _NODE_FAULT_SIGNATURES:
+        if all(marker in blob for marker in markers):
+            return name
+    return None
+
+
 def _blocked_attempt_retry_kind(value: Any) -> str:
     """Classify the latest block for retry policy, not root-cause analytics.
 
@@ -683,6 +799,22 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
     blob = json_dumps(detail).lower() if detail else str(value or "").lower()
     if not blob.strip():
         return "legacy_transient"
+    if (
+        str(detail.get("reason") or "").strip().lower() == "repository_gate_failed"
+        and detail.get("manual_repair_required") is not True
+    ):
+        # The repository gate ran on the agent's head and failed: the work is
+        # red, not the evidence invalid. Checked before the deterministic
+        # markers, which the consequential "not pushed" problem would match.
+        # It consumes an attempt and retries with the gate output, like a
+        # failing executor run, until max_attempts.
+        return "work"
+    if str(detail.get("reason") or "").strip().lower() == "harness_finalization_incomplete":
+        # The harness did not push or did not record its verifier result; the
+        # agent's work is not at fault (worker._only_harness_finalization_problems).
+        # Checked before the deterministic markers, whose "repo evidence
+        # requires" text the problems repeat.
+        return "infrastructure_transient"
     if any(marker in blob for marker in _DETERMINISTIC_FAILURE_MARKERS):
         return "non_retryable"
     if _is_openshell_verifier_infrastructure_failure(blob):
@@ -838,6 +970,14 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "Agent run timed out — the task is likely too large for one run.",
             "Raise MAC_EXECUTOR_AGENT_TIMEOUT for heavier work and/or split into child tasks (add_child_tasks / decompose-on-failure). Pre-bake slow toolchains into the sandbox image so setup doesn't consume the budget.",
         )
+    if reason == "repository_gate_failed":
+        return note(
+            "The repository test gate ran on the agent's change and failed (%s)."
+            % (problems_text or error or "tests failed"),
+            "Ordinary work failure: the task retries with the failing gate output in "
+            "the next attempt's prompt until max_attempts. If every attempt fails the "
+            "same tests, read the gate output in `mac task show` and fix or split the task.",
+        )
     if (
         reason == "verification_contract_failed"
         or "refusing to push" in blob
@@ -859,14 +999,10 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "[%s] %s" % (failure.cause, failure.problem),
             failure.remediation,
         )
-    if (
-        "review_retraction_cap_hit" in blob
-        or "review_verdict_wait_cap_hit" in blob
-        or "reviewer" in blob
-    ):
+    if "reviewer" in blob:
         return note(
-            "Review never completed (reviewer unavailable or timed out).",
-            "Ensure a free, fresh reviewer (don't run every agent executing at once); raise MAC_REVIEW_RETRACTION_CAP / MAC_REVIEW_VERDICT_WAIT_CAP / MAC_DEFAULT_REVIEWER_STALE_AFTER_SECONDS. Heavy reviews need the review heartbeat to stay alive.",
+            "Review never completed (the hub-reviewer could not decide it).",
+            "Read the blocked reason in `mac task show`: an ineligible hub-reviewer (task review policy names another reviewer, or its tenant excludes the review machine) or a verdict the task's review contract rejects. Fix the policy or the evidence, then `mac task reopen`.",
         )
     if "max attempt" in blob:
         return note(
@@ -1032,65 +1168,10 @@ REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yml",
 )
 
-#: Output signatures that mean the verification COULD NOT RUN, as opposed to
-#: ran and found the change wanting.
-#:
-#: These are transport and environment faults of the harness itself. On
-#: 2026-08-19 every review in a 90-minute window was rejected, and the signed
-#: verdict for one of them ended:
-#:
-#:     coverage safety: statements 69300/76238 (90.90%, floor 90.00%);
-#:                      branches   20216/24618 (82.12%, floor 80.00%)
-#:       - Uploading files to /sandbox...
-#:       + Files uploaded
-#:     Error:   x ssh exited with status exit status: 1
-#:
-#: BOTH COVERAGE FLOORS PASSED. The gate the run exists to enforce was
-#: satisfied, and the coding-agent's ssh stream then died. That exit status
-#: became `rejected`, signed, and indistinguishable downstream from a reviewer
-#: judging the work deficient. One task was rejected, redone more thoroughly
-#: (58 tests -> 60, 2 files -> 11, and ruff added), and
-#: rejected identically, because the verdict never depended on the diff.
-#: Output signatures proving the gate RAN AND JUDGED THE CHANGE WANTING.
-#:
-#: Checked BEFORE the unavailable signatures, and they win, because the two
-#: overlap in exactly the case that matters.
-#:
-#: `ssh exited with status` is the generic wrapper exit printed whenever a
-#: remote command returns non-zero -- it accompanies every failure through the
-#: ssh transport, not only a transport fault. Listing it as "unavailable"
-#: (2026-08-19, PR #478) therefore inverted the original bug instead of fixing
-#: it. Before, a transport death was signed as a rejection. After, a genuine
-#: rejection was swallowed as "could not verify", so NO verdict was signed and
-#: the task sat in REVIEWING forever.
-#:
-#: Observed live on 2026-08-20: twelve `hub_verify_unavailable` events in
-#: ninety minutes whose real failures were
-#:     "documentation contract failed: published shell fences outside the
-#:      executable book are forbidden"
-#: and
-#:     "documentation-inventory.md is stale: regenerate with
-#:      scripts/generate-docs-reference.py --write"
-#: -- both real, actionable, and both discarded. Twenty tasks accumulated in
-#: REVIEWING, five of them for over a hundred hours.
-#:
-#: The discriminator is whether the gate reached a judgement. It is not
-#: "did the gate produce output": in the #478 case the coverage gate ran and
-#: PASSED before the stream died, so output alone would have called that a
-#: rejection too. Only an explicit FAILING verdict counts.
-#: Every entry must appear ONLY on failure. That is the whole discipline here,
-#: and it is easy to get wrong in the direction that reintroduces #478:
-#: `coverage safety:` was an obvious-looking candidate and is emitted whether
-#: the floors pass or fail, so it would have marked the original
-#: passed-then-the-stream-died run as a rejection -- exactly the bug #478
-#: existed to fix. Likewise `repository contract` appears in
-#: "running fail-fast repository contract preflight", which is a start
-#: message, not a verdict.
-#:
-#: When in doubt leave a signature OUT. A missing signature means a real
-#: rejection is retried as "unavailable", which wastes a run. A wrong one
-#: means a transport fault is signed as a rejection, which discards correct
-#: work and is what this pair of fixes is for.
+#: Output signatures proving the contract gate RAN AND JUDGED THE CHANGE
+#: WANTING. They anchor the verifier output excerpt on the reason a run failed.
+#: Every entry must appear ONLY on failure: `coverage safety:` and `repository
+#: contract` look like candidates but are printed on passing runs too.
 _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
     "documentation contract failed",
     "is stale:",
@@ -1103,209 +1184,14 @@ _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
 )
 
 
-_HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
-    "hub verifier resource profile unavailable",
-    # cursor-agent's stream transport, the observed cause
-    "ssh exited with status",
-    "connection reset by peer",
-    "connection refused",
-    "retriableerror",
-    "resource_exhausted",
-    # no route to run anything at all
-    "no acceptable coding agent",
-    "agent_binary_missing",
-    "sandbox_policy_denied",
-    # the harness never got far enough to test the change
-    "failed to create sandbox",
-    "error: could not create sandbox",
-)
+def verifier_sandbox_env_pairs() -> List[str]:
+    """``--env`` values for a verifier OpenShell create.
 
-
-def hub_verification_unavailable_reason(output: str) -> Optional[str]:
-    """The signature saying this run could not verify anything, if present.
-
-    Returning a reason means "we do not know whether the change is good" --
-    which must NOT be recorded as a rejection. A signature over "rejected" is
-    a claim the evidence does not support, and downstream nothing can tell it
-    apart from a real verdict.
-
-    Deliberately narrow. An unrecognised failure stays a rejection, because
-    treating unknown failures as infrastructure would let a genuinely broken
-    change pass through as "could not verify" and retry forever -- failing
-    open on the gate this exists to enforce.
-    """
-    text = (output or "").lower()
-    # A gate that judged the change wanting is a REJECTION, whatever the
-    # transport did afterwards. Checked first because the two sets overlap:
-    # a real contract failure still exits through ssh and still prints
-    # "ssh exited with status".
-    for verdict in _HUB_VERIFY_VERDICT_SIGNATURES:
-        if verdict in text:
-            return None
-    for signature in _HUB_VERIFY_UNAVAILABLE_SIGNATURES:
-        if signature in text:
-            return signature
-    return None
-
-
-# OpenShell injects this hosts entry; ``host.docker.internal`` is Docker
-# Desktop and is not present in a hub-verify sandbox. Keep in lockstep with
-# ``executor_sandbox._OPENSHELL_HOST_ALIAS_DEFAULT``.
-_HUB_VERIFY_SANDBOX_PG_HOST = "host.openshell.internal"
-_HUB_VERIFY_PG_PORT = "55432"
-_HUB_VERIFY_PG_DB = "mac_hubverify"
-_HUB_VERIFY_PG_CONTAINER = "mac-hubverify-postgres"
-_LOOPBACK_PG_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
-
-
-def parse_start_test_postgres_export(stdout: str) -> str:
-    """Read the DSN from ``scripts/start-test-postgres.sh`` stdout."""
-
-    for line in (stdout or "").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("export MAC_TEST_PG_URL="):
-            return stripped.split("=", 1)[1].strip().strip("'\"")
-    return ""
-
-
-def _pg_url_authority(dsn: str) -> Optional[Tuple[str, int]]:
-    parsed = urllib.parse.urlsplit((dsn or "").strip())
-    host = (parsed.hostname or "").strip().lower()
-    if not host:
-        return None
-    return host, int(parsed.port or 5432)
-
-
-def _hub_verify_pg_shares_live_server(candidate: str, live: str) -> bool:
-    """True when *candidate* is the live hub Postgres process, even if the
-    database name or role differs.
-
-    ``start-test-postgres.sh`` will happily emit ``...@127.0.0.1:5432/mac_test``
-    when the hub is already listening on 5432. Exact-string comparison against
-    ``MAC_DATABASE_URL`` (a different database on that same server) would then
-    inject the live cluster into the sandbox.
+    The test database lives inside the sandbox: the gateway may run on a
+    separate Linux host, and libpq cannot use OpenShell's HTTP proxy.
     """
 
-    if not candidate or not live:
-        return False
-    if candidate.strip() == live.strip():
-        return True
-    left = _pg_url_authority(candidate)
-    right = _pg_url_authority(live)
-    if left is None or right is None:
-        return False
-    left_host, left_port = left
-    right_host, right_port = right
-    if left_port != right_port:
-        return False
-    if left_host == right_host:
-        return True
-    return left_host in _LOOPBACK_PG_HOSTS or right_host in _LOOPBACK_PG_HOSTS
-
-
-def _hub_verify_sandbox_pg_host(*, sandbox_host: str = "") -> str:
-    return (
-        sandbox_host
-        or os.environ.get("MAC_HUB_VERIFY_PG_HOST")
-        or os.environ.get("MAC_OPENSHELL_HOST_ALIAS")
-        or ""
-    ).strip() or _HUB_VERIFY_SANDBOX_PG_HOST
-
-
-def hub_verify_sandbox_pg_url(
-    raw: str,
-    *,
-    live_database_url: str = "",
-    sandbox_host: str = "",
-) -> Optional[str]:
-    """Return a test DSN the OpenShell hub-verify sandbox can use.
-
-    Refuses the live hub Postgres (same host+port, not merely the same DSN).
-    Rewrites loopback hosts to ``host.openshell.internal`` (override with
-    ``MAC_HUB_VERIFY_PG_HOST`` or ``MAC_OPENSHELL_HOST_ALIAS``) so a dedicated
-    Postgres started on the hub is reachable from inside the sandbox.
-    """
-
-    candidate = (raw or "").strip()
-    live = (live_database_url or "").strip()
-    if not candidate:
-        return None
-    if _hub_verify_pg_shares_live_server(candidate, live):
-        return None
-    host = _hub_verify_sandbox_pg_host(sandbox_host=sandbox_host)
-    parsed = urllib.parse.urlsplit(candidate)
-    hostname = (parsed.hostname or "").strip().lower()
-    if hostname in _LOOPBACK_PG_HOSTS:
-        username = parsed.username or ""
-        password = parsed.password
-        userinfo = username
-        if password is not None:
-            userinfo = "%s:%s" % (username, password)
-        netloc = host
-        if parsed.port:
-            netloc = "%s:%s" % (host, parsed.port)
-        if userinfo:
-            netloc = "%s@%s" % (userinfo, netloc)
-        candidate = urllib.parse.urlunsplit(
-            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
-        )
-        if _hub_verify_pg_shares_live_server(candidate, live):
-            return None
-    return candidate
-
-
-def _hub_verify_start_test_postgres(repo_root: Path) -> str:
-    helper = repo_root / "scripts" / "start-test-postgres.sh"
-    if not helper.is_file():
-        return ""
-    env = dict(os.environ)
-    env.pop("MAC_TEST_PG_URL", None)
-    env["MAC_TEST_PG_PORT"] = (
-        os.environ.get("MAC_HUB_VERIFY_PG_PORT") or _HUB_VERIFY_PG_PORT
-    ).strip() or _HUB_VERIFY_PG_PORT
-    env["MAC_TEST_PG_DB"] = _HUB_VERIFY_PG_DB
-    env["MAC_TEST_PG_CONTAINER"] = _HUB_VERIFY_PG_CONTAINER
-    env["MAC_TEST_PG_DATADIR"] = os.environ.get("MAC_HUB_VERIFY_PG_DATADIR") or os.path.join(
-        tempfile.gettempdir(), "mac-hubverify-pgdata"
-    )
-    try:
-        proc = subprocess.run(
-            ["bash", str(helper)],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=90,
-            check=False,
-            env=env,
-        )
-    except Exception:  # noqa: BLE001 - missing helper must not abort verify
-        return ""
-    # 0 is success; ``returncode or 1`` would turn a successful helper into a
-    # miss and leave the sandbox without MAC_TEST_PG_URL (observed after #682).
-    if getattr(proc, "returncode", 1) != 0:
-        return ""
-    return parse_start_test_postgres_export(proc.stdout or "")
-
-
-def hub_verify_test_pg_url(repo_root: Path) -> Optional[str]:
-    """Dedicated test DSN for the hub-verify sandbox, never the live hub DB."""
-
-    explicit = (os.environ.get("MAC_HUB_VERIFY_PG_URL") or "").strip()
-    live = (os.environ.get("MAC_DATABASE_URL") or os.environ.get("MAC_DB") or "").strip()
-    raw = explicit or _hub_verify_start_test_postgres(repo_root)
-    return hub_verify_sandbox_pg_url(raw, live_database_url=live)
-
-
-def hub_verify_sandbox_env_pairs(*, test_pg_url: Optional[str] = None) -> List[str]:
-    """``--env`` values for a hub-verify OpenShell create."""
-
-    pairs = ["HOME=/tmp", "PATH=%s" % SANDBOX_BASE_PATH]
-    dsn = (test_pg_url or "").strip()
-    if dsn:
-        pairs.append("MAC_TEST_PG_URL=%s" % dsn)
-    else:
-        pairs.append("MAC_TEST_PG_LOCAL=1")
-    return pairs
+    return ["HOME=/tmp", "PATH=%s" % SANDBOX_BASE_PATH, "MAC_TEST_PG_LOCAL=1"]
 
 
 def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
@@ -1415,7 +1301,7 @@ def _hub_verify_exception_detail(exc: Exception) -> JsonDict:
 
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 #: Marker recorded on a task that was approved but has no publication
-#: destination, so the task itself says why it is sitting in REVIEWING instead
+#: destination, so the task itself says why it is still awaiting review instead
 #: of leaving the reason in a code comment (task_ce6c8ea3).
 PUBLICATION_BLOCK_SCHEMA = "mac.publication_block.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -1474,6 +1360,141 @@ class _PublicationBaseMovedError(ValidationError):
         )
 
 
+class _PublicationAuthorityRevokedError(ValidationError):
+    """The task row changed between admission and the forge mutation.
+
+    The land step admits a task at the ``updated_at`` it read, and re-checks
+    that version under a row lock immediately before asking the forge to
+    merge (the final task-authority fence). A mismatch means the attempt's
+    authority is stale -- not that the task cannot land. A completed stop or
+    cancel moves the task out of review, so the next tick does not retry it;
+    any other write (a concurrent metadata update, an operator edit) leaves it
+    in review, and a fresh attempt re-reads the task and re-acquires authority.
+
+    RETRYABLE by type, not by message text: it carries a retry delay, so the
+    landing budget charges an attempt and backs off instead of classifying a
+    bare ValidationError as ``landing_non_retryable`` and blocking. Live on
+    2026-10-03 an approved task went straight to BLOCKED, then FAILED, on the
+    message "a fresh review publication attempt is required".
+    """
+
+    publication_failure_kind = "publication_authority_revoked"
+    publication_retry_after_seconds = LANDING_BACKOFF_MIN_SECONDS
+
+    def __init__(self) -> None:
+        super().__init__(
+            "git publication authority changed before forge mutation; "
+            "a fresh review publication attempt is required"
+        )
+
+
+class _LandingInProgressError(ValidationError):
+    """Another consumer is already landing this same task.
+
+    Not a failure of this task: the land step in progress owns it. The caller
+    must not record anything on the task (see ``_repository_land_lock``).
+    """
+
+    publication_failure_kind = "landing_in_progress"
+    publication_retry_after_seconds = 60
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__("git publication of %s is already in progress" % task_id)
+
+
+class _LandingChecksFailedError(ValidationError):
+    """The pull request's required checks failed for the head that would land.
+
+    Still ``pull_request_checks_failed`` -- permanent for the land step, which
+    must never retry the same head -- but it carries what a worker needs to fix
+    the failure (each failed check's name, conclusion, details URL and scrubbed
+    log tail) and where the pull request lives, so the default review workflow
+    can send the SAME task back to push a fix to that pull request
+    (``_send_back_for_check_fix``).
+    """
+
+    publication_failure_kind = "pull_request_checks_failed"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failed_checks: Sequence[JsonDict] = (),
+        head_sha: str = "",
+        landing_head: str = "",
+        forge_api_url: str = "",
+        pull_request_number: int = 0,
+        pull_request_url: str = "",
+        head_branch: str = "",
+    ) -> None:
+        self.failed_checks = [dict(item) for item in failed_checks if isinstance(item, dict)]
+        self.head_sha = str(head_sha or "")
+        self.landing_head = str(landing_head or head_sha or "")
+        self.forge_api_url = str(forge_api_url or "")
+        self.pull_request_number = _nonnegative_int(pull_request_number)
+        self.pull_request_url = str(pull_request_url or "")
+        self.head_branch = str(head_branch or "")
+        super().__init__(message)
+
+    def summary(self) -> str:
+        """One line per failed check, without log tails."""
+        lines = []
+        for item in self.failed_checks:
+            line = "%s: %s" % (item.get("name") or "?", item.get("conclusion") or "failure")
+            if item.get("details_url"):
+                line += " (%s)" % item["details_url"]
+            lines.append(line)
+        return "; ".join(lines)
+
+
+class _LandingRebaseRequiredError(ValidationError):
+    """The reviewed head no longer lands as verified: its worker must rebase.
+
+    Raised when the canonical tip is not the base the worker's verifier ran
+    on (the tip moved) or when the head conflicts with the tip. The hub runs
+    no tests of its own, so the fix is the worker's: rebase onto the tip and
+    re-run its verifier. The default review workflow turns this into a
+    send-back of the SAME task (``_send_back_for_rebase``).
+    """
+
+    publication_failure_kind = "rebase_required"
+
+    def __init__(
+        self,
+        *,
+        canonical_tip: str,
+        verified_base: str,
+        head_sha: str,
+        conflicted_files: Sequence[str] = (),
+        error: str = "",
+        forge_api_url: str = "",
+        pull_request_number: int = 0,
+    ) -> None:
+        # Where the superseded attempt's pull request lives, so the send-back
+        # can close it (``_close_superseded_pull_request``). Empty/0: none.
+        self.forge_api_url = str(forge_api_url or "")
+        self.pull_request_number = _nonnegative_int(pull_request_number)
+        self.canonical_tip = str(canonical_tip or "")
+        self.verified_base = str(verified_base or "")
+        self.head_sha = str(head_sha or "")
+        self.conflicted_files = [str(path) for path in conflicted_files]
+        self.conflict = bool(self.conflicted_files or error)
+        if self.conflict:
+            why = "conflicts with the canonical tip %s: %s" % (
+                self.canonical_tip[:12] or "?",
+                ", ".join(self.conflicted_files[:10]) or str(error)[:200] or "unknown",
+            )
+        else:
+            why = "was verified on %s but the canonical tip is now %s" % (
+                self.verified_base[:12] or "an older base",
+                self.canonical_tip[:12] or "?",
+            )
+        super().__init__(
+            "git publication: reviewed head %s %s; the worker must rebase onto the "
+            "tip and re-run its verifier" % (self.head_sha[:12], why)
+        )
+
+
 # Sandbox git preflight for hub verification. The repo is tar-uploaded into the
 # sandbox, so its files can be owned by a different uid than the user running
 # the tests (HOME=/tmp guarantees no .gitconfig safe.directory whitelist).
@@ -1501,55 +1522,6 @@ _BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_\-]*$")
 ATTESTATION_KEY_BYTES = 32
 
 
-def _serialize_runtime_source_publication(function: Callable[..., Optional[JsonDict]]):
-    """Order mutation of the deployed checkout against fleet epoch creation."""
-
-    @functools.wraps(function)
-    def wrapped(
-        self: "ControlPlane",
-        task_id: str,
-        target: str,
-        evidence_id: str,
-    ) -> Optional[JsonDict]:
-        if target not in {"git://main", "git://origin/main"}:
-            return function(self, task_id, target, evidence_id)
-        if not self._publication_targets_runtime_source(task_id):
-            return function(self, task_id, target, evidence_id)
-        # Hold the barrier only long enough to READ it. It used to wrap the
-        # publication itself, and a publication runs a contract gate in a
-        # sandbox for 45-90 minutes.
-        #
-        # Thread dump taken on the hub mid-hang, 2026-08-14:
-        #
-        #   one thread:  publish_task -> validate_projected_merge_contract
-        #                -> _hub_verify_run_contract_test -> subprocess wait
-        #                (holding _PUBLICATION_BARRIER_THREAD_LOCK)
-        #   seven more:  publish_task -> publication_serialization (blocked),
-        #                one of them the hub TICK thread
-        #
-        # The waiters occupy the request threadpool, /health stops being
-        # answered, the supervisor restarts the process after its probes fail,
-        # and the in-flight gate dies without recording anything. 147
-        # consecutive failed probes and 225 restarts were logged before this
-        # was found; every publication attempt in this session died that way.
-        #
-        # The docstring of publication_serialization already says the epoch row
-        # "remains the durable barrier after this short creation critical
-        # section ends" -- so the long tail never needed the lock. The read is
-        # what must be atomic against epoch creation.
-        with self.fleet_release_epochs.publication_serialization():
-            barrier = self.fleet_release_epochs.active_publication_barrier()
-        if barrier is not None:
-            raise PublicationDeferredError(
-                "git publication is deferred while fleet release epoch %s is %s"
-                % (barrier["epoch_id"], barrier["state"]),
-                barrier=barrier,
-            )
-        return function(self, task_id, target, evidence_id)
-
-    return wrapped
-
-
 def _generate_attestation_key() -> str:
     """Mint a fresh per-agent HMAC key. Returned base64url so it fits
     in a single env var or JSON string without escaping."""
@@ -1560,232 +1532,6 @@ def _generate_attestation_key() -> str:
         .decode("ascii")
         .rstrip("=")
     )
-
-
-# ---------------------------------------------------------------------------
-# Legacy single-task publication: conflict-to-integration context payload.
-#
-# When the merge-gate (``mac.merge_queue.validate_projected_merge``) reports a
-# textual conflict for an approved single-task publication, the task cannot
-# fast-forward onto the moving canonical ``main`` tip. Rather than silently
-# abort, the legacy publisher hands the conflict to an *integration executor*
-# (rebase / resolve / re-verify). That executor needs context: which task was
-# approved, the reviewed head it approved, the evidence receipt, the current
-# canonical baseline, the attempt base it diverged from, exactly which paths
-# conflict, and — the expensive part — which already-landed commits/tasks
-# touched those same paths between the attempt base and current ``main``.
-#
-# ``build_conflict_integration_payload`` assembles that context as a pure,
-# unit-testable function returning a ``JsonDict``. It is deliberately isolated
-# from ControlPlane state: the only I/O it performs is through an injected
-# ``git_runner`` shaped exactly like ``ControlPlane._git_output`` (returns a
-# dict with ``returncode``/``stdout``/``stderr``), so it can be exercised
-# against a real temporary repo without a database or a full control plane.
-#
-# It records *raw intent/evidence pointers* and leaves the semantic
-# supersession decision to the integration executor as an explicit field
-# (``supersession.decision`` defaults to ``"undecided"``); precedence is NEVER
-# inferred from commit timestamps here. Current ``main`` is always preserved as
-# the canonical baseline of the payload.
-# ---------------------------------------------------------------------------
-
-# Optional commit trailer an integration executor may read to correlate a
-# landed commit back to the MAC task that produced it. Absent by default; when
-# present it is surfaced as a raw pointer only (never used to infer precedence).
-_MAC_TASK_TRAILER_RE = re.compile(r"^\s*Mac-Task-Id:\s*(?P<task_id>\S+)\s*$", re.MULTILINE)
-
-
-def _landed_commits_touching_paths(
-    git_runner: "Callable[[List[str], int], JsonDict]",
-    base_sha: str,
-    main_sha: str,
-    conflicted_paths: Sequence[str],
-) -> List[JsonDict]:
-    """Return raw commit pointers for commits in ``base_sha..main_sha`` that
-    touched any of ``conflicted_paths``.
-
-    Uses ``git log`` restricted to the conflicted paths (path-restricted
-    ``rev-list`` semantics). Each entry carries only raw pointers — sha,
-    subject, author, author-date, and any ``Mac-Task-Id`` trailer — so callers
-    can present provenance without inferring precedence. Returns ``[]`` when
-    the range or paths cannot be resolved; the builder records the failure
-    separately rather than raising, so a conflict payload is always producible.
-    """
-    if not base_sha or not main_sha:
-        return []
-    paths = [str(path) for path in conflicted_paths if str(path).strip()]
-    if not paths:
-        return []
-    # Record separator keeps commit records unambiguous even if a subject or
-    # body contains newlines; %x1f (unit separator) delimits fields.
-    record_sep = "\x1e"
-    field_sep = "%x1f"
-    fmt = field_sep.join(["%H", "%an", "%aI", "%s", "%b"])
-    args = [
-        "log",
-        "%s..%s" % (base_sha, main_sha),
-        "--no-merges",
-        "--format=%s%s" % (record_sep, fmt),
-        "--",
-        *paths,
-    ]
-    result = git_runner(args, 60)
-    if int(result.get("returncode", 1)) != 0:
-        return []
-    stdout = str(result.get("stdout") or "")
-    commits: List[JsonDict] = []
-    for raw in stdout.split(record_sep):
-        raw = raw.strip("\n")
-        if not raw:
-            continue
-        fields = raw.split("\x1f")
-        if len(fields) < 4:
-            continue
-        sha, author, author_date, subject = fields[0], fields[1], fields[2], fields[3]
-        body = fields[4] if len(fields) > 4 else ""
-        trailer = _MAC_TASK_TRAILER_RE.search(body)
-        commits.append(
-            {
-                "sha": sha.strip(),
-                "author": author.strip(),
-                "author_date": author_date.strip(),
-                "subject": subject.strip(),
-                "task_id": trailer.group("task_id").strip() if trailer else None,
-            }
-        )
-    return commits
-
-
-def build_conflict_integration_payload(
-    *,
-    approved_task_id: str,
-    accepted_evidence_id: str,
-    reviewed_head_sha: str,
-    current_main_sha: str,
-    attempt_base_sha: str,
-    conflicted_paths: Sequence[str],
-    depends_on: Optional[Sequence[str]] = None,
-    git_runner: "Optional[Callable[[List[str], int], JsonDict]]" = None,
-    supersession_decision: str = "undecided",
-    superseded_task_id: Optional[str] = None,
-    superseded_by_task_id: Optional[str] = None,
-) -> JsonDict:
-    """Assemble the context-rich integration payload for an approved-but-
-    conflicting *legacy single-task* publication.
-
-    This is a pure builder (aside from the optional injected ``git_runner``):
-    it captures raw pointers and computed provenance and returns a ``JsonDict``.
-    It does NOT mutate the repository, the database, or the REVIEWING flow, and
-    it makes no semantic precedence decision.
-
-    The payload records:
-
-    * ``approved_task`` — the approved task id, its accepted evidence id, and
-      the reviewed head SHA the reviewer approved.
-    * ``canonical_baseline`` — the current canonical ``main`` tip, always
-      preserved as the baseline the integration must land on.
-    * ``attempt_base_sha`` — the base the attempt diverged from
-      (``runtime.repository_base_sha``).
-    * ``conflicted_paths`` — the conflicted paths from
-      ``MergeGateVerdict.conflicted_files``.
-    * ``landed_since_base`` — the set of commits (and any correlated task ids)
-      between the attempt base and current ``main`` that touched the conflicted
-      paths, computed via a path-restricted ``git log``.
-    * ``dependencies`` — explicit *terminal* prerequisites supplied by the
-      caller.  The approved task is an input authority, not a lifecycle
-      dependency: it deliberately remains REVIEWING until this integration
-      repair succeeds, so adding it here would deadlock the repair.
-    * ``supersession`` — an explicit decision field the integration executor
-      sets. Defaults to ``"undecided"``; timestamps are never used to infer
-      precedence here.
-
-    ``git_runner`` is shaped like ``ControlPlane._git_output`` — called as
-    ``git_runner(args, timeout)`` and returning a dict with
-    ``returncode``/``stdout``/``stderr``. When omitted, provenance is left
-    empty and flagged as uncomputed, keeping the builder usable in contexts
-    without repository access.
-    """
-    if not approved_task_id or not str(approved_task_id).strip():
-        raise ValidationError("conflict integration payload requires approved_task_id")
-    if not accepted_evidence_id or not str(accepted_evidence_id).strip():
-        raise ValidationError("conflict integration payload requires accepted_evidence_id")
-    if not _GIT_SHA_RE.match(str(reviewed_head_sha).strip()):
-        raise ValidationError("conflict integration payload requires a git reviewed_head_sha")
-    if not _GIT_SHA_RE.match(str(current_main_sha).strip()):
-        raise ValidationError("conflict integration payload requires a git current_main_sha")
-    if not _GIT_SHA_RE.match(str(attempt_base_sha).strip()):
-        raise ValidationError("conflict integration payload requires a git attempt_base_sha")
-
-    normalized_paths = coerce_list(
-        str(path).strip() for path in (conflicted_paths or []) if str(path).strip()
-    )
-    if not normalized_paths:
-        raise ValidationError("conflict integration payload requires at least one conflicted path")
-
-    supersession = ensure_json_object(None)
-    decision = str(supersession_decision or "undecided").strip() or "undecided"
-    if decision not in {"undecided", "supersede", "coexist", "abandon"}:
-        raise ValidationError(
-            "conflict integration payload supersession decision must be one of "
-            "undecided/supersede/coexist/abandon"
-        )
-    supersession = {
-        # Explicit, integration-executor-owned decision. Never inferred from
-        # commit timestamps in this builder.
-        "decision": decision,
-        "superseded_task_id": (str(superseded_task_id).strip() if superseded_task_id else None),
-        "superseded_by_task_id": (
-            str(superseded_by_task_id).strip() if superseded_by_task_id else None
-        ),
-        "decided": decision != "undecided",
-        "policy": "explicit_only_no_timestamp_inference",
-    }
-
-    provenance_computed = git_runner is not None
-    landed = (
-        _landed_commits_touching_paths(
-            git_runner,
-            str(attempt_base_sha).strip(),
-            str(current_main_sha).strip(),
-            normalized_paths,
-        )
-        if git_runner is not None
-        else []
-    )
-    landed_task_ids = coerce_list(commit["task_id"] for commit in landed if commit.get("task_id"))
-
-    payload: JsonDict = {
-        "schema": "mac.conflict_integration_payload.v1",
-        "kind": "legacy_single_task_publication_conflict",
-        "approved_task": {
-            "task_id": str(approved_task_id).strip(),
-            "accepted_evidence_id": str(accepted_evidence_id).strip(),
-            "reviewed_head_sha": str(reviewed_head_sha).strip(),
-        },
-        # Current main is ALWAYS the canonical baseline the integration lands on.
-        "canonical_baseline": {
-            "ref": "main",
-            "main_sha": str(current_main_sha).strip(),
-        },
-        "attempt_base_sha": str(attempt_base_sha).strip(),
-        "conflicted_paths": normalized_paths,
-        "landed_since_base": {
-            "computed": provenance_computed,
-            "base_sha": str(attempt_base_sha).strip(),
-            "main_sha": str(current_main_sha).strip(),
-            "commits": landed,
-            "task_ids": landed_task_ids,
-        },
-        "dependencies": {
-            # Only terminal prerequisites belong in the scheduler dependency
-            # set.  ``approved_task`` above records the non-terminal input
-            # authority without making the repair wait for the very task it
-            # must unblock.
-            "depends_on": coerce_list(depends_on or []),
-        },
-        "supersession": supersession,
-    }
-    return payload
 
 
 def _contract_mapping(value: Any, field: str) -> JsonDict:
@@ -1969,6 +1715,7 @@ def _build_onboarding_description(url: str, repo_name: str) -> str:
             "  Include the full environment contract JSON in your evidence.",
             "",
             "Deliverables — report all of these in your evidence (evidence_type=investigation):",
+            "  In mac-evidence.json, place the report under operator_result and include a substantive operator_result.summary (or result, findings, or artifacts). Descriptive subkeys alone are not accepted by the evidence contract.",
             "  1. A concise summary of what the project does and its architecture (languages, frameworks, key modules, entry points), grounded in README.md/AGENTS.md/PLAN.md where present.",
             "  2. How to build it and run its tests, inferred from the repo's own manifests/CI and README — not guessed.",
             "  3. The environment contract (mac.environment_contract.v1) derived from static analysis of the checkout.",
@@ -2114,44 +1861,27 @@ def _canonicalize_for_signature(manifest: Dict[str, Any]) -> bytes:
     return json_dumps(filtered).encode("utf-8")
 
 
-def _hub_review_verify_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
-    """Option C: hub runs the review contract test itself (one controlled
-    sandbox) instead of dispatching to a reviewer agent. Off by default; the
-    hub deploy sets MAC_REVIEW_HUB_VERIFY=1."""
-    env = os.environ if environ is None else environ
-    return str(env.get("MAC_REVIEW_HUB_VERIFY") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _semantic_reviewer_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
-    """LLM second-eyes on default review. Off.
-
-    Observed 2026-08-23: release blockers that had already passed tests and
-    been pushed were rejected by fleet semantic reviewers, then burned
-    millions of tokens retrying the same gate. Hub-verify is the only
-    default review. Set MAC_REVIEW_SEMANTIC_REVIEWER=1 only as an emergency
-    opt-in to restore the old nudge path.
-    """
-    env = os.environ if environ is None else environ
-    return str(env.get("MAC_REVIEW_SEMANTIC_REVIEWER") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA = "mac.hub_review_verifier.v1"
+HUB_REVIEWER_KEY_RESOURCE_KEY = "hub_reviewer_attestation_key"
+HUB_REVIEWER_KEY_STATUS_SCHEMA = "mac.hub_reviewer_attestation_key_status.v1"
+HUB_REVIEWER_KEY_RECOVERY_LIMIT = 3
 DEFAULT_HUB_REVIEWER_AGENT_NAME = "hub-reviewer"
 DEFAULT_HUB_REVIEWER_AGENT_ID = "agent_hub-reviewer"
 DEFAULT_HUB_REVIEWER_MACHINE_ID = "machine_operator_review"
-REVIEWER_INDEPENDENCE_REASONS = frozenset(
-    {
-        "reviewer_cooperative_family_participant",
-        "reviewer_previously_owned_task",
-        "reviewer_created_executor_evidence",
-        "reviewer_same_persona",
-    }
-)
+
+
+class AgentAttestationKeyState(str, Enum):
+    ABSENT = "absent"
+    DECRYPTABLE = "decryptable"
+    UNDECRYPTABLE = "undecryptable"
+
+
+@dataclass(frozen=True)
+class AgentAttestationKeyStatus:
+    """Typed, internal result of inspecting one encrypted agent key."""
+
+    state: AgentAttestationKeyState
+    key: Optional[str] = None
 
 
 def sign_verification_manifest(key: str, manifest: Dict[str, Any]) -> str:
@@ -2191,6 +1921,25 @@ from mac.agent_health import (  # noqa: E402
 )
 
 
+#: OpenShell 0.1.2 rejects sandbox names over 19 characters. The historic hub
+#: verifier name ``mac-hubverify-<16 hex>`` is 30 characters, so it only ever
+#: created on the legacy 0.0.x verifier gateway. ``mac-hv-`` plus 10 hex is 17
+#: characters and keeps 40 bits of per-invocation uniqueness.
+_HUB_VERIFY_SANDBOX_NAME_PREFIX = "mac-hv-"
+_HUB_VERIFY_SANDBOX_NAME_MAX_LENGTH = 19
+
+
+def _hub_verify_sandbox_name() -> str:
+    """A unique OpenShell sandbox name that fits the 0.1.2 length limit."""
+
+    import uuid
+
+    name = _HUB_VERIFY_SANDBOX_NAME_PREFIX + uuid.uuid4().hex[:10]
+    if len(name) > _HUB_VERIFY_SANDBOX_NAME_MAX_LENGTH:
+        raise RuntimeError("hub verifier sandbox name exceeds the OpenShell length limit")
+    return name
+
+
 def run_repository_contract_test_in_openshell(
     remote_url: str,
     branch: str,
@@ -2198,19 +1947,17 @@ def run_repository_contract_test_in_openshell(
     test_command: str,
     bootstrap_command: str = "",
     *,
-    prepared_report: Optional[Mapping[str, Any]] = None,
     verifier_identity: Optional[Dict[str, Any]] = None,
     local_repository: Optional[Path] = None,
     expected_tree_sha: str = "",
     timeout_seconds: Optional[float] = None,
 ) -> Tuple[int, str]:
-    """Clone the pushed branch and run the contract test in an isolated
-    OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
+    """Stage a commit and run the contract test in an isolated verifier.
 
-    Isolation is mandatory: this executes pushed (agent-authored) test code
-    for the control plane, so it must not run on the hub host. Injected
-    via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
-    ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+    Runs in an OpenShell sandbox on the configured gateway (or the dedicated
+    VM verifier). Returns (returncode, tail_of_output). Isolation is
+    mandatory: this executes agent-authored test code, so it must not run on
+    the host that calls it."""
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
 
     def bounded_timeout(cap: float) -> float:
@@ -2239,42 +1986,35 @@ def run_repository_contract_test_in_openshell(
         auth_url, auth_env = str(local_repository.resolve()), {}
     else:
         auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
+    from .vm_verifier import configured_vm_verifier, run_staged_vm_verification
+
+    try:
+        vm_config = configured_vm_verifier(remote_url)
+    except (OSError, ValueError) as exc:
+        return 1, f"hub verification is unavailable: dedicated VM configuration: {exc}"
     openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
     image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
-    if not image:
+    if vm_config is None and not image:
         return 1, (
             "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
             "the deployment-approved immutable OpenShell runtime image"
         )
-    if not re.fullmatch(r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image):
+    if vm_config is None and not re.fullmatch(
+        r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image
+    ):
         return 1, (
             "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
             "the immutable repository-owned OpenShell runtime image"
         )
     try:
-        profile_args, profile_env, profile_preflight = verifier_resource_profile()
+        profile_args, profile_env, profile_preflight = (
+            verifier_resource_profile() if vm_config is None else ([], [], "")
+        )
     except ValueError as exc:
         return 1, str(exc)
     policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
-    if local_repository is not None and not policy:
+    if vm_config is None and local_repository is not None and not policy:
         return 1, "pre-push verification unavailable: MAC_OPENSHELL_POLICY is required"
-    if prepared_report is not None:
-        from .trusted_artifact import nofollow_regular_file_identity
-
-        try:
-            _policy_path, policy_digest = nofollow_regular_file_identity(policy)
-        except (OSError, ValueError):
-            return (
-                1,
-                "hub verification is unavailable: report verifier policy is missing or invalid",
-            )
-        if verifier_identity is not None:
-            verifier_identity.update(
-                runtime_image_ref=image,
-                policy_sha256=policy_digest,
-                execution_environment="openshell_sandbox",
-                platform="linux",
-            )
     try:
         # 1200s could not cover even a scoped run once cloning, uploading
         # and dependency bootstrap are counted: the scoped gate alone takes
@@ -2286,7 +2026,7 @@ def run_repository_contract_test_in_openshell(
         timeout = 1200.0
     if timeout_seconds is not None:
         timeout = max(1.0, float(timeout_seconds))
-    if _truthy_env("MAC_OPENSHELL_GC"):
+    if vm_config is None and _truthy_env("MAC_OPENSHELL_GC"):
         try:
             from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
 
@@ -2304,14 +2044,12 @@ def run_repository_contract_test_in_openshell(
             logging.getLogger(__name__).warning(
                 "OpenShell sandbox GC failed before hub verification: %s", exc
             )
-    import uuid as _uuid
-
     tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
     # Unique per invocation: the review sweep may re-tick while a verify is
     # still running, and a head_sha-derived name collides ("already
     # exists"). The in-flight guard in the caller also prevents overlap,
     # but a unique name is the belt-and-suspenders.
-    name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
+    name = _hub_verify_sandbox_name()
     try:
         clone_args = (
             ["git", "clone", "--no-local", "--no-checkout", "--", auth_url, str(tmp / "repo")]
@@ -2373,37 +2111,6 @@ def run_repository_contract_test_in_openshell(
             check=False,
         )
         observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
-        if prepared_report is not None and observed_head != head_sha:
-            # The signed worker inspected this exact canonical-remote
-            # commit. A read-only report has no pushed branch of its own;
-            # trunk may advance while it is being written. Fetch only that
-            # prepared commit, leaving pushed code reviews' HEAD gate intact.
-            for args in (
-                ["fetch", "--depth", "1", "origin", head_sha],
-                ["checkout", "--detach", head_sha],
-            ):
-                selected = subprocess.run(
-                    ["git", "-C", str(tmp / "repo"), *args],
-                    capture_output=True,
-                    text=True,
-                    timeout=bounded_timeout(300),
-                    check=False,
-                    env={**os.environ, **auth_env} if auth_env else None,
-                    stdin=subprocess.DEVNULL,
-                )
-                if selected.returncode != 0:
-                    return (
-                        1,
-                        "hub verification is unavailable: could not fetch prepared report commit",
-                    )
-            selected = subprocess.run(
-                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=bounded_timeout(30),
-                check=False,
-            )
-            observed_head = selected.stdout.strip() if selected.returncode == 0 else ""
         if observed_head != head_sha:
             return 1, (
                 "hub verify clone HEAD mismatch: expected %s, observed %s"
@@ -2426,6 +2133,29 @@ def run_repository_contract_test_in_openshell(
             return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
                 -800:
             ]
+        if vm_config is not None:
+            tree = subprocess.run(
+                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD^{tree}"],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(30),
+                check=False,
+            )
+            if tree.returncode or not _GIT_SHA_RE.fullmatch(tree.stdout.strip()):
+                return 1, "hub verification is unavailable: dedicated VM source tree unresolved"
+            if expected_tree_sha and tree.stdout.strip() != expected_tree_sha:
+                return 1, "hub verification is unavailable: dedicated VM source tree mismatch"
+            return run_staged_vm_verification(
+                vm_config,
+                tmp / "repo.tgz",
+                remote_url=remote_url,
+                head_sha=head_sha,
+                tree_sha=tree.stdout.strip(),
+                test_command=test_command or "scripts/run-contract-tests.sh",
+                bootstrap_command=bootstrap_command,
+                timeout_seconds=bounded_timeout(timeout),
+                verifier_identity=verifier_identity,
+            )
         subprocess.run(
             [openshell, "sandbox", "delete", name],
             capture_output=True,
@@ -2442,7 +2172,7 @@ def run_repository_contract_test_in_openshell(
             "--label",
             "mac.owner=mac",
             "--label",
-            "mac.kind=hubverify",
+            "mac.kind=hv",
             "--label",
             "mac.pid=%d" % os.getpid(),
             "--label",
@@ -2456,25 +2186,15 @@ def run_repository_contract_test_in_openshell(
         # control-plane host's PATH. The test database belongs inside the
         # sandbox too: the gateway may run on a separate Linux fleet host,
         # and libpq cannot use OpenShell's HTTP network proxy.
-        for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
+        for value in [*verifier_sandbox_env_pairs(), *profile_env]:
             argv += ["--env", value]
-        # `sandbox create` defaults to opening an interactive shell when no
-        # command is supplied. In a non-interactive verifier that leaves the
-        # CLI attached forever even though the sandbox has reached Ready.
-        # Run a bounded no-op initial command so create returns while the
-        # persistent sandbox remains available for upload and exec phases.
-        argv += ["--no-tty", "--", "/bin/true"]
+        # Create must return while the persistent sandbox stays Ready for the
+        # upload and exec phases. OpenShell 0.0.x attaches an interactive
+        # shell when no command is given, so it gets a bounded /bin/true; 0.1
+        # makes a trailing command the main process (whose exit ends Ready),
+        # so it gets --detach and no command.
+        argv += openshell_create_keepalive_args(openshell)
         report_preflight = ""
-        if prepared_report is not None:
-            expected_tree = str(prepared_report.get("base_tree") or "")
-            if not _GIT_SHA_RE.fullmatch(head_sha) or not _GIT_SHA_RE.fullmatch(expected_tree):
-                return 1, "hub verification is unavailable: invalid prepared report identity"
-            report_preflight = (
-                'test "$(uname -s)" = Linux && '
-                'test "$(git rev-parse HEAD)" = %s && '
-                'test "$(git rev-parse HEAD^{tree})" = %s || '
-                "{ echo 'hub verification is unavailable: report Linux/source identity mismatch' >&2; exit 96; }; "
-            ) % (head_sha, expected_tree)
         if local_repository is not None:
             report_preflight = (
                 'test "$(uname -s)" = Linux && '
@@ -2531,7 +2251,9 @@ def run_repository_contract_test_in_openshell(
                     + identity_preflight
                     + command
                 )
-                return subprocess.run(
+                # Repository-declared bootstrap/test commands may span lines;
+                # OpenShell's exec RPC rejects newline-bearing arguments.
+                exec_argv = assert_exec_argv_single_line(
                     [
                         openshell,
                         "sandbox",
@@ -2546,8 +2268,11 @@ def run_repository_contract_test_in_openshell(
                         "--",
                         "/bin/bash",
                         "-c",
-                        shell_command,
-                    ],
+                        single_line_shell_script(shell_command),
+                    ]
+                )
+                return subprocess.run(
+                    exec_argv,
                     capture_output=True,
                     text=True,
                     timeout=bounded_timeout(timeout),
@@ -2618,6 +2343,50 @@ def run_repository_contract_test_in_openshell(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+_VERIFIER_OUTPUT_EDGE_CHARS = 2000
+_SANITY_SELECTION_RE = re.compile(r"^sanity selection: (.*)$", re.MULTILINE)
+_SANITY_SELECTION_MODE_RE = re.compile(r"^(\S+) \((.*)\)$")
+_PYTEST_SUMMARY_COUNT_RE = re.compile(r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed)\b")
+
+
+def _verifier_output_record(output: str) -> JsonDict:
+    """What a gate run said about itself, bounded for evidence.
+
+    Records the selection line ``run-sanity-tests.sh`` prints, the head and
+    tail of the output (the selection is at the top, pytest's verdict at the
+    bottom) and the test count from pytest's final summary line when one
+    parses. A selector that answered ``full`` is flagged so a fallback --
+    for example a fresh clone with no impact index -- is visible rather than
+    indistinguishable from a deliberate full run.
+    """
+    text = str(output or "")
+    record: JsonDict = {
+        "output_head": text[:_VERIFIER_OUTPUT_EDGE_CHARS],
+        "output_tail": (
+            text[-_VERIFIER_OUTPUT_EDGE_CHARS:] if len(text) > _VERIFIER_OUTPUT_EDGE_CHARS else ""
+        ),
+        "output_chars": len(text),
+    }
+    selection = _SANITY_SELECTION_RE.search(text)
+    if selection:
+        line = selection.group(1).strip()
+        record["selection"] = "sanity selection: " + line
+        parsed = _SANITY_SELECTION_MODE_RE.match(line)
+        if parsed:
+            record["selection_mode"] = parsed.group(1)
+            record["selection_reason"] = parsed.group(2)
+            if parsed.group(1) == "full":
+                record["selection_fallback_full"] = True
+    for line in reversed(text.splitlines()):
+        if " in " not in line or not _PYTEST_SUMMARY_COUNT_RE.search(line):
+            continue
+        record["test_count"] = sum(
+            int(count) for count, _kind in _PYTEST_SUMMARY_COUNT_RE.findall(line)
+        )
+        break
+    return record
+
+
 def verify_unpublished_repository(
     worktree: Path,
     command: str,
@@ -2625,7 +2394,7 @@ def verify_unpublished_repository(
     *,
     timeout_seconds: Optional[float] = None,
     allow_untracked: bool = False,
-    prepared_base_sha: str = "",
+    selection_base_sha: str = "",
 ) -> JsonDict:
     """Test a pristine copy of this exact commit on the Linux gateway before push.
 
@@ -2633,6 +2402,14 @@ def verify_unpublished_repository(
     source in a fresh clone, executes through the existing verifier transport,
     and rejects a source change while verification was in flight. No repository
     bootstrap or test command is executed by the native host.
+
+    *selection_base_sha* scopes a sanity-capable contract gate to the diff
+    ``base..HEAD``. Publishing callers pass the canonical tip the worktree was
+    just rebased onto, so the selection is the task's own change rather than
+    whatever else landed since the lease was prepared. The selection the
+    script announced, a bounded head and tail of the output and the parsed
+    test count are recorded on the result; a selector that fell back to the
+    full suite is recorded too (``selection_fallback_full``).
     """
     import math
 
@@ -2692,7 +2469,7 @@ def verify_unpublished_repository(
         head, tree = source_identity()
         if (
             command in {"scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh"}
-            and _GIT_SHA_RE.fullmatch(prepared_base_sha)
+            and _GIT_SHA_RE.fullmatch(selection_base_sha)
             and (worktree / "test-policy.toml").is_file()
             and os.access(worktree / "scripts/run-sanity-tests.sh", os.X_OK)
             and subprocess.run(
@@ -2702,7 +2479,7 @@ def verify_unpublished_repository(
                     str(worktree),
                     "merge-base",
                     "--is-ancestor",
-                    prepared_base_sha,
+                    selection_base_sha,
                     head,
                 ],
                 capture_output=True,
@@ -2712,9 +2489,9 @@ def verify_unpublished_repository(
             == 0
         ):
             result["contract_command"] = command
-            command = "scripts/run-sanity-tests.sh --base %s" % prepared_base_sha
+            command = "scripts/run-sanity-tests.sh --base %s" % selection_base_sha
             result["command"] = (bootstrap_command + " && " if bootstrap_command else "") + command
-            result["selected_base_sha"] = prepared_base_sha
+            result["selected_base_sha"] = selection_base_sha
         identity: JsonDict = {}
         rc, output = run_repository_contract_test_in_openshell(
             "",
@@ -2728,6 +2505,7 @@ def verify_unpublished_repository(
             verifier_identity=identity,
         )
         result.update(returncode=rc, stdout=output)
+        result.update(_verifier_output_record(output))
         result.update(
             (key, identity[key])
             for key in (
@@ -2741,7 +2519,7 @@ def verify_unpublished_repository(
         if identity.get("execution_attempted"):
             result.update(
                 status="pass" if rc == 0 else "fail",
-                execution_environment="openshell_sandbox",
+                execution_environment=identity.get("execution_environment", "openshell_sandbox"),
                 executed_head_sha=head,
                 executed_tree_sha=tree,
             )
@@ -2776,10 +2554,6 @@ class ControlPlane:
         # This is what makes multi-replica mac-api stateless — every
         # replica hits the shared CNPG cluster without any code change.
         self.store: Store = store or make_store_from_env()
-        # The API composition root attaches the hub-owned CI controller after
-        # both services exist. Embedded/test control planes intentionally leave
-        # this unset unless they are exercising post-publication CI follow-up.
-        self._cicd_monitor: Any = None
         # Lease authority is deliberately distinct from general event
         # timestamps. PostgreSQL-backed hubs read it from the shared database;
         # SQLite is a single-hub authority and samples this service clock only
@@ -2878,9 +2652,6 @@ class ControlPlane:
         # Task lifecycle -> addressed bus traffic. Fed by the transition
         # outbox, so it publishes only what committed (task_7faf8e56).
         self.task_lifecycle_bus = TaskLifecycleBusPublisher(self)
-        self.source_releases = SourceReleaseService(self.store)
-        self.source_convergence = SourceConvergenceService(self)
-        self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
         self.roles = RolesService(
             self.store,
@@ -2918,13 +2689,6 @@ class ControlPlane:
             get_machine=self.get_machine,
             machine_allows_tenant=self._machine_allows_tenant,
         )
-        from mac.fleet_release_epoch_service import FleetReleaseEpochService
-
-        self.fleet_release_epochs = FleetReleaseEpochService(
-            self,
-            verify_signature=verify_verification_manifest_signature,
-        )
-        self.fleet_upgrades = FleetUpgradeService(self)
         self.memory = MemoryService(
             self.store,
             get_task=self.get_task,
@@ -2975,7 +2739,6 @@ class ControlPlane:
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
             reviewer_eligibility_check=self._reviewer_assignment_problem,
-            reviewer_fallback_check=self._reviewer_independence_fallback_reason,
             completion_proof_check=self._require_canonical_integration_proof,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
@@ -2991,40 +2754,13 @@ class ControlPlane:
             self.store,
             self.observability,
             get_agent=self.get_agent,
-            get_evidence=self.get_evidence,
-            agent_has_active_lease=self._agent_has_active_lease,
-            agent_is_virtual=self._agent_is_virtual,
         )
-        self.deploy = DeployService(
+        self.artifacts = ArtifactRegistryService(self.store, self.observability)
+        self.runtime_environments = RuntimeEnvironmentService(
             self.store,
-            self.observability,
-            get_tenant=self.get_tenant,
             get_task=self.get_task,
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
-        )
-        self.rollouts = RolloutService(
-            self.store,
-            self.observability,
-            get_tenant=self.get_tenant,
-            get_runtime=self.get_runtime,
-            get_eval_set=self.get_eval_set,
-            create_task=self.create_task,
-            add_memory=self.add_memory,
-            task_from_row=self._task_from_row,
-            deploy_artifact=self.deploy.deploy_artifact,
-            get_artifact_by_digest=self.deploy.get_artifact,
-            get_environment=self.deploy.get_environment,
-            current_deployment=self.deploy.current_deployment,
-        )
-        self.optimizer = ScientificOptimizerService(
-            self.store,
-            self.observability,
-            get_task=self.get_task,
-            task_detail=self.task_detail,
-            list_observability=self.list_observability,
-            create_task=self.create_task,
-            config=ScientificOptimizerConfig.from_env(),
         )
         # Event-driven review advancement (opt-in; enabled by the hub's tick
         # wiring). Review-stage transitions used to wait for the next periodic
@@ -3370,6 +3106,7 @@ class ControlPlane:
                     executor_script_sha256=str(attestation["executor_script_sha256"]),
                     source_root=str(attestation["source_root"]),
                     source_bundle_sha256=str(attestation["source_bundle_sha256"]),
+                    runtime_config_sha256=str(attestation["runtime_config_sha256"]),
                 )
             )
         return projected
@@ -3412,6 +3149,16 @@ class ControlPlane:
             merged["startup_self_test"] = existing["startup_self_test"]
         if "openshell_required" in existing:
             merged["openshell_required"] = existing["openshell_required"]
+        # Hub reviewer key readiness is controller-owned.  A worker may not
+        # claim that an unreadable signing key is healthy, and routine virtual
+        # agent re-registration must not erase the controller's diagnosis.
+        merged.pop(HUB_REVIEWER_KEY_RESOURCE_KEY, None)
+        reviewer_key_status = existing.get(HUB_REVIEWER_KEY_RESOURCE_KEY)
+        if (
+            isinstance(reviewer_key_status, Mapping)
+            and reviewer_key_status.get("schema") == HUB_REVIEWER_KEY_STATUS_SCHEMA
+        ):
+            merged[HUB_REVIEWER_KEY_RESOURCE_KEY] = dict(reviewer_key_status)
         merged.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         existing_approval = existing.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
         if valid_read_only_report_repository_executor_approval(existing_approval):
@@ -3906,7 +3653,6 @@ class ControlPlane:
                 "agents",
                 "projects",
                 "pipelines",
-                "merge-queue",
                 "cycles",
                 "telemetry",
             }
@@ -4353,7 +4099,6 @@ class ControlPlane:
                 "agents",
                 "projects",
                 "pipelines",
-                "merge-queue",
                 "cycles",
                 "telemetry",
             ],
@@ -5056,7 +4801,6 @@ class ControlPlane:
                     "agents",
                     "projects",
                     "pipelines",
-                    "merge-queue",
                     "cycles",
                     "telemetry",
                 ],
@@ -5102,24 +4846,6 @@ class ControlPlane:
 
     def unassign_role(self, agent_id: str) -> Agent:
         return self.roles.unassign_role(agent_id)
-
-    def list_provisioning_requests(
-        self, *args: Any, **kwargs: Any
-    ) -> List[AgentProvisioningRequest]:
-        return self.provisioning.list_requests(*args, **kwargs)
-
-    def get_provisioning_request(self, request_id: str) -> AgentProvisioningRequest:
-        return self.provisioning.get_request(request_id)
-
-    def fulfill_provisioning_request(
-        self, request_id: str, agent_id: str
-    ) -> AgentProvisioningRequest:
-        return self.provisioning.fulfill_request(request_id, agent_id)
-
-    def cancel_provisioning_request(
-        self, request_id: str, *, reason: str = "operator-cancelled"
-    ) -> AgentProvisioningRequest:
-        return self.provisioning.cancel_request(request_id, reason=reason)
 
     def agent_identity(self, agent_id: str) -> JsonDict:
         """Layered identity for an agent: soul → role → mood → hardware.
@@ -5611,55 +5337,6 @@ class ControlPlane:
                 )
             return str(row["task_id"])
 
-    @property
-    def generator_yield_gate(self) -> "GeneratorYieldGate":
-        """The measured yield gate, constructed once per control plane."""
-
-        gate = getattr(self, "_generator_yield_gate", None)
-        if gate is None:
-            gate = GeneratorYieldGate(self.store)
-            self._generator_yield_gate = gate
-        return gate
-
-    def _enforce_generator_yield(self, metadata: Any) -> None:
-        """Refuse a filing from a generator whose measured yield is too low.
-
-        Records the suppression before raising: a generator that silently
-        stopped filing would be indistinguishable from one that had nothing
-        to file, which is how the low-yield generators went unnoticed for six
-        weeks in the first place.
-        """
-
-        try:
-            self.generator_yield_gate.enforce(metadata)
-        except GeneratorSuppressed as exc:
-            origin_type = generator_origin_type_of(metadata)
-            try:
-                self.record_log(
-                    "task.generator_suppressed",
-                    level="warning",
-                    detail={
-                        "origin_type": origin_type,
-                        "verdict": self.generator_yield_gate.evaluate(origin_type),
-                        "message": str(exc),
-                    },
-                )
-            except Exception:  # noqa: BLE001 - reporting must not mask the refusal
-                pass
-            raise
-
-    def generator_yield_report(self) -> JsonDict:
-        """Every task origin's filed/completed record and gate standing."""
-
-        gate = self.generator_yield_gate
-        return {
-            "schema": GENERATOR_YIELD_SCHEMA,
-            "floor": gate.policy.floor,
-            "min_sample": gate.policy.min_sample,
-            "enabled": gate.policy.enabled,
-            "origins": gate.report(),
-        }
-
     def create_task(
         self,
         title: str,
@@ -5735,12 +5412,7 @@ class ControlPlane:
         if bool(_workflow_run_id) != bool(_workflow_node_key):
             raise ValidationError("workflow-linked task creation requires both run id and node key")
         self._reject_reserved_break_glass_metadata(requested_metadata)
-        # An automated generator whose filed work does not complete stops
-        # filing. This is the single choke point every generator passes
-        # through, so a generator added later is gated by default rather than
-        # having to remember to opt in. Human-filed origins are exempt --
-        # see mac.generator_yield.HUMAN_ORIGIN_TYPES.
-        self._enforce_generator_yield(requested_metadata)
+        _validate_acceptance_checks_metadata(requested_metadata)
         if idempotency_key is not None:
             if _task_id is not None:
                 raise ValidationError(
@@ -5820,11 +5492,6 @@ class ControlPlane:
                 "schema": "mac.managed_single_task.route.v1",
                 "activation": "legacy_compatibility",
             }
-        normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
-            task_id,
-            project,
-            normalized_metadata,
-        )
         created = False
         with self.store.transaction() as conn:
             existing = conn.execute(
@@ -5911,8 +5578,6 @@ class ControlPlane:
                         creation_detail,
                         conn=conn,
                     )
-                    if optimizer_assignment is not None:
-                        self.optimizer.insert_assignment(conn, optimizer_assignment)
                     created = True
         if (
             created
@@ -6268,7 +5933,7 @@ class ControlPlane:
                         "metadata.origin.%s contradicts the current registered repository" % key
                     )
             # Repository identity is canonical; the producer still owns its
-            # origin type, which drives grooming cadence and generator yield.
+            # origin type.
             origin.setdefault("type", "direct_task")
             origin.update(
                 {
@@ -7127,11 +6792,7 @@ class ControlPlane:
                         "  1. mac admin sandbox-image bom --containerfile deploy/openshell/mac-hermes.Containerfile",
                         "  2. add anything it reports to the Containerfile, and",
                         "     mac admin sandbox-image bom --write deploy/openshell/sandbox-bom.json",
-                        "  3. publish the image through the reviewed workflow, then",
-                        "     mac admin sandbox-image rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
-                        "",
-                        "Step 3 is a barrier task per worker: each one drains before it "
-                        "updates, so the fleet rolls rather than stopping.",
+                        "  3. publish the image through the reviewed workflow.",
                     ]
                 ),
                 project=project,
@@ -7157,60 +6818,6 @@ class ControlPlane:
                 "checked": False,
                 "reason": "drift check failed: %s: %s" % (type(exc).__name__, exc),
             }
-
-    def roll_out_sandbox_image(
-        self,
-        image_ref: str,
-        *,
-        bom: Optional[Mapping[str, Any]] = None,
-        actor: str = "human",
-        project: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """File one barrier task per agent to install a reviewed image.
-
-        Rolling, not fleet-wide: each agent drains and updates independently,
-        so the fleet keeps working through the rollout instead of stopping at
-        once. Deduplicated per (agent, image) because a rollout re-filed on
-        every tick would queue a barrier per tick, and barriers quiesce their
-        agent -- the worker would stop taking work permanently.
-        """
-        image_ref = validate_image_ref(image_ref)
-        agents = [agent.to_dict() for agent in self.list_agents()]
-        plan = plan_rollout(
-            agents,
-            image_ref,
-            bom=bom or {},
-            # Ask SQL for the non-terminal tasks rather than reading all of
-            # them and discarding most in Python. On the fleet hub the table is
-            # 8,372 rows / 116MB and ~89% of it is terminal, so this fetched
-            # (and detoasted) roughly nine rows for every one it kept.
-            already_scheduled=scheduled_rollouts(self._non_terminal_tasks()),
-        )
-        filed: List[str] = []
-        skipped: List[str] = []
-        for item in plan:
-            try:
-                task = self.create_task(
-                    item["title"],
-                    description=item["description"],
-                    project=project,
-                    metadata=item["metadata"],
-                    actor=actor,
-                )
-            except (ValidationError, TransitionError, NotFoundError):
-                # One unfilable worker must not abort the rollout for the rest:
-                # a partial roll is recoverable by re-running, an aborted one
-                # leaves whichever workers were reached in an unknown mix.
-                skipped.append(item["agent_id"])
-            else:
-                filed.append(task.id)
-        return {
-            "schema": ROLLOUT_SCHEMA,
-            "image": image_ref,
-            "filed": filed,
-            "skipped": skipped,
-            "agents_considered": len(agents),
-        }
 
     def record_sandbox_excursion(
         self,
@@ -7336,8 +6943,9 @@ class ControlPlane:
         """Task counts by state (parity with bd stats).
 
         ``reviewing_parked`` is reported alongside the states whenever it is
-        non-zero: the count of REVIEWING tasks that are approved but have no
-        publication destination, so nothing will ever move them to COMPLETED.
+        non-zero: the count of approved tasks still in review (NEEDS_REVIEW, or
+        a legacy REVIEWING row) that have no publication destination, so
+        nothing will ever move them to COMPLETED.
         Without it a permanently parked task is counted under ``reviewing`` and
         is indistinguishable from work in flight — which is how four of them sat
         unnoticed for four days (task_ce6c8ea3). It is an addition, not a
@@ -7372,12 +6980,12 @@ class ControlPlane:
         """Add ``reviewing_parked`` to ``counts`` when there is anything to add.
 
         Resolving a publication target per task costs a project lookup, so this
-        short-circuits when nothing is in REVIEWING at all — which is the usual
+        short-circuits when nothing is in review at all — which is the usual
         case, and keeps `mac task stats` as cheap as it was.  A failure here
         must not take the stats call down with it: the counts are the primary
         answer and the parked count is an annotation on them.
         """
-        if not counts.get(TaskState.REVIEWING.value):
+        if not (counts.get(TaskState.REVIEWING.value) or counts.get(TaskState.NEEDS_REVIEW.value)):
             return counts
         try:
             parked = self.parked_reviewing_tasks(limit=1_000_000)
@@ -7659,6 +7267,7 @@ class ControlPlane:
                     if key in persisted_metadata:
                         preserved_publication_metadata[key] = persisted_metadata[key]
             self._reject_reserved_break_glass_metadata(new_metadata)
+            _validate_acceptance_checks_metadata(new_metadata)
         dependency_quarantine = (
             ensure_json_object(new_metadata.get("dependency_quarantine"))
             if dependency_ids is not None
@@ -7773,7 +7382,7 @@ class ControlPlane:
         This is a glanceable, additive record of what happened on a task -- what
         the worker did, what the reviewer found/fixed, environment changes made to
         build/test -- a few lines per phase, the way a person watching the
-        claude/codex/cursor CLI would summarize it. It deliberately does NOT touch
+        coding CLI would summarize it. It deliberately does NOT touch
         evidence, history, or the verification pipeline (those remain the durable
         forensic logs); it is surfaced by ``mac task summary`` / ``task show``.
         """
@@ -8160,11 +7769,6 @@ class ControlPlane:
                 child_project,
                 child_capabilities,
             )
-            normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
-                allocated_child_ids[index - 1],
-                child_project,
-                normalized_metadata,
-            )
             prepared.append(
                 {
                     "id": allocated_child_ids[index - 1],
@@ -8180,7 +7784,6 @@ class ControlPlane:
                     "required_capabilities": child_capabilities,
                     "dependencies": child_dependencies,
                     "metadata": normalized_metadata,
-                    "optimizer_assignment": optimizer_assignment,
                     "max_attempts": int(
                         spec["max_attempts"]
                         if spec.get("max_attempts") is not None
@@ -8312,8 +7915,6 @@ class ControlPlane:
                     child_creation_detail,
                     conn=conn,
                 )
-                if child["optimizer_assignment"] is not None:
-                    self.optimizer.insert_assignment(conn, child["optimizer_assignment"])
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
@@ -9421,238 +9022,6 @@ class ControlPlane:
             },
         )
 
-    def assign_review_experiment(
-        self,
-        task_id: str,
-        *,
-        experiment_id: str,
-        arm: Optional[str] = None,
-        arms: Optional[Dict[str, Any]] = None,
-        assignment_probability: Optional[float] = None,
-        blind: bool = False,
-        blind_arms: Optional[Iterable[str]] = None,
-        policy_version: str = "v1",
-        hypothesis: str = "",
-        stratum: str = "",
-        actor: str = "human",
-    ) -> JsonDict:
-        """Persist a replayable review-strategy assignment on a task.
-
-        Weighted assignment is deterministic from experiment/task/policy ids,
-        so callers can reproduce the choice while the stored probability keeps
-        future off-policy analysis possible.
-        """
-        from mac.review_experiments import build_assignment, parse_assignment
-
-        task = self.get_task(task_id)
-        assignment = build_assignment(
-            task_id=task_id,
-            experiment_id=experiment_id,
-            arm=arm,
-            arms=arms,
-            assignment_probability=assignment_probability,
-            blind=blind,
-            blind_arms=blind_arms,
-            policy_version=policy_version,
-            hypothesis=hypothesis,
-            stratum=stratum,
-            assigned_by=actor,
-        )
-        existing = parse_assignment(task.metadata)
-        if existing is not None:
-            immutable_fields = (
-                "experiment_id",
-                "arm",
-                "assignment_method",
-                "assignment_probability",
-                "blind",
-                "blind_arms",
-                "policy_version",
-                "arm_distribution",
-                "hypothesis",
-                "stratum",
-            )
-            if all(existing.get(key) == assignment.get(key) for key in immutable_fields):
-                return existing
-            raise ValidationError("review experiment assignment is immutable")
-        if (
-            task.state != TaskState.OPEN.value
-            or task.owner_agent_id is not None
-            or task.lease_id is not None
-        ):
-            raise ValidationError(
-                "review experiment assignment must occur before a task is claimed"
-            )
-        metadata = ensure_json_object(task.metadata)
-        metadata["review_experiment"] = assignment
-        self.update_task(task_id, metadata=metadata, actor=actor)
-        self._record_history(
-            task_id,
-            "task.review_experiment_assigned",
-            actor,
-            task.state,
-            task.state,
-            {
-                "experiment_id": assignment["experiment_id"],
-                "arm": assignment["arm"],
-                "assignment_method": assignment["assignment_method"],
-                "assignment_probability": assignment["assignment_probability"],
-                "blind": assignment["blind"],
-                "policy_version": assignment["policy_version"],
-            },
-        )
-        return assignment
-
-    def record_review_outcome(
-        self,
-        task_id: str,
-        *,
-        kind: str,
-        status: str,
-        finding_id: str = "",
-        severity_weight: float = 1.0,
-        source: str = "operator",
-        detail: Optional[Dict[str, Any]] = None,
-        actor: str = "human",
-    ) -> JsonDict:
-        """Attach a validated or delayed outcome without mutating evidence."""
-        from mac.review_experiments import append_outcome, build_outcome
-
-        task = self.get_task(task_id)
-        outcome = build_outcome(
-            kind=kind,
-            status=status,
-            finding_id=finding_id,
-            severity_weight=severity_weight,
-            source=source,
-            detail=detail,
-            observed_by=actor,
-        )
-        metadata = append_outcome(task.metadata, outcome)
-        self.update_task(task_id, metadata=metadata, actor=actor)
-        self._record_history(
-            task_id,
-            "task.review_outcome_recorded",
-            actor,
-            task.state,
-            task.state,
-            {
-                "outcome_id": outcome["id"],
-                "kind": outcome["kind"],
-                "status": outcome["status"],
-                "finding_id": outcome["finding_id"],
-                "severity_weight": outcome["severity_weight"],
-                "source": outcome["source"],
-            },
-        )
-        return outcome
-
-    def review_observation(self, task_id: str) -> JsonDict:
-        from mac.review_experiments import build_observation
-
-        detail = self.task_detail(task_id)
-        review_subject_ids = [
-            "review_%s" % review.get("id")
-            for review in detail.get("reviews", [])
-            if isinstance(review, dict) and review.get("id")
-        ]
-        routes = []
-        seen_route_ids = set()
-        for subject_id in [task_id, *review_subject_ids]:
-            for route in self.list_observability(
-                kind="log",
-                name="llm.route",
-                subject_type="task",
-                subject_id=subject_id,
-                limit=1000,
-            ):
-                route_id = getattr(route, "id", None)
-                if route_id and route_id in seen_route_ids:
-                    continue
-                if route_id:
-                    seen_route_ids.add(route_id)
-                routes.append(route)
-        return build_observation(
-            detail,
-            llm_routes=[item.to_dict() for item in routes],
-        )
-
-    def review_experiment_report(
-        self,
-        experiment_id: str,
-        *,
-        project: Optional[str] = None,
-        min_tasks_per_arm: int = 5,
-        min_validated_outcomes_per_arm: int = 3,
-    ) -> JsonDict:
-        from mac.review_experiments import build_report, parse_assignment
-
-        observations = []
-        for task in self.list_tasks():
-            if project is not None and task.project != project:
-                continue
-            assignment = parse_assignment(task.metadata)
-            if assignment is None or assignment.get("experiment_id") != experiment_id:
-                continue
-            observations.append(self.review_observation(task.id))
-        return build_report(
-            experiment_id,
-            observations,
-            min_tasks_per_arm=min_tasks_per_arm,
-            min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
-        )
-
-    # Scientific optimizer -------------------------------------------------
-
-    def optimizer_status(self) -> JsonDict:
-        return self.optimizer.status()
-
-    def optimizer_tick(self) -> JsonDict:
-        return self.optimizer.tick(trigger="operator")
-
-    def create_scientific_policy(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.optimizer.create_policy(*args, **kwargs)
-
-    def list_scientific_policies(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.optimizer.list_policies(*args, **kwargs)
-
-    def get_scientific_policy(self, policy_id: str) -> JsonDict:
-        return self.optimizer.get_policy(policy_id)
-
-    def promote_scientific_policy(self, policy_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.promote_policy(policy_id, **kwargs)
-
-    def rollback_scientific_policy(self, project: str, policy_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.rollback_policy(project, policy_id, **kwargs)
-
-    def create_scientific_experiment(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.optimizer.create_experiment(*args, **kwargs)
-
-    def list_scientific_experiments(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.optimizer.list_experiments(*args, **kwargs)
-
-    def get_scientific_experiment(self, experiment_id: str) -> JsonDict:
-        return self.optimizer.get_experiment(experiment_id)
-
-    def start_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.start_experiment(experiment_id, **kwargs)
-
-    def pause_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.pause_experiment(experiment_id, **kwargs)
-
-    def promote_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.promote_experiment(experiment_id, **kwargs)
-
-    def observe_scientific_task(self, experiment_id: str, task_id: str) -> JsonDict:
-        return self.optimizer.observe_task(experiment_id, task_id)
-
-    def analyze_scientific_experiment(self, experiment_id: str) -> JsonDict:
-        self.optimizer.refresh_experiment(experiment_id)
-        return self.optimizer.analyze_experiment(experiment_id, actor="operator")
-
-    def scientific_experiment_evidence(self, experiment_id: str, *, limit: int = 500) -> JsonDict:
-        return self.optimizer.experiment_evidence(experiment_id, limit=limit)
-
     def task_summary(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id).to_dict()
         resolved_task_id = str(task["id"])
@@ -9695,44 +9064,6 @@ class ControlPlane:
     #: level 6 and several times the cost.
     TRANSCRIPT_COMPRESSION = "zlib"
     TRANSCRIPT_COMPRESSION_LEVEL = 6
-
-    def _index_transcript_turn(
-        self,
-        task: Any,
-        *,
-        transcript_id: str,
-        sequence: int,
-        prompt: str,
-        response: str,
-        agent_id: Optional[str],
-        coding_agent: Optional[str],
-        created_at: str,
-    ) -> None:
-        """Hand the plaintext to the vector store, if one is configured.
-
-        BEST EFFORT, like the transcript write itself. A vector store that is
-        absent, slow or broken must not fail a task whose work is already done
-        and whose record is about to be stored durably in Postgres -- Postgres
-        remains the system of record, and the index is a derived view that can
-        be rebuilt from it.
-        """
-        writer = getattr(self, "vector_writer", None)
-        if writer is None:
-            return
-        try:
-            writer.embed_transcript_turn(
-                task_id=task.id,
-                transcript_id=transcript_id,
-                sequence=sequence,
-                prompt=prompt,
-                response=response,
-                agent_id=agent_id,
-                coding_agent=coding_agent,
-                project=getattr(task, "project", None),
-                created_at=created_at,
-            )
-        except Exception as exc:  # noqa: BLE001 - a derived index is not the record
-            logging.getLogger(__name__).warning("transcript not indexed for %s: %s", task.id, exc)
 
     @classmethod
     def _compress_transcript(cls, prompt: str, response: str, stderr: str) -> tuple[bytes, str]:
@@ -9844,20 +9175,6 @@ class ControlPlane:
             (task.id,),
         )
         sequence = max((int(row["sequence"] or 0) for row in existing), default=-1) + 1
-        # INDEXED BEFORE COMPRESSION, deliberately. The plaintext is in hand
-        # exactly once -- here. Feeding the vector store later would mean
-        # reading every row back and inflating it again purely to index it,
-        # which is work that is free at this point in the path.
-        self._index_transcript_turn(
-            task,
-            transcript_id=record_id,
-            sequence=sequence,
-            prompt=prompt_text,
-            response=response_text,
-            agent_id=agent_id,
-            coding_agent=coding_agent,
-            created_at=now,
-        )
         payload, codec = self._compress_transcript(prompt_text, response_text, stderr_text)
         with self.store.transaction() as conn:
             conn.execute(
@@ -9994,7 +9311,6 @@ class ControlPlane:
 
     EVENT_SUBJECT_TYPES = (
         "task",
-        "rollout",
         "eval_set",
         "secret",
         "environment",
@@ -10065,9 +9381,7 @@ class ControlPlane:
             )
 
         simple_sources = (
-            ("rollout_events", "rollout", "rollout_id"),
             ("eval_set_events", "eval_set", "eval_set_id"),
-            ("environment_events", "environment", "environment_id"),
             ("project_events", "project", "project_id"),
             ("fleet_events", "fleet", "fleet_id"),
             ("agent_lifecycle_events", "agent", "agent_id"),
@@ -10338,23 +9652,6 @@ class ControlPlane:
             }
             for row in rows
         ]
-
-    def list_news(
-        self,
-        *,
-        after_sequence: Optional[int] = None,
-        project: Optional[str] = None,
-        limit: int = 100,
-    ) -> JsonDict:
-        """Significant task and agent lifecycle facts for human observers."""
-        from mac.news_feed import build_news_feed
-
-        return build_news_feed(
-            self,
-            after_sequence=after_sequence,
-            project=project,
-            limit=limit,
-        )
 
     # Observability: thin facade over ``self.observability`` so existing
     # callers keep working. New code should call ``cp.observability.<method>``
@@ -11673,8 +10970,6 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
-        if target == TaskState.CANCELLED.value:
-            self._evict_merge_queue_entry_for_cancelled_task(task_id)
         return result
 
     def transition_task(
@@ -11697,30 +10992,7 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
-        if _state_value(target_state) == TaskState.CANCELLED.value:
-            self._evict_merge_queue_entry_for_cancelled_task(task_id)
         return result
-
-    def _evict_merge_queue_entry_for_cancelled_task(self, task_id: str) -> None:
-        """Clear this task's live merge-queue entry, if it has one.
-
-        A cancelled task will never call ``claim_slot`` again, so an entry it
-        already holds -- often still at ``attempts == 0`` because it was
-        cancelled before winning a slot -- would otherwise sit in the queue
-        forever with no reaper able to touch it (``stalled_entries`` requires
-        ``attempts >= 1``). Left alone, that is a permanent head-of-line block
-        for every entry behind it. Best-effort: a queue lookup failure must
-        never block the cancellation itself.
-        """
-
-        try:
-            self._native_merge_queue().evict_for_task(task_id, reason="owning task was cancelled")
-        except Exception:  # noqa: BLE001 - cancellation must still succeed.
-            logging.getLogger("mac.merge_queue").warning(
-                "failed to evict merge queue entry for cancelled task %s",
-                task_id,
-                exc_info=True,
-            )
 
     def request_task_input(
         self,
@@ -11752,6 +11024,252 @@ class ControlPlane:
             detail,
             drain_outbox=drain_outbox,
         )
+
+    def post_task_message(
+        self,
+        task_id: str,
+        *,
+        author_kind: str,
+        author: str,
+        kind: str,
+        body: str,
+        reply_to: Optional[int] = None,
+        metadata: Optional[JsonDict] = None,
+    ) -> JsonDict:
+        """Append one message to a task's board (see :mod:`mac.task_board`)."""
+        from mac.task_board import TaskBoard
+
+        board = TaskBoard(self.store)
+        message = board.post(
+            task_id,
+            author_kind=author_kind,
+            author=author,
+            kind=kind,
+            body=body,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+        if (
+            message.kind == "question"
+            and message.author_kind == "agent"
+            and not (message.metadata or {}).get("blocking")
+        ):
+            # A blocking question is announced when the task parks on it: the
+            # NEEDS_INPUT transition emits its own ``task.question``. Sending
+            # one here too would notify people twice for one question.
+            self._notify_task_question(message)
+        elif message.kind == "answer" and message.reply_to is not None:
+            self._resume_task_answered_on_board(board, message)
+        return message.to_dict()
+
+    def list_recent_board(
+        self, *, after: int = 0, limit: int = 200, include_activity: bool = False
+    ) -> JsonDict:
+        """The board across all tasks, for the console's conversation view.
+
+        Messages after ``after`` (oldest first; on a first read, the newest
+        ``limit``), each with its task's title, project and state, plus every
+        agent question nobody has answered yet.
+        """
+        from mac.task_board import TaskMessage
+
+        try:
+            after = int(after or 0)
+            limit = max(1, min(int(limit or 200), 500))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("after and limit must be integers") from exc
+        activity = "" if include_activity else " AND m.kind <> 'activity'"
+        select = (
+            "SELECT m.*, t.title AS task_title, t.project AS task_project, t.state AS task_state "
+            "FROM task_messages m JOIN tasks t ON t.id = m.task_id"
+        )
+        if int(after or 0) > 0:
+            rows = self.store.query_all(
+                select + " WHERE m.id > ?" + activity + " ORDER BY m.id ASC LIMIT ?",
+                (int(after), limit),
+            )
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        select + " WHERE 1 = 1" + activity + " ORDER BY m.id DESC LIMIT ?",
+                        (limit,),
+                    )
+                )
+            )
+        open_rows = self.store.query_all(
+            select
+            + " WHERE m.kind = 'question' AND m.author_kind = 'agent'"
+            " AND t.state NOT IN ('completed', 'failed', 'cancelled')"
+            " AND NOT EXISTS (SELECT 1 FROM task_messages a WHERE a.reply_to = m.id"
+            " AND a.kind = 'answer') ORDER BY m.id ASC LIMIT 100",
+        )
+
+        def _with_task(row: Any) -> JsonDict:
+            return {
+                **TaskMessage.from_row(row).to_dict(),
+                "task_title": row["task_title"],
+                "task_project": row["task_project"],
+                "task_state": row["task_state"],
+            }
+
+        messages = [_with_task(row) for row in rows]
+        return {
+            "schema": "mac.task_board_feed.v1",
+            "messages": messages,
+            "open_questions": [_with_task(row) for row in open_rows],
+            "cursor": messages[-1]["id"] if messages else int(after or 0),
+        }
+
+    def _notify_task_question(self, message: Any) -> None:
+        """Send an agent's question to people through the notification outbox.
+
+        The notifier routes ``task.question`` to whichever Slack, Telegram or
+        Hermes channels subscribe to it. A notification failure never refuses
+        the question: it is on the board either way.
+        """
+        try:
+            task = self.get_task(message.task_id)
+            detail = dict(message.metadata or {})
+            lines = [message.body]
+            if detail.get("options"):
+                lines.append("Options: %s" % ", ".join(str(o) for o in detail["options"]))
+            if detail.get("default") is not None:
+                lines.append("If nobody answers%s, the agent will assume: %s" % (
+                    " by %s" % detail["expires_at"] if detail.get("expires_at") else "",
+                    detail["default"],
+                ))
+            lines.append(
+                "Answer: mac task say %s --answer %s \"...\"" % (message.task_id, message.id)
+            )
+            self.record_notification(
+                "task.question",
+                "Question on: %s" % task.title,
+                "\n".join(lines),
+                subject_type="task",
+                subject_id=message.task_id,
+                metadata={
+                    "task_message_id": message.id,
+                    "blocking": False,
+                    "project": task.project,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.record_log(
+                "task_board.question_notification_failed",
+                layer="control_plane",
+                level="warning",
+                detail={"task_id": message.task_id, "error": str(exc)[:500]},
+            )
+
+    def _resume_task_answered_on_board(self, board: Any, answer: Any) -> None:
+        """An answer to the question a task is parked on returns it to the queue."""
+        try:
+            question = board.get(int(answer.reply_to))
+        except NotFoundError:
+            return
+        if question.kind != "question":
+            return
+        task = self.get_task(answer.task_id)
+        if task.state != TaskState.NEEDS_INPUT.value:
+            return
+        parked_on = ensure_json_object(ensure_json_object(task.metadata).get("needs_input"))
+        board_id = parked_on.get("board_message_id")
+        if board_id is not None and int(board_id) != int(question.id):
+            return
+        self.answer_task_input(
+            answer.task_id, answer.body, answer.author or "human", disposition="resume"
+        )
+
+    def expire_task_questions(self, *, now: Optional[str] = None) -> JsonDict:
+        """Apply the default of every expired, unanswered agent question.
+
+        An agent may ask with ``--default`` and ``--expires``. When the time
+        passes with no answer, the hub answers with the default itself, which
+        resumes a task parked on that question. A question past its time with
+        no default is announced once as overdue and stays open.
+        """
+        from mac.task_board import TaskBoard
+
+        try:
+            instant = parse_time(now or utcnow())
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("now must be an ISO-8601 time") from exc
+        rows = self.store.query_all(
+            """
+            SELECT q.* FROM task_messages q
+            WHERE q.kind = 'question' AND q.author_kind = 'agent'
+              AND NOT EXISTS (
+                  SELECT 1 FROM task_messages a
+                  WHERE a.reply_to = q.id AND a.kind = 'answer'
+              )
+            ORDER BY q.id
+            LIMIT 500
+            """,
+        )
+        board = TaskBoard(self.store)
+        applied: List[int] = []
+        overdue: List[int] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata"] or "{}")
+                expires_at = parse_time(str(metadata.get("expires_at") or ""))
+            except Exception:  # noqa: BLE001 - no usable deadline: never expires
+                continue
+            if expires_at > instant:
+                continue
+            question_id = int(row["id"])
+            if metadata.get("default") is not None:
+                self.post_task_message(
+                    str(row["task_id"]),
+                    author_kind="hub",
+                    author="hub",
+                    kind="answer",
+                    body="No answer by %s; proceeding with the default: %s"
+                    % (metadata["expires_at"], metadata["default"]),
+                    reply_to=question_id,
+                    metadata={"default_applied": True},
+                )
+                applied.append(question_id)
+                continue
+            already = self.store.query_one(
+                "SELECT 1 FROM task_messages WHERE task_id = ? AND author_kind = 'hub' "
+                "AND kind = 'message' AND reply_to = ?",
+                (str(row["task_id"]), question_id),
+            )
+            if already is None:
+                board.post(
+                    str(row["task_id"]),
+                    author_kind="hub",
+                    author="hub",
+                    kind="message",
+                    body="Question #%d is overdue and has no default; it stays open." % question_id,
+                    reply_to=question_id,
+                    metadata={"overdue": True},
+                )
+                overdue.append(question_id)
+        return {"schema": "mac.task_question_expiry.v1", "defaults_applied": applied, "overdue": overdue}
+
+    def list_task_messages(
+        self,
+        task_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> JsonDict:
+        """A task's board after cursor ``after``, oldest first."""
+        from mac.task_board import TaskBoard
+
+        self.get_task(task_id)
+        messages = TaskBoard(self.store).list(
+            task_id, after=after, limit=limit, kinds=list(kinds or [])
+        )
+        return {
+            "task_id": task_id,
+            "messages": [message.to_dict() for message in messages],
+            "cursor": messages[-1].id if messages else int(after or 0),
+        }
 
     #: Answering a parked question is a judgement, not automatically a
     #: release. "resume" returns the task to the dispatch pool; any
@@ -11858,18 +11376,6 @@ class ControlPlane:
             detail,
             drain_outbox=drain_outbox,
         )
-
-    def judgement_status(self) -> JsonDict:
-        process = getattr(self, "_judgement_process", None)
-        if process is None:
-            raise ValidationError("judgement process is not attached to this control plane")
-        return process.status()
-
-    def judgement_run(self) -> JsonDict:
-        process = getattr(self, "_judgement_process", None)
-        if process is None:
-            raise ValidationError("judgement process is not attached to this control plane")
-        return process.run_once(trigger="operator")
 
     # ------------------------------------------------------------------
     # ADR 0020: a running task is not edited in place.
@@ -13040,7 +12546,10 @@ class ControlPlane:
         elif task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
             self._require_lease_actor(task, created_by, lease_id)
             fenced_lease_id = str(task.lease_id or "")
-        elif task.state == TaskState.REVIEWING.value:
+        elif task.state in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
+            # A review decided from NEEDS_REVIEW (the default workflow) or a
+            # human-requested one in REVIEWING; either way the author must hold
+            # exactly one current review of the task.
             fenced_review_status = (
                 ReviewStatus.APPROVED.value if kind == "publication" else ReviewStatus.PENDING.value
             )
@@ -13151,7 +12660,7 @@ class ControlPlane:
                 )
                 if (
                     current_task_row is None
-                    or current_task_row["state"] != TaskState.REVIEWING.value
+                    or current_task_row["state"] != task.state
                     or review_lock.rowcount != 1
                 ):
                     raise AuthorizationError(
@@ -14510,8 +14019,8 @@ class ControlPlane:
             return token if claimed.rowcount == 1 else None
 
     def _agent_is_virtual(self, agent_id: str) -> bool:
-        """True for hub-driven virtual agents (e.g. the hub_verify review
-        verifier) that have no worker process of their own."""
+        """True for hub-driven virtual agents (e.g. the hub-reviewer) that
+        have no worker process of their own."""
         try:
             agent = self.get_agent(agent_id)
         except NotFoundError:
@@ -14519,7 +14028,7 @@ class ControlPlane:
         return bool(ensure_json_object(agent.resources).get("virtual"))
 
     def _record_expired_lease_zombie_signal(self, lease: Lease) -> None:
-        # Virtual, hub-driven agents (the hub_verify review verifier) have no
+        # Virtual, hub-driven agents (the hub-reviewer) have no
         # worker process and by design never emit executor telemetry, so the
         # "consecutive lease expiries without telemetry" zombie signal — which
         # exists to bench dead REAL hosts — is a category error for them. Every
@@ -15460,8 +14969,6 @@ class ControlPlane:
             )
             self._mirror_agent_reported_hardware_to_machine(conn, machine_id, resource_value, now)
         agent = self.get_agent(aid)
-        self._ensure_agent_nap_schedule(agent.id, actor=actor)
-        agent = self.get_agent(aid)
         # Stash the cleartext key on the returned agent so the API layer
         # can surface it to the caller on first registration. The Agent
         # dataclass itself never persists this — it's an attribute set
@@ -15480,17 +14987,258 @@ class ControlPlane:
         )
         return agent
 
-    def _agent_attestation_key(self, agent_id: str) -> Optional[str]:
-        """Decrypted HMAC key for an agent, or None if the row predates
-        the attestation-key column."""
-        row = self.store.query_one(
-            "SELECT attestation_key_ciphertext FROM agents WHERE id = ?", (agent_id,)
-        )
-        if row is None or not row["attestation_key_ciphertext"]:
-            return None
+    def _inspect_agent_attestation_key(
+        self, agent_id: str, *, conn: Any = None
+    ) -> AgentAttestationKeyStatus:
+        """Distinguish absence from ciphertext this hub cannot decrypt."""
+
+        if conn is None:
+            row = self.store.query_one(
+                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?", (agent_id,)
+            )
+        else:
+            row = conn.execute(
+                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("agent not found: %s" % agent_id)
+        ciphertext = row["attestation_key_ciphertext"]
+        if not ciphertext:
+            return AgentAttestationKeyStatus(AgentAttestationKeyState.ABSENT)
         try:
-            return self.secrets._decrypt(row["attestation_key_ciphertext"])
-        except Exception:  # noqa: BLE001 - corrupt or rotated key shouldn't crash review
+            key = self.secrets._decrypt(ciphertext)
+        except Exception:  # noqa: BLE001 - the state is surfaced, not swallowed.
+            return AgentAttestationKeyStatus(AgentAttestationKeyState.UNDECRYPTABLE)
+        return AgentAttestationKeyStatus(AgentAttestationKeyState.DECRYPTABLE, key)
+
+    def _agent_attestation_key(self, agent_id: str) -> Optional[str]:
+        """Decrypted HMAC key, preserving the historical optional contract."""
+
+        try:
+            return self._inspect_agent_attestation_key(agent_id).key
+        except NotFoundError:
+            return None
+
+    def hub_reviewer_attestation_key_status(
+        self, agent_id: str = DEFAULT_HUB_REVIEWER_AGENT_ID
+    ) -> Dict[str, Any]:
+        """Secret-free readiness for the virtual reviewer's signing authority."""
+
+        inspected = self._inspect_agent_attestation_key(agent_id)
+        agent = self.get_agent(agent_id)
+        persisted = ensure_json_object(
+            ensure_json_object(agent.resources).get(HUB_REVIEWER_KEY_RESOURCE_KEY)
+        )
+        return {
+            "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+            "agent_id": agent_id,
+            "state": inspected.state.value,
+            "ready": inspected.state is AgentAttestationKeyState.DECRYPTABLE,
+            "recovery_attempts": int(persisted.get("recovery_attempts") or 0),
+            "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+            **(
+                {"last_recovered_at": persisted["last_recovered_at"]}
+                if persisted.get("last_recovered_at")
+                else {}
+            ),
+            **(
+                {"last_failure_at": persisted["last_failure_at"]}
+                if persisted.get("last_failure_at")
+                else {}
+            ),
+        }
+
+    def ensure_hub_reviewer_attestation_key(
+        self,
+        agent_id: str = DEFAULT_HUB_REVIEWER_AGENT_ID,
+        *,
+        actor: str = "default-review-workflow",
+    ) -> str:
+        """Return a usable virtual-reviewer key, repairing it at most three times.
+
+        The hub is both owner and consumer of this virtual identity, so there
+        is no host-side secret to coordinate. Recovery is a local, fenced
+        replacement. It never exports the key, performs one attempt per call,
+        and persists success and failure across process restarts.
+        """
+
+        agent = self.get_agent(agent_id)
+        if not self._agent_is_virtual(agent_id) or not self._agent_is_hub_review_verifier(agent):
+            raise ValidationError("attestation self-heal is limited to the virtual hub reviewer")
+
+        now = utcnow()
+        result_key: Optional[str] = None
+        failure: Optional[str] = None
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
+            resources = ensure_json_object(json_loads(row["resources"], {}))
+            persisted = ensure_json_object(resources.get(HUB_REVIEWER_KEY_RESOURCE_KEY))
+            inspected = self._inspect_agent_attestation_key(agent_id, conn=conn)
+            attempts = int(persisted.get("recovery_attempts") or 0)
+
+            if inspected.state is AgentAttestationKeyState.DECRYPTABLE:
+                result_key = inspected.key
+                desired = {
+                    **persisted,
+                    "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                    "state": AgentAttestationKeyState.DECRYPTABLE.value,
+                    "ready": True,
+                    "recovery_attempts": attempts,
+                    "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                }
+                if desired != persisted:
+                    resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = desired
+                    conn.execute(
+                        "UPDATE agents SET resources = ?, health_status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (json_dumps(resources), HealthStatus.HEALTHY.value, now, agent_id),
+                    )
+            elif attempts >= HUB_REVIEWER_KEY_RECOVERY_LIMIT:
+                failure = "virtual reviewer attestation key recovery exhausted"
+                first_exhausted_report = persisted.get("recovery_exhausted") is not True
+                resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = {
+                    **persisted,
+                    "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                    "state": inspected.state.value,
+                    "ready": False,
+                    "recovery_attempts": attempts,
+                    "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                    "recovery_exhausted": True,
+                }
+                conn.execute(
+                    "UPDATE agents SET resources = ?, health_status = ?, updated_at = ? WHERE id = ?",
+                    (json_dumps(resources), HealthStatus.UNHEALTHY.value, now, agent_id),
+                )
+                if first_exhausted_report:
+                    self._record_agent_lifecycle_event(
+                        conn,
+                        agent_id,
+                        "agent.virtual_reviewer_attestation_key.recovery_exhausted",
+                        actor,
+                        {
+                            "agent_id": agent_id,
+                            "state": inspected.state.value,
+                            "attempts": attempts,
+                            "limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        },
+                        now,
+                    )
+            else:
+                attempts += 1
+                try:
+                    candidate = _generate_attestation_key()
+                    encrypted = self.secrets._encrypt(candidate)
+                except Exception as exc:  # noqa: BLE001 - persist bounded failure state.
+                    failure = (
+                        "virtual reviewer attestation key recovery failed: %s" % type(exc).__name__
+                    )
+                    resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = {
+                        "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                        "state": inspected.state.value,
+                        "ready": False,
+                        "recovery_attempts": attempts,
+                        "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        "last_failure_at": now,
+                    }
+                    conn.execute(
+                        "UPDATE agents SET resources = ?, health_status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (json_dumps(resources), HealthStatus.UNHEALTHY.value, now, agent_id),
+                    )
+                    self._record_agent_lifecycle_event(
+                        conn,
+                        agent_id,
+                        "agent.virtual_reviewer_attestation_key.recovery_failed",
+                        actor,
+                        {
+                            "agent_id": agent_id,
+                            "previous_state": inspected.state.value,
+                            "attempt": attempts,
+                            "limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                            "error_type": type(exc).__name__,
+                        },
+                        now,
+                    )
+                else:
+                    result_key = candidate
+                    resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = {
+                        "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                        "state": AgentAttestationKeyState.DECRYPTABLE.value,
+                        "ready": True,
+                        "recovery_attempts": attempts,
+                        "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        "last_recovered_at": now,
+                        "recovered_from": inspected.state.value,
+                    }
+                    # Keep prior/history generations intact. A malformed
+                    # current ciphertext does not prove older ciphertext is
+                    # unusable, and retained signatures still need it.
+                    conn.execute(
+                        """
+                        UPDATE agents
+                        SET attestation_key_ciphertext = ?,
+                            attestation_key_rotated_at = ?,
+                            resources = ?, health_status = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            encrypted,
+                            now,
+                            json_dumps(resources),
+                            HealthStatus.HEALTHY.value,
+                            now,
+                            agent_id,
+                        ),
+                    )
+                    self._record_agent_lifecycle_event(
+                        conn,
+                        agent_id,
+                        "agent.virtual_reviewer_attestation_key.recovered",
+                        actor,
+                        {
+                            "agent_id": agent_id,
+                            "previous_state": inspected.state.value,
+                            "attempt": attempts,
+                            "limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        },
+                        now,
+                    )
+        if failure is not None:
+            raise ValidationError(failure)
+        if result_key is None:
+            raise ValidationError("virtual reviewer attestation key is unavailable")
+        return result_key
+
+    def _reviewer_attestation_key_for_signing(
+        self, reviewer_agent_id: str, *, actor: str
+    ) -> Optional[str]:
+        try:
+            reviewer = self.get_agent(reviewer_agent_id)
+        except NotFoundError:
+            return None
+        if not (
+            self._agent_is_virtual(reviewer_agent_id)
+            and self._agent_is_hub_review_verifier(reviewer)
+        ):
+            return self._agent_attestation_key(reviewer_agent_id)
+        try:
+            return self.ensure_hub_reviewer_attestation_key(reviewer_agent_id, actor=actor)
+        except (MACError, RuntimeError) as exc:
+            self.observability.record_log(
+                "workflow.default_review.hub_reviewer_key_unhealthy",
+                level="error",
+                layer="control_plane",
+                source="default-review-workflow",
+                subject_type="agent",
+                subject_id=reviewer_agent_id,
+                detail={"actor": actor, "error": str(exc)[:300]},
+            )
             return None
 
     def _agent_attestation_prev_key(self, agent_id: str) -> Optional[str]:
@@ -15516,8 +15264,8 @@ class ControlPlane:
     def _agent_attestation_history_keys(self, agent_id: str) -> List[str]:
         """Decrypted attestation keys retired before the immediate previous one.
 
-        A fleet release rotates every participating agent at once
-        (fleet_release_epoch_service). With only ``prev`` retained, two
+        A fleet release (the release epochs, since removed) rotated every
+        participating agent at once. With only ``prev`` retained, two
         releases put in-flight review evidence permanently out of reach and the
         task parks in waiting_for_verifiable_evidence with no diagnosis --
         observed live 2026-07-30, when one release orphaned 66 tasks.
@@ -15619,7 +15367,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             conn.execute(
                 """
                 UPDATE agents
@@ -15653,135 +15400,6 @@ class ControlPlane:
         if key is None:
             return False
         return verify_verification_manifest_signature(key, challenge, signature)
-
-    @staticmethod
-    def _validated_deployment_attestation_probe(
-        agent_id: str, probe: Mapping[str, Any]
-    ) -> tuple[str, str, Dict[str, Any], str]:
-        """Validate the secret-free, deployment-owner key probe.
-
-        The probe does not authorize recovery by itself: the API route is
-        admin-only and the fleet deployer additionally holds the target's
-        fenced deployment lock.  Its purpose is to make the recovery decision
-        explicit and auditable while ensuring a valid installed key is never
-        rotated merely because a deploy was rerun.
-        """
-
-        expected_keys = {
-            "schema",
-            "state",
-            "agent_id",
-            "deployment_id",
-            "challenge",
-            "signature",
-        }
-        if not isinstance(probe, Mapping) or set(probe) != expected_keys:
-            raise ValidationError("attestation-key recovery probe is malformed")
-        if probe.get("schema") != "mac.agent_attestation_key_probe.v1":
-            raise ValidationError("attestation-key recovery probe schema is unsupported")
-        if probe.get("agent_id") != agent_id:
-            raise ValidationError("attestation-key recovery probe agent does not match")
-        deployment_id = str(probe.get("deployment_id") or "").strip()
-        if not deployment_id:
-            raise ValidationError("attestation-key recovery probe lacks deployment id")
-        state = str(probe.get("state") or "").strip()
-        challenge = probe.get("challenge")
-        signature = str(probe.get("signature") or "")
-        if state == "missing":
-            if challenge != {} or signature:
-                raise ValidationError("missing-key probe must not carry a signature")
-            return state, deployment_id, {}, ""
-        if state != "present" or not isinstance(challenge, dict):
-            raise ValidationError("attestation-key recovery probe state is unsupported")
-        if set(challenge) != {
-            "schema",
-            "purpose",
-            "agent_id",
-            "deployment_id",
-            "nonce",
-        }:
-            raise ValidationError("attestation-key recovery challenge is malformed")
-        if (
-            challenge.get("schema") != "mac.agent_attestation_challenge.v1"
-            or challenge.get("purpose") != "fleet-deploy-attestation-key-proof"
-            or challenge.get("agent_id") != agent_id
-            or challenge.get("deployment_id") != deployment_id
-            or len(str(challenge.get("nonce") or "")) < 32
-            or not signature.startswith("v1:")
-        ):
-            raise ValidationError("attestation-key recovery challenge is invalid")
-        return state, deployment_id, challenge, signature
-
-    def recover_agent_attestation_key(self, agent_id: str, probe: Mapping[str, Any]) -> str:
-        """Rotate only when the deployment-owned probe is missing or stale.
-
-        This is the deployment recovery primitive.  Unlike the historical
-        worker-side ``--rotate-missing``/``--rotate-invalid`` path, it runs
-        under administrator authority and linearizes the probe decision with
-        the key rotation.  A valid installed key fails closed without change.
-        """
-
-        state, deployment_id, challenge, signature = self._validated_deployment_attestation_probe(
-            agent_id, probe
-        )
-        now = utcnow()
-        with self.store.transaction() as conn:
-            locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-                (agent_id,),
-            )
-            if locked.rowcount != 1:
-                raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
-            row = conn.execute(
-                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?",
-                (agent_id,),
-            ).fetchone()
-            current_key: Optional[str] = None
-            if row is not None and row["attestation_key_ciphertext"]:
-                try:
-                    current_key = self.secrets._decrypt(row["attestation_key_ciphertext"])
-                except Exception:  # noqa: BLE001 - corrupt authority is stale.
-                    current_key = None
-            if (
-                state == "present"
-                and current_key is not None
-                and verify_verification_manifest_signature(current_key, challenge, signature)
-            ):
-                raise ValidationError("attestation key is already valid; recovery rotation refused")
-            key = _generate_attestation_key()
-            conn.execute(
-                """
-                UPDATE agents
-                SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
-                    attestation_key_history_ciphertext = ?,
-                    attestation_key_ciphertext = ?,
-                    attestation_key_rotated_at = ?,
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    self._attestation_history_after_rotation(agent_id, rotated_at=now, conn=conn),
-                    self.secrets._encrypt(key),
-                    now,
-                    now,
-                    agent_id,
-                ),
-            )
-            self._record_agent_lifecycle_event(
-                conn,
-                agent_id,
-                "agent.attestation_key.recovered",
-                "fleet-deploy",
-                {
-                    "agent_id": agent_id,
-                    "deployment_id": deployment_id,
-                    "probe_state": state,
-                    "reason": "missing" if state == "missing" else "stale",
-                },
-                now,
-            )
-        return key
 
     @staticmethod
     def _report_executor_startup_proof_matches(
@@ -15847,7 +15465,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             resources = ensure_json_object(json_loads(row["resources"], {}))
             current_attestation = resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
@@ -15882,6 +15499,7 @@ class ControlPlane:
                 executor_script_sha256=str(expected_attestation["executor_script_sha256"]),
                 source_root=str(expected_attestation["source_root"]),
                 source_bundle_sha256=str(expected_attestation["source_bundle_sha256"]),
+                runtime_config_sha256=str(expected_attestation["runtime_config_sha256"]),
             )
             resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
             resources = self._project_report_repository_executor_marker(resources)
@@ -15925,7 +15543,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             resources = ensure_json_object(json_loads(row["resources"], {}))
             resources.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
@@ -15949,70 +15566,6 @@ class ControlPlane:
         if row is None:
             raise NotFoundError("agent not found: %s" % agent_id)
         return self._agent_from_row(row)
-
-    # -- curiosity quarantine (hub-mediated) -------------------------------
-    #
-    # The ledger lives inside the mac-openclaw-<agent> sandbox and a dispatched
-    # task runs in a different mac-task-* sandbox that cannot reach it, so
-    # adjudication was impossible from the one place it needed to happen
-    # (task_3a4503f0). One implementation here serves both transports: the
-    # local CLI on the host, and the hub API for every sandboxed caller.
-
-    def _curiosity(self) -> Any:
-        service = getattr(self, "_curiosity_service", None)
-        if service is None:
-            from mac.curiosity_service import CuriosityService
-
-            service = CuriosityService()
-            self._curiosity_service = service
-        return service
-
-    def _curiosity_call(self, operation: Any) -> Dict[str, Any]:
-        """Translate curiosity failures into the domain errors callers expect.
-
-        The service layer speaks ValueError / RuntimeError because it is also
-        usable outside the control plane, but every public ControlPlane method
-        must raise a domain error (tests/test_control_plane_public_contract.py).
-        """
-        from mac.curiosity_service import (
-            CuriosityCommandError,
-            CuriosityUnavailable,
-        )
-
-        try:
-            return operation()
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
-        except CuriosityUnavailable as exc:
-            # A host with no OpenClaw gateway has no ledger. That is a fact
-            # about the host, not a transient fault to retry.
-            raise NotFoundError(str(exc)) from exc
-        except CuriosityCommandError as exc:
-            raise ValidationError(str(exc)) from exc
-
-    def list_curiosity_candidates(self, status: Optional[str] = None) -> Dict[str, Any]:
-        """Quarantined/approved/rejected curiosity candidates for this host."""
-        return self._curiosity_call(lambda: self._curiosity().list_candidates(status))
-
-    def decide_curiosity_candidate(
-        self,
-        candidate_id: str,
-        decision: str,
-        *,
-        actor: str,
-        reason: str,
-        approval_id: str,
-    ) -> Dict[str, Any]:
-        """Approve or reject one candidate, recording the external judgment."""
-        return self._curiosity_call(
-            lambda: self._curiosity().decide(
-                decision,
-                candidate_id,
-                actor=actor,
-                reason=reason,
-                approval_id=approval_id,
-            )
-        )
 
     def list_agents(self, *, include_deleted: bool = False) -> List[Agent]:
         sql = "SELECT * FROM agents"
@@ -16413,544 +15966,6 @@ class ControlPlane:
             agent = self._agent_from_row(row)
         return released.rowcount == 1, agent
 
-    @staticmethod
-    def _dispatch_hold_epoch_receipt_id(epoch_id: str) -> str:
-        return "alce_epoch_%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
-
-    @staticmethod
-    def _dispatch_hold_epoch_identity_payload(
-        *,
-        epoch_id: str,
-        normalized: Sequence[Tuple[str, str]],
-        requested_expectations: Sequence[Mapping[str, Any]],
-        successor_reason: Optional[str],
-    ) -> Dict[str, Any]:
-        return {
-            "epoch_id": epoch_id,
-            "holds": [
-                {"agent_id": agent_id, "hold_reason": reason} for agent_id, reason in normalized
-            ],
-            "outcome": ("successor_hold" if successor_reason is not None else "released"),
-            "successor_hold_reason": successor_reason,
-            "expectations": [dict(item) for item in requested_expectations],
-        }
-
-    @staticmethod
-    def _dispatch_hold_epoch_identity_sha256(payload: Mapping[str, Any]) -> str:
-        return hashlib.sha256(
-            json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-
-    def _replayed_agent_dispatch_hold_epoch_agents(
-        self,
-        conn: Any,
-        *,
-        epoch_id: str,
-        normalized: Sequence[Tuple[str, str]],
-        requested_expectations: Sequence[Mapping[str, Any]],
-        successor_reason_value: Optional[str],
-        require_agent_rows: bool = True,
-    ) -> Optional[List[Agent]]:
-        """Read and validate one exact durable epoch without mutating it."""
-
-        def query_one(sql: str, parameters: Tuple[Any, ...]) -> Any:
-            if hasattr(conn, "query_one"):
-                return conn.query_one(sql, parameters)
-            return conn.execute(sql, parameters).fetchone()
-
-        def query_all(sql: str, parameters: Tuple[Any, ...]) -> List[Any]:
-            if hasattr(conn, "query_all"):
-                return list(conn.query_all(sql, parameters))
-            return list(conn.execute(sql, parameters).fetchall())
-
-        epoch_outcome = "successor_hold" if successor_reason_value is not None else "released"
-        receipt_event_type = (
-            "agent.dispatch_hold_epoch_transitioned"
-            if successor_reason_value is not None
-            else "agent.dispatch_hold_epoch_released"
-        )
-        epoch_event_type = "agent.dispatch_hold_epoch_committed"
-        epoch_receipt_id = self._dispatch_hold_epoch_receipt_id(epoch_id)
-        requested_holds = [
-            {"agent_id": agent_id, "hold_reason": reason} for agent_id, reason in normalized
-        ]
-
-        marker = query_one(
-            "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
-            (epoch_receipt_id,),
-        )
-        marker_matches = marker is None
-        if marker is not None and marker["event_type"] == epoch_event_type:
-            marker_detail = ensure_json_object(json_loads(marker["detail"], {}))
-            marker_holds = marker_detail.get("holds")
-            marker_successor_reason = marker_detail.get("successor_hold_reason")
-            if marker_successor_reason is not None:
-                marker_successor_reason = str(marker_successor_reason).strip()
-            marker_outcome = str(marker_detail.get("outcome") or "released")
-            marker_expectations = marker_detail.get("expectations")
-            expectations_match = (
-                marker_expectations == list(requested_expectations)
-                if isinstance(marker_expectations, list)
-                else not requested_expectations
-            )
-            marker_matches = (
-                str(marker_detail.get("epoch_id") or "") == epoch_id
-                and isinstance(marker_holds, list)
-                and marker_holds == requested_holds
-                and marker_outcome == epoch_outcome
-                and marker_successor_reason == successor_reason_value
-                and expectations_match
-            )
-        if not marker_matches:
-            raise ValidationError(
-                "fleet release epoch id was already used with a different "
-                "or incomplete hold set, successor outcome, or expectations"
-            )
-
-        if marker is None:
-            receipt_rows = query_all(
-                "SELECT agent_id, event_type, detail "
-                "FROM agent_lifecycle_events WHERE event_type IN (?, ?)",
-                (
-                    "agent.dispatch_hold_epoch_released",
-                    "agent.dispatch_hold_epoch_transitioned",
-                ),
-            )
-        else:
-            receipt_rows = []
-            for agent_id, _reason in normalized:
-                receipt_rows.extend(
-                    query_all(
-                        "SELECT agent_id, event_type, detail "
-                        "FROM agent_lifecycle_events "
-                        "WHERE agent_id = ? AND event_type = ?",
-                        (agent_id, receipt_event_type),
-                    )
-                )
-        observed_holds: List[Dict[str, str]] = []
-        for receipt_row in receipt_rows:
-            detail = ensure_json_object(json_loads(receipt_row["detail"], {}))
-            if str(detail.get("epoch_id") or "") != epoch_id:
-                continue
-            if str(receipt_row["event_type"] or "") != receipt_event_type:
-                raise ValidationError(
-                    "fleet release epoch id was already used with a different successor outcome"
-                )
-            if (
-                successor_reason_value is not None
-                and str(detail.get("successor_hold_reason") or "") != successor_reason_value
-            ):
-                raise ValidationError(
-                    "fleet release epoch receipt has a different successor outcome"
-                )
-            observed_holds.append(
-                {
-                    "agent_id": str(receipt_row["agent_id"] or ""),
-                    "hold_reason": str(detail.get("hold_reason") or ""),
-                }
-            )
-
-        if marker is None and not observed_holds:
-            return None
-        observed_holds.sort(key=lambda item: item["agent_id"])
-        if observed_holds != requested_holds:
-            raise ValidationError(
-                "fleet release epoch id was already used with a different "
-                "or incomplete hold set or successor outcome"
-            )
-        if marker is None and requested_expectations:
-            raise ValidationError("legacy fleet release epoch receipt lacks expectation identity")
-
-        if not require_agent_rows:
-            return []
-        replayed: List[Agent] = []
-        for agent_id, _reason in normalized:
-            row = query_one("SELECT * FROM agents WHERE id = ?", (agent_id,))
-            if row is None:
-                raise NotFoundError(
-                    "fleet release epoch receipt references missing agent: %s" % agent_id
-                )
-            replayed.append(self._agent_from_row(row))
-        return replayed
-
-    def agent_dispatch_hold_epoch_status(
-        self, epoch_id: str, identity_sha256: str
-    ) -> Dict[str, Any]:
-        """Return absent, exact committed, or identity mismatch without writes."""
-
-        epoch_id = str(epoch_id or "").strip()
-        if (
-            not epoch_id
-            or len(epoch_id.encode("utf-8")) > 512
-            or any(not character.isprintable() for character in epoch_id)
-        ):
-            raise ValidationError("fleet release epoch id is invalid")
-        identity_sha256 = str(identity_sha256 or "").strip()
-        if not re.fullmatch(r"[0-9a-f]{64}", identity_sha256):
-            raise ValidationError("fleet release epoch identity digest is invalid")
-
-        epoch_receipt_id = self._dispatch_hold_epoch_receipt_id(epoch_id)
-        conn = self.store
-        marker = conn.query_one(
-            "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
-            (epoch_receipt_id,),
-        )
-        if marker is None:
-            return {
-                "status": "absent",
-                "epoch_id": epoch_id,
-                "identity_sha256": identity_sha256,
-            }
-        if marker["event_type"] != "agent.dispatch_hold_epoch_committed":
-            return {
-                "status": "mismatch",
-                "epoch_id": epoch_id,
-                "identity_sha256": identity_sha256,
-            }
-        detail = ensure_json_object(json_loads(marker["detail"], {}))
-        holds = detail.get("holds")
-        expectations = detail.get("expectations")
-        outcome = str(detail.get("outcome") or "released")
-        successor_reason = detail.get("successor_hold_reason")
-        if successor_reason is not None:
-            successor_reason = str(successor_reason).strip()
-        if (
-            str(detail.get("epoch_id") or "") != epoch_id
-            or not isinstance(holds, list)
-            or not isinstance(expectations, list)
-            or outcome not in {"released", "successor_hold"}
-            or (outcome == "successor_hold") != (successor_reason is not None)
-        ):
-            return {
-                "status": "mismatch",
-                "epoch_id": epoch_id,
-                "identity_sha256": identity_sha256,
-            }
-        normalized: List[Tuple[str, str]] = []
-        for item in holds:
-            if not isinstance(item, Mapping):
-                break
-            agent_id = str(item.get("agent_id") or "").strip()
-            reason = str(item.get("hold_reason") or "").strip()
-            if not agent_id or not reason:
-                break
-            normalized.append((agent_id, reason))
-        else:
-            normalized.sort(key=lambda item: item[0])
-            if len(normalized) == len(set(agent_id for agent_id, _ in normalized)):
-                identity = self._dispatch_hold_epoch_identity_payload(
-                    epoch_id=epoch_id,
-                    normalized=normalized,
-                    requested_expectations=expectations,
-                    successor_reason=successor_reason,
-                )
-                actual_digest = self._dispatch_hold_epoch_identity_sha256(identity)
-                if actual_digest == identity_sha256:
-                    try:
-                        replayed = self._replayed_agent_dispatch_hold_epoch_agents(
-                            conn,
-                            epoch_id=epoch_id,
-                            normalized=normalized,
-                            requested_expectations=expectations,
-                            successor_reason_value=successor_reason,
-                            require_agent_rows=False,
-                        )
-                    except (NotFoundError, ValidationError):
-                        replayed = None
-                    if replayed is not None:
-                        return {
-                            "status": "committed",
-                            "epoch_id": epoch_id,
-                            "identity_sha256": actual_digest,
-                            "outcome": outcome,
-                            "successor_hold_reason": successor_reason,
-                            "agent_ids": [agent_id for agent_id, _ in normalized],
-                        }
-        return {
-            "status": "mismatch",
-            "epoch_id": epoch_id,
-            "identity_sha256": identity_sha256,
-        }
-
-    def release_agent_dispatch_holds_batch(
-        self,
-        holds: Iterable[Tuple[str, str]],
-        *,
-        epoch_id: str,
-        actor: str = "fleet-deploy",
-        expectations: Optional[Mapping[str, Mapping[str, Any]]] = None,
-        successor_reason: Optional[str] = None,
-    ) -> List["Agent"]:
-        """Atomically release or hand off one exact fleet-cohort hold epoch.
-
-        Every reason comparison and every update shares one transaction.  A
-        stale or replaced hold therefore rolls the entire cohort back instead
-        of exposing a mixed-generation interval in which early workers can
-        claim while later workers remain fenced.  When ``successor_reason`` is
-        supplied, every deployment hold is replaced directly by that successor
-        hold without any committed or observable unheld state.
-        """
-
-        epoch_id = str(epoch_id or "").strip()
-        if not epoch_id:
-            raise ValidationError("fleet release epoch id is required")
-        successor_reason_value: Optional[str] = None
-        if successor_reason is not None:
-            successor_reason_raw = str(successor_reason or "")
-            if any(not character.isprintable() for character in successor_reason_raw):
-                raise ValidationError(
-                    "successor dispatch hold reason must be at most 512 UTF-8 "
-                    "bytes and contain no control characters"
-                )
-            successor_reason_value = successor_reason_raw.strip()
-            if not successor_reason_value:
-                raise ValidationError("successor dispatch hold reason is required")
-            if len(successor_reason_value.encode("utf-8")) > 512:
-                raise ValidationError(
-                    "successor dispatch hold reason must be at most 512 UTF-8 "
-                    "bytes and contain no control characters"
-                )
-        normalized: List[Tuple[str, str]] = []
-        seen: set[str] = set()
-        try:
-            hold_entries = iter(holds)
-        except TypeError as exc:
-            raise ValidationError("fleet release holds must be an iterable") from exc
-        for entry in hold_entries:
-            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
-                raise ValidationError("fleet release entries must be (agent_id, reason) pairs")
-            raw_agent_id, raw_reason = entry
-            agent_id = str(raw_agent_id or "").strip()
-            reason = str(raw_reason or "").strip()
-            if not agent_id or not reason:
-                raise ValidationError("fleet release entries require agent_id and reason")
-            if agent_id in seen:
-                raise ValidationError("duplicate agent in fleet release epoch: %s" % agent_id)
-            seen.add(agent_id)
-            normalized.append((agent_id, reason))
-        if not normalized:
-            raise ValidationError("fleet release epoch requires at least one hold")
-        if successor_reason_value is not None and any(
-            reason == successor_reason_value for _agent_id, reason in normalized
-        ):
-            raise ValidationError(
-                "successor dispatch hold reason must differ from every current hold"
-            )
-        # A stable lock order avoids two concurrent cohort releases deadlocking
-        # merely because their callers supplied the same set in a different
-        # order.  Epoch identity is set-based, so response ordering is likewise
-        # deterministic.
-        normalized.sort(key=lambda item: item[0])
-
-        now = utcnow()
-        agents: List[Agent] = []
-        expected_by_agent = dict(expectations or {})
-        requested_expectations: List[Dict[str, Any]] = []
-        for agent_id, _reason in normalized:
-            expected = ensure_json_object(expected_by_agent.get(agent_id))
-            if not expected:
-                continue
-            requested_expectations.append(
-                {
-                    "agent_id": agent_id,
-                    "generation": expected.get("generation"),
-                    "baseline_seen": str(expected.get("baseline_seen") or "").strip(),
-                    "principal_id": expected.get("principal_id"),
-                    "require_authenticated": bool(expected.get("require_authenticated")),
-                    "require_report_executor": bool(expected.get("require_report_executor")),
-                }
-            )
-
-        epoch_outcome = "successor_hold" if successor_reason_value is not None else "released"
-        receipt_event_type = (
-            "agent.dispatch_hold_epoch_transitioned"
-            if successor_reason_value is not None
-            else "agent.dispatch_hold_epoch_released"
-        )
-        epoch_event_type = "agent.dispatch_hold_epoch_committed"
-        epoch_receipt_id = (
-            "alce_epoch_%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
-        )
-        requested_holds = [
-            {"agent_id": agent_id, "hold_reason": reason} for agent_id, reason in normalized
-        ]
-
-        def replayed_epoch_agents(conn: Any) -> Optional[List[Agent]]:
-            """Return an exact prior commit, or reject partial/changed reuse."""
-
-            return self._replayed_agent_dispatch_hold_epoch_agents(
-                conn,
-                epoch_id=epoch_id,
-                normalized=normalized,
-                requested_expectations=requested_expectations,
-                successor_reason_value=successor_reason_value,
-            )
-
-        with self.store.transaction() as conn:
-            # BEGIN IMMEDIATE already serializes SQLite writers, but Postgres
-            # READ COMMITTED does not retain a lock for an ordinary SELECT.
-            # Acquire every agent row in the same stable order before reading
-            # readiness or active-work state. A concurrent heartbeat can no
-            # longer replace idle/healthy/generation/principal proof between
-            # validation and the hold-clearing UPDATE.
-            for agent_id, _reason in normalized:
-                locked = conn.execute(
-                    "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-                    (agent_id,),
-                )
-                if locked.rowcount != 1:
-                    raise NotFoundError("agent not found: %s" % agent_id)
-                reserved = conn.execute(
-                    "SELECT epoch_id FROM fleet_release_epoch_agents "
-                    "WHERE agent_id = ? AND open_state = 1",
-                    (agent_id,),
-                ).fetchone()
-                if reserved is not None:
-                    raise ValidationError("agent belongs to an open prepared fleet release epoch")
-            replayed = replayed_epoch_agents(conn)
-            if replayed is not None:
-                return replayed
-
-            # Claim the epoch with a deterministic primary key in the same
-            # transaction as every release.  ON CONFLICT serializes concurrent
-            # same-epoch requests on both SQLite and PostgreSQL without a new
-            # schema object.  The marker is invisible unless the whole cohort
-            # commits; rollback removes it together with all per-agent receipts.
-            claimed_epoch = conn.execute(
-                """
-                INSERT INTO agent_lifecycle_events
-                    (id, agent_id, event_type, actor, detail, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO NOTHING
-                """,
-                (
-                    epoch_receipt_id,
-                    normalized[0][0],
-                    epoch_event_type,
-                    actor,
-                    json_dumps(
-                        {
-                            "actor": actor,
-                            "epoch_id": epoch_id,
-                            "holds": requested_holds,
-                            "outcome": epoch_outcome,
-                            "successor_hold_reason": successor_reason_value,
-                            "expectations": requested_expectations,
-                        }
-                    ),
-                    now,
-                ),
-            )
-            if claimed_epoch.rowcount != 1:
-                replayed = replayed_epoch_agents(conn)
-                if replayed is not None:
-                    return replayed
-                raise ValidationError("fleet release epoch id could not be claimed")
-
-            for agent_id, reason in normalized:
-                row_before = conn.execute(
-                    "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
-                    (agent_id,),
-                ).fetchone()
-                if row_before is None:
-                    raise NotFoundError("agent not found: %s" % agent_id)
-                active_task = conn.execute(
-                    "SELECT id FROM tasks WHERE owner_agent_id = ? AND state IN (?, ?) LIMIT 1",
-                    (
-                        agent_id,
-                        TaskState.CLAIMED.value,
-                        TaskState.RUNNING.value,
-                    ),
-                ).fetchone()
-                if active_task is not None or row_before["current_task_id"] is not None:
-                    raise ValidationError("fleet release epoch found active work on %s" % agent_id)
-                expected = ensure_json_object(expected_by_agent.get(agent_id))
-                if expected:
-                    resources = ensure_json_object(json_loads(row_before["resources"], {}))
-                    authenticated = ensure_json_object(
-                        resources.get("worker_credential_authenticated")
-                    )
-                    baseline_seen = str(expected.get("baseline_seen") or "").strip()
-                    last_seen = str(row_before["last_seen_at"] or "").strip()
-                    if (
-                        row_before["status"] != AgentStatus.IDLE.value
-                        or row_before["health_status"] != HealthStatus.HEALTHY.value
-                        or not baseline_seen
-                        or not last_seen
-                        or parse_time(last_seen) <= parse_time(baseline_seen)
-                        or resources.get("deployment_generation") != expected.get("generation")
-                    ):
-                        raise ValidationError(
-                            "fleet release epoch lost readiness for %s" % agent_id
-                        )
-                    if bool(expected.get("require_authenticated")) and not (
-                        authenticated.get("agent_id") == agent_id
-                        and authenticated.get("principal_id") == expected.get("principal_id")
-                    ):
-                        raise ValidationError(
-                            "fleet release epoch lost credential proof for %s" % agent_id
-                        )
-                    if bool(expected.get("require_report_executor")) and not (
-                        self._report_executor_release_ready(agent_id, resources)
-                    ):
-                        raise ValidationError(
-                            "fleet release epoch lost report executor proof for %s" % agent_id
-                        )
-                if successor_reason_value is None:
-                    committed = conn.execute(
-                        """
-                        UPDATE agents
-                        SET dispatch_hold = 0, dispatch_hold_reason = NULL,
-                            dispatch_hold_at = NULL, updated_at = ?
-                        WHERE id = ? AND deleted_at IS NULL
-                            AND dispatch_hold = 1 AND dispatch_hold_reason = ?
-                        """,
-                        (now, agent_id, reason),
-                    )
-                else:
-                    committed = conn.execute(
-                        """
-                        UPDATE agents
-                        SET dispatch_hold = 1, dispatch_hold_reason = ?,
-                            dispatch_hold_at = ?, updated_at = ?
-                        WHERE id = ? AND deleted_at IS NULL
-                            AND dispatch_hold = 1 AND dispatch_hold_reason = ?
-                        """,
-                        (
-                            successor_reason_value,
-                            now,
-                            now,
-                            agent_id,
-                            reason,
-                        ),
-                    )
-                row = conn.execute(
-                    "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
-                    (agent_id,),
-                ).fetchone()
-                if committed.rowcount != 1:
-                    raise ValidationError(
-                        "fleet release epoch lost dispatch-hold ownership for %s" % agent_id
-                    )
-                if successor_reason_value is not None:
-                    self._withdraw_service_claims_for_dispatch_hold(conn, agent_id, now)
-                self._record_agent_lifecycle_event(
-                    conn,
-                    agent_id,
-                    receipt_event_type,
-                    actor,
-                    {
-                        "agent_id": agent_id,
-                        "epoch_id": epoch_id,
-                        "hold_reason": reason,
-                        "outcome": epoch_outcome,
-                        "successor_hold_reason": successor_reason_value,
-                    },
-                    now,
-                )
-                agents.append(self._agent_from_row(row))
-        return agents
-
     def clear_agent_dispatch_hold(self, agent_id: str) -> "Agent":
         """Remove the dispatch hold from an agent, making it eligible for dispatch again."""
         self.get_agent(agent_id)  # raises NotFoundError if absent
@@ -17026,43 +16041,19 @@ class ControlPlane:
             # hiding credentials behind agents.deleted_at lets an intentional
             # later resurrection make every old active bearer valid again.
             # Revoke pending/active principals in the same transaction as the
-            # tombstone and preserve secret-free audit facts. This also repairs
-            # credentials left behind by tombstones created before this rule.
-            credential_rows = conn.execute(
-                "SELECT id, agent_id, credential_version, token_fingerprint "
-                "FROM worker_credentials WHERE agent_id = ? "
-                "AND state IN ('pending_install', 'active')",
-                (agent_id,),
-            ).fetchall()
+            # tombstone. This also repairs credentials left behind by
+            # tombstones created before this rule.
             conn.execute(
                 "UPDATE worker_credentials SET state = 'revoked', "
                 "revoked_at = ?, updated_at = ? WHERE agent_id = ? "
                 "AND state IN ('pending_install', 'active')",
                 (now, now, agent_id),
             )
-            for credential in credential_rows:
-                conn.execute(
-                    "INSERT INTO worker_credential_events ("
-                    "id, principal_id, agent_id, event_type, actor, detail, created_at"
-                    ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        new_id("workercred-event"),
-                        credential["id"],
-                        credential["agent_id"],
-                        "worker_credential.revoked",
-                        actor,
-                        json_dumps(
-                            {
-                                "schema": "mac.worker_credential_event.v1",
-                                "credential_version": int(credential["credential_version"] or 0),
-                                "token_fingerprint": str(credential["token_fingerprint"] or ""),
-                                "state": "revoked",
-                                "reason": "agent_decommissioned",
-                            }
-                        ),
-                        now,
-                    ),
-                )
+            conn.execute(
+                "UPDATE inference_tokens SET revoked_at = ? "
+                "WHERE agent_id = ? AND revoked_at IS NULL",
+                (now, agent_id),
+            )
             if agent.deleted_at:
                 return
             departed = agent
@@ -17082,8 +16073,6 @@ class ControlPlane:
                 now,
             )
             conn.execute("DELETE FROM mood_overlays WHERE agent_id = ?", (agent_id,))
-            conn.execute("DELETE FROM nap_schedules WHERE agent_id = ?", (agent_id,))
-            conn.execute("DELETE FROM nap_runs WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM agent_config_flags WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM agent_deploy_configs WHERE agent_id = ?", (agent_id,))
             conn.execute(
@@ -17334,31 +16323,10 @@ class ControlPlane:
             )
         if {"status", "health_status"} & set(meaningful_changes):
             self.dispatch.invalidate_pull_round_cache()
-        self._ensure_agent_nap_schedule(agent.id, actor=actor or agent_id)
         self._release_auto_quarantine_on_heartbeat(agent_before)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
-
-    def _ensure_agent_nap_schedule(self, agent_id: str, *, actor: str) -> None:
-        agent = self.get_agent(agent_id)
-        if self._agent_is_virtual(agent.id):
-            schedule = self.get_nap_schedule(agent.id)
-            if schedule is not None and schedule.enabled:
-                # Keep the old row and audit history, but retire the worker
-                # schedule that earlier versions assigned to this hub identity.
-                self.configure_nap(
-                    agent.id,
-                    offset_minutes=schedule.offset_minutes,
-                    window_minutes=schedule.window_minutes,
-                    enabled=False,
-                    actor=actor or agent.id,
-                )
-            return
-        if agent.status == AgentStatus.OFFLINE.value:
-            return
-        if self.get_nap_schedule(agent.id) is None:
-            self.configure_nap(agent.id, actor=actor or agent.id)
 
     def _maybe_drain_notifications_on_heartbeat(self, agent: Agent) -> None:
         """Drain ``pending`` operator notifications on hub-agent heartbeat.
@@ -17479,11 +16447,9 @@ class ControlPlane:
                 if item.get("status")
                 in {
                     "waiting_for_verifiable_evidence",
-                    "waiting_for_reviewer",
-                    "waiting_for_reviewer_verdict",
+                    "waiting_for_hub_reviewer",
                     "waiting_for_publication_evidence",
                     "waiting_for_publication_target",
-                    "ambiguous_pending_reviews",
                 }
             ]
             if result.get("processed") or stuck:
@@ -17577,999 +16543,6 @@ class ControlPlane:
 
     def effective_agent_config(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         return self.agent_state.effective_agent_config(*args, **kwargs)
-
-    # Nap schedule + lifecycle
-    #
-    # Each agent has a single nap_schedule row (offset_minutes, window_minutes).
-    # The offset defaults to a stable hash of the agent's name to spread the
-    # fleet across each hourly cycle (MD5 % 60). Nap
-    # *execution* is off-process — the agent (or a sidecar) decides what to
-    # summarize and where to store it. mac records begin/complete events and
-    # links to the produced summary evidence + vector refs.
-
-    # Nap schedule + lifecycle: thin facade over ``self.agent_state``.
-
-    def configure_nap(self, *args: Any, **kwargs: Any) -> NapSchedule:
-        return self.agent_state.configure_nap(*args, **kwargs)
-
-    def get_nap_schedule(self, agent_id: str) -> Optional[NapSchedule]:
-        return self.agent_state.get_nap_schedule(agent_id)
-
-    def list_nap_schedules(self) -> List[NapSchedule]:
-        return self.agent_state.list_nap_schedules()
-
-    def next_nap_window(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, str]]:
-        return self.agent_state.next_nap_window(*args, **kwargs)
-
-    def begin_nap(self, *args: Any, **kwargs: Any) -> NapRun:
-        return self.agent_state.begin_nap(*args, **kwargs)
-
-    def memory_health(
-        self,
-        *,
-        qdrant_url: Optional[str] = None,
-        nap_interval_hours: float = 1.0,
-        vector_ingestion_max_age_hours: float = (_DEFAULT_INGESTION_MAX_AGE_HOURS),
-        qdrant_transport: Optional[Any] = None,
-        qdrant_scan_limit: Optional[int] = None,
-    ) -> JsonDict:
-        """mem-10: memory-tier health snapshot.
-
-        Returns a dict the operator (and a future scheduled alerter)
-        can read to spot the failure modes the audits found:
-
-          * Inert vector tier — memory_records growing while
-            vector_refs stays at 0. The 2026-05-28 audit's smoking gun.
-          * Stalled consolidator — last_nap_run_at older than
-            ``2 * nap_interval_hours`` means the nap cycle stopped
-            running.
-          * Stalled vector ingestion — a Qdrant collection whose newest
-            ``embedded_at`` is older than
-            ``vector_ingestion_max_age_hours``. ``points_count`` alone
-            cannot see this: points persist, so a collection frozen
-            since 2026-07-25 still reports 667 healthy-looking points.
-          * Unwritten memory tier — a declared tier with zero points
-            while a sibling tier is populated. Nothing promotes into it.
-          * Mixed embedding spaces — one collection holding vectors from
-            two embedding models, which are not comparable, so recall
-            silently returns wrong neighbours.
-          * Disk bloat — mac.db growing faster than the vector tier.
-
-        ``qdrant_url`` defaults to the configured Qdrant URL
-        (MAC_QDRANT_URL, QDRANT_URL, QDRANT_ADDRESS, or
-        QDRANT_FLEET_URL). When unreachable,
-        the qdrant_collections block reports its error instead of
-        raising; the operator still gets the database-side numbers.
-
-        ``qdrant_transport`` and ``qdrant_scan_limit`` exist for tests
-        and for operators tuning the bounded payload scan; production
-        callers leave both at their defaults.
-        """
-        from datetime import datetime, timezone
-        from pathlib import Path
-
-        # Thresholds arrive from an HTTP query string and from operators, so
-        # they are validated here rather than where they are first multiplied.
-        nap_interval = _memory_number(
-            "nap_interval_hours", nap_interval_hours, minimum=0.0, maximum=24 * 365
-        )
-        ingestion_max_age = _memory_number(
-            "vector_ingestion_max_age_hours",
-            vector_ingestion_max_age_hours,
-            minimum=0.0,
-            maximum=24 * 365,
-        )
-        scan_limit = (
-            None
-            if qdrant_scan_limit is None
-            else _memory_count("qdrant_scan_limit", qdrant_scan_limit, maximum=10_000_000)
-        )
-
-        now = utcnow()
-        now_dt = datetime.now(tz=timezone.utc)
-
-        # SQLite-side counts.
-        def _count(sql: str) -> int:
-            row = self.store.query_one(sql)
-            return int(row["n"]) if row is not None else 0
-
-        mr_count = _count("SELECT COUNT(*) AS n FROM memory_records")
-        vr_count = _count("SELECT COUNT(*) AS n FROM vector_refs")
-        oe_count = _count("SELECT COUNT(*) AS n FROM observability_events")
-
-        nap_row = self.store.query_one(
-            "SELECT MAX(completed_at) AS last FROM nap_runs WHERE status = 'completed'"
-        )
-        last_nap_at = nap_row["last"] if nap_row is not None and nap_row["last"] else None
-
-        # mac.db file size (when we can find the file).
-        db_path = getattr(self.store, "path", None) or getattr(self.store, "_path", None)
-        db_size: Optional[int] = None
-        if db_path:
-            try:
-                db_size = Path(str(db_path)).stat().st_size
-            except OSError:
-                db_size = None
-
-        # Qdrant per-collection state — best-effort. Beyond points_count this
-        # reads each point's embedded_at + embedding_model payload, because
-        # ingestion freshness and model mixing are invisible in the count.
-        url = _configured_qdrant_url(qdrant_url)
-        qdrant_block: JsonDict = {
-            "url": url,
-            "collections": {},
-            "error": None,
-            "ingestion_max_age_hours": ingestion_max_age,
-        }
-        qdrant_alerts: List[JsonDict] = []
-        if url:
-            try:
-                from mac.models import MAC_MEMORY_COLLECTIONS
-
-                qdrant_block["collections"] = _probe_qdrant_collections(
-                    url,
-                    MAC_MEMORY_COLLECTIONS,
-                    transport=qdrant_transport,
-                    scan_limit=scan_limit,
-                    now=now_dt,
-                )
-                qdrant_alerts = _evaluate_qdrant_alerts(
-                    qdrant_block["collections"],
-                    ingestion_max_age_hours=ingestion_max_age,
-                )
-            except Exception as exc:  # noqa: BLE001
-                qdrant_block["error"] = str(exc)
-
-        # Alert rules (the audit's failure modes encoded).
-        alerts: List[JsonDict] = []
-        if mr_count > 100 and vr_count == 0:
-            alerts.append(
-                {
-                    "severity": "critical",
-                    "code": "inert_vector_tier",
-                    "message": (
-                        "memory_records=%d but vector_refs=0; the writer never "
-                        "ran. This is the failure mode the original 2026-05-28 "
-                        "audit surfaced." % mr_count
-                    ),
-                }
-            )
-        if last_nap_at is not None:
-            try:
-                last_dt = datetime.fromisoformat(last_nap_at)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-                age_hours = (now_dt - last_dt).total_seconds() / 3600.0
-                if age_hours > 2.0 * nap_interval:
-                    alerts.append(
-                        {
-                            "severity": "critical",
-                            "code": "stalled_consolidator",
-                            "message": (
-                                "last successful nap completed_at=%s "
-                                "(%.1fh ago, threshold %.1fh = 2× nap_interval)"
-                                % (last_nap_at, age_hours, 2.0 * nap_interval)
-                            ),
-                        }
-                    )
-            except (TypeError, ValueError):
-                pass
-        elif mr_count > 0:
-            # We have memories but no completed nap_runs at all.
-            alerts.append(
-                {
-                    "severity": "warning",
-                    "code": "no_nap_history",
-                    "message": (
-                        "no completed nap_runs on record despite %d "
-                        "memory_records — the consolidator has never run "
-                        "successfully." % mr_count
-                    ),
-                }
-            )
-        alerts.extend(qdrant_alerts)
-
-        return {
-            "schema": "mac.memory_health.v1",
-            "captured_at": now,
-            "mac_db_size_bytes": db_size,
-            "memory_records_count": mr_count,
-            "vector_refs_count": vr_count,
-            "observability_events_count": oe_count,
-            "last_nap_run_at": last_nap_at,
-            "qdrant": qdrant_block,
-            "alerts": alerts,
-        }
-
-    #: The monitor probes Qdrant over the network and scans point payloads, so
-    #: it runs on its own interval rather than on every dispatcher tick. Fifteen
-    #: minutes is far below the default 24h staleness threshold it is watching,
-    #: so it cannot be the reason an alert is late.
-    MEMORY_HEALTH_TICK_SECONDS = 900.0
-
-    def memory_health_tick(self) -> JsonDict:
-        """Run the memory-tier health snapshot from the hub's own clock.
-
-        ``memory_health`` computes the alerts, but until this existed nothing
-        called it on a schedule: the CLI, the HTTP route and two facades, all
-        of them operator-driven. That is the same shape as the stranding
-        detector that "ran" only when a human typed the command, and it is why
-        27 days of dead ingestion were found by hand on 2026-08-21 rather than
-        reported on 2026-07-26. An alert nobody evaluates is a log line.
-
-        Emits one ``memory.alert`` observability event per critical alert plus
-        a ``memory.health_tick_ran`` heartbeat, because a monitor that is
-        silent when healthy is indistinguishable from a monitor that is not
-        running — the distinction this whole change exists to make.
-        """
-
-        summary: JsonDict = {
-            "schema": "mac.memory_health_tick.v1",
-            "ran": False,
-            "skipped_reason": None,
-            "alerts": [],
-        }
-        # An unconfigured Qdrant is not a fault to alert on: a hub with no
-        # vector store has no ingestion to have stopped.
-        if not _configured_qdrant_url(None):
-            summary["skipped_reason"] = "qdrant_url_unset"
-            return summary
-        # Elapsed-time throttle, so it must not move when the wall clock does.
-        now = time.monotonic()
-        last = getattr(self, "_memory_health_tick_at", None)
-        interval = float(
-            _env_int(
-                "MAC_MEMORY_HEALTH_TICK_SECONDS",
-                int(self.MEMORY_HEALTH_TICK_SECONDS),
-                minimum=1,
-            )
-        )
-        if last is not None and (now - last) < interval:
-            summary["skipped_reason"] = "throttled"
-            return summary
-        self._memory_health_tick_at = now
-
-        health = self.memory_health(
-            vector_ingestion_max_age_hours=float(
-                _env_int(
-                    "MAC_MEMORY_INGESTION_MAX_AGE_HOURS",
-                    int(_DEFAULT_INGESTION_MAX_AGE_HOURS),
-                    minimum=1,
-                )
-            )
-        )
-        summary["ran"] = True
-        for alert in health["alerts"]:
-            if alert.get("severity") != "critical":
-                continue
-            summary["alerts"].append(alert)
-            self.record_log(
-                "memory.alert",
-                layer="control_plane",
-                source="dispatcher.tick",
-                level="error",
-                detail={
-                    "schema": "mac.memory_alert.v1",
-                    "code": alert.get("code"),
-                    "message": alert.get("message"),
-                    "collection": alert.get("collection"),
-                },
-            )
-        self.record_log(
-            "memory.health_tick_ran",
-            layer="control_plane",
-            source="dispatcher.tick",
-            detail={
-                "schema": "mac.memory_health_tick.v1",
-                "alert_codes": [a.get("code") for a in summary["alerts"]],
-                "ingestion_max_age_hours": health["qdrant"]["ingestion_max_age_hours"],
-                "qdrant_error": health["qdrant"]["error"],
-            },
-        )
-        return summary
-
-    def recall_memory(
-        self,
-        query: str,
-        *,
-        tier: str = "medium",
-        limit: int = 5,
-        min_score: Optional[float] = None,
-        project: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        qdrant_url: Optional[str] = None,
-        vector_writer: Optional[Any] = None,
-    ) -> List[JsonDict]:
-        """mem-09: vector-tier recall.
-
-        Embeds ``query`` and returns the top hits in the chosen tier
-        as the mem-09 standard shape (memory_id, task_id, score,
-        summary, ...). Server-side filters cover project/tenant; pass
-        a pre-built VectorWriterService when the caller already has
-        one to skip repeated initialization.
-        """
-        if not query or not str(query).strip():
-            raise ValidationError("recall_memory requires a non-empty query")
-        if vector_writer is None:
-            url = _configured_qdrant_url(qdrant_url)
-            if not url:
-                raise ValidationError(
-                    "recall_memory needs a Qdrant URL — pass qdrant_url or set "
-                    "MAC_QDRANT_URL/QDRANT_URL/QDRANT_ADDRESS/QDRANT_FLEET_URL"
-                )
-            from mac.vector_writer_service import VectorWriterService
-
-            vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
-        return vector_writer.recall(
-            query,
-            tier=tier,
-            limit=limit,
-            score_threshold=min_score,
-            project=project,
-            tenant_id=tenant_id,
-            agent_id=agent_id,
-        )
-
-    def recall_dream_artifacts(
-        self,
-        query: str,
-        *,
-        tier: str = "medium",
-        limit: int = 5,
-        min_score: Optional[float] = None,
-        project: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        scope: Optional[str] = None,
-        kind: Optional[str] = None,
-        min_confidence: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        qdrant_url: Optional[str] = None,
-        vector_writer: Optional[Any] = None,
-    ) -> List[JsonDict]:
-        """Recall typed ``mac.dream.v1`` artifacts using their retrieval rules.
-
-        Dream artifacts are stored as ordinary memory_records, but this method
-        keeps their read path explicit: only ``subject_type='dream'`` hits are
-        eligible, and callers may narrow by scope, kind, project, agent, tenant,
-        and minimum confidence.
-        """
-        if not query or not str(query).strip():
-            raise ValidationError("recall_dream_artifacts requires a non-empty query")
-        if vector_writer is None:
-            url = _configured_qdrant_url(qdrant_url)
-            if not url:
-                raise ValidationError(
-                    "recall_dream_artifacts needs a Qdrant URL — pass qdrant_url "
-                    "or set MAC_QDRANT_URL/QDRANT_URL/QDRANT_ADDRESS/QDRANT_FLEET_URL"
-                )
-            from mac.vector_writer_service import VectorWriterService
-
-            vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
-
-        must: List[JsonDict] = [{"key": "subject_type", "match": {"value": "dream"}}]
-        if project:
-            must.append({"key": "project", "match": {"value": project}})
-        if agent_id:
-            must.append({"key": "agent_id", "match": {"value": agent_id}})
-        if scope:
-            must.append({"key": "dream_scope", "match": {"value": scope}})
-        if kind:
-            must.append({"key": "dream_kind", "match": {"value": kind}})
-
-        hits = vector_writer.recall(
-            query,
-            tier=tier,
-            limit=max(1, int(limit)),
-            score_threshold=min_score,
-            filter_payload={"must": must},
-            tenant_id=tenant_id,
-        )
-        if min_confidence:
-            floor_by_name = {"low": 0.0, "medium": 0.65, "high": 0.9}
-            floor = floor_by_name.get(str(min_confidence).strip().lower())
-            if floor is None:
-                raise ValidationError("min_confidence must be one of low / medium / high")
-
-            def _confidence_score(hit: JsonDict) -> float:
-                payload = hit.get("payload") if isinstance(hit.get("payload"), dict) else {}
-                raw = payload.get("dream_confidence_score")
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    name = str(payload.get("dream_confidence") or "").strip().lower()
-                    return floor_by_name.get(name, 0.0)
-
-            hits = [hit for hit in hits if _confidence_score(hit) >= floor]
-        return hits[: max(1, int(limit))]
-
-    def import_dream_logs(
-        self,
-        *,
-        dream_logs_dir: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        created_by: str = "dream-log-import",
-        embed: bool = True,
-        qdrant_url: Optional[str] = None,
-        vector_writer: Optional[Any] = None,
-        dry_run: bool = False,
-    ) -> JsonDict:
-        """Merge the gateway's orphaned ``~/.hermes/dream_logs`` reports into
-        durable ``memory_records`` (record_type ``dream:imported_report``).
-
-        No first-party reader consumes ``dream_logs`` today, so that learning
-        never reached MAC's durable store; this consolidates it. Each imported
-        memory is ``subject_type='dream'`` and, when ``embed`` is set and a
-        Qdrant URL is configured, is embedded into the medium tier so it becomes
-        retrievable via :meth:`recall_dream_artifacts`. Idempotent; dedups on
-        findings. Returns the importer's stable report dict.
-        """
-        from pathlib import Path as _Path
-
-        from mac import dream_log_import as _dli
-
-        if embed and vector_writer is None and not dry_run:
-            url = _configured_qdrant_url(qdrant_url)
-            if url:
-                from mac.vector_writer_service import VectorWriterService
-
-                vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
-        return _dli.import_dream_logs(
-            self,
-            dream_logs_dir=_Path(dream_logs_dir) if dream_logs_dir else None,
-            agent_id=agent_id,
-            created_by=created_by,
-            vector_writer=vector_writer,
-            dry_run=dry_run,
-        )
-
-    def run_nap_cycle(
-        self,
-        agent_id: str,
-        *,
-        actor: Optional[str] = None,
-        vector_writer: Optional[Any] = None,
-        embed_into_medium: bool = True,
-        emit_dream_artifacts: bool = True,
-        promote_into_long: bool = True,
-    ) -> JsonDict:
-        """mem-08 autonomy: drive an agent through one full nap.
-
-        Sequence:
-          1. begin_nap (agent → DRAINING, nap_run created)
-          2. consolidate (summarize since last nap, embed into medium)
-          3. promote settled medium memories into the long tier
-          4. complete_nap (agent → IDLE, nap_run completed)
-
-        Neither consolidation nor completion is allowed to escape once
-        begin_nap has moved the agent to DRAINING: a step-2 failure is
-        captured in ``consolidation_error`` and a step-3 failure in
-        ``complete_error``, and the agent's resolved state is always
-        refetched and reported. A leaking exception here would strand
-        the agent in DRAINING, which is much worse than a missing
-        summary, so this method never re-raises after the nap begins.
-
-        If begin_nap itself refuses (e.g. the agent holds an active
-        lease — it's mid-task, not nappable right now), the cycle is
-        reported as ``skipped`` rather than raising. This keeps the
-        autonomous nap-tick from failing its whole batch over one busy
-        agent; the next tick retries once the agent is free.
-        """
-        try:
-            run = self.begin_nap(agent_id, actor=actor)
-        except ValidationError as exc:
-            return {
-                "nap_run": None,
-                "skipped": True,
-                "skip_reason": str(exc),
-                "consolidation": {},
-                "consolidation_error": None,
-                "repair_tasks": {},
-                "repair_task_error": None,
-                "complete_error": None,
-            }
-        consolidation_report: JsonDict = {}
-        consolidation_error: Optional[str] = None
-        repair_task_report: JsonDict = {}
-        repair_task_error: Optional[str] = None
-        dream_report: JsonDict = {}
-        dream_error: Optional[str] = None
-        promotion_report: JsonDict = {}
-        promotion_error: Optional[str] = None
-        complete_error: Optional[str] = None
-        completed = run
-        try:
-            try:
-                consolidation_report = self.consolidate_nap(
-                    agent_id,
-                    nap_run_id=run.id,
-                    embed_into_medium=embed_into_medium,
-                    # The legacy dreamer appended a dream:failure_pattern row
-                    # per group per nap. mac.dreaming replaces it and writes to
-                    # a reviewable candidate store instead, so it stays off.
-                    emit_dream_artifacts=False,
-                    vector_writer=vector_writer,
-                    created_by=actor or "nap-cycle:%s" % agent_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                consolidation_error = str(exc)
-            if consolidation_error is None and emit_dream_artifacts:
-                try:
-                    dream_report = self.run_dream_cycle(
-                        agent_id=agent_id,
-                        actor=actor or "nap-cycle:%s" % agent_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    dream_error = str(exc)
-            # Long-tier promotion rides the nap because the nap is the only
-            # thing that already runs on a schedule and already holds a
-            # vector writer. Giving it its own timer would repeat the mistake
-            # that killed ingestion on 2026-07-25: a second scheduled thing
-            # nobody remembers to migrate.
-            if vector_writer is not None and promote_into_long:
-                try:
-                    promotion_report = self.promote_memory_tier(
-                        vector_writer=vector_writer,
-                        created_by=actor or "nap-cycle:%s" % agent_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    promotion_error = str(exc)
-        finally:
-            # Always attempt to complete the nap so the agent returns to
-            # IDLE, even when consolidation threw. A completion failure
-            # (anything other than the benign off-path TransitionError)
-            # is recorded rather than re-raised so the agent isn't left
-            # stranded in DRAINING by a propagating exception.
-            try:
-                completed = self.complete_nap(
-                    run.id,
-                    summary_evidence_id=None,
-                    detail={
-                        "consolidation": consolidation_report,
-                        "consolidation_error": consolidation_error,
-                        "dream": dream_report,
-                        "dream_error": dream_error,
-                        "promotion": promotion_report,
-                        "promotion_error": promotion_error,
-                    },
-                    actor=actor,
-                )
-            except TransitionError:
-                # An off-path actor already completed/failed the run
-                # (e.g., an admin cancelled mid-cycle). Refetch and
-                # report; not an error from this cycle's perspective.
-                completed = self._safe_get_nap_run(run.id, run)
-            except Exception as exc:  # noqa: BLE001
-                complete_error = str(exc)
-                completed = self._safe_get_nap_run(run.id, run)
-        return {
-            "nap_run": completed.to_dict(),
-            "skipped": False,
-            "consolidation": consolidation_report,
-            "consolidation_error": consolidation_error,
-            "dream": dream_report,
-            "dream_error": dream_error,
-            "promotion": promotion_report,
-            "promotion_error": promotion_error,
-            # Retained so existing callers keep parsing; the low-confidence
-            # repair-task filer it reported on is gone. Of the 1,259 tasks it
-            # filed in production, 4 completed.
-            "repair_tasks": repair_task_report,
-            "repair_task_error": repair_task_error,
-            "complete_error": complete_error,
-        }
-
-    def run_dream_cycle(
-        self,
-        *,
-        agent_id: Optional[str] = None,
-        project: Optional[str] = None,
-        since: str = "",
-        limit: int = 2000,
-        actor: str = "dreaming",
-        policy: Optional[Any] = None,
-        auto_promote: Optional[bool] = None,
-        vector_writer: Optional[Any] = None,
-    ) -> JsonDict:
-        """Run one dream and persist the resulting candidate store.
-
-        The run lands in ``dream_runs``/``dream_candidate_entries`` first, so a
-        bad dream can be discarded rather than cleaned out of live memory
-        afterwards.
-
-        ``auto_promote`` closes the learning loop: a run that passed *every*
-        gate is adopted immediately, writing ``dream_memory:*`` records and
-        retiring the rows they supersede. A quarantined run is never promoted.
-        Leaving it ``None`` reads ``MAC_DREAM_AUTO_PROMOTE`` (default on), so
-        the behaviour can be switched off on a live fleet by setting that to
-        ``0`` and restarting, without a redeploy.
-        """
-
-        from mac import dreaming
-
-        # Boundary validation: callers reach this over the CLI and the API, so
-        # accept a DreamPolicy or a plain mapping and reject anything else
-        # rather than failing later on an attribute access.
-        if policy is None:
-            dream_policy = dreaming.DreamPolicy()
-        elif isinstance(policy, dreaming.DreamPolicy):
-            dream_policy = policy
-        elif isinstance(policy, Mapping):
-            try:
-                dream_policy = dreaming.DreamPolicy(**dict(policy))
-            except TypeError as exc:
-                raise ValidationError("invalid dream policy: %s" % exc) from exc
-        else:
-            raise ValidationError(
-                "policy must be a DreamPolicy or mapping, got %s" % type(policy).__name__
-            )
-        records = dreaming.load_records(
-            self.store, project=project, agent_id=agent_id, since=since, limit=limit
-        )
-        # Prior promoted memories go in as state to revise, not as evidence.
-        existing = dreaming.load_existing_memories(self.store, project=project)
-        # Transcripts are the primary material a dream mines. Passing an empty
-        # list here showed the extractor "(no transcripts supplied)", and 49
-        # consecutive production runs returned nothing as a result.
-        sessions = dreaming.load_sessions(self.store, agent_id=agent_id, since=since)
-        model, caller = dreaming.resolve_model_caller()
-        result = dreaming.dream(
-            records,
-            sessions,
-            existing=existing,
-            policy=dream_policy,
-            model=model,
-            model_caller=caller,
-        )
-        dreaming.save_run(
-            self.store,
-            result,
-            dream_policy,
-            agent_id=agent_id,
-            project=project,
-            created_by=actor,
-            input_record_count=len(records),
-            input_session_count=len(sessions),
-        )
-        report = result.to_dict()
-        report["promotion"] = None
-        # Bound the run history. The nap cycle calls this per agent per nap, so
-        # an unpruned audit trail would become the next 154k table.
-        try:
-            report["prune"] = dreaming.prune_runs(self.store)
-        except Exception as exc:  # noqa: BLE001 - pruning is maintenance, not the run
-            report["prune"] = {"error": str(exc)[:300]}
-        if auto_promote is None:
-            from mac.env_config import env_bool
-
-            auto_promote = env_bool("MAC_DREAM_AUTO_PROMOTE", default=True)
-        if auto_promote and result.state is dreaming.StoreState.READY_FOR_REVIEW:
-            # Only a run that cleared every gate reaches this branch; a
-            # quarantined one stays put for inspection.
-            try:
-                report["promotion"] = dreaming.promote_run(
-                    self.store,
-                    self.memory,
-                    result.run_id,
-                    actor=actor,
-                    vector_writer=vector_writer,
-                )
-            except Exception as exc:  # noqa: BLE001 - a failed adopt is not a failed dream
-                report["promotion"] = {"error": str(exc)[:300]}
-        return report
-
-    def promote_dream_run(
-        self,
-        run_id: str,
-        *,
-        actor: str = "dreaming",
-        vector_writer: Optional[Any] = None,
-        retire_superseded: bool = True,
-    ) -> JsonDict:
-        """Adopt a reviewed dream run into live memory."""
-
-        from mac import dreaming
-
-        return dreaming.promote_run(
-            self.store,
-            self.memory,
-            run_id,
-            actor=actor,
-            retire_superseded=retire_superseded,
-            vector_writer=vector_writer,
-        )
-
-    def get_dream_run(self, run_id: str) -> Optional[JsonDict]:
-        from mac import dreaming
-
-        return dreaming.get_run(self.store, run_id)
-
-    def list_dream_runs(self, *, state: Optional[str] = None, limit: int = 20) -> List[JsonDict]:
-        from mac import dreaming
-
-        return dreaming.list_runs(self.store, state=state, limit=limit)
-
-    def discard_dream_run(self, run_id: str, *, reason: str = "") -> JsonDict:
-        from mac import dreaming
-
-        return dreaming.discard_run(self.store, run_id, reason=reason)
-
-    def _safe_get_nap_run(self, run_id: str, fallback: NapRun) -> NapRun:
-        """Refetch a nap_run for reporting in an error path, falling
-        back to a known run object if even the read fails — so
-        run_nap_cycle never re-raises after the nap has begun."""
-        try:
-            return self.get_nap_run(run_id)
-        except Exception:  # noqa: BLE001
-            return fallback
-
-    def list_due_nap_agents(self, *, as_of: Optional[str] = None) -> List[JsonDict]:
-        """Return enabled nap_schedules whose current window has opened
-        and hasn't been completed yet.
-
-        An agent's "current window" is the current cadence bucket start plus
-        ``offset_minutes`` (or the previous bucket if this bucket has not
-        opened yet).
-        We consider it open when `as_of` >= window_start, and unclaimed
-        when last_completed_at is either NULL or before window_start.
-
-        Selection is deliberately catch-up, not strict: an agent stays
-        due from window_start until it actually completes a nap, even
-        once `as_of` has passed window_end. ``window_minutes`` therefore
-        does NOT gate the autonomous path — it only sets how long the
-        informational ``in_window`` flag stays true. This keeps the
-        hourly nap robust against a tick that lands just after a
-        narrow window closes (a strict in-window check would silently
-        skip the agent for the whole cycle). Callers that want strict
-        windowing should filter on ``in_window`` themselves.
-        """
-        from datetime import datetime, timedelta, timezone
-
-        as_of_dt = datetime.fromisoformat(as_of) if as_of else datetime.now(timezone.utc)
-        if as_of_dt.tzinfo is None:
-            as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
-        rows = self.store.query_all(
-            """
-            SELECT agent_id, offset_minutes, window_minutes, last_completed_at
-            FROM nap_schedules WHERE enabled = 1
-            """
-        )
-        due: List[JsonDict] = []
-        for row in rows:
-            if self._agent_is_virtual(row["agent_id"]):
-                continue
-            offset = int(row["offset_minutes"] or 0) % NAP_WINDOW_MINUTES
-            window = int(row["window_minutes"] or 15)
-            day_start = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            elapsed_minutes = int((as_of_dt - day_start).total_seconds() // 60)
-            cycle_minutes = (elapsed_minutes // NAP_WINDOW_MINUTES) * NAP_WINDOW_MINUTES
-            window_start = day_start + timedelta(minutes=cycle_minutes + offset)
-            if window_start > as_of_dt:
-                window_start = window_start - timedelta(minutes=NAP_WINDOW_MINUTES)
-            window_end = window_start + timedelta(minutes=window)
-            already_done = False
-            if row["last_completed_at"]:
-                try:
-                    last_dt = datetime.fromisoformat(row["last_completed_at"])
-                    if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    if last_dt >= window_start:
-                        already_done = True
-                except (TypeError, ValueError):
-                    pass
-            if already_done:
-                continue
-            due.append(
-                {
-                    "agent_id": row["agent_id"],
-                    "window_start": window_start.isoformat(timespec="microseconds"),
-                    "window_end": window_end.isoformat(timespec="microseconds"),
-                    "last_completed_at": row["last_completed_at"],
-                    "in_window": window_start <= as_of_dt <= window_end,
-                }
-            )
-        return due
-
-    def consolidate_nap(
-        self,
-        agent_id: str,
-        *,
-        since: Optional[str] = None,
-        nap_run_id: Optional[str] = None,
-        embed_into_medium: bool = True,
-        emit_dream_artifacts: bool = True,
-        vector_writer: Optional[Any] = None,
-        created_by: Optional[str] = None,
-    ) -> JsonDict:
-        """mem-08: build per-(task/project) summaries from the agent's
-        recent memory_records and embed them into the medium tier.
-
-        ``vector_writer`` is an optional pre-built VectorWriterService.
-        When None, no embedding happens (consolidator runs in
-        summary-only mode — useful when Qdrant is unreachable)."""
-        from mac.nap_consolidator import NapConsolidatorService
-
-        consolidator = NapConsolidatorService(
-            store=self.store,
-            memory=self.memory,
-            vector_writer=vector_writer,
-        )
-        return consolidator.consolidate_agent(
-            agent_id,
-            since=since,
-            nap_run_id=nap_run_id,
-            embed_into_medium=embed_into_medium,
-            emit_dream_artifacts=emit_dream_artifacts,
-            created_by=created_by,
-        )
-
-    def _vector_writer_for(
-        self,
-        vector_writer: Optional[Any],
-        qdrant_url: Optional[str],
-        caller: str,
-        *,
-        requires: Sequence[str] = (),
-    ) -> Any:
-        """Reuse a caller's writer, or build one from the Qdrant cascade.
-
-        ``requires`` names the methods this caller is about to invoke. A
-        supplied writer that lacks one is a rejected request, not an
-        ``AttributeError`` raised half-way through the operation.
-        """
-
-        if vector_writer is not None:
-            missing = [
-                name for name in requires if not callable(getattr(vector_writer, name, None))
-            ]
-            if missing:
-                raise ValidationError(
-                    "%s needs a vector writer providing %s" % (caller, ", ".join(missing))
-                )
-            return vector_writer
-        url = _configured_qdrant_url(qdrant_url)
-        if not url:
-            raise ValidationError(
-                "%s needs a Qdrant URL — pass qdrant_url or set "
-                "MAC_QDRANT_URL/QDRANT_URL/QDRANT_ADDRESS/QDRANT_FLEET_URL" % caller
-            )
-        from mac.vector_writer_service import VectorWriterService
-
-        return VectorWriterService(memory=self.memory, qdrant_url=url)
-
-    def reconcile_memory_embedding_spaces(
-        self,
-        *,
-        tier: str = "medium",
-        limit: Optional[int] = None,
-        scan_limit: Optional[int] = None,
-        dry_run: bool = False,
-        report_only: bool = False,
-        qdrant_url: Optional[str] = None,
-        vector_writer: Optional[Any] = None,
-        created_by: str = "memory-reconcile",
-    ) -> JsonDict:
-        """Collapse a tier onto one embedding model.
-
-        A model switch left ``mac_memory_medium`` holding 601 points from one
-        embedder and 66 from another. Qdrant compares them anyway — same
-        dimension, incommensurable spaces — so similarity search returned
-        wrong neighbours and raised nothing. Re-embedding the minority through
-        the normal write path restores a single comparable space.
-        """
-
-        from mac.models import MAC_MEMORY_COLLECTIONS
-
-        if tier not in MAC_MEMORY_COLLECTIONS:
-            raise ValidationError("unknown memory tier: %s" % tier)
-        limit_value = None if limit is None else _memory_count("limit", limit, maximum=1_000_000)
-        scan_limit_value = (
-            None
-            if scan_limit is None
-            else _memory_count("scan_limit", scan_limit, maximum=10_000_000)
-        )
-        method = "embedding_space_report" if report_only else "reconcile_embedding_spaces"
-        writer = self._vector_writer_for(
-            vector_writer,
-            qdrant_url,
-            "reconcile_memory_embedding_spaces",
-            requires=(method,),
-        )
-        if report_only:
-            return writer.embedding_space_report(tier=tier, scan_limit=scan_limit_value)
-        return writer.reconcile_embedding_spaces(
-            tier=tier,
-            limit=limit_value,
-            scan_limit=scan_limit_value,
-            dry_run=dry_run,
-            created_by=created_by,
-        )
-
-    def promote_memory_tier(
-        self,
-        *,
-        vector_writer: Optional[Any] = None,
-        qdrant_url: Optional[str] = None,
-        min_age_days: Optional[float] = None,
-        limit: Optional[int] = None,
-        drop_medium: bool = False,
-        dry_run: bool = False,
-        created_by: str = "memory-promotion",
-    ) -> JsonDict:
-        """Promote settled medium-tier memories into ``mac_memory_long``.
-
-        The long tier was declared in mem-06 and had never received a point:
-        no code path anywhere passed ``tier="long"`` to the vector writer, so
-        the collection advertised a capability the fleet did not have. This is
-        the writer. See :mod:`mac.memory_promotion` for what "settled" means.
-
-        Returns a report even when nothing qualified, so a caller can tell
-        "ran and found nothing old enough" from "did not run".
-        """
-
-        from mac.memory_promotion import (
-            MemoryPromotionService,
-            MIN_AGE_DAYS_CEILING,
-            MIN_AGE_DAYS_FLOOR,
-            MAX_PER_PASS_CEILING,
-            promotion_settings,
-        )
-
-        min_age_value = (
-            None
-            if min_age_days is None
-            else _memory_number(
-                "min_age_days",
-                min_age_days,
-                minimum=MIN_AGE_DAYS_FLOOR,
-                maximum=MIN_AGE_DAYS_CEILING,
-            )
-        )
-        limit_value = (
-            None if limit is None else _memory_count("limit", limit, maximum=MAX_PER_PASS_CEILING)
-        )
-
-        settings = promotion_settings()
-        if not settings["enabled"]:
-            return {
-                "schema": "mac.memory_promotion.v1",
-                "skipped": True,
-                "skip_reason": "MAC_MEMORY_PROMOTION_ENABLED is off",
-                "candidates": 0,
-                "promoted": 0,
-            }
-        service = MemoryPromotionService(
-            memory=self.memory,
-            vector_writer=self._vector_writer_for(
-                vector_writer,
-                qdrant_url,
-                "promote_memory_tier",
-                requires=("embed_memory",) + (("delete_point",) if drop_medium else ()),
-            ),
-        )
-        report = service.promote(
-            min_age_days=(settings["min_age_days"] if min_age_value is None else min_age_value),
-            limit=settings["max_per_pass"] if limit_value is None else limit_value,
-            drop_medium=drop_medium,
-            dry_run=dry_run,
-            created_by=created_by,
-        )
-        report["skipped"] = False
-        if settings["configuration_errors"]:
-            report["configuration_errors"] = settings["configuration_errors"]
-        return report
-
-    def complete_nap(self, *args: Any, **kwargs: Any) -> NapRun:
-        return self.agent_state.complete_nap(*args, **kwargs)
-
-    def fail_nap(self, *args: Any, **kwargs: Any) -> NapRun:
-        return self.agent_state.fail_nap(*args, **kwargs)
-
-    def get_nap_run(self, run_id: str) -> NapRun:
-        return self.agent_state.get_nap_run(run_id)
-
-    def list_nap_runs(self, *args: Any, **kwargs: Any) -> List[NapRun]:
-        return self.agent_state.list_nap_runs(*args, **kwargs)
 
     # -- Ticketing connectors (meta-tickets) --------------------------------
     # beads is no longer a read/write source; it's an import-only connector.
@@ -18770,9 +16743,12 @@ class ControlPlane:
         """Tombstone ephemeral agents whose heartbeat lease has lapsed.
 
         Skips agents holding an active task lease (lease expiry reclaims the
-        task first; the agent is swept on a later tick). Open bus streams the
-        departed agent left behind are closed so waiting peers see a terminal
-        status rather than an open stream that will never append again.
+        task first; the agent is swept on a later tick) or held by a deploy
+        (DEPLOYMENT_HOLD_REASON_PREFIXES). A deploy deliberately stops those
+        workers, so heartbeat silence is not evidence that their hosts departed. Open
+        bus streams the departed agent left behind are closed so waiting peers
+        see a terminal status rather than an open stream that will never append
+        again.
         """
         now = utcnow()
         expired: List[Agent] = []
@@ -18787,6 +16763,14 @@ class ControlPlane:
                 continue
             if self._agent_has_active_lease(agent.id):
                 continue
+            if self._agent_held_by_deployment(agent):
+                # A deploy stopped this worker on purpose (fleet-update restarts
+                # it while it is held). Deleting its agent row would strand the
+                # host: the update waits for this agent to report the new
+                # commit, and a worker with no agent row cannot. Silence under a
+                # deploy hold is not evidence the host departed.
+                continue
+            self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
             self.store.execute(
                 """
                 UPDATE agentbus_streams
@@ -18801,7 +16785,6 @@ class ControlPlane:
                     AgentBusStreamStatus.OPEN.value,
                 ),
             )
-            self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
             self.record_log(
                 "agent.ephemeral.expired",
                 layer="control_plane",
@@ -18993,35 +16976,6 @@ class ControlPlane:
             )
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
             pass
-
-    def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
-        required_role = None
-        hardware: JsonDict = {}
-        metadata = ensure_json_object(task.metadata)
-        required_commands = _repository_required_commands_from_metadata(metadata)
-        host_required_commands = _repository_host_required_commands_from_metadata(metadata)
-        if isinstance(task.metadata, dict):
-            md_role = task.metadata.get("required_role")
-            if isinstance(md_role, str) and md_role.strip():
-                required_role = md_role.strip()
-            md_hw = task.metadata.get("hardware")
-            if isinstance(md_hw, dict):
-                hardware = md_hw
-        self.provisioning.request_agent(
-            reason="dispatch.no_eligible_agent",
-            role_slug=required_role,
-            capabilities=list(task.required_capabilities or []),
-            hardware=hardware,
-            task_id=task.id,
-            tenant_id=self._task_tenant_id(task),
-            detail={
-                "task_state": task.state,
-                "task_title": task.title,
-                "required_commands": required_commands,
-                "sandbox_host_required_commands": host_required_commands,
-                "sandbox_required_commands": required_commands,
-            },
-        )
 
     def _prepare_task_dispatch_admission(self, task: Task) -> Task:
         """Persist deterministic sizing before an implementation lease exists.
@@ -19255,7 +17209,7 @@ class ControlPlane:
                 detail={"error": str(exc)},
             )
         try:
-            self.reconcile_service_roles()  # media-01: reap stale claims + signal zero-holder ops
+            self.reconcile_service_roles()  # media-01: reap stale claims + report zero-holder ops
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
         unblocked_page = self._unblock_ready_sweep_page(limit=limit_value)
@@ -19288,46 +17242,6 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
-        # Memory-tier alerts, same lesson as retention and the stranding
-        # detector above: memory_health could already see stopped ingestion,
-        # an unwritten tier and mixed embedding spaces, but every caller was a
-        # human. The 2026-08-21 audit found ingestion dead since 2026-07-25 --
-        # 27 days -- because nothing evaluated the alerts on a clock. Self-
-        # throttled to MEMORY_HEALTH_TICK_SECONDS, since it costs a Qdrant
-        # round-trip and a bounded payload scan.
-        try:
-            memory_health = self.memory_health_tick()
-        except Exception as exc:  # noqa: BLE001 - a monitor must never stop dispatch.
-            memory_health = {
-                "schema": "mac.memory_health_tick.v1",
-                "errors": [{"error": str(exc)[:500]}],
-            }
-            self.record_log(
-                "memory.health_tick_failed",
-                layer="control_plane",
-                source="dispatcher.tick",
-                level="warning",
-                detail={"error": str(exc)[:500]},
-            )
-        # The tick is the RIGHT place to run a publication's contract gate, and
-        # for a long time it was the only place that refused to.
-        #
-        # With this False, the tick advanced reviews but would not run the
-        # verify, so the only path that actually published was
-        # _maybe_advance_reviews_on_heartbeat -- an agent HTTP request. That
-        # made a heartbeat take 250-315s (measured; the agent's own client gives
-        # up at 30s and retries, starting ANOTHER overlapping publication), and
-        # three approved canaries sat unpublished for hours because the one
-        # worker whose heartbeat drives it could not finish a request.
-        #
-        # This loop is a background thread (api.py `_loop`), not a request
-        # handler. Blocking here delays the next tick; blocking on a heartbeat
-        # costs a worker. MAC_TICK_BLOCKING_HUB_VERIFY=0 restores the old
-        # behaviour for an operator who would rather the tick never stall.
-        #
-        # This is the narrow version of task_fad95a2b. The full fix is a bounded
-        # publication worker so neither the tick nor a request waits on a
-        # sandboxed test run.
         # The review sweep is NOT run here any more. It clones a repository and
         # runs a contract gate inline, so it used to make this thread's period
         # equal to a git clone plus a test run rather than
@@ -19355,7 +17269,6 @@ class ControlPlane:
                 limit=limit_value,
                 actor="default-review-workflow",
                 tenant_id=None,
-                allow_blocking_hub_verify=_truthy_env("MAC_TICK_BLOCKING_HUB_VERIFY", "1"),
             )
         else:
             review_workflows = {"skipped": "runs_on_publication_worker"}
@@ -19381,34 +17294,13 @@ class ControlPlane:
                 level="warning",
                 detail={"error": str(exc)[:500]},
             )
-        # Desired-source holds must land before dispatch.  Otherwise a stale
-        # idle node can acquire new work in the same tick that notices drift.
         try:
-            source_convergence = self.source_convergence.tick(limit=limit_value)
-        except Exception as exc:  # noqa: BLE001 - controller failure must not stop lease maintenance.
-            source_convergence = {
-                "schema": "mac.source_convergence.v1",
-                "errors": [{"error": str(exc)[:500]}],
-            }
+            self.expire_task_questions()
+        except Exception as exc:  # noqa: BLE001 - question expiry must not stop dispatch
             self.record_log(
-                "source_convergence.tick_failed",
+                "task_board.question_expiry_failed",
                 layer="control_plane",
-                source="dispatcher.tick",
-                level="error",
-                detail={"error": str(exc)[:500]},
-            )
-        try:
-            crash_repairs = self.crashes.tick(limit=limit_value)
-        except Exception as exc:  # noqa: BLE001 - crash repair must not stop dispatch.
-            crash_repairs = {
-                "schema": "mac.agent_crash_repair_tick.v1",
-                "errors": [{"error": str(exc)[:500]}],
-            }
-            self.record_log(
-                "agent.crash.repair_tick_failed",
-                layer="control_plane",
-                source="dispatcher.tick",
-                level="error",
+                level="warning",
                 detail={"error": str(exc)[:500]},
             )
         try:
@@ -19443,11 +17335,8 @@ class ControlPlane:
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
-            "source_convergence": source_convergence,
-            "crash_repairs": crash_repairs,
             "stall_nudges": stall_nudges,
             "retention_pruned": retention_pruned,
-            "memory_health": memory_health,
             "auto_reopened": [task.to_dict() for task in auto_retry_page["tasks"]],
             "auto_retry_exhausted": [
                 task.to_dict() for task in auto_retry_page.get("exhausted", [])
@@ -19463,68 +17352,6 @@ class ControlPlane:
                 "dead_letters_next_cursor": dead_letters_page["next_cursor"],
             },
         }
-
-    # Communication bus
-
-    def register_source_release(self, *args: Any, **kwargs: Any) -> SourceRelease:
-        return self.source_releases.register_release(*args, **kwargs)
-
-    def get_source_release(self, release_id: str) -> SourceRelease:
-        return self.source_releases.get_release(release_id)
-
-    def list_source_releases(self, *args: Any, **kwargs: Any) -> List[SourceRelease]:
-        return self.source_releases.list_releases(*args, **kwargs)
-
-    def set_fleet_desired_source(self, *args: Any, **kwargs: Any) -> FleetDesiredSourceState:
-        return self.source_releases.set_desired_source(*args, **kwargs)
-
-    def source_convergence_status(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.source_convergence.status(*args, **kwargs)
-
-    def tick_source_convergence(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.source_convergence.tick(*args, **kwargs)
-
-    def request_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.request(*args, **kwargs)
-
-    def get_fleet_upgrade(self, upgrade_id: str) -> JsonDict:
-        return self.fleet_upgrades.get(upgrade_id)
-
-    def list_fleet_upgrades(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.fleet_upgrades.list(*args, **kwargs)
-
-    def cancel_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.cancel(*args, **kwargs)
-
-    def stage_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.stage(*args, **kwargs)
-
-    def arm_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.arm_hub_swap(*args, **kwargs)
-
-    def launch_fleet_upgrade_hub_swap(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.launch_hub_swap(*args, **kwargs)
-
-    def resume_fleet_upgrades(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.fleet_upgrades.resume_pending(*args, **kwargs)
-
-    def record_fleet_upgrade_supervisor_receipt(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.record_supervisor_receipt(*args, **kwargs)
-
-    def open_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.open_worker_epoch(*args, **kwargs)
-
-    def prove_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.prove_worker_epoch(*args, **kwargs)
-
-    def commit_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.commit_worker_epoch(*args, **kwargs)
-
-    def abort_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.abort_worker_epoch(*args, **kwargs)
-
-    def fleet_upgrade_events(self, upgrade_id: str) -> List[JsonDict]:
-        return self.fleet_upgrades.events(upgrade_id)
 
     # Agent control messages: thin facade over ``self.messaging``.
 
@@ -19639,8 +17466,8 @@ class ControlPlane:
     ) -> List[JsonDict]:
         """Say, on the bus, that a change LANDED and that the trunk moved.
 
-        Emitted from the merge path itself, immediately after the forge (or
-        mac's own queue) reported the merge and the resulting canonical tip was
+        Emitted from the merge path itself, immediately after the forge
+        reported the merge (or the guarded push landed) and the resulting canonical tip was
         verified against the remote — never scraped from a log and never
         re-derived later from state a second writer may already have moved.
 
@@ -19657,8 +17484,7 @@ class ControlPlane:
         ``tree_sha`` is carried on both and is the load-bearing field. Every
         merge here is a SQUASH: the commit sha is minted at merge time, so a
         consumer keyed on it cannot match anything it knew beforehand. The tree
-        survives the squash, which is exactly why
-        ``native_merge_queue.landing_is_safe`` gates on tree identity.
+        survives the squash.
 
         Spoken as the HUB (``publish_system``): the hub performed the merge, so
         attributing it to the task's agent would be a lie — and would make that
@@ -20706,7 +18532,6 @@ class ControlPlane:
                 subject_id=publication.task_id,
                 detail={**git_publication, "publication_id": publication.id},
             )
-            self._schedule_cicd_check_after_publication(publication, git_publication)
         # publish_task transitions the underlying task to COMPLETED inside
         # its own transaction (bypassing transition_task), so we run the
         # workflow runtime hook here so workflow runs advance on publish.
@@ -20725,58 +18550,6 @@ class ControlPlane:
                     "workflow runtime failed to advance after publish_task"
                 )
         return publication
-
-    def _schedule_cicd_check_after_publication(
-        self,
-        publication: Publication,
-        git_publication: JsonDict,
-    ) -> None:
-        """Append the durable exact-SHA handoff for post-publication CI.
-
-        Publication remains complete once the reviewed change is remotely
-        integrated. CI is a linked lifecycle continuation: the background
-        monitor chooses the repository-specific delay, re-polls pending runs,
-        and coalesces terminal failures into low-priority maintenance.
-        """
-
-        final_sha = str(git_publication.get("final_sha") or "").strip()
-        if not _GIT_SHA_RE.match(final_sha):
-            return
-        monitor = getattr(self, "_cicd_monitor", None)
-        if monitor is None:
-            return
-        task = self.get_task(publication.task_id)
-        metadata = ensure_json_object(task.metadata)
-        origin = ensure_json_object(metadata.get("origin"))
-        repository_url = str(
-            origin.get("repository_url") or git_publication.get("repository_url") or ""
-        ).strip()
-        try:
-            monitor.schedule_publication_followup(
-                task_id=publication.task_id,
-                publication_id=publication.id,
-                project=str(task.project or ""),
-                canonical_sha=final_sha,
-                repository_url=repository_url,
-                published_at=publication.created_at,
-                actor=publication.created_by,
-            )
-        except Exception:  # noqa: BLE001 - publication is already durable.
-            try:
-                self.record_log(
-                    "cicd.followup.schedule_failed",
-                    layer="control_plane",
-                    source=publication.created_by,
-                    level="error",
-                    subject_type="task",
-                    subject_id=publication.task_id,
-                    detail={
-                        "publication_id": publication.id,
-                        "canonical_sha": final_sha,
-                    },
-                )
-            except Exception:
-                pass
 
     def _record_canonical_integration_proof(
         self,
@@ -20862,23 +18635,53 @@ class ControlPlane:
             _trusted_internal=True,
         )
 
-    def _publication_targets_runtime_source(self, task_id: str) -> bool:
-        """Whether legacy publication would mutate this process's source checkout."""
+    @contextlib.contextmanager
+    def _repository_land_lock(
+        self, clone_url: str, canonical_branch: str, task_id: str = ""
+    ) -> Iterator[None]:
+        """Serialize land steps per (repository, canonical branch).
 
-        task = self.get_task(task_id)
-        metadata = ensure_json_object(task.metadata)
-        origin = ensure_json_object(metadata.get("origin"))
-        repository_path = str(origin.get("repository_path") or "").strip()
-        if not repository_path:
-            return False
-        try:
-            candidate = Path(repository_path).expanduser().resolve()
-            runtime_source = Path(__file__).resolve().parents[2]
-        except OSError:
-            return False
-        return candidate == runtime_source
+        A PostgreSQL transaction-scoped advisory lock, held for the whole land
+        step, so every hub process and thread sees the same lock and a
+        crashed holder releases it with its connection. It is TRY-locked: a
+        second land step for the same repository does not queue behind the
+        first (a land step clones and talks to the forge), it waits a tick
+        under the landing deadline instead.
 
-    @_serialize_runtime_source_publication
+        ``task_id`` additionally takes a per-task lock, first. The default
+        review runs from both the sweep and the event-driven consumer, so the
+        same task can reach this point twice at once. The loser used to see
+        ``landing_serialized`` and record that wait -- a metadata write to the
+        very task the winner was landing, which bumped its ``updated_at`` and
+        revoked the winner's task-authority fence just before the forge merge
+        (``_PublicationAuthorityRevokedError``). The loser now raises
+        ``_LandingInProgressError`` instead, which the review workflow turns
+        into a no-op that writes nothing.
+        """
+
+        repository = _canonicalize_git_url(clone_url) or str(clone_url or "")
+        key = "mac.land:%s#%s" % (repository, canonical_branch)
+        with self.store.transaction() as conn:
+            if task_id:
+                task_row = conn.execute(
+                    "SELECT pg_try_advisory_xact_lock(hashtext(?)) AS held",
+                    ("mac.land.task:%s" % task_id,),
+                ).fetchone()
+                if task_row is None or not task_row["held"]:
+                    raise _LandingInProgressError(task_id)
+            row = conn.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtext(?)) AS held", (key,)
+            ).fetchone()
+            if row is None or not row["held"]:
+                busy = ValidationError(
+                    "git publication is waiting for another landing on %s %s to finish"
+                    % (repository, canonical_branch)
+                )
+                busy.publication_retry_after_seconds = 60
+                busy.publication_failure_kind = "landing_serialized"
+                raise busy
+            yield
+
     def _publish_git_target_if_needed(
         self,
         task_id: str,
@@ -20902,10 +18705,9 @@ class ControlPlane:
             raise ValidationError("git publication canonical branch is invalid: %s" % exc) from exc
         repo_path_raw = str(origin.get("repository_path") or "").strip()
         repository_url = str(origin.get("repository_url") or "").strip()
-        # mac-k8s: remote-clone tasks (jordanh-gke and any K8s fleet) have no
-        # local repository_path on the hub. Rather than refuse to publish, merge
-        # via a transient authed clone of the remote so K8s-mode work can reach
-        # main. The clone is cleaned up before returning (best-effort on errors).
+        # Remote-clone tasks have no local repository_path on the hub. Rather
+        # than refuse to publish, merge via a transient authed clone of the
+        # remote. The clone is cleaned up before returning (best-effort on errors).
         # Read the executor evidence first: its repo block records the remote the
         # worker actually pushed the task branch to, which lets us publish a
         # local-repo task (origin has only an agent-side repository_path that does
@@ -20999,26 +18801,40 @@ class ControlPlane:
         # docstring records as still live on "the hub publish and hub verify
         # paths". Verify was fixed (#341); this is publish.
         auth_url, auth_env = _gitops.askpass_remote_auth(clone_url)
+        # The base the worker's verifier ran on: the canonical tip its
+        # finalizer synced onto before the contract gate (#909).
+        canonical_sync = ensure_json_object(repo.get("canonical_sync"))
+        verified_base = (
+            str(canonical_sync.get("canonical_tip") or "").strip()
+            if str(canonical_sync.get("status") or "") in {"fresh", "rebased"}
+            else ""
+        )
         last_base_move: Optional[_PublicationBaseMovedError] = None
-        for attempt in range(2):
-            try:
-                return self._publish_git_target_attempt(
-                    task=task,
-                    target=target,
-                    remote_ref=remote_ref,
-                    source_branch=source_branch,
-                    head_sha=head_sha,
-                    clone_url=clone_url,
-                    auth_url=auth_url,
-                    auth_env=auth_env,
-                    canonical_branch=canonical_branch,
-                    attempt=attempt + 1,
-                    agent_pull_request=agent_pull_request,
-                )
-            except _PublicationBaseMovedError as exc:
-                last_base_move = exc
-                if attempt == 0:
-                    continue
+        with self._repository_land_lock(clone_url, canonical_branch, task.id):
+            for attempt in range(2):
+                try:
+                    return self._publish_git_target_attempt(
+                        task=task,
+                        target=target,
+                        remote_ref=remote_ref,
+                        source_branch=source_branch,
+                        head_sha=head_sha,
+                        clone_url=clone_url,
+                        auth_url=auth_url,
+                        auth_env=auth_env,
+                        canonical_branch=canonical_branch,
+                        attempt=attempt + 1,
+                        agent_pull_request=agent_pull_request,
+                        verified_base=verified_base,
+                    )
+                except _PublicationBaseMovedError as exc:
+                    # The tip moved between the land step's read and its merge
+                    # (someone outside mac pushed). Retry once at once; the
+                    # retry sees the new tip and sends the task back to
+                    # rebase if the worker's verification no longer covers it.
+                    last_base_move = exc
+                    if attempt == 0:
+                        continue
         assert last_base_move is not None
         exhausted = ValidationError(
             "%s; a second exact-base attempt also lost the publication race; "
@@ -21091,203 +18907,6 @@ class ControlPlane:
             "api_url": api_url,
         }
 
-    # ------------------------------------------------------------------
-    # mac's own merge queue (see mac.native_merge_queue).
-    # ------------------------------------------------------------------
-
-    def _native_merge_queue(self) -> Any:
-        """The durable native queue, bound to this hub's store.
-
-        Constructed lazily and cached: the queue holds no state of its own --
-        everything lives in ``merge_queue_entries`` / ``merge_queue_windows`` --
-        so a restart rebuilds this object and continues from the ledger.
-        """
-
-        from mac.native_merge_queue import NativeMergeQueue
-
-        queue = getattr(self, "_native_merge_queue_instance", None)
-        if queue is None:
-            queue = NativeMergeQueue(self.store, observe=self.record_metric)
-            self._native_merge_queue_instance = queue
-        return queue
-
-    def _merge_queue_snapshot(self, queue: Any, entry_id: str) -> Optional[JsonDict]:
-        """Depth, window, and eviction history for the queue this entry is in.
-
-        Recorded into the publication evidence beside `merge_serialization` so
-        the guarantee is not a claim: an operator reading `mac task show` can
-        see how deep the queue was, how wide the speculation window was, and
-        what was evicted and why. This repository has shipped four gates today
-        that reported healthy while enforcing nothing; a queue nobody can watch
-        is the next one.
-        """
-
-        try:
-            entry = queue.entry(entry_id)
-            if entry is None:
-                return None
-            return queue.snapshot(entry.repository, entry.branch)
-        except Exception:  # noqa: BLE001 - observability never blocks a land
-            return None
-
-    def _merge_queue_owner(self) -> str:
-        """Who holds a queue slot.  Stable per hub process, unique per hub."""
-
-        owner = getattr(self, "_merge_queue_owner_id", "")
-        if not owner:
-            owner = "hub-%s-%d" % (socket.gethostname(), os.getpid())
-            self._merge_queue_owner_id = owner
-        return owner
-
-    def _resolve_merge_serialization(self, clone_url: str, canonical_branch: str) -> JsonDict:
-        """Decide WHICH mechanism serializes this landing, from stored state.
-
-        The capability is a project attribute refreshed by the existing GitHub
-        ingest poller (see :mod:`mac.merge_capability`), not a per-merge probe.
-        A missing or expired answer is resolved right here and written back, so
-        a repository registered five minutes ago does not have to wait for a
-        poll before it can publish.
-
-        If it still cannot be determined, the answer is mac's own queue.
-        "Unknown" is never permission to do an unserialized squash.
-        """
-
-        from mac.merge_capability import (
-            MergeCapability,
-            capability_ttl_seconds,
-            repository_remote_and_branch,
-            resolve_merge_capability,
-            stored_capability,
-        )
-        from mac.native_merge_queue import MODE_FORGE_QUEUE, MODE_NATIVE_QUEUE
-
-        wanted = _canonicalize_git_url(clone_url)
-        record = None
-        capability: Optional[MergeCapability] = None
-        try:
-            for repo in self.list_project_repositories(enabled=True):
-                coordinates = repository_remote_and_branch(repo)
-                if not coordinates["remote"]:
-                    continue
-                if _canonicalize_git_url(coordinates["remote"]) == wanted:
-                    record = repo
-                    break
-        except Exception:  # noqa: BLE001 - an unreadable registry is not fatal
-            record = None
-        if record is not None:
-            capability = stored_capability(getattr(record, "metadata", None))
-        source = "stored"
-        if capability is None or capability.is_stale(
-            branch=canonical_branch, ttl_seconds=capability_ttl_seconds()
-        ):
-            source = "resolved_now"
-            capability = resolve_merge_capability(
-                clone_url, canonical_branch, resolver="publication"
-            )
-            if record is not None:
-                try:
-                    self.record_repository_merge_capability(record.id, capability.to_dict())
-                except Exception:  # noqa: BLE001 - caching is best effort
-                    pass
-        mode = MODE_FORGE_QUEUE if capability.use_forge_queue else MODE_NATIVE_QUEUE
-        return {
-            "mode": mode,
-            "source": source,
-            "repository_id": getattr(record, "id", "") if record is not None else "",
-            "capability": capability.to_dict(),
-        }
-
-    def _build_speculative_base(
-        self,
-        root: Path,
-        git_step: Any,
-        base_sha: str,
-        predecessors: Sequence[JsonDict],
-    ) -> str:
-        """Project the queue entries ahead of us on top of the canonical tip.
-
-        This is the speculative half of the queue: entry N is tested against
-        ``tip + entries 1..N-1`` rather than the bare tip, so N does not have to
-        wait for N-1 to land before it can be tested.  Each predecessor is
-        merged with ``git merge-tree`` (no working tree is touched) and the
-        result committed with ``commit-tree`` to give the next step a parent.
-
-        Returns "" when the projection cannot be built -- an unfetchable
-        predecessor branch, or a conflict between two queued changes.  The
-        caller defers; it never falls back to testing against the bare tip,
-        because that result would be attributed to a queue position it was not
-        tested at.
-        """
-
-        current = str(base_sha or "").strip()
-        for predecessor in predecessors:
-            sha = str(predecessor.get("head_sha") or "").strip()
-            branch = str(predecessor.get("source_branch") or "").strip()
-            if not sha:
-                return ""
-            have = git_step(
-                "speculative_have", ["cat-file", "-e", "%s^{commit}" % sha], check=False
-            )
-            if _git_step_returncode(have) != 0:
-                if not branch:
-                    return ""
-                fetched = git_step(
-                    "speculative_fetch",
-                    [
-                        "fetch",
-                        "origin",
-                        "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch),
-                    ],
-                    timeout=180,
-                    check=False,
-                )
-                if _git_step_returncode(fetched) != 0:
-                    return ""
-                have = git_step(
-                    "speculative_have_after_fetch",
-                    ["cat-file", "-e", "%s^{commit}" % sha],
-                    check=False,
-                )
-                if _git_step_returncode(have) != 0:
-                    return ""
-            merged = git_step(
-                "speculative_merge_tree",
-                ["merge-tree", "--write-tree", "--name-only", current, sha],
-                check=False,
-            )
-            if _git_step_returncode(merged) != 0:
-                # Two queued changes conflict with each other. Speculation on
-                # top of this predecessor is worthless; defer rather than
-                # pretend the bare tip is our base.
-                return ""
-            lines = [line for line in str(merged.get("stdout") or "").splitlines() if line.strip()]
-            if not lines:
-                return ""
-            committed = git_step(
-                "speculative_commit_tree",
-                [
-                    "-c",
-                    "user.name=MAC Merge Queue",
-                    "-c",
-                    "user.email=merge-queue@mac.invalid",
-                    "commit-tree",
-                    lines[0],
-                    "-p",
-                    current,
-                    "-p",
-                    sha,
-                    "-m",
-                    "MAC merge queue speculative base",
-                ],
-                check=False,
-            )
-            if _git_step_returncode(committed) != 0:
-                return ""
-            current = str(committed.get("stdout") or "").strip()
-            if not current:
-                return ""
-        return current
-
     def _publish_via_pull_request(
         self,
         *,
@@ -21305,9 +18924,9 @@ class ControlPlane:
         root: Path,
         agent_pull_request: Optional[JsonDict] = None,
         required_checks: Tuple[str, ...] = (),
-        serialization: Optional[JsonDict] = None,
-        queue: Any = None,
-        queue_entry_id: str = "",
+        strict_checks: bool = False,
+        verified_base_is_tip: bool = True,
+        verified_base: str = "",
     ) -> JsonDict:
         """Land the agent's pull request; the hub records, it does not author.
 
@@ -21318,24 +18937,49 @@ class ControlPlane:
         that fallback is recorded in the publication commands rather than
         being indistinguishable from the normal path.
 
-        The hub does not merge either: it asks the forge's MERGE QUEUE to
-        land the PR when the canonical branch has one, and the queue performs
-        the merge after testing the projected post-merge tree.  Without a
-        queue the request degrades to a plain squash merge, which does *not*
-        carry that guarantee -- so the canonical tip is re-validated against
-        the tested base immediately beforehand, and the weaker serialization
-        is named in the evidence.
+        One test gate decides the merge.  With required status checks the
+        forge's checks are that gate: pending waits, failed blocks.  Without
+        them the worker's verifier run is the gate, which holds only while the
+        canonical tip is still the base it verified -- so a moved tip sends the
+        task back to rebase and retest, and the tip is re-validated right
+        before the merge is requested (optimistic concurrency: a tip that moves
+        in between raises ``_PublicationBaseMovedError`` and the attempt is
+        retried under the landing budget).
 
         The hub never pushes the canonical branch.  A squash merge means the
         reviewed commit is deliberately *not* an ancestor of the canonical tip
         afterwards, so the canonical-integration proof records
         ``contains_reviewed_head`` honestly instead of asserting an ancestry
         that squashing destroys.
+
+        A strict ruleset ("require branches to be up to date") will not merge a
+        pull request that is behind the base, and nothing else updates it. When
+        it is behind, the land step asks the forge to update the branch
+        (``gitops.update_pull_request_branch``) and waits for the required
+        checks on the updated head under the landing budget; a conflict sends
+        the task back to rebase. The updated head is the reviewed head plus
+        merges of the canonical branch only, so it is kept, not reset.
         """
 
         from . import gitops as _gitops
 
+        admitted_task_updated_at = task.updated_at
+
         branch = str(source_branch or "").strip()
+        check_fix_pr = self._check_fix_pull_request(
+            task,
+            api_url=api_url,
+            canonical_branch=canonical_branch,
+            source_branch=branch,
+            commands=commands,
+            attempt=attempt,
+        )
+        if check_fix_pr is not None:
+            # A check-fix attempt lands through the pull request whose checks
+            # failed: its head branch is moved to the fixed head below, so the
+            # checks re-run on that same pull request.
+            branch = str(check_fix_pr["head"])
+            agent_pull_request = check_fix_pr
         remote_head_ref = "refs/heads/%s" % branch
         observed = git_step(
             "observe_pull_request_branch",
@@ -21344,7 +18988,23 @@ class ControlPlane:
         )
         observed_sha = str(observed.get("stdout") or "").split(None, 1)
         observed_sha = observed_sha[0] if observed_sha else ""
-        if observed_sha != head_sha:
+        # The commit the forge's checks run on and the merge is pinned to: the
+        # reviewed head, or a forge update of it with the canonical branch.
+        landing_head = head_sha
+        if (
+            observed_sha
+            and observed_sha != head_sha
+            and strict_checks
+            and self._is_base_update_of(
+                git_step,
+                branch=branch,
+                candidate=observed_sha,
+                reviewed_head=head_sha,
+                canonical_tip=base_sha,
+            )
+        ):
+            landing_head = observed_sha
+        if observed_sha != landing_head:
             # NEVER a bare push: an explicit source:destination refspec, and a
             # lease pinned to exactly what we just observed, so a branch that
             # moved under us fails instead of being overwritten.
@@ -21388,11 +19048,8 @@ class ControlPlane:
             # pointing at a branch other than the one just pushed. A
             # GitHub PR's head branch is immutable once created, so
             # reusing a mismatched number is not a retry -- it is a
-            # permanent, silent no-op: the push lands on ``branch``, the
-            # recorded PR keeps whatever branch it always had, and every
-            # future publish attempt "succeeds" at reusing the wrong PR
-            # forever while genuinely conflicting against main. Verify the
-            # live head before trusting the cached reference.
+            # permanent, silent no-op. Verify the live head before trusting
+            # the cached reference.
             observed_pr_head = _gitops.pull_request_state(api_url, agent_pr_number)
             if (
                 observed_pr_head.get("known")
@@ -21443,6 +19100,31 @@ class ControlPlane:
             }
         )
 
+        # NEVER DOUBLE-LAND. Between attempts the PR may have been merged by a
+        # human, by the forge, or by a previous attempt of ours that died after
+        # the merge and before recording it. Read PR state before acting.
+        observed_pr = _gitops.pull_request_state(api_url, pr.number)
+        commands.append(
+            {
+                "name": "observe_pull_request",
+                "attempt": attempt,
+                "number": pr.number,
+                "known": bool(observed_pr.get("known")),
+                "merged": bool(observed_pr.get("merged")),
+                "state": str(observed_pr.get("state") or ""),
+                "sha": str(observed_pr.get("sha") or ""),
+            }
+        )
+        pre_merged: Optional[Any] = None
+        if observed_pr.get("merged"):
+            pre_merged = _gitops.PullRequestMergeResult(
+                merged=True,
+                number=pr.number,
+                sha=str(observed_pr.get("sha") or ""),
+                serialization="observed",
+                reason="already merged on the forge; observed, not re-merged",
+            )
+
         # VERIFY, DO NOT ASSUME. The party requesting the merge confirms the
         # required contexts actually passed for this head SHA, instead of
         # trusting the forge to refuse. The fleet authenticates as the
@@ -21451,58 +19133,147 @@ class ControlPlane:
         # break-glass) -- so the requester inherits it and CAN merge straight
         # past required checks. It did: the first publication under this flow
         # merged two seconds after the PR was opened, with every required
-        # context reported SKIPPED. Nothing gated it, because this path also
-        # skips its own contract re-projection precisely BECAUSE the forge
-        # reports required checks.
+        # context reported SKIPPED.
         #
         # "No required contexts" and "required contexts that have not reported
         # yet" are NOT the same thing, and are recorded separately: the first
-        # is an unprotected repository, where the local contract gate above
-        # ran instead; the second is a gate that has not run, which defers.
-        if required_checks:
-            verdicts = _gitops.required_check_verdicts(api_url, head_sha, tuple(required_checks))
+        # is a repository whose gate is the worker's verifier run; the second
+        # is a gate that has not run, which waits.
+        if pre_merged is None and strict_checks:
+            landing_head = self._update_pull_request_branch_if_behind(
+                git_step,
+                api_url=api_url,
+                pr=pr,
+                observed_pr=observed_pr,
+                landing_head=landing_head,
+                head_sha=head_sha,
+                base_sha=base_sha,
+                verified_base=verified_base,
+                commands=commands,
+                attempt=attempt,
+            )
+        #
+        # The task's own acceptance checks (``metadata.acceptance_checks``) are
+        # gated exactly like required contexts for THIS pull request: the
+        # gate is the union. One difference: an acceptance check that has not
+        # reported for the head at all is not guaranteed to ever report, so it
+        # is its own wait kind and blocks, named, at the landing deadline.
+        acceptance_checks = task_acceptance_checks(task.metadata)
+        gate_checks = tuple(required_checks) + tuple(
+            name for name in acceptance_checks if name not in required_checks
+        )
+        not_reported: List[str] = []
+        if pre_merged is not None:
+            verdicts: JsonDict = {}
+            case = "already_merged"
+        elif gate_checks:
+            verdicts = _gitops.required_check_verdicts(api_url, landing_head, gate_checks)
+            not_reported = [
+                str(name)
+                for name in verdicts.get("missing") or []
+                if name in acceptance_checks and name not in required_checks
+            ]
             if verdicts.get("failed"):
                 case = "failed"
             elif not verdicts.get("known"):
                 case = "unverifiable"
+            elif not_reported:
+                case = "acceptance_not_reported"
             elif verdicts.get("pending"):
                 case = "pending"
             else:
                 case = "verified"
         else:
-            verdicts = {
-                "known": True,
-                "contexts": [],
-                "passed": [],
-                "pending": [],
-                "failed": [],
-            }
+            verdicts = {}
             case = "none_configured"
-        commands.append(
-            {
-                "name": "required_check_verification",
-                "attempt": attempt,
-                "case": case,
-                "head_sha": head_sha,
-                "contexts": list(verdicts.get("contexts") or []),
-                "passed": list(verdicts.get("passed") or []),
-                "pending": list(verdicts.get("pending") or []),
-                "failed": list(verdicts.get("failed") or []),
-            }
-        )
+        verification: JsonDict = {
+            "name": "required_check_verification",
+            "attempt": attempt,
+            "case": case,
+            "head_sha": landing_head,
+            "contexts": list(verdicts.get("contexts") or []),
+            "passed": list(verdicts.get("passed") or []),
+            "pending": list(verdicts.get("pending") or []),
+            "failed": list(verdicts.get("failed") or []),
+        }
+        if acceptance_checks:
+            verification["acceptance_checks"] = list(acceptance_checks)
+            verification["not_reported"] = list(not_reported)
+        commands.append(verification)
         if case == "failed":
-            failure = ValidationError(
+            # The one test gate for this repository said no. Retrying the
+            # same head cannot change that. Collect why each check failed so
+            # the review workflow can send the task back to fix it (or block
+            # with the failure named when it cannot).
+            failed_names = tuple(str(item) for item in verdicts.get("failed") or [])
+            try:
+                failed_checks = list(
+                    _gitops.failed_check_details(api_url, landing_head, failed_names)
+                )
+            except Exception:  # noqa: BLE001 - the details are best-effort
+                failed_checks = [{"name": name, "conclusion": "failure"} for name in failed_names]
+            for item in failed_checks:
+                if isinstance(item, dict) and str(item.get("name") or "") not in required_checks:
+                    # Not required by the repository: the task's own
+                    # acceptance check. Named so the worker knows why it gates.
+                    item["acceptance_check"] = True
+            commands.append(
+                {
+                    "name": "failed_check_details",
+                    "attempt": attempt,
+                    "head_sha": landing_head,
+                    "checks": [
+                        {
+                            "name": item.get("name"),
+                            "conclusion": item.get("conclusion"),
+                            "details_url": item.get("details_url"),
+                            "log_tail_bytes": len(str(item.get("log_tail") or "").encode()),
+                        }
+                        for item in failed_checks
+                    ],
+                }
+            )
+            failed_acceptance = [name for name in failed_names if name not in required_checks]
+            raise _LandingChecksFailedError(
                 "git publication will not merge %s: required checks failed for "
-                "reviewed head %s: %s"
+                "reviewed head %s: %s%s"
                 % (
                     pr.url or ("#%d" % pr.number),
-                    head_sha[:12],
-                    ", ".join(str(item) for item in verdicts.get("failed") or []),
+                    landing_head[:12],
+                    ", ".join(failed_names),
+                    " (task acceptance checks: %s)" % ", ".join(failed_acceptance)
+                    if failed_acceptance
+                    else "",
+                ),
+                failed_checks=failed_checks,
+                head_sha=head_sha,
+                landing_head=landing_head,
+                forge_api_url=api_url,
+                pull_request_number=pr.number,
+                pull_request_url=pr.url,
+                head_branch=branch,
+            )
+        if case == "acceptance_not_reported":
+            still_pending = [
+                str(item) for item in verdicts.get("pending") or [] if item not in not_reported
+            ]
+            waiting = ValidationError(
+                "git publication is waiting on the task's acceptance checks before "
+                "%s can merge into %s: %s not reported for %s%s. "
+                "metadata.acceptance_checks must name checks exactly as the forge "
+                "reports them; the task blocks if they have not reported by the "
+                "landing deadline."
+                % (
+                    pr.url or ("#%d" % pr.number),
+                    canonical_branch,
+                    ", ".join(not_reported),
+                    landing_head[:12],
+                    "; still pending: %s" % ", ".join(still_pending) if still_pending else "",
                 )
             )
-            failure.publication_retry_after_seconds = 600
-            failure.publication_failure_kind = "pull_request_checks_failed"
-            raise failure
+            waiting.publication_retry_after_seconds = 600
+            waiting.publication_failure_kind = ACCEPTANCE_CHECKS_NOT_REPORTED
+            raise waiting
         if case in {"pending", "unverifiable"}:
             pending = ValidationError(
                 "git publication is waiting on the pull request's own required "
@@ -21510,11 +19281,11 @@ class ControlPlane:
                 % (
                     pr.url or ("#%d" % pr.number),
                     canonical_branch,
-                    "could not read check results for %s" % head_sha[:12]
+                    "could not read check results for %s" % landing_head[:12]
                     if case == "unverifiable"
                     else "not yet reported for %s: %s"
                     % (
-                        head_sha[:12],
+                        landing_head[:12],
                         ", ".join(str(item) for item in verdicts.get("pending") or []),
                     ),
                 )
@@ -21522,138 +19293,20 @@ class ControlPlane:
             pending.publication_retry_after_seconds = 600
             pending.publication_failure_kind = "pull_request_checks_pending"
             raise pending
-
-        # HOW THE MERGE IS SERIALIZED -- the guarantee, written down.
-        #
-        # merge_queue.py validates against the PROJECTED post-merge state (the
-        # "Not Rocket Science Rule"): test the tree that will actually land,
-        # serialize the merges, and post-merge testing is redundant because
-        # what was tested IS what landed. A plain forge squash-merge does not
-        # preserve that -- if the canonical branch advances between the status
-        # checks finishing and the merge executing, the landed tree was never
-        # tested. Required status checks alone do not close that; a MERGE
-        # QUEUE does, and unlike `strict` required checks it serializes the
-        # merges without serializing the (here ~2 hour) test runs.
-        #
-        # So: use the queue when the canonical branch has one. When it does
-        # not -- no queue configured yet, gitea, or an unreadable ruleset --
-        # degrade EXPLICITLY: re-validate that the canonical tip is still the
-        # base this candidate was projected and gated against, and name the
-        # weaker serialization in the evidence. Silently squash-merging while
-        # the code still assumes the queue's guarantee is the same hole in a
-        # harder-to-see place.
-        from mac.native_merge_queue import (
-            MODE_DIRECT_SQUASH,
-            MODE_FORGE_QUEUE,
-            MODE_NATIVE_QUEUE,
-        )
-
-        mode = str(ensure_json_object(serialization).get("mode") or "")
-        if not mode:
-            # No capability was resolved for us (a direct caller, or a test
-            # exercising this method alone). Ask, and fail toward the mechanism
-            # that serializes: an unknown answer is never a licence to squash.
-            probed = _gitops.merge_queue_enabled(api_url, canonical_branch)
-            mode = MODE_FORGE_QUEUE if probed else MODE_DIRECT_SQUASH
-        queue_enabled = mode == MODE_FORGE_QUEUE
-        native = bool(queue is not None and queue_entry_id and mode == MODE_NATIVE_QUEUE)
-
-        pre_merged: Optional[Any] = None
-        if native:
-            # NEVER DOUBLE-LAND. Between attempts the PR may have been merged by
-            # a human, by the forge, or by a previous attempt of ours that died
-            # after the merge and before recording it. #400 established the
-            # pattern -- read PR state before acting -- and this path needs it
-            # more, because mac is the one doing the merging.
-            # Tell the entry which PR it is landing. claim_slot ran before the
-            # PR existed, so the column is still at its 0 default -- and every
-            # step below assumes a PR to look at. An entry that never learns
-            # its number can neither land nor be evicted; one on the live hub
-            # reached 70 attempts that way while its work had already merged.
-            queue.record_pull_request(queue_entry_id, int(pr.number))
-            observed_pr = _gitops.pull_request_state(api_url, pr.number)
-            commands.append(
-                {
-                    "name": "merge_queue_observe_pull_request",
-                    "attempt": attempt,
-                    "number": pr.number,
-                    "known": bool(observed_pr.get("known")),
-                    "merged": bool(observed_pr.get("merged")),
-                    "state": str(observed_pr.get("state") or ""),
-                    "sha": str(observed_pr.get("sha") or ""),
-                }
-            )
-            if not observed_pr.get("known"):
-                unreadable = ValidationError(
-                    "mac merge queue could not read the state of %s before "
-                    "merging; deferring rather than merging blind" % (pr.url or ("#%d" % pr.number))
+        if case == "none_configured" or (case == "verified" and not required_checks):
+            # Acceptance checks alone are not the repository's test gate: with
+            # no required checks the worker's verifier still is, and it holds
+            # only while the canonical tip is the base it verified.
+            if not verified_base_is_tip:
+                raise _LandingRebaseRequiredError(
+                    canonical_tip=base_sha,
+                    verified_base=verified_base,
+                    head_sha=head_sha,
+                    forge_api_url=api_url,
+                    pull_request_number=pr.number,
                 )
-                unreadable.publication_retry_after_seconds = 600
-                unreadable.publication_failure_kind = "merge_queue_unreadable_state"
-                raise unreadable
-            if observed_pr.get("merged"):
-                pre_merged = _gitops.PullRequestMergeResult(
-                    merged=True,
-                    number=pr.number,
-                    sha=str(observed_pr.get("sha") or ""),
-                    serialization=MODE_NATIVE_QUEUE,
-                    reason="already merged on the forge; observed, not re-merged",
-                )
-            else:
-                git_step(
-                    "merge_queue_refresh_tip",
-                    [
-                        "fetch",
-                        "origin",
-                        "+refs/heads/%s:refs/remotes/origin/%s"
-                        % (canonical_branch, canonical_branch),
-                    ],
-                    check=False,
-                )
-                tip_tree = str(
-                    git_step(
-                        "merge_queue_tip_tree",
-                        [
-                            "rev-parse",
-                            "refs/remotes/origin/%s^{tree}" % canonical_branch,
-                        ],
-                        check=False,
-                    ).get("stdout")
-                    or ""
-                ).strip()
-                allowed, why, _entry = queue.may_land(queue_entry_id, canonical_tip_tree=tip_tree)
-                commands.append(
-                    {
-                        "name": "merge_queue_land_gate",
-                        "attempt": attempt,
-                        "entry_id": queue_entry_id,
-                        "allowed": bool(allowed),
-                        "reason": why,
-                        "canonical_tip_tree": tip_tree,
-                    }
-                )
-                if not allowed:
-                    if "front of the queue" in why:
-                        waiting = ValidationError(
-                            "mac merge queue is landing an earlier change first: %s" % why
-                        )
-                        waiting.publication_retry_after_seconds = 300
-                        waiting.publication_failure_kind = "merge_queue_waiting"
-                        raise waiting
-                    observed_canonical = git_step(
-                        "revalidate_canonical_tip",
-                        [
-                            "ls-remote",
-                            "origin",
-                            "refs/heads/%s" % canonical_branch,
-                        ],
-                        check=False,
-                    )
-                    observed_tip = str(observed_canonical.get("stdout") or "").split(None, 1)
-                    observed_tip = observed_tip[0] if observed_tip else ""
-                    # The tested projection is stale. Re-project; do NOT merge.
-                    raise _PublicationBaseMovedError(base_sha, observed_tip or why)
-        elif not queue_enabled:
+            # OCC validation phase: the worker's verifier tested the tree that
+            # lands only while the canonical tip is still the one it verified.
             observed_canonical = git_step(
                 "revalidate_canonical_tip",
                 ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
@@ -21661,45 +19314,53 @@ class ControlPlane:
             observed_tip = str(observed_canonical.get("stdout") or "").split(None, 1)
             observed_tip = observed_tip[0] if observed_tip else ""
             if observed_tip and observed_tip != base_sha:
-                # OCC validation phase: the tested projection is stale, so a
-                # merge now would land a tree nobody tested. Re-project.
                 raise _PublicationBaseMovedError(base_sha, observed_tip)
+        test_gate = "required_checks" if required_checks else "worker_verifier"
         commands.append(
             {
                 "name": "merge_serialization",
                 "attempt": attempt,
-                "merge_queue": bool(queue_enabled or native),
-                "mode": mode,
-                "queue_entry_id": queue_entry_id if native else "",
-                "queue": self._merge_queue_snapshot(queue, queue_entry_id) if native else None,
+                "mode": "serial_land_loop",
+                "test_gate": test_gate,
                 "guarantee": (
-                    "the forge merge queue tests the projected post-merge tree "
-                    "and merges in order: what was tested is what lands"
-                    if queue_enabled
-                    else "mac's own merge queue ordered this change, tested it "
-                    "against the tree it will land on, and refused the merge "
-                    "unless the canonical tip's tree is still that exact tree: "
-                    "what was tested is what lands"
-                    if native
-                    else "no merge queue on this branch; a plain squash merge "
-                    "is not serialized against concurrent merges, so the "
-                    "canonical tip was re-validated against the tested base "
-                    "immediately before requesting it"
+                    "the forge's required checks passed for the reviewed head; "
+                    "landings for this repository are serialized by the hub"
+                    if required_checks
+                    else "the worker verified the reviewed head on top of the "
+                    "canonical tip, and the tip was re-validated immediately "
+                    "before the merge was requested"
                 ),
             }
         )
         try:
-            merge = pre_merged or _gitops.request_pull_request_merge(
-                api_url,
-                pr.number,
-                sha=head_sha,
-                branch=canonical_branch,
-                method="squash",
-                commit_title="%s (#%d)" % (title, pr.number),
-                commit_message=body,
-                queue_enabled=queue_enabled,
-            )
+            if pre_merged is not None:
+                merge = pre_merged
+            else:
+                # This is the final task-authority fence before the forge
+                # mutation. The no-op update locks the task row, so a completed
+                # stop wins before this request, or waits until a request
+                # already accepted by the forge returns. Revoking a lease
+                # cannot cancel that already-accepted request.
+                with self.store.transaction() as conn:
+                    authority = conn.execute(
+                        "UPDATE tasks SET updated_at = updated_at "
+                        "WHERE id = ? AND state = ? AND updated_at = ?",
+                        (task.id, task.state, admitted_task_updated_at),
+                    )
+                    if authority.rowcount != 1:
+                        raise _PublicationAuthorityRevokedError()
+                    merge = _gitops.request_pull_request_merge(
+                        api_url,
+                        pr.number,
+                        sha=landing_head,
+                        branch=canonical_branch,
+                        method="squash",
+                        commit_title="%s (#%d)" % (title, pr.number),
+                        commit_message=body,
+                    )
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, _PublicationAuthorityRevokedError):
+                raise
             detail = _gitops._scrub_secret(str(exc))
             failure = ValidationError(
                 "git publication could not merge pull request %s: %s"
@@ -21715,29 +19376,16 @@ class ControlPlane:
                 "number": pr.number,
                 "merged": merge.merged,
                 "blocked": merge.blocked,
-                "queued": merge.queued,
                 "serialization": merge.serialization,
                 "sha": merge.sha,
                 "reason": merge.reason,
             }
         )
-        if merge.queued and not merge.merged:
-            # Accepted into the merge queue. The queue tests the projected
-            # post-merge tree and lands it in order, so publication is not
-            # complete yet: defer through the SAME retry backoff pending
-            # checks use, and observe the merge on a later attempt.
-            queued = ValidationError(
-                "git publication placed %s in the %s merge queue; it lands once "
-                "the queue's checks pass" % (pr.url or ("#%d" % pr.number), canonical_branch)
-            )
-            queued.publication_retry_after_seconds = 600
-            queued.publication_failure_kind = "pull_request_queued"
-            raise queued
         if not merge.merged:
             # The PR exists and is correct; the forge's own gates simply have
-            # not finished. Publication is NOT complete, so the task stays in
-            # REVIEWING and the existing publication-retry backoff re-attempts
-            # later. Retrying is cheap because the PR is reused, not reopened.
+            # not finished. Publication is NOT complete, so the task stays
+            # approved and waits under the landing deadline. Retrying is cheap
+            # because the PR is reused, not reopened.
             pending = ValidationError(
                 "git publication is waiting on the pull request's own required "
                 "checks before %s can merge into %s: %s"
@@ -21746,18 +19394,6 @@ class ControlPlane:
             pending.publication_retry_after_seconds = 600
             pending.publication_failure_kind = "pull_request_checks_pending"
             raise pending
-
-        if native:
-            landed = queue.record_landed(queue_entry_id, landed_sha=str(merge.sha or ""))
-            commands.append(
-                {
-                    "name": "merge_queue_landed",
-                    "attempt": attempt,
-                    "entry_id": queue_entry_id,
-                    "observed_only": bool(pre_merged),
-                    **landed,
-                }
-            )
 
         final_sha = str(merge.sha or "").strip()
         git_step(
@@ -21820,16 +19456,212 @@ class ControlPlane:
             "base_sha": base_sha,
             "final_sha": final_sha,
             "publication_mode": "pull_request_squash",
-            "merge_serialization": (
-                MODE_NATIVE_QUEUE if native else (merge.serialization or mode or MODE_DIRECT_SQUASH)
-            ),
+            "merge_serialization": "serial_land_loop",
+            "test_gate": test_gate,
             "pull_request_opened_by": opened_by,
             "pull_request_number": pr.number,
             "pull_request_url": pr.url,
+            "pull_request_head_sha": landing_head,
             "contains_reviewed_head": bool(contains_reviewed_head),
             "attempt": attempt,
             "commands": commands,
         }
+
+    def _check_fix_pull_request(
+        self,
+        task: Task,
+        *,
+        api_url: str,
+        canonical_branch: str,
+        source_branch: str,
+        commands: List[JsonDict],
+        attempt: int,
+    ) -> Optional[JsonDict]:
+        """The pull request a check-fix attempt must land through, if any.
+
+        A task sent back to fix failed required checks
+        (``metadata.fix_failed_checks``) pushes its fix from a fresh worker
+        lease, i.e. a NEW lease-suffixed branch. Landing that branch would wait
+        on checks nobody runs: the forge runs them for the pull request, whose
+        head branch is immutable and is still the old one -- and the agent's
+        own pull-request lookup reuses that open PR by task id. So while the
+        PR is still open, the land step moves the PR's head branch to the new
+        reviewed head (``_publish_via_pull_request`` pushes it with a lease)
+        and lands through it. A closed or merged PR is not reused.
+        """
+
+        from . import gitops as _gitops
+
+        directive = ensure_json_object(ensure_json_object(task.metadata).get("fix_failed_checks"))
+        number = _nonnegative_int(directive.get("pull_request_number"))
+        head = str(directive.get("head_branch") or "").strip()
+        if not number or not head or head == source_branch:
+            return None
+        try:
+            head = validate_git_ref(head)
+        except ValueError:
+            return None
+        observed = _gitops.pull_request_state(api_url, number)
+        reuse = bool(
+            observed.get("known")
+            and not observed.get("merged")
+            and str(observed.get("state") or "") == "open"
+            and str(observed.get("head_ref") or head) == head
+        )
+        commands.append(
+            {
+                "name": "check_fix_pull_request",
+                "attempt": attempt,
+                "number": number,
+                "head": head,
+                "source_branch": source_branch,
+                "state": str(observed.get("state") or ""),
+                "reused": reuse,
+            }
+        )
+        if not reuse:
+            return None
+        return {
+            "opened": True,
+            "number": number,
+            "url": str(directive.get("pull_request_url") or ""),
+            "base": canonical_branch,
+            "head": head,
+            "forge": str(observed.get("host") or ""),
+            "state": "open",
+            "reused_for": "fix_failed_checks",
+        }
+
+    @staticmethod
+    def _is_base_update_of(
+        git_step: Any,
+        *,
+        branch: str,
+        candidate: str,
+        reviewed_head: str,
+        canonical_tip: str,
+    ) -> bool:
+        """Is ``candidate`` the reviewed head plus merges of the canonical branch?
+
+        That is what GitHub's update-branch makes: a merge commit whose first
+        parent is the previous head and whose second is on the canonical
+        branch, possibly repeated. Anything else on the PR branch is not what
+        was reviewed, and the land step resets the branch to the reviewed head.
+        """
+
+        git_step(
+            "fetch_pull_request_branch",
+            ["fetch", "origin", "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch)],
+            check=False,
+        )
+        current = candidate
+        for _ in range(20):
+            if current == reviewed_head:
+                return True
+            listed = git_step(
+                "inspect_pull_request_head",
+                ["rev-list", "--parents", "-n", "1", current],
+                check=False,
+            )
+            fields = str(listed.get("stdout") or "").split()
+            if _git_step_returncode(listed) != 0 or len(fields) != 3:
+                return False
+            _, first_parent, merged_parent = fields
+            on_canonical = git_step(
+                "pull_request_head_merges_canonical",
+                ["merge-base", "--is-ancestor", merged_parent, canonical_tip],
+                check=False,
+            )
+            if _git_step_returncode(on_canonical) != 0:
+                return False
+            current = first_parent
+        return False
+
+    @staticmethod
+    def _update_pull_request_branch_if_behind(
+        git_step: Any,
+        *,
+        api_url: str,
+        pr: Any,
+        observed_pr: Mapping[str, Any],
+        landing_head: str,
+        head_sha: str,
+        base_sha: str,
+        verified_base: str,
+        commands: List[JsonDict],
+        attempt: int,
+    ) -> str:
+        """Bring a strict-checks pull request up to date with the base.
+
+        Returns the head to verify and merge when the PR is current. When it is
+        behind (the forge says so, or the canonical tip is not in its head) the
+        forge is asked to update the branch, and the land step waits for the
+        checks on the new head under the landing deadline. A conflict sends
+        the task back to its worker to rebase.
+        """
+
+        from . import gitops as _gitops
+
+        contains_tip = (
+            _git_step_returncode(
+                git_step(
+                    "pull_request_contains_canonical_tip",
+                    ["merge-base", "--is-ancestor", base_sha, landing_head],
+                    check=False,
+                )
+            )
+            == 0
+        )
+        forge_state = str(observed_pr.get("mergeable_state") or "")
+        behind = forge_state == "behind" or not contains_tip
+        if not behind:
+            return landing_head
+        update = _gitops.update_pull_request_branch(
+            api_url, pr.number, expected_head_sha=landing_head
+        )
+        commands.append(
+            {
+                "name": "update_pull_request_branch",
+                "attempt": attempt,
+                "number": pr.number,
+                "mergeable_state": forge_state,
+                "contains_canonical_tip": contains_tip,
+                "expected_head_sha": landing_head,
+                "updated": bool(update.get("updated")),
+                "conflict": bool(update.get("conflict")),
+                "reason": str(update.get("reason") or "")[:300],
+            }
+        )
+        if update.get("conflict"):
+            raise _LandingRebaseRequiredError(
+                canonical_tip=base_sha,
+                verified_base=verified_base,
+                head_sha=head_sha,
+                error="the forge could not update the pull request branch: %s"
+                % str(update.get("reason") or "merge conflict")[:200],
+                forge_api_url=api_url,
+                pull_request_number=pr.number,
+            )
+        if update.get("updated"):
+            waiting = ValidationError(
+                "git publication updated %s with %s because the repository requires "
+                "branches to be up to date; waiting for its required checks to re-run"
+                % (getattr(pr, "url", "") or ("#%d" % pr.number), base_sha[:12])
+            )
+            waiting.publication_retry_after_seconds = 300
+            waiting.publication_failure_kind = "pull_request_branch_updated"
+            raise waiting
+        failed = ValidationError(
+            "git publication could not update %s, which is behind %s: %s"
+            % (
+                getattr(pr, "url", "") or ("#%d" % pr.number),
+                base_sha[:12],
+                str(update.get("reason") or "unknown")[:300],
+            )
+        )
+        failed.publication_retry_after_seconds = 600
+        failed.publication_failure_kind = "pull_request_update_branch_failed"
+        raise failed
 
     def _publish_git_target_attempt(
         self,
@@ -21845,10 +19677,22 @@ class ControlPlane:
         canonical_branch: str,
         attempt: int,
         agent_pull_request: Optional[JsonDict] = None,
+        verified_base: str = "",
     ) -> JsonDict:
-        """Build, test, and publish one exact-base candidate in a fresh clone."""
+        """One ``land`` step: land the reviewed head on the current tip, or say why not.
 
-        from . import gitops as _gitops
+        Runs under the repository's land lock (see
+        ``_repository_land_lock``), so the canonical tip read here can only be
+        moved by someone outside mac. In a fresh clone of the canonical branch:
+
+        1. fetch the current tip and the reviewed head;
+        2. ``git merge-tree`` (no tests) -- a conflict sends the task back to
+           its worker to rebase (``_LandingRebaseRequiredError``);
+        3. with required checks, land through the pull request once they pass;
+        4. without them, land only if the tip is still the base the worker
+           verified (it is an ancestor of the reviewed head); a moved tip sends
+           the task back to rebase and retest. The hub runs no tests itself.
+        """
 
         commands: List[JsonDict] = []
         with tempfile.TemporaryDirectory(prefix="mac-publish-") as tmp:
@@ -21940,227 +19784,20 @@ class ControlPlane:
             base_result = git_step("exact_canonical_base", ["rev-parse", "HEAD"])
             base_sha = str(base_result.get("stdout") or "").strip()
 
-            from mac.merge_queue import (
-                validate_projected_merge,
-                validate_projected_merge_contract,
-            )
-            from mac.native_merge_queue import MODE_NATIVE_QUEUE
+            from mac.merge_queue import validate_projected_merge
 
-            # WHICH MECHANISM SERIALIZES THIS LANDING.
-            #
-            # Read from the project's stored repository attribute rather than
-            # probed here (mac.merge_capability): the answer changes maybe twice
-            # a year and this is the worst possible moment to depend on a forge
-            # API call. GitHub merge queues are organization-only, so for every
-            # User-owned repository the operator has, `mac_native_queue` is not
-            # a fallback -- it is the only path.
+            from . import gitops as _gitops
+
             strategy = self._resolve_publication_strategy(clone_url)
-            serialization = self._resolve_merge_serialization(clone_url, canonical_branch)
-            commands.append(
-                {
-                    "name": "merge_serialization_capability",
-                    "attempt": attempt,
-                    "mode": serialization["mode"],
-                    "source": serialization["source"],
-                    **serialization["capability"],
-                }
-            )
-            use_native_queue = (
-                serialization["mode"] == MODE_NATIVE_QUEUE
-                and strategy["strategy"] == "pull_request"
-            )
-
-            queue = None
-            queue_entry_id = ""
-            queue_owner = ""
-            projected_base_sha = base_sha
-            if use_native_queue:
-                queue = self._native_merge_queue()
-                queue_owner = self._merge_queue_owner()
-                queue_repository = _canonicalize_git_url(clone_url) or clone_url
-                # RECOVER THE HEAD OF THE LINE BEFORE ASKING FOR A SLOT.
-                #
-                # When the queue is blocked, the attempts that still run are
-                # exactly the ones being deferred behind the block -- so they
-                # are the only callers available to clear it, and they must do
-                # it before they ask for a slot they cannot get. Between
-                # 2026-08-19 and 2026-08-22 this queue held twelve entries and
-                # landed once: the front had been tested against a tree the
-                # trunk moved off (a pull request merged outside the queue) and
-                # its own publication loop had stopped, so nothing re-tested it
-                # and everything behind it deferred every six minutes forever.
-                #
-                # HEAD is the canonical tip: the clone above is
-                # `--branch canonical_branch` and nothing has checked anything
-                # else out, so this is the same commit as `base_sha`.
-                tip_tree = str(
-                    git_step(
-                        "merge_queue_canonical_tip_tree",
-                        ["rev-parse", "%s^{tree}" % base_sha],
-                        check=False,
-                    ).get("stdout")
-                    or ""
-                ).strip()
-                # Same rationale as reconcile_front below, for a different way an
-                # entry can stop moving: it wins its slot, tests clean, and then
-                # every publication attempt fails for a reason retrying cannot
-                # fix (its branch has no commits against main because another
-                # entry already carried the same change home first). It is
-                # never evicted on its own -- claim_slot() only increments
-                # attempts, it does not judge them -- so it sits at the front
-                # forever, burning every publish attempt for entries behind it
-                # too. evict_exhausted() is the reaper for exactly this; it was
-                # defined but never called from anywhere, so it never ran.
-                evicted_stalled = queue.evict_exhausted(queue_repository, canonical_branch)
-                if evicted_stalled:
-                    commands.append(
-                        {
-                            "name": "merge_queue_stalled_reaper",
-                            "attempt": attempt,
-                            "evicted_entry_ids": evicted_stalled,
-                        }
-                    )
-                commands.append(
-                    {
-                        "name": "merge_queue_front_recovery",
-                        "attempt": attempt,
-                        **queue.reconcile_front(
-                            queue_repository,
-                            canonical_branch,
-                            canonical_tip_tree=tip_tree,
-                            driver_task_id=str(task.id),
-                        ),
-                    }
-                )
-                decision = queue.claim_slot(
-                    repository=queue_repository,
-                    branch=canonical_branch,
-                    task_id=str(task.id),
-                    head_sha=head_sha,
-                    owner=queue_owner,
-                    detail={"source_branch": source_branch},
-                )
-                commands.append(
-                    {
-                        "name": "merge_queue_slot",
-                        "attempt": attempt,
-                        **decision.to_dict(),
-                    }
-                )
-                if not decision.admitted:
-                    # The window is full, or another worker holds this slot.
-                    # Deferring is the correct answer: the entry keeps its place
-                    # in line and the existing publication backoff re-attempts.
-                    deferred = ValidationError(
-                        "mac merge queue deferred publication of %s: %s"
-                        % (task.id, decision.reason)
-                    )
-                    deferred.publication_retry_after_seconds = max(
-                        60, int(decision.defer_seconds or 300)
-                    )
-                    deferred.publication_failure_kind = "merge_queue_deferred"
-                    raise deferred
-                queue_entry_id = decision.entry.id if decision.entry else ""
-                if decision.predecessors:
-                    predecessor_entries = [
-                        {
-                            "head_sha": entry.head_sha,
-                            "source_branch": str((entry.detail or {}).get("source_branch") or ""),
-                        }
-                        for entry in queue.live_entries(queue_repository, canonical_branch)
-                        if entry.head_sha in set(decision.predecessors)
-                    ]
-                    projected_base_sha = self._build_speculative_base(
-                        root, git_step, base_sha, predecessor_entries
-                    )
-                    commands.append(
-                        {
-                            "name": "merge_queue_speculative_base",
-                            "attempt": attempt,
-                            "tip": base_sha,
-                            "speculative_base": projected_base_sha,
-                            "predecessors": list(decision.predecessors),
-                            "built": bool(projected_base_sha),
-                        }
-                    )
-                    if not projected_base_sha:
-                        # A predecessor we cannot fetch, or two queued changes
-                        # that conflict. Never test against the bare tip
-                        # instead: that result would be attributed to a queue
-                        # position it was not tested at.
-                        queue.release(queue_entry_id, owner=queue_owner)
-                        stalled = ValidationError(
-                            "mac merge queue could not project %s on top of the "
-                            "%d change(s) ahead of it; deferring rather than "
-                            "testing against a base this entry will not land on"
-                            % (task.id, len(decision.predecessors))
-                        )
-                        stalled.publication_retry_after_seconds = 300
-                        stalled.publication_failure_kind = "merge_queue_speculation_unavailable"
-                        raise stalled
-
-            gate = validate_projected_merge(str(root), projected_base_sha, head_sha)
-            commands.append({"name": "merge_gate", **gate.to_dict()})
-            if not gate.clean:
-                if queue is not None and queue_entry_id:
-                    # A conflict is this entry's fault, not the queue's: evict
-                    # it, halve the window, and discard every speculative
-                    # result that was built on top of it.
-                    eviction = queue.evict(
-                        queue_entry_id,
-                        reason="projected merge conflicts with the queue base",
-                    )
-                    commands.append(
-                        {
-                            "name": "merge_queue_eviction",
-                            "attempt": attempt,
-                            "entry_id": queue_entry_id,
-                            **eviction,
-                        }
-                    )
-                merge_gate_error = ValidationError(
-                    "git publication merge gate: task branch does not integrate onto "
-                    "the current main tip (%s); conflicts: %s — route to integration "
-                    "(rebase + resolve + re-verify), do not merge"
-                    % (
-                        gate.base_sha[:12] or "?",
-                        ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
-                    )
-                )
-                merge_gate_error.conflict_integration_context = {
-                    "schema": "mac.merge_gate_conflict_context.v1",
-                    "task_id": str(task.id),
-                    "reviewed_head_sha": str(head_sha).strip(),
-                    "current_main_sha": str(gate.base_sha or "").strip(),
-                    "conflicted_paths": [
-                        str(path).strip()
-                        for path in gate.conflicted_files
-                        if str(path).strip() and str(path).strip() != "<unknown>"
-                    ],
-                    "repo_root": str(root),
-                }
-                raise merge_gate_error
-
-            # Scope the projected gate the way the REVIEW verifier scopes its
-            # own, for the same reason and from the same helper.
-            #
-            # This ran the whole contract suite -- ~45 minutes -- under
-            # MAC_HUB_VERIFY_TIMEOUT, which defaults to 1200s. It could not
-            # finish, so no approved task could ever publish: it failed, retried
-            # ~1200s later, failed again, and the task sat in REVIEWING,
-            # approved and unpublished. Measured on task_de42aa6c: approved
-            # 19:36:51, publication failed 20:02:44 and again 20:23:43.
-            #
-            # The projected tree differs from the tree review already gated only
-            # by however far main moved, so the changed-file selection is the
-            # honest question to ask of it. An unresolvable diff falls back to
-            # the full command, exactly as the review helper does.
-            required_checks: tuple[str, ...] = ()
+            required_checks: Tuple[str, ...] = ()
+            strict_checks = False
+            forge_api_url = ""
             if strategy["strategy"] == "pull_request":
-                probed = _gitops.required_status_check_contexts(
-                    str(strategy["api_url"]), canonical_branch
-                )
-                required_checks = tuple(probed or ())
+                forge_api_url = str(strategy["api_url"])
+                policy = _gitops.required_status_check_policy(forge_api_url, canonical_branch)
+                if policy is not None:
+                    required_checks = tuple(policy.contexts)
+                    strict_checks = bool(policy.strict and required_checks)
             commands.append(
                 {
                     "name": "publication_strategy",
@@ -22168,153 +19805,77 @@ class ControlPlane:
                     "forge": strategy["forge"],
                     "reason": strategy["reason"],
                     "required_status_checks": list(required_checks),
+                    "required_status_checks_strict": strict_checks,
+                    "test_gate": "required_checks" if required_checks else "worker_verifier",
                 }
             )
-            # WHO gates the merge. On the pull-request path the forge's own
-            # required status checks run against the merge result GitHub will
-            # actually produce, which is a strictly better question than the
-            # hub's local re-projection of it -- and the local one costs 15-45
-            # minutes under MAC_HUB_VERIFY_TIMEOUT, which is exactly why
-            # approved tasks used to sit unpublished (see the note below). So
-            # when the forge is demonstrably gating the branch, mac's reviewer
-            # verdict decides whether a PR is opened and merged at all, and the
-            # forge's checks decide whether that merge is permitted. When the
-            # forge reports no required checks, the hub keeps its own gate --
-            # a repo nobody protected must not silently lose the contract run.
-            forge_gates_merge = bool(required_checks)
-
-            projected_changed: list[str] = []
-            try:
-                projected_diff = self._git_output(
-                    root,
-                    ["diff", "--name-only", "%s...%s" % (projected_base_sha, head_sha)],
-                    timeout=60,
-                )
-                if int(projected_diff.get("returncode") or 1) == 0:
-                    projected_changed = [
-                        line.strip()
-                        for line in str(projected_diff.get("stdout") or "").splitlines()
-                        if line.strip()
-                    ]
-            except Exception:  # noqa: BLE001 - an unreadable diff means "run everything"
-                projected_changed = []
-            full_test_command = self._hub_review_test_command(
-                task, {"files_changed": projected_changed}
+            agent_pr = ensure_json_object(agent_pull_request)
+            superseded_pr_number = (
+                _nonnegative_int(agent_pr.get("number")) if agent_pr.get("opened") else 0
             )
-            # Say which question was asked. The scoped and full commands take
-            # ~15 and ~45 minutes, and only one of them fits the timeout -- so
-            # a silent fallback to full looks exactly like a gate that hung,
-            # and the timeout message says nothing about which ran.
+
+            already_integrated = (
+                _git_step_returncode(
+                    git_step(
+                        "source_already_merged",
+                        ["merge-base", "--is-ancestor", head_sha, base_sha],
+                        check=False,
+                    )
+                )
+                == 0
+            )
+            gate = validate_projected_merge(str(root), base_sha, head_sha)
+            commands.append({"name": "merge_gate", **gate.to_dict()})
+            if not gate.clean and not already_integrated:
+                raise _LandingRebaseRequiredError(
+                    canonical_tip=base_sha,
+                    verified_base=verified_base,
+                    head_sha=head_sha,
+                    conflicted_files=[
+                        str(path).strip()
+                        for path in gate.conflicted_files
+                        if str(path).strip() and str(path).strip() != "<unknown>"
+                    ],
+                    error=gate.error,
+                    forge_api_url=forge_api_url,
+                    pull_request_number=superseded_pr_number,
+                )
+            # The worker's verifier tested the reviewed head. That result
+            # covers the tree that lands only when the head already contains
+            # the current tip: the tip has not moved since the worker synced
+            # onto it (evidence repo.canonical_sync.canonical_tip).
+            verified_base_is_tip = (
+                _git_step_returncode(
+                    git_step(
+                        "verified_base_is_canonical_tip",
+                        ["merge-base", "--is-ancestor", base_sha, head_sha],
+                        check=False,
+                    )
+                )
+                == 0
+            )
             commands.append(
                 {
-                    "name": "publication_gate_scope",
-                    "changed_files": len(projected_changed),
-                    "scoped": bool(projected_changed)
-                    and "run-sanity-tests.sh" in full_test_command,
-                    "command": full_test_command[:200],
+                    "name": "land_freshness",
+                    "attempt": attempt,
+                    "canonical_tip": base_sha,
+                    "verified_base": verified_base,
+                    "verified_base_is_tip": verified_base_is_tip,
+                    "already_integrated": already_integrated,
                 }
             )
-            if forge_gates_merge:
-                commands.append(
-                    {
-                        "name": "publication_contract_gate",
-                        "skipped": True,
-                        "reason": "delegated to the pull request's required checks",
-                        "required_status_checks": list(required_checks),
-                    }
-                )
-            else:
-                publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
-                if publication_test_runner is None:
-                    # The projected-merge gate reuses the hub_verify sandbox
-                    # runner, which also needs bootstrap.command run before
-                    # test.command (see _hub_verify_run_contract_test) -- but
-                    # ContractTestRunner's signature has no bootstrap slot, so
-                    # curry it in here rather than widening that protocol.
-                    run_contract_test = self._hub_verify_run_contract_test
-                    publication_bootstrap_command = _repository_contract_bootstrap_command_for_task(
-                        task
-                    )
 
-                    def publication_test_runner(
-                        repo_dir: str, branch: str, head_sha: str, command: str
-                    ) -> Tuple[int, str]:
-                        return run_contract_test(
-                            repo_dir, branch, head_sha, command, publication_bootstrap_command
-                        )
-
-                contract_gate = validate_projected_merge_contract(
-                    str(root),
-                    projected_base_sha,
-                    head_sha,
-                    full_test_command,
-                    test_runner=publication_test_runner,
-                    merge_gate=gate,
+            if not required_checks and not verified_base_is_tip and not already_integrated:
+                # Decided before any pull request is pushed or opened, so a
+                # send-back leaves no hub-opened PR behind; the agent's own PR
+                # for this attempt is closed by the send-back.
+                raise _LandingRebaseRequiredError(
+                    canonical_tip=base_sha,
+                    verified_base=verified_base,
+                    head_sha=head_sha,
+                    forge_api_url=forge_api_url,
+                    pull_request_number=superseded_pr_number,
                 )
-                commands.append({"name": "publication_contract_gate", **contract_gate.to_dict()})
-                if not contract_gate.passed:
-                    diagnosis = contract_gate.error or contract_gate.output_tail
-                    if queue is not None and queue_entry_id:
-                        eviction = queue.evict(
-                            queue_entry_id,
-                            reason="projected contract gate failed: %s"
-                            % (diagnosis or "unknown failure")[:200],
-                        )
-                        commands.append(
-                            {
-                                "name": "merge_queue_eviction",
-                                "attempt": attempt,
-                                "entry_id": queue_entry_id,
-                                **eviction,
-                            }
-                        )
-                    raise ValidationError(
-                        "git publication contract gate failed on the projected "
-                        "current-main merge: %s" % (diagnosis or "unknown failure")
-                    )
-
-            if queue is not None and queue_entry_id:
-                # THE TREES ARE THE RECEIPT. What lands is checked against
-                # `tested_base_tree` at merge time, so recording it here is what
-                # makes "never land an untested tree" enforceable rather than
-                # asserted.
-                base_tree = str(
-                    git_step(
-                        "merge_queue_tested_base_tree",
-                        ["rev-parse", "%s^{tree}" % projected_base_sha],
-                        check=False,
-                    ).get("stdout")
-                    or ""
-                ).strip()
-                recorded = queue.record_tested(
-                    queue_entry_id,
-                    owner=queue_owner,
-                    base_sha=projected_base_sha,
-                    base_tree=base_tree,
-                    merge_tree=gate.merged_tree_sha,
-                )
-                commands.append(
-                    {
-                        "name": "merge_queue_tested",
-                        "attempt": attempt,
-                        "entry_id": queue_entry_id,
-                        "recorded": bool(recorded),
-                        "tested_base_sha": projected_base_sha,
-                        "tested_base_tree": base_tree,
-                        "tested_merge_tree": gate.merged_tree_sha,
-                    }
-                )
-                if not recorded or not base_tree:
-                    # We no longer hold the slot (a restart reclaimed it) or the
-                    # tree is unreadable. Either way this result cannot be
-                    # trusted to authorize a merge.
-                    lost = ValidationError(
-                        "mac merge queue could not record the tested trees for "
-                        "%s; the slot is no longer held. Deferring." % task.id
-                    )
-                    lost.publication_retry_after_seconds = 300
-                    lost.publication_failure_kind = "merge_queue_slot_lost"
-                    raise lost
 
             if strategy["strategy"] == "pull_request":
                 return self._publish_via_pull_request(
@@ -22323,7 +19884,7 @@ class ControlPlane:
                     remote_ref=remote_ref,
                     source_branch=source_branch,
                     head_sha=head_sha,
-                    base_sha=projected_base_sha,
+                    base_sha=base_sha,
                     canonical_branch=canonical_branch,
                     api_url=str(strategy["api_url"]),
                     commands=commands,
@@ -22332,73 +19893,47 @@ class ControlPlane:
                     root=root,
                     agent_pull_request=agent_pull_request,
                     required_checks=required_checks,
-                    serialization=serialization,
-                    queue=queue,
-                    queue_entry_id=queue_entry_id,
+                    strict_checks=strict_checks,
+                    verified_base_is_tip=verified_base_is_tip or already_integrated,
+                    verified_base=verified_base,
                 )
 
-            publication_mode = "fast_forward"
-            ff_merge = git_step("merge_source_ff", ["merge", "--ff-only", head_sha], check=False)
-            if ff_merge["returncode"] != 0:
-                already_merged = git_step(
-                    "source_already_merged",
-                    ["merge-base", "--is-ancestor", head_sha, "HEAD"],
-                    check=False,
-                )
-                if already_merged["returncode"] == 0:
-                    publication_mode = "already_integrated"
-                else:
-                    publication_mode = "merge_commit"
-                    merge = git_step(
-                        "merge_source",
-                        ["merge", "--no-ff", "--no-edit", head_sha],
-                        timeout=180,
-                        check=False,
+            if already_integrated:
+                publication_mode = "already_integrated"
+                final_sha = base_sha
+            else:
+                publication_mode = "fast_forward"
+                git_step("merge_source_ff", ["merge", "--ff-only", head_sha])
+                final_head = git_step("final_head", ["rev-parse", "HEAD"])
+                final_sha = str(final_head.get("stdout") or "").strip()
+                push_args = [
+                    "push",
+                    "--force-with-lease=refs/heads/%s:%s" % (canonical_branch, base_sha),
+                    "origin",
+                    "HEAD:refs/heads/%s" % canonical_branch,
+                ]
+                push = git_step("push_main_occ", push_args, timeout=180, check=False)
+                if push["returncode"] != 0:
+                    git_step(
+                        "refresh_canonical_after_push_race",
+                        [
+                            "fetch",
+                            "origin",
+                            "+refs/heads/%s:refs/remotes/origin/%s"
+                            % (canonical_branch, canonical_branch),
+                        ],
                     )
-                    if merge["returncode"] != 0:
-                        git_step("merge_abort", ["merge", "--abort"], check=False)
-                        raise ValidationError(
-                            "git publication merge_source failed: %s"
-                            % (merge.get("stderr") or merge.get("stdout") or head_sha)
-                        )
-            publication_tree = git_step("verify_projected_tree", ["rev-parse", "HEAD^{tree}"])
-            actual_tree_sha = str(publication_tree.get("stdout") or "").strip()
-            if actual_tree_sha != gate.merged_tree_sha:
-                raise ValidationError(
-                    "git publication merged tree differs from the fully tested "
-                    "projection: expected %s, observed %s"
-                    % (gate.merged_tree_sha, actual_tree_sha or "<unresolved>")
-                )
-            final_head = git_step("final_head", ["rev-parse", "HEAD"])
-            final_sha = str(final_head.get("stdout") or "").strip()
-            push_args = [
-                "push",
-                "--force-with-lease=refs/heads/%s:%s" % (canonical_branch, base_sha),
-                "origin",
-                "HEAD:refs/heads/%s" % canonical_branch,
-            ]
-            push = git_step("push_main_occ", push_args, timeout=180, check=False)
-            if push["returncode"] != 0:
-                git_step(
-                    "refresh_canonical_after_push_race",
-                    [
-                        "fetch",
-                        "origin",
-                        "+refs/heads/%s:refs/remotes/origin/%s"
-                        % (canonical_branch, canonical_branch),
-                    ],
-                )
-                observed_result = git_step(
-                    "observed_canonical_after_push_race",
-                    ["rev-parse", "refs/remotes/origin/%s" % canonical_branch],
-                )
-                observed_sha = str(observed_result.get("stdout") or "").strip()
-                if observed_sha != base_sha:
-                    raise _PublicationBaseMovedError(base_sha, observed_sha)
-                raise ValidationError(
-                    "git publication push_main_occ failed without canonical "
-                    "movement: %s" % (push.get("stderr") or push.get("stdout") or push_args)
-                )
+                    observed_result = git_step(
+                        "observed_canonical_after_push_race",
+                        ["rev-parse", "refs/remotes/origin/%s" % canonical_branch],
+                    )
+                    observed_sha = str(observed_result.get("stdout") or "").strip()
+                    if observed_sha != base_sha:
+                        raise _PublicationBaseMovedError(base_sha, observed_sha)
+                    raise ValidationError(
+                        "git publication push_main_occ failed without canonical "
+                        "movement: %s" % (push.get("stderr") or push.get("stdout") or push_args)
+                    )
             verify_remote = git_step(
                 "verify_remote_canonical",
                 ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
@@ -22431,428 +19966,11 @@ class ControlPlane:
                 "base_sha": base_sha,
                 "final_sha": final_sha,
                 "publication_mode": publication_mode,
+                "merge_serialization": "serial_land_loop",
+                "test_gate": "worker_verifier",
                 "attempt": attempt,
                 "commands": commands,
             }
-
-    def _build_conflict_integration_payload(
-        self,
-        *,
-        approved_task_id: str,
-        accepted_evidence_id: str,
-        reviewed_head_sha: str,
-        current_main_sha: str,
-        attempt_base_sha: str,
-        conflicted_paths: Sequence[str],
-        repo_path: Path,
-        depends_on: Optional[Sequence[str]] = None,
-    ) -> JsonDict:
-        """Thin ControlPlane wrapper over ``build_conflict_integration_payload``.
-
-        Binds ``self._git_output`` (scoped to ``repo_path``) as the pure
-        builder's ``git_runner`` so path-restricted landed-commit provenance is
-        computed against the real canonical checkout.
-
-        Returns the ``JsonDict`` payload; it does not persist anything or touch
-        the REVIEWING flow.
-        """
-
-        def git_runner(args: List[str], timeout: int = 60) -> JsonDict:
-            # Landed-commit provenance is best-effort: if the resolved repo path
-            # is unavailable (e.g. a transient clone already cleaned up, or a
-            # path that no longer exists), return a failure dict so the pure
-            # builder records empty provenance rather than raising — a conflict
-            # payload must always be producible.
-            try:
-                return self._git_output(repo_path, list(args), timeout=timeout)
-            except OSError:
-                return {"returncode": 1, "stdout": "", "stderr": "repo path unavailable"}
-
-        return build_conflict_integration_payload(
-            approved_task_id=approved_task_id,
-            accepted_evidence_id=accepted_evidence_id,
-            reviewed_head_sha=reviewed_head_sha,
-            current_main_sha=current_main_sha,
-            attempt_base_sha=attempt_base_sha,
-            conflicted_paths=conflicted_paths,
-            depends_on=depends_on,
-            git_runner=git_runner,
-        )
-
-    @staticmethod
-    def _conflict_integration_idempotency_fingerprint(
-        *,
-        approved_task_id: str,
-        accepted_evidence_id: str,
-        attempt_base_sha: str,
-        current_main_sha: str,
-        reviewed_head_sha: str,
-        conflicted_paths: Sequence[str],
-    ) -> str:
-        """Stable fingerprint over the conflict identity.
-
-        Duplicate conflict events for the SAME approved task, accepted
-        evidence, attempt base, canonical tip, reviewed head, and conflict set
-        must resolve to the SAME integration task rather than spawning
-        duplicates.  The conflict set is order-normalised so path enumeration
-        order never changes the fingerprint.
-        """
-        normalized_paths = sorted(
-            {str(path).strip() for path in (conflicted_paths or []) if str(path).strip()}
-        )
-        material = json_dumps(
-            {
-                "schema": "mac.conflict_integration_fingerprint.v1",
-                "approved_task_id": str(approved_task_id).strip(),
-                "accepted_evidence_id": str(accepted_evidence_id).strip(),
-                "attempt_base_sha": str(attempt_base_sha).strip(),
-                "current_main_sha": str(current_main_sha).strip(),
-                "reviewed_head_sha": str(reviewed_head_sha).strip(),
-                "conflicted_paths": normalized_paths,
-            }
-        )
-        return "sha256:%s" % hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-    def _find_linked_conflict_integration_task(
-        self, approved_task_id: str, fingerprint: str
-    ) -> Optional[str]:
-        """Re-read any integration task already created for this exact conflict.
-
-        Looks for a task whose metadata records the same
-        ``conflict_integration.fingerprint`` and links back to the approved
-        task.  This is the durable idempotency backstop that complements the
-        ``create_task`` idempotency key, so a duplicate conflict event that
-        loses the key race still resolves to the SAME single integration task.
-        """
-        try:
-            rows = self.store.query_all(
-                "SELECT id, state, dependencies, metadata, created_at "
-                "FROM tasks WHERE metadata LIKE ? ORDER BY created_at DESC",
-                ("%" + fingerprint + "%",),
-            )
-        except Exception:  # noqa: BLE001 - idempotency lookup is best-effort.
-            return None
-        for row in rows:
-            try:
-                metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
-            except Exception:  # noqa: BLE001
-                continue
-            integration = ensure_json_object(metadata.get("conflict_integration"))
-            if (
-                str(integration.get("fingerprint") or "") == fingerprint
-                and str(integration.get("approved_task_id") or "") == str(approved_task_id).strip()
-            ):
-                task_id = str(row["id"])
-                if str(row["state"] or "") in TERMINAL_TASK_STATES:
-                    continue
-                self._reconcile_conflict_integration_family(
-                    approved_task_id=str(approved_task_id).strip(),
-                    keep_task_id=task_id,
-                )
-                return task_id
-        return None
-
-    def _reconcile_conflict_integration_family(
-        self, *, approved_task_id: str, keep_task_id: str
-    ) -> None:
-        """Repair the live legacy-conflict family around one current task.
-
-        Older deployments made the repair depend on the still-REVIEWING task
-        it must unblock.  Repeated base movement then produced a new repair for
-        each canonical tip, leaving every older baseline parked forever.  The
-        exact-fingerprint lookup is the natural reconciliation point: retain
-        the current conflict identity, clear its impossible parent dependency,
-        and retire every older non-terminal repair for the same approved task.
-        """
-
-        try:
-            keep = self.get_task(keep_task_id)
-            if approved_task_id in keep.dependencies:
-                # Hub-internal reconciliation (see above): clearing an
-                # impossible parent dependency is not an operator edit and must
-                # not stop and restart the task.
-                self._update_task_fields(
-                    keep_task_id,
-                    dependencies=[
-                        dependency
-                        for dependency in keep.dependencies
-                        if dependency != approved_task_id
-                    ],
-                    actor="default-review-workflow",
-                )
-            rows = self.store.query_all(
-                "SELECT id, state, metadata FROM tasks WHERE metadata LIKE ?",
-                ("%" + approved_task_id + "%",),
-            )
-        except Exception:  # noqa: BLE001 - publication diagnosis must survive.
-            logging.getLogger("mac.conflict_integration").warning(
-                "conflict integration family reconciliation failed for %s",
-                approved_task_id,
-                exc_info=True,
-            )
-            return
-
-        for row in rows:
-            candidate_id = str(row["id"])
-            if candidate_id == keep_task_id or str(row["state"] or "") in TERMINAL_TASK_STATES:
-                continue
-            try:
-                metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
-            except Exception:  # noqa: BLE001
-                continue
-            integration = ensure_json_object(metadata.get("conflict_integration"))
-            if (
-                str(integration.get("role") or "") != "integration_repair"
-                or str(integration.get("approved_task_id") or "") != approved_task_id
-            ):
-                continue
-            try:
-                self.close_task(
-                    candidate_id,
-                    TaskState.CANCELLED.value,
-                    "default-review-workflow",
-                    {
-                        "reason": ("superseded by the current integration conflict baseline"),
-                        "disposition": "superseded",
-                        "replacement_task_id": keep_task_id,
-                        "cleanup_grace_seconds": 0,
-                    },
-                )
-            except Exception:  # noqa: BLE001 - keep the current repair usable.
-                logging.getLogger("mac.conflict_integration").warning(
-                    "failed to supersede stale integration repair %s",
-                    candidate_id,
-                    exc_info=True,
-                )
-
-    def _handoff_conflict_to_integration(
-        self,
-        *,
-        task: Task,
-        review: "Review",
-        evidence: "Evidence",
-        target: str,
-        conflict_context: Mapping[str, Any],
-        actor: str,
-    ) -> Optional[str]:
-        """Turn a legacy single-task publication conflict into ONE idempotent,
-        context-rich integration repair task.
-
-        Returns the integration task id (existing or newly created), or
-        ``None`` when the handoff does not apply / could not be produced (the
-        caller still records the diagnosis telemetry).
-        """
-        approved_task_id = str(task.id)
-        metadata = ensure_json_object(task.metadata)
-        # COORDINATION GUARD: plan-DAG coordination modes own their own
-        # integration path; never divert them.
-        coordination = ensure_json_object(metadata.get("coordination"))
-        coordination_mode = str(coordination.get("mode") or "").strip()
-        if coordination_mode in {
-            "cooperative_integration",
-            "plan_dag",
-        }:
-            return None
-
-        reviewed_head_sha = str(conflict_context.get("reviewed_head_sha") or "").strip()
-        current_main_sha = str(conflict_context.get("current_main_sha") or "").strip()
-        conflicted_paths = [
-            str(path).strip()
-            for path in (conflict_context.get("conflicted_paths") or [])
-            if str(path).strip()
-        ]
-        repo_root = str(conflict_context.get("repo_root") or "").strip()
-        runtime = ensure_json_object(metadata.get("runtime"))
-        attempt_base_sha = str(runtime.get("repository_base_sha") or "").strip()
-        if not attempt_base_sha:
-            # Without a valid attempt base the pure builder cannot validate; fall
-            # back to the current main tip so the payload still records where the
-            # attempt diverged (worst case: empty landed-since provenance).
-            attempt_base_sha = current_main_sha
-        if not (reviewed_head_sha and current_main_sha and conflicted_paths):
-            # Not a structured merge-gate conflict (some other publish failure);
-            # let the caller record the plain diagnosis without a handoff.
-            return None
-
-        fingerprint = self._conflict_integration_idempotency_fingerprint(
-            approved_task_id=approved_task_id,
-            accepted_evidence_id=str(evidence.id),
-            attempt_base_sha=attempt_base_sha,
-            current_main_sha=current_main_sha,
-            reviewed_head_sha=reviewed_head_sha,
-            conflicted_paths=conflicted_paths,
-        )
-
-        # Idempotency backstop: if an integration task already exists for this
-        # exact conflict identity, reuse it rather than spawning a duplicate.
-        existing = self._find_linked_conflict_integration_task(approved_task_id, fingerprint)
-        if existing is not None:
-            return existing
-
-        try:
-            payload = self._build_conflict_integration_payload(
-                approved_task_id=approved_task_id,
-                accepted_evidence_id=str(evidence.id),
-                reviewed_head_sha=reviewed_head_sha,
-                current_main_sha=current_main_sha,
-                attempt_base_sha=attempt_base_sha,
-                conflicted_paths=conflicted_paths,
-                repo_path=Path(repo_root) if repo_root else Path("."),
-                depends_on=[],
-            )
-        except (ValidationError, MACError):
-            # Payload could not be assembled (e.g. an unexpected non-git sha);
-            # do not spawn a malformed integration task — the caller still
-            # surfaces the diagnosis.
-            return None
-
-        # DISTINCT AGENT: the integration executor must not be the approved
-        # task's executor.  Model the integration task as a cooperative family
-        # member of the approved task so the durable lease-based separation
-        # (``_coordination_excluded_agent_ids``) excludes the executor, and add
-        # an explicit exclusion of the executor agent as a belt-and-suspenders.
-        excluded_agent_ids = sorted(
-            {
-                str(evidence.created_by).strip()
-                for _ in (0,)
-                if str(evidence.created_by or "").strip()
-            }
-            | {
-                str(task.owner_agent_id).strip()
-                for _ in (0,)
-                if str(task.owner_agent_id or "").strip()
-            }
-        )
-
-        integration_metadata: JsonDict = {
-            "schema": "mac.task.v1",
-            "conflict_integration": {
-                "schema": "mac.conflict_integration_link.v1",
-                "role": "integration_repair",
-                "approved_task_id": approved_task_id,
-                "accepted_evidence_id": str(evidence.id),
-                "review_id": review.id,
-                "publication_target": target,
-                "fingerprint": fingerprint,
-                "payload": payload,
-            },
-            "context_payload": payload,
-            "publication_target": target,
-            "relationships": {
-                "parent_task_id": approved_task_id,
-                "relationship": "integration_repair",
-                "blocks": [approved_task_id],
-            },
-            "coordination": {
-                "mode": "legacy_conflict_integration",
-                "integration_task_id": approved_task_id,
-                "require_distinct_agent": True,
-            },
-            "excluded_agent_ids": excluded_agent_ids,
-            "retry_excluded_agent_ids": excluded_agent_ids,
-        }
-        # Carry the approved task's project and repository/execution contract so
-        # the integration executor runs against the same repository.
-        for carry_key in ("origin", "execution_contract", "acc_metadata", "runtime"):
-            value = metadata.get(carry_key)
-            if value is not None:
-                integration_metadata[carry_key] = value
-
-        landed_task_ids = [
-            str(tid).strip()
-            for tid in ensure_json_object(payload.get("landed_since_base")).get("task_ids", [])
-            if str(tid).strip()
-        ]
-        try:
-            contention_metadata = {
-                "schema": "mac.merge_conflict_contention.v1",
-                "publication_target": target,
-                "current_main_sha": current_main_sha,
-                "reviewed_head_sha": reviewed_head_sha,
-                "conflicted_path_count": len(conflicted_paths),
-            }
-            common_contention = {
-                "task_id": approved_task_id,
-                "project": task.project,
-                "attempt": max(1, int(task.attempt_count or 0)),
-                "stage": "publication",
-                "reason": "base_moved_merge_conflict",
-                "peer_task_ids": landed_task_ids,
-                "wait_started_at": review.completed_at or review.created_at,
-                "outcome": "blocked",
-                "metadata": contention_metadata,
-            }
-            self.task_flow.record_contention(
-                resource_class="repository_ref",
-                resource_key="%s:%s:%s" % (str(task.project or ""), target, current_main_sha),
-                **common_contention,
-            )
-            self.task_flow.record_contention(
-                resource_class="repository_path_set",
-                resource_key="%s:%s"
-                % (
-                    str(task.project or ""),
-                    "\x00".join(sorted(conflicted_paths)),
-                ),
-                **common_contention,
-            )
-        except Exception:  # noqa: BLE001 - telemetry cannot block repair.
-            logging.getLogger("mac.task_flow").warning(
-                "failed to record merge contention for %s",
-                approved_task_id,
-                exc_info=True,
-            )
-
-        description = (
-            "Legacy single-task publication conflict repair.\n\n"
-            "The approved task %s (evidence %s, reviewed head %s) could not "
-            "fast-forward onto the current canonical main tip %s: the reviewed "
-            "branch conflicts on: %s.\n\n"
-            "As a DISTINCT agent (you must not be the approved task's executor): "
-            "rebase/resolve the reviewed change onto current main, rerun the FULL "
-            "projected-main contract (validate_projected_merge_contract via "
-            "scripts/run-contract-tests.sh on the projected merge), push a "
-            "replacement ref, and trigger publication retry for the approved "
-            "task. Current main is the canonical baseline; preserve it and record "
-            "any supersession decision explicitly (see "
-            "metadata.context_payload.supersession). Landed tasks touching the "
-            "conflicted paths since the attempt base: %s."
-            % (
-                approved_task_id,
-                str(evidence.id),
-                reviewed_head_sha[:12],
-                current_main_sha[:12],
-                ", ".join(conflicted_paths[:20]) or "(unknown)",
-                ", ".join(landed_task_ids) or "(none recorded)",
-            )
-        )
-
-        try:
-            integration_task = self.create_task(
-                "Integrate conflicting approved task %s onto current main" % approved_task_id,
-                description=description,
-                project=task.project,
-                priority=int(task.priority),
-                required_capabilities=list(task.required_capabilities),
-                # The approved task stays REVIEWING until this task resolves
-                # its publication conflict.  A hard dependency on it creates
-                # an unbreakable lifecycle deadlock.
-                dependencies=[],
-                metadata=integration_metadata,
-                actor=actor,
-                idempotency_key=fingerprint,
-                _idempotency_scope="conflict-integration:%s" % approved_task_id,
-            )
-        except (ValidationError, MACError):
-            # A concurrent duplicate conflict event may have won the create
-            # race; re-read the linked integration task so both events resolve
-            # to the SAME single task.
-            return self._find_linked_conflict_integration_task(approved_task_id, fingerprint)
-        self._reconcile_conflict_integration_family(
-            approved_task_id=approved_task_id,
-            keep_task_id=integration_task.id,
-        )
-        return integration_task.id
 
     def _validate_publication_evidence(self, task_id: str, evidence_id: Optional[str]) -> None:
         if evidence_id is None:
@@ -22980,7 +20098,6 @@ class ControlPlane:
         limit: int,
         actor: str,
         tenant_id: Optional[str],
-        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         """Advance one database-coordinated cursor page for autonomous callers."""
         claim = self.reconciliation.claim("default-review-sweep")
@@ -22998,7 +20115,6 @@ class ControlPlane:
                 actor=actor,
                 tenant_id=tenant_id,
                 cursor=claim.cursor,
-                allow_blocking_hub_verify=allow_blocking_hub_verify,
             )
         except Exception:
             self.reconciliation.abandon(claim)
@@ -23015,7 +20131,6 @@ class ControlPlane:
         actor: str = "default-review-workflow",
         tenant_id: Optional[str] = None,
         cursor: Optional[str] = None,
-        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         """Sweep one bounded, state-filtered page of reviewable tasks.
 
@@ -23058,18 +20173,7 @@ class ControlPlane:
             # must not abort the tick and starve dispatch. The self-driver never
             # crashes the hub; it records the failure and moves on.
             try:
-                if allow_blocking_hub_verify:
-                    result = self.advance_default_review_workflow(
-                        task.id,
-                        actor=actor,
-                    )
-                else:
-                    result = self.advance_default_review_workflow(
-                        task.id,
-                        actor=actor,
-                        allow_blocking_hub_verify=False,
-                    )
-                results.append(result)
+                results.append(self.advance_default_review_workflow(task.id, actor=actor))
             except Exception as exc:  # noqa: BLE001 - one row must not stop the sweep
                 try:
                     self._record_default_review_observation(
@@ -23128,6 +20232,267 @@ class ControlPlane:
             raise ValidationError("invalid review sweep cursor")
         return priority, created_at, task_id
 
+    def _block_default_review(
+        self,
+        task_id: str,
+        reason: str,
+        detail: JsonDict,
+        actor: str,
+    ) -> JsonDict:
+        """Park a review that cannot progress without an operator, with its reason."""
+        for pending in self.list_reviews(task_id):
+            if pending.status == ReviewStatus.PENDING.value:
+                self._retract_default_review(pending, actor, reason)
+        block_detail = {"reason": reason, "manual_repair_required": True, **detail}
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.blocked",
+            "error",
+            block_detail,
+            actor,
+        )
+        try:
+            self._transition_task_internal(
+                task_id,
+                TaskState.BLOCKED.value,
+                actor,
+                block_detail,
+            )
+        except TransitionError:
+            # Already terminal or otherwise moved: nothing more to do.
+            pass
+        return {"task_id": task_id, "status": "blocked", **block_detail}
+
+    def _review_verdict_targets(self, review: Review, executor_evidence_id: str) -> bool:
+        if not review.evidence_id:
+            return False
+        try:
+            verdict = self.get_evidence(review.evidence_id)
+        except NotFoundError:
+            return False
+        manifest = ensure_json_object(ensure_json_object(verdict.metadata).get("verification"))
+        return str(manifest.get("reviewed_evidence_id") or "").strip() == executor_evidence_id
+
+    def _review_from_worker_evidence(
+        self,
+        task: Task,
+        evidence: Evidence,
+        evidence_assessment: JsonDict,
+        actor: str,
+    ) -> Union[Review, JsonDict]:
+        """Turn validated worker evidence into the task's review verdict.
+
+        The worker's verifier ran the contract gate on a fresh clone of the
+        exact pushed commit, and ``_bound_review_evidence`` has already
+        enforced that only a real verifier pass counts. Nothing is re-run
+        here. The hub-reviewer signs a verdict over that evidence and the
+        review is decided from it.
+
+        Returns the decided review, or a status dict when the task waits or
+        has been blocked.
+        """
+        task_id = task.id
+        reviews = self.list_reviews(task_id)
+        for existing in reversed(reviews):
+            if existing.status == ReviewStatus.APPROVED.value and self._review_verdict_targets(
+                existing, evidence.id
+            ):
+                # A previous tick approved this evidence (from NEEDS_REVIEW, or
+                # a legacy/human review in REVIEWING); landing is what remains.
+                return existing
+        reviewer = self._ensure_hub_reviewer_agent(actor=actor)
+        if reviewer is None:
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.waiting",
+                "warning",
+                {"reason": "hub_reviewer_unavailable"},
+                actor,
+            )
+            exhausted = self._consume_landing_budget(
+                task_id,
+                "waiting_for_hub_reviewer",
+                counts_attempt=False,
+                evidence_id=evidence.id,
+                actor=actor,
+            )
+            if exhausted is not None:
+                return exhausted
+            return {"task_id": task_id, "status": "waiting_for_hub_reviewer"}
+        # Any other pending review (a legacy reviewer assignment, or a
+        # duplicate) is superseded: the worker evidence is the verdict. The
+        # hub-reviewer's own oldest pending review is reused, so a review that
+        # was waiting on the retired hub-side test run is decided here.
+        kept: Optional[Review] = None
+        superseded: List[str] = []
+        for pending in sorted(reviews, key=lambda item: (item.created_at, item.id)):
+            if pending.status != ReviewStatus.PENDING.value:
+                continue
+            if pending.reviewer_agent_id == reviewer.id and kept is None:
+                kept = pending
+                continue
+            self._retract_default_review(pending, actor, "superseded_by_worker_evidence")
+            superseded.append(pending.id)
+        if superseded:
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.superseded",
+                "info",
+                {"retracted_review_ids": superseded, "reason": "superseded_by_worker_evidence"},
+                actor,
+            )
+        try:
+            # The hub-reviewer decides in this same tick, so the task stays in
+            # NEEDS_REVIEW: REVIEWING is for a human-requested review only.
+            review = self.request_review(task_id, reviewer.id, actor=actor, enter_reviewing=False)
+        except AuthorizationError as exc:
+            return self._block_default_review(
+                task_id,
+                "hub_reviewer_ineligible",
+                {"error": str(exc)[:300], "executor_evidence_id": evidence.id},
+                actor,
+            )
+        verdict_evidence, _problems = self._find_review_verdict_evidence(
+            task_id,
+            review.reviewer_agent_id,
+            executor_evidence_id=evidence.id,
+            not_before=review.created_at,
+        )
+        if verdict_evidence is None:
+            recorded = self._record_worker_evidence_verdict(task, review, evidence, actor)
+            if recorded is None:
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.waiting",
+                    "warning",
+                    {"reason": "hub_reviewer_key_unavailable", "review_id": review.id},
+                    actor,
+                )
+                exhausted = self._consume_landing_budget(
+                    task_id,
+                    "waiting_for_hub_reviewer",
+                    counts_attempt=False,
+                    evidence_id=evidence.id,
+                    actor=actor,
+                )
+                if exhausted is not None:
+                    return exhausted
+                return {
+                    "task_id": task_id,
+                    "status": "waiting_for_hub_reviewer",
+                    "review_id": review.id,
+                }
+            verdict_evidence, problems = self._find_review_verdict_evidence(
+                task_id,
+                review.reviewer_agent_id,
+                executor_evidence_id=evidence.id,
+                verdict_evidence_id=recorded.id,
+                not_before=review.created_at,
+            )
+            if verdict_evidence is None:
+                # The task's review contract asks for more than the worker
+                # evidence carries (e.g. a cooperative integration attestation).
+                return self._block_default_review(
+                    task_id,
+                    "worker_evidence_verdict_invalid",
+                    {
+                        "review_id": review.id,
+                        "executor_evidence_id": evidence.id,
+                        "verdict_evidence_id": recorded.id,
+                        "problems": list(problems)[:10],
+                    },
+                    actor,
+                )
+        verdict_manifest = ensure_json_object(
+            ensure_json_object(verdict_evidence.metadata).get("verification")
+        )
+        coverage = ensure_json_object(verdict_manifest.get("requirement_coverage"))
+        coverage_failed = coverage.get("required") is True and coverage.get("status") == "fail"
+        if self._verdict_value(verdict_evidence) == "rejected":
+            decision = (
+                ReviewStatus.CHANGES_REQUESTED.value
+                if coverage_failed
+                else ReviewStatus.REJECTED.value
+            )
+            try:
+                review = self.submit_review(
+                    review.id,
+                    decision,
+                    review.reviewer_agent_id,
+                    reason=(
+                        "reviewer requested changes: task requirements not addressed"
+                        if coverage_failed
+                        else "reviewer rejected via signed verdict evidence"
+                    ),
+                    evidence_id=verdict_evidence.id,
+                )
+            except ValidationError:
+                # A concurrent advancer (the event-driven consumer and the
+                # periodic sweep both call this function) may have already
+                # submitted the same verdict between our stale read and this
+                # write. If the review already landed in the state we were
+                # about to write, this is a duplicate, not a failure.
+                review = self.reviews.get_review(review.id)
+                if review.status != decision:
+                    raise
+            self._record_default_review_observation(
+                task_id,
+                (
+                    "workflow.default_review.changes_requested"
+                    if coverage_failed
+                    else "workflow.default_review.rejected"
+                ),
+                "warning",
+                {
+                    "review_id": review.id,
+                    "reviewer_agent_id": review.reviewer_agent_id,
+                    "verdict_evidence_id": verdict_evidence.id,
+                },
+                actor,
+            )
+            if not coverage_failed:
+                # Distill the rejection into a durable, project-scoped lesson so
+                # the next execution run on this project recalls it. A coverage
+                # send-back names exactly which requirements remain, so the
+                # task-local feedback is the useful record; it is not a
+                # project-level failure lesson.
+                self._record_project_failure_lesson(
+                    task_id,
+                    evidence_type="review_verdict",
+                    error_signature="review_rejected",
+                    signals={"review_rejected": True},
+                    evidence_id=verdict_evidence.id,
+                )
+            return review
+        try:
+            review = self.submit_review(
+                review.id,
+                ReviewStatus.APPROVED.value,
+                review.reviewer_agent_id,
+                reason="approved from validated worker evidence",
+                evidence_id=verdict_evidence.id,
+            )
+        except ValidationError:
+            # See the rejected branch above: a concurrent advancer may have
+            # already submitted this same approval.
+            review = self.reviews.get_review(review.id)
+            if review.status != ReviewStatus.APPROVED.value:
+                raise
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.approved",
+            "info",
+            {
+                "review_id": review.id,
+                "reviewer_agent_id": review.reviewer_agent_id,
+                "verdict_evidence_id": verdict_evidence.id,
+                "executor_evidence_id": evidence.id,
+                "evidence_type": evidence_assessment.get("evidence_type"),
+            },
+            actor,
+        )
+        return review
+
     def _terminal_review_noop(self, task_id: str) -> Optional[JsonDict]:
         """Return a terminal-aware successful no-op result when ``task_id`` has
         already been completed and/or published, otherwise ``None``.
@@ -23163,8 +20528,6 @@ class ControlPlane:
         self,
         task_id: str,
         actor: str = "default-review-workflow",
-        *,
-        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         # Terminal-aware entry gate: if a concurrent consumer already
         # completed/published this task, no-op with the existing receipt.
@@ -23190,6 +20553,20 @@ class ControlPlane:
             except (TypeError, ValueError):
                 # Malformed controller metadata must not strand the task.
                 pass
+        landing = ensure_json_object(ensure_json_object(task.metadata).get("landing"))
+        landing_not_before = str(landing.get("not_before") or "").strip()
+        if landing_not_before and not landing.get("blocked_at"):
+            try:
+                if parse_time(utcnow()) < parse_time(landing_not_before):
+                    return {
+                        "task_id": task_id,
+                        "status": "landing_backoff",
+                        "not_before": landing_not_before,
+                        "attempts": landing.get("attempts"),
+                        "last_reason": landing.get("last_reason"),
+                    }
+            except (TypeError, ValueError):
+                pass
         if self._default_review_disabled(task):
             self._record_default_review_observation(
                 task_id,
@@ -23201,6 +20578,23 @@ class ControlPlane:
             return {"task_id": task_id, "status": "disabled_by_task_policy"}
 
         evidence, evidence_assessment = self._bound_review_evidence(task)
+        if (
+            evidence is None
+            and task.state == TaskState.REVIEWING.value
+            and evidence_assessment.get("reason") == "bound_evidence_not_verifiable"
+        ):
+            # The bound target is immutable, so this never clears by waiting.
+            # Tasks that were in review when hub-verify existed land here when
+            # their evidence deferred its tests to that second run.
+            return self._block_default_review(
+                task_id,
+                "review_evidence_not_verifiable",
+                {
+                    "executor_evidence_id": evidence_assessment.get("executor_evidence_id"),
+                    "problems": list(evidence_assessment.get("problems") or [])[:10],
+                },
+                actor,
+            )
         if evidence is None:
             self._record_default_review_observation(
                 task_id,
@@ -23215,603 +20609,10 @@ class ControlPlane:
                 **evidence_assessment,
             }
 
-        # If the task has more than one pending review, refuse to act —
-        # the ambiguous state has no clear winner and the autonomous
-        # swarm shouldn't silently pick one (mac-d9c).
-        pending_reviews = [
-            r for r in self.list_reviews(task_id) if r.status == ReviewStatus.PENDING.value
-        ]
-        pending_reviews = self._dedupe_same_reviewer_pending_reviews(
-            pending_reviews,
-            actor,
-        )
-        if len(pending_reviews) > 1:
-            self._record_default_review_observation(
-                task_id,
-                "workflow.default_review.ambiguous",
-                "warning",
-                {
-                    "reason": "multiple_pending_reviews",
-                    "pending_review_ids": [r.id for r in pending_reviews],
-                },
-                actor,
-            )
-            return {
-                "task_id": task_id,
-                "status": "ambiguous_pending_reviews",
-                "pending_review_ids": [r.id for r in pending_reviews],
-            }
-
-        review = self._default_review_for_task(task_id)
-        if (
-            review is not None
-            and review.status == ReviewStatus.APPROVED.value
-            and task.state == TaskState.NEEDS_REVIEW.value
-        ):
-            # A recovered submission needs its own verdict. Preserve the old
-            # approval as history and use normal selection for a fresh review.
-            review = None
-        if review is not None and review.status == ReviewStatus.PENDING.value:
-            reviewer_issue = self._default_reviewer_unavailable_reason_for_id(
-                task,
-                review.reviewer_agent_id,
-                executor_agent_id=evidence.created_by,
-                allow_conditional_independence_fallback=True,
-            )
-            if reviewer_issue is not None:
-                self._retract_default_review(
-                    review,
-                    actor,
-                    "reviewer_unavailable:%s" % reviewer_issue,
-                )
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.retracted",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "reason": reviewer_issue,
-                    },
-                    actor,
-                )
-                review = None
-        if review is None:
-            # mem-12: bound review retraction. Before creating a fresh
-            # review for the same executor evidence, count how many
-            # reviews for this task have already retracted *since the
-            # latest evidence was recorded*. If we've hit the cap, block
-            # the task for repair — looping forever is what bit task_d7c51a0b
-            # with 503 retracted reviews in the original incident.
-            try:
-                retraction_cap = int(os.environ.get("MAC_REVIEW_RETRACTION_CAP", "3"))
-            except ValueError:
-                retraction_cap = 3
-            # mem-12 window fix: scope the retraction count to "retractions
-            # since the work under review was submitted" — i.e. the executor
-            # evidence we are actually reviewing (already resolved above as
-            # ``evidence``). The original query took the latest evidence of
-            # ANY kind, so the reviewer's own ``review``-kind attempt evidence
-            # advanced the window every cycle and the cap never tripped — the
-            # bug behind the 2026-06 review runaway. Genuine rework still
-            # resets the window because new executor evidence becomes the
-            # reviewed ``evidence`` on the next advance.
-            threshold_at = evidence.created_at or ""
-            retracted_count_row = self.store.query_one(
-                """
-                SELECT COUNT(*) AS n FROM reviews
-                WHERE task_id = ? AND status = ?
-                  AND created_at >= ?
-                """,
-                (task_id, ReviewStatus.RETRACTED.value, threshold_at),
-            )
-            retracted_count = int(retracted_count_row["n"]) if retracted_count_row else 0
-            if retracted_count >= retraction_cap:
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.exhausted",
-                    "error",
-                    {
-                        "reason": "review_retraction_cap_hit",
-                        "cap": retraction_cap,
-                        "retracted_count": retracted_count,
-                        "executor_evidence_id": evidence.id,
-                    },
-                    actor,
-                )
-                self._record_history(
-                    task_id,
-                    "task.review_exhausted",
-                    actor,
-                    None,
-                    None,
-                    {
-                        "cap": retraction_cap,
-                        "retracted_count": retracted_count,
-                        "executor_evidence_id": evidence.id,
-                    },
-                )
-                try:
-                    self._transition_task_internal(
-                        task_id,
-                        TaskState.BLOCKED.value,
-                        actor,
-                        {
-                            "reason": "review_retraction_cap_hit",
-                            "manual_repair_required": True,
-                            "cap": retraction_cap,
-                            "retracted_count": retracted_count,
-                            "executor_evidence_id": evidence.id,
-                        },
-                    )
-                except TransitionError:
-                    # Already terminal or otherwise moved: nothing more to do.
-                    pass
-                return {
-                    "task_id": task_id,
-                    "status": "review_retraction_exhausted",
-                    "cap": retraction_cap,
-                    "retracted_count": retracted_count,
-                }
-            protocol_failed_reviewer_ids = {
-                str(row["reviewer_agent_id"])
-                for row in self.store.query_all(
-                    """
-                    SELECT reviewer_agent_id FROM reviews
-                    WHERE task_id = ? AND status = ?
-                      AND created_at >= ?
-                      AND reason LIKE 'reviewer_protocol_failure:%'
-                    """,
-                    (task_id, ReviewStatus.RETRACTED.value, threshold_at),
-                )
-            }
-            if not _semantic_reviewer_enabled():
-                self._ensure_hub_review_verifier_agent(task, actor=actor)
-            reviewer = self._select_default_reviewer(
-                task,
-                executor_agent_id=evidence.created_by,
-                excluded_agent_ids=protocol_failed_reviewer_ids,
-            )
-            if reviewer is None:
-                review_policy = self._default_review_policy(task)
-                target_reviewer_id = str(
-                    review_policy.get("target_agent_id")
-                    or review_policy.get("reviewer_agent_id")
-                    or ""
-                ).strip()
-                if target_reviewer_id in protocol_failed_reviewer_ids:
-                    detail = {
-                        "reason": "target_reviewer_protocol_failed",
-                        "manual_repair_required": True,
-                        "reviewer_agent_id": target_reviewer_id,
-                        "executor_evidence_id": evidence.id,
-                    }
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.target_reviewer_protocol_failed",
-                        "error",
-                        detail,
-                        actor,
-                    )
-                    try:
-                        self._transition_task_internal(
-                            task_id,
-                            TaskState.BLOCKED.value,
-                            actor,
-                            detail,
-                        )
-                    except TransitionError:
-                        pass
-                    return {
-                        "task_id": task_id,
-                        "status": "target_reviewer_protocol_failed",
-                        **detail,
-                    }
-                self._ensure_hub_review_verifier_agent(task, actor=actor)
-                reviewer = self._select_default_reviewer(
-                    task,
-                    executor_agent_id=evidence.created_by,
-                    excluded_agent_ids=protocol_failed_reviewer_ids,
-                )
-            if reviewer is None:
-                reviewer = self._select_default_reviewer(
-                    task,
-                    executor_agent_id=evidence.created_by,
-                    excluded_agent_ids=protocol_failed_reviewer_ids,
-                    allow_independence_fallback=True,
-                )
-            if reviewer is None:
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.waiting",
-                    "warning",
-                    {"reason": "no_eligible_reviewer"},
-                    actor,
-                )
-                # Signal that the swarm needs a reviewer-capable agent it
-                # doesn't have. The default-review workflow will pick the
-                # request up on a future tick once the provisioner has
-                # registered a matching agent.
-                self.provisioning.request_agent(
-                    reason="review.no_eligible_reviewer",
-                    capabilities=["review"],
-                    task_id=task_id,
-                    tenant_id=self._task_tenant_id(task),
-                    detail={
-                        "evidence_type": evidence_assessment.get("evidence_type"),
-                    },
-                )
-                return {"task_id": task_id, "status": "waiting_for_reviewer"}
-            fallback_reason = self._reviewer_independence_fallback_reason(
-                task,
-                reviewer,
-                executor_agent_id=evidence.created_by,
-                excluded_agent_ids=protocol_failed_reviewer_ids,
-            )
-            review = self.request_review(task_id, reviewer.id, actor=actor)
-            assignment_detail = {
-                "review_id": review.id,
-                "reviewer_agent_id": reviewer.id,
-                "reviewer_independence": ("fallback" if fallback_reason else "independent"),
-            }
-            if fallback_reason:
-                assignment_detail["reviewer_independence_reason"] = fallback_reason
-            self._record_default_review_observation(
-                task_id,
-                "workflow.default_review.assigned",
-                "info",
-                assignment_detail,
-                actor,
-            )
-        elif (
-            review.status == ReviewStatus.PENDING.value
-            and task.state == TaskState.NEEDS_REVIEW.value
-        ):
-            # A recovered attempt can retain its older pending review. Reuse
-            # the transactional request path so reviewer evidence is authorized
-            # before verification starts, without assigning a second review.
-            review = self.request_review(task_id, review.reviewer_agent_id, actor=actor)
-            task = self.get_task(task_id)
-
-        if review.status == ReviewStatus.PENDING.value:
-            # mac-jqb: the workflow no longer self-approves. It requires
-            # the reviewer agent to have produced a *review verdict*
-            # evidence row — a separate, signed manifest authored by
-            # the reviewer (not the executor) declaring approve/reject.
-            # Until that exists, the review stays pending. This makes
-            # the second-eyes role actually do work; today the workflow
-            # waits for the verdict, and a follow-up review-executor
-            # worker will produce it automatically.
-            verdict_evidence, verdict_problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=evidence.id,
-                not_before=review.created_at,
-            )
-            # Option C — hub-side verification. Instead of dispatching a nudge
-            # and waiting for a reviewer agent to independently clone + run the
-            # contract test (fragile: every reviewer node needs a working dev
-            # environment, in-sandbox and host, and the sandbox->host handoff
-            # to be perfect), the hub runs the contract test ONCE in a
-            # controlled OpenShell sandbox on the pushed branch and records the
-            # signed verdict on the selected reviewer's behalf. Second-eyes
-            # holds (the verdict is signed by a non-author agent); the fragile
-            # N-node verification collapses to one controlled environment.
-            if verdict_evidence is None and _hub_review_verify_enabled():
-                if allow_blocking_hub_verify:
-                    self._run_hub_review_verification(task, review, evidence, actor)
-                else:
-                    # The periodic tick owns lease expiry, dependency
-                    # unblocking, and dispatch. Never make that clock wait for
-                    # Git/OpenShell/tests; the dedicated event consumer retains
-                    # the same fail-closed verifier and per-review in-flight
-                    # guard.
-                    self._nudge_review_workflow(task.id)
-                verdict_evidence, verdict_problems = self._find_review_verdict_evidence(
-                    task_id,
-                    review.reviewer_agent_id,
-                    executor_evidence_id=evidence.id,
-                    not_before=review.created_at,
-                )
-                # Blocking guard (Option C): hub verify is the authoritative
-                # review gate.  If no verdict was produced in this tick (e.g.
-                # the sandbox is still running, the reviewer key is not yet
-                # available, or a concurrent in-flight guard fired), we MUST
-                # NOT fall through to the agent-nudge path — that would allow
-                # an unverified task to advance toward merge.  Return a
-                # waiting status so the sweep retries on the next tick.
-                #
-                # Experiments used to skip hub-verify so a semantic reviewer
-                # could be measured. That reviewer is gone; hub-verify is the
-                # only default gate unless the emergency opt-in is set.
-                if verdict_evidence is None:
-                    task_meta = ensure_json_object(task.metadata)
-                    experiment_assignment = ensure_json_object(task_meta.get("review_experiment"))
-                    is_experiment = (
-                        experiment_assignment.get("schema") == "mac.review_experiment.v1"
-                    )
-                    # Hold the merge gate only for evidence hub-verify can
-                    # actually gate: a pushed repo change with a contract test to
-                    # run. Evidence that is NOT a pushed repo change has nothing
-                    # to hub-verify; with the semantic reviewer removed that
-                    # path approves from the already-validated executor
-                    # evidence instead of nudging an LLM.
-                    hub_verifiable = self._hub_verify_repo_info(
-                        task, evidence
-                    ) is not None or self._read_only_report_needs_hub_verify(task, evidence)
-                    wait_for_hub = hub_verifiable and (
-                        self._read_only_report_needs_hub_verify(task, evidence)
-                        or not is_experiment
-                        or not _semantic_reviewer_enabled()
-                    )
-                    if wait_for_hub:
-                        self._record_default_review_observation(
-                            task_id,
-                            "workflow.default_review.waiting_for_hub_verify",
-                            "warning",
-                            {
-                                "review_id": review.id,
-                                "reviewer_agent_id": review.reviewer_agent_id,
-                                "executor_evidence_id": evidence.id,
-                                "reason": "hub_verify_in_progress_or_pending",
-                            },
-                            actor,
-                        )
-                        return {
-                            "task_id": task_id,
-                            "status": "waiting_for_hub_verify",
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                            "executor_evidence_id": evidence.id,
-                        }
-            if verdict_evidence is None and not _semantic_reviewer_enabled():
-                repo_info = self._hub_verify_repo_info(task, evidence)
-                evidence_type = (
-                    str(
-                        evidence_assessment.get("evidence_type")
-                        or ensure_json_object(
-                            ensure_json_object(evidence.metadata).get("verification")
-                        ).get("evidence_type")
-                        or ""
-                    )
-                    .strip()
-                    .lower()
-                )
-                # Repo changes are never rubber-stamped. Even when the
-                # verifier cannot resolve a clone target yet, stay pending
-                # rather than approving a pushed branch without a test run.
-                hub_verifiable = (
-                    repo_info is not None
-                    or evidence_type == "repo_change"
-                    or self._read_only_report_needs_hub_verify(task, evidence)
-                )
-                if hub_verifiable:
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.waiting_for_hub_verify",
-                        "warning",
-                        {
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                            "executor_evidence_id": evidence.id,
-                            "reason": "hub_verify_in_progress_or_pending",
-                        },
-                        actor,
-                    )
-                    return {
-                        "task_id": task_id,
-                        "status": "waiting_for_hub_verify",
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "executor_evidence_id": evidence.id,
-                    }
-                verdict_evidence = self._record_semantic_reviewer_removed_verdict(
-                    task, review, evidence, actor
-                )
-            if verdict_evidence is None and review.status == ReviewStatus.PENDING.value:
-                failed_attempt, failure_reason = self._review_attempt_protocol_failure(
-                    task_id,
-                    review,
-                    executor_evidence_id=evidence.id,
-                )
-                if failed_attempt is not None:
-                    retraction_reason = "reviewer_protocol_failure:%s" % failure_reason
-                    self._retract_default_review(review, actor, retraction_reason)
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.reviewer_protocol_failed",
-                        "warning",
-                        {
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                            "executor_evidence_id": evidence.id,
-                            "review_attempt_evidence_id": failed_attempt.id,
-                            "reason": failure_reason,
-                            "problems": verdict_problems,
-                        },
-                        actor,
-                    )
-                    return {
-                        "task_id": task_id,
-                        "status": "reviewer_protocol_failed",
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "review_attempt_evidence_id": failed_attempt.id,
-                        "reason": failure_reason,
-                    }
-                # Bound the verdict-wait loop. mem-12 only caps RETRACTION;
-                # a reviewer that keeps producing review-attempt evidence but
-                # never a valid signed verdict would otherwise spin here
-                # forever, re-nudging every tick (task_5de06b: 59 review-kind
-                # evidence rows, 0 verdict — the live half of the 2026-06
-                # runaway). Past a cap, block the task instead of re-nudging.
-                try:
-                    verdict_wait_cap = int(os.environ.get("MAC_REVIEW_VERDICT_WAIT_CAP", "6"))
-                except ValueError:
-                    verdict_wait_cap = 6
-                wait_count_row = self.store.query_one(
-                    """
-                    SELECT COUNT(*) AS n FROM evidence
-                    WHERE task_id = ? AND kind = 'review'
-                      AND created_at >= ?
-                    """,
-                    (task_id, review.created_at),
-                )
-                wait_count = int(wait_count_row["n"]) if wait_count_row else 0
-                if verdict_wait_cap > 0 and wait_count >= verdict_wait_cap:
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.exhausted",
-                        "error",
-                        {
-                            "reason": "review_verdict_wait_cap_hit",
-                            "cap": verdict_wait_cap,
-                            "wait_count": wait_count,
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                        },
-                        actor,
-                    )
-                    self._record_history(
-                        task_id,
-                        "task.review_exhausted",
-                        actor,
-                        None,
-                        None,
-                        {
-                            "reason": "review_verdict_wait_cap_hit",
-                            "cap": verdict_wait_cap,
-                            "wait_count": wait_count,
-                            "review_id": review.id,
-                        },
-                    )
-                    try:
-                        self._transition_task_internal(
-                            task_id,
-                            TaskState.BLOCKED.value,
-                            actor,
-                            {
-                                "reason": "review_verdict_wait_cap_hit",
-                                "manual_repair_required": True,
-                                "cap": verdict_wait_cap,
-                                "wait_count": wait_count,
-                                "review_id": review.id,
-                            },
-                        )
-                    except TransitionError:
-                        pass
-                    return {
-                        "task_id": task_id,
-                        "status": "review_verdict_wait_exhausted",
-                        "cap": verdict_wait_cap,
-                        "wait_count": wait_count,
-                        "review_id": review.id,
-                    }
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.waiting_for_verdict",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "evidence_id": evidence.id,
-                        "problems": verdict_problems,
-                    },
-                    actor,
-                )
-                nudge = self._ensure_review_verdict_nudge(task_id, review, evidence)
-                return {
-                    "task_id": task_id,
-                    "status": "waiting_for_reviewer_verdict",
-                    "review_id": review.id,
-                    "reviewer_agent_id": review.reviewer_agent_id,
-                    "executor_evidence_id": evidence.id,
-                    "problems": verdict_problems,
-                    "nudge_id": nudge.id if nudge is not None else None,
-                    "nudge_status": "queued" if nudge is not None else "already_queued",
-                }
-            if verdict_evidence is None or review.status != ReviewStatus.PENDING.value:
-                # Auto-approved (semantic reviewer removed, non-repo evidence)
-                # or a prior tick already recorded the verdict. Re-submitting
-                # a completed review raises "review is already completed"
-                # which, unguarded, aborts the entire hub tick every cycle
-                # and wedges the task in review forever. Skip re-submission
-                # and fall through to publication.
-                pass
-            elif self._verdict_value(verdict_evidence) == "rejected":
-                try:
-                    review = self.submit_review(
-                        review.id,
-                        ReviewStatus.REJECTED.value,
-                        review.reviewer_agent_id,
-                        reason="reviewer rejected via signed verdict evidence",
-                        evidence_id=verdict_evidence.id,
-                    )
-                except ValidationError:
-                    # A concurrent advancer (the event-driven consumer and the
-                    # periodic sweep both call this function) may have already
-                    # submitted the same verdict between our stale read and
-                    # this write. If the review already landed in the state we
-                    # were about to write, this is a duplicate, not a failure
-                    # -- fall through with the winner's row instead of
-                    # dropping the advancement on the floor.
-                    review = self.reviews.get_review(review.id)
-                    if review.status != ReviewStatus.REJECTED.value:
-                        raise
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.rejected",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "verdict_evidence_id": verdict_evidence.id,
-                    },
-                    actor,
-                )
-                # Distill the rejection into a durable, project-scoped lesson so
-                # the next execution run on this project recalls it (the review
-                # branch never wrote a deployment_learning record, so rejected
-                # work taught the fleet nothing — a real learn-from-bad gap).
-                self._record_project_failure_lesson(
-                    task_id,
-                    evidence_type="review_verdict",
-                    error_signature="review_rejected",
-                    signals={"review_rejected": True, "problems": list(verdict_problems or [])[:5]},
-                    evidence_id=verdict_evidence.id,
-                )
-            else:
-                try:
-                    review = self.submit_review(
-                        review.id,
-                        ReviewStatus.APPROVED.value,
-                        review.reviewer_agent_id,
-                        reason="reviewer approved via signed verdict evidence",
-                        evidence_id=verdict_evidence.id,
-                    )
-                except ValidationError:
-                    # See the rejected branch above: a concurrent advancer may
-                    # have already submitted this same approval.
-                    review = self.reviews.get_review(review.id)
-                    if review.status != ReviewStatus.APPROVED.value:
-                        raise
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.approved",
-                    "info",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "verdict_evidence_id": verdict_evidence.id,
-                        "executor_evidence_id": evidence.id,
-                        "evidence_type": evidence_assessment.get("evidence_type"),
-                    },
-                    actor,
-                )
-            # The publication evidence below stays as the executor's
-            # signed work — that's the artifact being published. The
-            # reviewer's verdict was just consumed onto the review row
-            # via submit_review(evidence_id=verdict_evidence.id) above.
+        reviewed = self._review_from_worker_evidence(task, evidence, evidence_assessment, actor)
+        if not isinstance(reviewed, Review):
+            return reviewed
+        review = reviewed
 
         if review.status != ReviewStatus.APPROVED.value:
             return {
@@ -23822,7 +20623,7 @@ class ControlPlane:
             }
 
         task = self.get_task(task_id)
-        if task.state != TaskState.REVIEWING.value:
+        if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
             return {
                 "task_id": task_id,
                 "status": "approved_not_publishable",
@@ -23841,6 +20642,15 @@ class ControlPlane:
                 },
                 actor,
             )
+            exhausted = self._consume_landing_budget(
+                task_id,
+                "waiting_for_publication_evidence",
+                counts_attempt=False,
+                evidence_id=evidence.id,
+                actor=actor,
+            )
+            if exhausted is not None:
+                return exhausted
             return {
                 "task_id": task_id,
                 "status": "waiting_for_publication_evidence",
@@ -23857,7 +20667,7 @@ class ControlPlane:
             else:
                 # No operator-configured publication destination; refuse to
                 # invent one. The review is approved, but the task stays in
-                # REVIEWING until an operator sets metadata.publication_target
+                # review until an operator sets metadata.publication_target
                 # (mac-w29).
                 #
                 # Stamp the reason onto the task as well as into the event
@@ -23880,6 +20690,15 @@ class ControlPlane:
                     {"review_id": review.id, "evidence_id": evidence.id},
                     actor,
                 )
+                exhausted = self._consume_landing_budget(
+                    task_id,
+                    "waiting_for_publication_target",
+                    counts_attempt=False,
+                    evidence_id=evidence.id,
+                    actor=actor,
+                )
+                if exhausted is not None:
+                    return exhausted
                 return {
                     "task_id": task_id,
                     "status": "waiting_for_publication_target",
@@ -23901,42 +20720,59 @@ class ControlPlane:
                 review.reviewer_agent_id,
                 evidence_id=evidence.id,
             )
-        except PublicationDeferredError as exc:
-            barrier = dict(exc.barrier)
-            self._record_publication_deferred_once(
-                task_id,
-                barrier=barrier,
-                target=target,
-                review_id=review.id,
-                evidence_id=evidence.id,
-                actor=actor,
-            )
+        except _LandingInProgressError:
+            # The sweep and the event-driven consumer both reached the land
+            # step; the other one holds it. Write nothing: any task write here
+            # would revoke that land step's authority fence.
             return {
                 "task_id": task_id,
-                "status": "publication_deferred",
+                "status": "landing_in_progress",
                 "review_id": review.id,
-                "target": target,
-                "reason": str(exc),
-                "barrier": barrier,
             }
+        except _LandingRebaseRequiredError as exc:
+            terminal = self._terminal_review_noop(task_id)
+            if terminal is not None:
+                return terminal
+            return self._send_back_for_rebase(
+                task_id,
+                exc,
+                review_id=review.id,
+                evidence=evidence,
+                target=target,
+                actor=actor,
+            )
         except (ValidationError, MACError) as exc:
             # A concurrent consumer may have completed + published this task
             # after the pre-publish re-read (or its publish_task landed the
-            # WHERE state=REVIEWING UPDATE first, so ours raised
+            # guarded state UPDATE first, so ours raised
             # TransitionError('task state changed during publish; retry') /
             # ValidationError). Re-read terminal state BEFORE recording any
             # failure telemetry: if the task is now completed/published, the
             # exception was caused by that concurrent completion, so treat it
             # as a successful no-op and never emit a spurious publish_failed
-            # diagnosis. Only genuine, still-in-REVIEWING failures (e.g. a real
+            # diagnosis. Only genuine, still-in-review failures (e.g. a real
             # merge conflict) fall through to the diagnosis below.
             terminal = self._terminal_review_noop(task_id)
             if terminal is not None:
                 return terminal
+            if isinstance(exc, _LandingChecksFailedError):
+                # Red CI is the worker's to fix: send the task back with the
+                # failed checks and their logs while the budget lasts. None
+                # means it cannot go back, and it blocks below as before.
+                sent_back = self._send_back_for_check_fix(
+                    task_id,
+                    exc,
+                    review_id=review.id,
+                    evidence=evidence,
+                    target=target,
+                    actor=actor,
+                )
+                if sent_back is not None:
+                    return sent_back
             # Auto-publish failed AFTER a genuine approval — most often the
             # reviewed branch no longer merges cleanly into main (a stale branch
             # base / merge conflict). Previously this exception propagated and was
-            # swallowed, leaving the task silently parked in REVIEWING with no
+            # swallowed, leaving the task silently parked in review with no
             # explanation (approved but never published). Surface it instead: an
             # observation for telemetry AND a glanceable Problem/Remediation
             # diagnosis on the task (via `mac task show`/`summary`), so the
@@ -23966,37 +20802,24 @@ class ControlPlane:
                     actor=actor,
                     _preserve_control_plane_publication_metadata=True,
                 )
-            # Legacy single-task publication conflict handoff: when the failure
-            # is the merge-gate reporting that the approved branch no longer
-            # integrates onto the CURRENT canonical main tip, do not just park
-            # the task in REVIEWING with a diagnosis. Create exactly ONE
-            # idempotent, context-rich integration repair task that a DISTINCT
-            # agent picks up to rebase/resolve, rerun the FULL projected-main
-            # contract, push a replacement ref, and trigger publication retry.
-            # Work-package / plan-DAG tasks are guarded out inside the helper and
-            # keep their managed integration path unchanged. The diagnosis /
-            # observation telemetry below is preserved regardless so operators
-            # still see why publication paused.
-            conflict_context = getattr(exc, "conflict_integration_context", None)
-            integration_task_id: Optional[str] = None
-            if isinstance(conflict_context, Mapping):
-                try:
-                    integration_task_id = self._handoff_conflict_to_integration(
-                        task=task,
-                        review=review,
-                        evidence=evidence,
-                        target=target,
-                        conflict_context=conflict_context,
-                        actor=actor,
-                    )
-                except Exception:  # noqa: BLE001 - handoff is best-effort; the
-                    # diagnosis telemetry below still surfaces the failure.
-                    logging.getLogger("mac.conflict_integration").warning(
-                        "conflict-to-integration handoff failed for %s",
-                        task_id,
-                        exc_info=True,
-                    )
-                    integration_task_id = None
+            # Every publication failure charges the single landing budget. A
+            # failure retrying cannot fix blocks now; transient ones back off
+            # and block once attempts or the deadline run out.
+            failure_mode = _landing_failure_mode(exc)
+            landing_blocked = self._consume_landing_budget(
+                task_id,
+                str(getattr(exc, "publication_failure_kind", "") or "publish_failed"),
+                retryable=failure_mode != "permanent",
+                counts_attempt=failure_mode != "wait",
+                error=detail,
+                evidence_id=evidence.id,
+                retry_after_seconds=(
+                    retry_after_seconds
+                    if retry_after_seconds > 0
+                    else (LANDING_BACKOFF_MIN_SECONDS if failure_mode == "wait" else 0)
+                ),
+                actor=actor,
+            )
             self._record_default_review_observation(
                 task_id,
                 "workflow.default_review.publish_failed",
@@ -24006,67 +20829,47 @@ class ControlPlane:
                     "evidence_id": evidence.id,
                     "target": target,
                     "error": detail[:500],
-                    "integration_task_id": integration_task_id,
                 },
                 actor,
             )
-            if integration_task_id is not None:
-                # Distinct, glanceable telemetry that a repair task was linked so
-                # operators can follow the handoff, without losing the diagnosis.
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.conflict_integration_created",
-                    "info",
-                    {
-                        "review_id": review.id,
-                        "evidence_id": evidence.id,
-                        "target": target,
-                        "integration_task_id": integration_task_id,
-                    },
-                    actor,
-                )
             try:
-                if integration_task_id is not None:
+                if landing_blocked is not None:
                     self.append_task_activity(
                         task_id,
                         "diagnosis",
                         actor,
-                        "Problem: Auto-publish to %s failed after approval — the "
-                        "reviewed branch no longer integrates onto the current "
-                        "canonical main tip (a merge conflict against the moving "
-                        "trunk). The task is approved but stays in REVIEWING, "
-                        "unpublished.\n"
-                        "Remediation: Linked integration repair task %s was "
-                        "created for a DISTINCT agent to rebase/resolve onto "
-                        "current main, rerun the full projected-main contract, "
-                        "push a replacement ref, and trigger publication retry. "
-                        "Current main remains the canonical baseline. Error: %s"
-                        % (target, integration_task_id, detail[:300]),
+                        "Problem: Auto-publish to %s failed after approval and the "
+                        "task cannot land (%s); it is now BLOCKED instead of "
+                        "retrying.\n"
+                        "Remediation: Fix the cause below, then re-drive the task; "
+                        "it gets a fresh landing budget. Error: %s"
+                        % (target, landing_blocked.get("status"), detail[:300]),
                     )
                 else:
                     self.append_task_activity(
                         task_id,
                         "diagnosis",
                         actor,
-                        "Problem: Auto-publish to %s failed after approval — the "
-                        "reviewed branch could not be merged into main (usually a "
-                        "merge conflict from a stale branch base). The task is "
-                        "approved but stays in REVIEWING, unpublished.\n"
-                        "Remediation: Re-drive the task from current main so its "
-                        "branch merges cleanly and let review->publish re-run, or an "
-                        "operator resolves the conflict and re-publishes. Error: %s"
-                        % (target, detail[:300]),
+                        "Problem: Auto-publish to %s did not land after approval. "
+                        "The task is approved and stays in review; the land loop "
+                        "retries it under its landing budget.\n"
+                        "Remediation: None needed while the budget lasts; if the "
+                        "error below cannot clear on its own, fix it and the next "
+                        "land step picks the task up. Error: %s" % (target, detail[:300]),
                     )
             except Exception:
                 pass
-            return {
+            failed: JsonDict = {
                 "task_id": task_id,
                 "status": "publish_failed",
                 "review_id": review.id,
                 "target": target,
                 "error": detail,
-                "integration_task_id": integration_task_id,
             }
+            if landing_blocked is not None:
+                failed["blocked_reason"] = landing_blocked.get("status")
+                failed["state"] = self.get_task(task_id).state
+            return failed
         self._record_default_review_observation(
             task_id,
             "workflow.default_review.published",
@@ -24090,6 +20893,537 @@ class ControlPlane:
             "review_id": review.id,
             "publication_id": publication.id,
         }
+
+    def _consume_landing_budget(
+        self,
+        task_id: str,
+        reason: str,
+        *,
+        retryable: bool = True,
+        counts_attempt: bool = True,
+        error: str = "",
+        evidence_id: Optional[str] = None,
+        retry_after_seconds: int = 0,
+        actor: str = "default-review-workflow",
+        blocked_as: str = "",
+    ) -> Optional[JsonDict]:
+        """Charge one landing wait or attempt against the task's single budget.
+
+        Every wait between review and landing calls this. ``counts_attempt``
+        charges one of ``MAC_LANDING_MAX_ATTEMPTS`` and backs off 5 -> 60
+        minutes; a pure wait (``counts_attempt=False``) charges only the
+        ``MAC_LANDING_DEADLINE_SECONDS`` deadline, measured from the first
+        landing attempt recorded in ``metadata.landing`` -- never from
+        ``updated_at``, which every retry refreshes. ``retryable=False`` blocks
+        at once. Returns ``None`` while budget remains, else the result of
+        moving the task to BLOCKED. New executor evidence (rework) or a return
+        from BLOCKED starts a fresh budget, except that ``rebases`` and
+        ``check_fixes`` (the land loop's send-backs, see
+        ``_send_back_for_rebase`` and ``_send_back_for_check_fix``) survive new
+        evidence: the re-run's evidence is exactly what a send-back asks for,
+        so it must not reset the cap. ``blocked_as`` names a
+        non-retryable block more precisely than ``landing_non_retryable``.
+        """
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        landing = ensure_json_object(metadata.get("landing"))
+        if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
+            # Blocked earlier in this same advance (e.g. by the verifier).
+            if task.state == TaskState.BLOCKED.value and landing.get("blocked_at"):
+                return {
+                    "task_id": task_id,
+                    "status": str(landing.get("outcome") or "landing_budget_exhausted"),
+                    "state": task.state,
+                }
+            return None
+        if landing.get("blocked_at"):
+            landing = {}
+        elif evidence_id and landing.get("evidence_id") not in (None, "", evidence_id):
+            landing = {key: landing[key] for key in _LANDING_SEND_BACK_COUNTERS if landing.get(key)}
+        now = utcnow()
+        first_attempt_at = str(landing.get("first_attempt_at") or "") or now
+        try:
+            elapsed = (parse_time(now) - parse_time(first_attempt_at)).total_seconds()
+        except (TypeError, ValueError):
+            first_attempt_at, elapsed = now, 0.0
+        attempts = _nonnegative_int(landing.get("attempts")) + (1 if counts_attempt else 0)
+        max_attempts = _int_env("MAC_LANDING_MAX_ATTEMPTS", DEFAULT_LANDING_MAX_ATTEMPTS)
+        deadline_seconds = _int_env(
+            "MAC_LANDING_DEADLINE_SECONDS", DEFAULT_LANDING_DEADLINE_SECONDS
+        )
+        block_reason: Optional[str] = None
+        exhausted_by: Optional[str] = None
+        if not retryable:
+            block_reason = str(blocked_as or "landing_non_retryable")
+        elif counts_attempt and attempts >= max_attempts:
+            block_reason, exhausted_by = "landing_budget_exhausted", "attempts"
+        elif elapsed >= deadline_seconds:
+            block_reason, exhausted_by = "landing_budget_exhausted", "deadline"
+            if reason == ACCEPTANCE_CHECKS_NOT_REPORTED:
+                # Name it: the deadline ran out because a check the task
+                # requires never reported, not because the forge was slow.
+                block_reason = "acceptance_checks_never_reported"
+        record: JsonDict = {
+            "schema": LANDING_BUDGET_SCHEMA,
+            "attempts": attempts,
+            "first_attempt_at": first_attempt_at,
+            "last_reason": str(landing.get("last_reason") or reason),
+            "evidence_id": str(evidence_id or landing.get("evidence_id") or ""),
+        }
+        if landing.get("last_error"):
+            record["last_error"] = landing["last_error"]
+        for counter in _LANDING_SEND_BACK_COUNTERS:
+            if landing.get(counter):
+                record[counter] = _nonnegative_int(landing.get(counter))
+        if counts_attempt or not retryable:
+            record["last_reason"] = reason
+            record["last_attempt_at"] = now
+            if error:
+                record["last_error"] = str(error)[:500]
+        if block_reason is None:
+            delay = int(retry_after_seconds or 0)
+            if counts_attempt:
+                delay = max(
+                    delay,
+                    min(
+                        LANDING_BACKOFF_MAX_SECONDS,
+                        LANDING_BACKOFF_MIN_SECONDS * (2 ** min(attempts - 1, 16)),
+                    ),
+                )
+            if delay > 0:
+                record["not_before"] = (parse_time(now) + timedelta(seconds=delay)).isoformat(
+                    timespec="microseconds"
+                )
+            # A pure wait re-checks every tick; persist only its first sighting
+            # so the wait itself does not churn metadata and updated_at.
+            if counts_attempt or delay > 0 or not landing.get("first_attempt_at"):
+                metadata["landing"] = record
+                self._persist_task_metadata_narrow(
+                    task_id, metadata, actor=actor, detail={"landing": reason}
+                )
+            return None
+        record["blocked_at"] = now
+        record["outcome"] = block_reason
+        if block_reason == "acceptance_checks_never_reported":
+            record["last_reason"] = reason
+            record["last_error"] = str(error or reason)[:500]
+        metadata["landing"] = record
+        self._persist_task_metadata_narrow(
+            task_id, metadata, actor=actor, detail={"landing": block_reason}
+        )
+        detail: JsonDict = {
+            "reason": block_reason,
+            "manual_repair_required": True,
+            "waiting_on": reason,
+            "last_reason": record["last_reason"],
+            "error": str(record.get("last_error") or error or reason)[:500],
+            "attempts": attempts,
+            "max_attempts": max_attempts,
+            "first_attempt_at": first_attempt_at,
+            "deadline_seconds": deadline_seconds,
+        }
+        if exhausted_by:
+            detail["exhausted_by"] = exhausted_by
+        self._record_default_review_observation(
+            task_id, "workflow.default_review.exhausted", "error", detail, actor
+        )
+        self._record_history(task_id, "task.landing_exhausted", actor, None, None, detail)
+        try:
+            self._transition_task_internal(task_id, TaskState.BLOCKED.value, actor, detail)
+        except TransitionError:
+            # Already terminal or otherwise moved: nothing more to do.
+            pass
+        return {"task_id": task_id, "status": block_reason, **detail}
+
+    def _send_back_for_rebase(
+        self,
+        task_id: str,
+        exc: "_LandingRebaseRequiredError",
+        *,
+        review_id: str,
+        evidence: Evidence,
+        target: str,
+        actor: str,
+    ) -> JsonDict:
+        """Send an approved task back to its worker to rebase and retest.
+
+        The land step found that the worker's verifier result no longer covers
+        what would land: the canonical tip moved past the base it verified, or
+        the head conflicts with the tip. The hub runs no tests, so the SAME
+        task goes back to OPEN with a ``rebase_onto_tip`` directive in its
+        metadata. The next attempt's finalizer syncs onto the current tip
+        before its verifier runs (``sync_worktree_with_canonical``), so the
+        new evidence is verified against the tip it will land on.
+
+        Capped at ``LANDING_MAX_REBASES`` send-backs per landing budget
+        (``metadata.landing.rebases``); past the cap the task blocks.
+        """
+
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        landing = ensure_json_object(metadata.get("landing"))
+        if landing.get("blocked_at"):
+            landing = {}
+        rebases = _nonnegative_int(landing.get("rebases"))
+        reason = "conflict" if exc.conflict else "canonical_moved"
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.rebase_required",
+            "warning",
+            {
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "target": target,
+                "reason": reason,
+                "canonical_tip": exc.canonical_tip,
+                "verified_base": exc.verified_base,
+                "conflicted_files": exc.conflicted_files[:20],
+                "rebases": rebases,
+                "max_rebases": LANDING_MAX_REBASES,
+            },
+            actor,
+        )
+        if rebases >= LANDING_MAX_REBASES:
+            blocked = self._consume_landing_budget(
+                task_id,
+                "rebase_required",
+                retryable=False,
+                error=str(exc),
+                evidence_id=evidence.id,
+                actor=actor,
+                blocked_as="landing_rebase_cap_exhausted",
+            )
+            return {
+                "task_id": task_id,
+                "status": "publish_failed",
+                "review_id": review_id,
+                "target": target,
+                "error": str(exc),
+                "blocked_reason": (blocked or {}).get("status", "landing_rebase_cap_exhausted"),
+                "state": self.get_task(task_id).state,
+            }
+        now = utcnow()
+        landing.update(
+            {
+                "schema": LANDING_BUDGET_SCHEMA,
+                "rebases": rebases + 1,
+                "last_reason": "rebase_required",
+                "last_attempt_at": now,
+                "last_error": str(exc)[:500],
+            }
+        )
+        landing.setdefault("first_attempt_at", now)
+        landing.pop("not_before", None)
+        metadata["landing"] = landing
+        repo = ensure_json_object(
+            ensure_json_object(ensure_json_object(evidence.metadata).get("verification")).get(
+                "repo"
+            )
+        )
+        metadata["rebase_onto_tip"] = {
+            "schema": "mac.rebase_onto_tip.v1",
+            "reason": reason,
+            "canonical_tip": exc.canonical_tip,
+            "verified_base": exc.verified_base,
+            "reviewed_head_sha": exc.head_sha,
+            "previous_remote_ref": str(repo.get("remote_ref") or ""),
+            "conflicted_files": exc.conflicted_files[:50],
+            "rebase": rebases + 1,
+            "max_rebases": LANDING_MAX_REBASES,
+            "evidence_id": evidence.id,
+            "requested_at": now,
+            "instruction": (
+                "Your previous attempt was approved but no longer lands as verified: "
+                + (
+                    "it conflicts with the canonical tip. "
+                    if exc.conflict
+                    else "the canonical tip moved after your verifier ran. "
+                )
+                + "Re-apply the change from previous_remote_ref (reviewed_head_sha) onto "
+                "the current canonical branch, resolve any conflicts, and finish; the "
+                "finalizer rebases onto the tip and re-runs the verifier. Do not "
+                "redo the task from scratch."
+            ),
+        }
+        self._persist_task_metadata_narrow(
+            task_id, metadata, actor=actor, detail={"landing": "rebase_required"}
+        )
+        if task.attempt_count >= task.max_attempts:
+            # A send-back is not a failed attempt; without room for one more
+            # claim the dispatcher would exhaust the task instead of rebasing.
+            self.update_task(task_id, max_attempts=task.attempt_count + 1, actor=actor)
+        self._transition_task_internal(
+            task_id,
+            TaskState.OPEN.value,
+            actor,
+            {
+                "reason": "rebase_onto_tip",
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "rebase_reason": reason,
+                "canonical_tip": exc.canonical_tip,
+                "verified_base": exc.verified_base,
+                "rebase": rebases + 1,
+                "max_rebases": LANDING_MAX_REBASES,
+            },
+        )
+        self._close_superseded_pull_request(task_id, exc, actor=actor)
+        try:
+            self.append_task_activity(
+                task_id,
+                "diagnosis",
+                actor,
+                "Problem: The approved change no longer lands as verified (%s).\n"
+                "Remediation: Sent back to the worker to rebase onto %s and re-run "
+                "its verifier (send-back %d of %d)."
+                % (
+                    "conflict with the canonical tip" if exc.conflict else "canonical tip moved",
+                    exc.canonical_tip[:12] or "the canonical tip",
+                    rebases + 1,
+                    LANDING_MAX_REBASES,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - narrative is best-effort
+            pass
+        return {
+            "task_id": task_id,
+            "status": "rebase_required",
+            "review_id": review_id,
+            "target": target,
+            "reason": reason,
+            "canonical_tip": exc.canonical_tip,
+            "rebases": rebases + 1,
+            "state": TaskState.OPEN.value,
+        }
+
+    def _send_back_for_check_fix(
+        self,
+        task_id: str,
+        exc: "_LandingChecksFailedError",
+        *,
+        review_id: str,
+        evidence: Evidence,
+        target: str,
+        actor: str,
+    ) -> Optional[JsonDict]:
+        """Send an approved task back to its worker to fix its failed checks.
+
+        The pull request's required checks -- the repository's one test gate --
+        failed for the head that would land. Re-landing that head cannot help
+        and the hub runs no tests, so the fix is the worker's: the SAME task
+        goes back to OPEN with a ``fix_failed_checks`` directive naming each
+        failed check with its conclusion, details URL and scrubbed log tail,
+        which the next attempt's prompt shows. That attempt's reviewed head is
+        then pushed onto the same pull request (``_check_fix_pull_request``),
+        so the checks re-run there and landing resumes.
+
+        Capped at ``LANDING_MAX_CHECK_FIXES`` per landing budget
+        (``metadata.landing.check_fixes``); past the cap the task blocks with
+        the last failure summary. Returns ``None`` when the task cannot be sent
+        back (no pull request to fix, or no worker evidence to build on): the
+        caller then blocks it as a plain ``pull_request_checks_failed``.
+        """
+
+        repo = ensure_json_object(
+            ensure_json_object(ensure_json_object(evidence.metadata).get("verification")).get(
+                "repo"
+            )
+        )
+        previous_head = exc.head_sha or str(repo.get("head_sha") or "")
+        if not (exc.pull_request_number and exc.head_branch and previous_head):
+            return None
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        landing = ensure_json_object(metadata.get("landing"))
+        if landing.get("blocked_at"):
+            landing = {}
+        check_fixes = _nonnegative_int(landing.get("check_fixes"))
+        summary = exc.summary() or str(exc)
+        failed_names = [str(item.get("name") or "") for item in exc.failed_checks]
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.required_checks_failed",
+            "warning",
+            {
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "target": target,
+                "pull_request_number": exc.pull_request_number,
+                "head_sha": exc.landing_head,
+                "failed_checks": failed_names[:20],
+                "check_fixes": check_fixes,
+                "max_check_fixes": LANDING_MAX_CHECK_FIXES,
+            },
+            actor,
+        )
+        if check_fixes >= LANDING_MAX_CHECK_FIXES:
+            error = "%s. Last failure: %s" % (str(exc), summary)
+            blocked = self._consume_landing_budget(
+                task_id,
+                "pull_request_checks_failed",
+                retryable=False,
+                error=error,
+                evidence_id=evidence.id,
+                actor=actor,
+                blocked_as="landing_check_fix_cap_exhausted",
+            )
+            try:
+                self.append_task_activity(
+                    task_id,
+                    "diagnosis",
+                    actor,
+                    "Problem: The pull request's required checks still fail after %d "
+                    "fix attempt(s): %s\n"
+                    "Remediation: Fix the failing checks by hand, then re-drive the "
+                    "task; it gets a fresh landing budget." % (check_fixes, summary[:400]),
+                )
+            except Exception:  # noqa: BLE001 - narrative is best-effort
+                pass
+            return {
+                "task_id": task_id,
+                "status": "publish_failed",
+                "review_id": review_id,
+                "target": target,
+                "error": error,
+                "blocked_reason": (blocked or {}).get("status", "landing_check_fix_cap_exhausted"),
+                "state": self.get_task(task_id).state,
+            }
+        now = utcnow()
+        landing.update(
+            {
+                "schema": LANDING_BUDGET_SCHEMA,
+                "check_fixes": check_fixes + 1,
+                "last_reason": "required_checks_failed",
+                "last_attempt_at": now,
+                "last_error": ("%s. %s" % (str(exc), summary))[:500],
+            }
+        )
+        landing.setdefault("first_attempt_at", now)
+        landing.pop("not_before", None)
+        metadata["landing"] = landing
+        metadata["fix_failed_checks"] = {
+            "schema": "mac.fix_failed_checks.v1",
+            "reason": "required_checks_failed",
+            "pull_request_number": exc.pull_request_number,
+            "pull_request_url": exc.pull_request_url,
+            "head_branch": exc.head_branch,
+            "reviewed_head_sha": previous_head,
+            "checked_head_sha": exc.landing_head,
+            "previous_remote_ref": str(repo.get("remote_ref") or ""),
+            "failed_checks": exc.failed_checks,
+            "check_fix": check_fixes + 1,
+            "max_check_fixes": LANDING_MAX_CHECK_FIXES,
+            "evidence_id": evidence.id,
+            "requested_at": now,
+            "instruction": (
+                "Your previous attempt was approved, but the pull request's required "
+                "checks failed. Start from previous_remote_ref (reviewed_head_sha), "
+                "fix what the failed checks below report, and finish; the hub pushes "
+                "your new head to the same pull request and lands it once its checks "
+                "pass. Do not redo the task from scratch."
+            ),
+        }
+        self._persist_task_metadata_narrow(
+            task_id, metadata, actor=actor, detail={"landing": "required_checks_failed"}
+        )
+        if task.attempt_count >= task.max_attempts:
+            # A send-back is not a failed attempt; without room for one more
+            # claim the dispatcher would exhaust the task instead of fixing it.
+            self.update_task(task_id, max_attempts=task.attempt_count + 1, actor=actor)
+        self._transition_task_internal(
+            task_id,
+            TaskState.OPEN.value,
+            actor,
+            {
+                "reason": "required_checks_failed",
+                "review_id": review_id,
+                "evidence_id": evidence.id,
+                "pull_request_number": exc.pull_request_number,
+                "head_sha": exc.landing_head,
+                "failed_checks": failed_names[:20],
+                "check_fix": check_fixes + 1,
+                "max_check_fixes": LANDING_MAX_CHECK_FIXES,
+            },
+        )
+        # A project lesson names the checks only: the logs travel with the task.
+        self._record_review_outcome_lesson(
+            task_id,
+            outcome="required_checks_failed",
+            detail="required checks failed on the pull request: %s" % summary,
+        )
+        try:
+            self.append_task_activity(
+                task_id,
+                "diagnosis",
+                actor,
+                "Problem: The pull request's required checks failed: %s\n"
+                "Remediation: Sent back to the worker to fix them on the same pull "
+                "request (send-back %d of %d)."
+                % (summary[:400], check_fixes + 1, LANDING_MAX_CHECK_FIXES),
+            )
+        except Exception:  # noqa: BLE001 - narrative is best-effort
+            pass
+        return {
+            "task_id": task_id,
+            "status": "required_checks_failed",
+            "review_id": review_id,
+            "target": target,
+            "pull_request_number": exc.pull_request_number,
+            "failed_checks": failed_names,
+            "check_fixes": check_fixes + 1,
+            "state": TaskState.OPEN.value,
+        }
+
+    def _close_superseded_pull_request(
+        self,
+        task_id: str,
+        exc: "_LandingRebaseRequiredError",
+        *,
+        actor: str,
+    ) -> None:
+        """Close the sent-back attempt's pull request; never block the send-back.
+
+        The re-run pushes a rebased head and opens its own pull request, so the
+        previous attempt's would otherwise stay open, stale and possibly
+        conflicting. A forge that refuses or cannot be reached is logged.
+        """
+
+        number = exc.pull_request_number
+        api_url = exc.forge_api_url
+        if not number or not api_url:
+            return
+        from . import gitops as _gitops
+
+        detail: JsonDict = {"pull_request_number": number, "canonical_tip": exc.canonical_tip}
+        try:
+            _gitops.close_pull_request(
+                api_url,
+                number,
+                comment="Superseded: task %s was re-run onto the new tip %s."
+                % (task_id, exc.canonical_tip[:12] or "of the default branch"),
+            )
+        except Exception as close_exc:  # noqa: BLE001 - must not block the send-back
+            logging.getLogger(__name__).warning(
+                "could not close superseded pull request #%s for %s: %s",
+                number,
+                task_id,
+                close_exc,
+            )
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.superseded_pr_close_failed",
+                "warning",
+                {**detail, "error": str(close_exc)[:300]},
+                actor,
+            )
+            return
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.superseded_pr_closed",
+            "info",
+            detail,
+            actor,
+        )
 
     def _record_review_outcome_lesson(self, task_id: str, *, outcome: str, detail: str) -> None:
         """Distill a review-stage outcome into a ``deployment_learning`` memory
@@ -24158,80 +21492,61 @@ class ControlPlane:
 
     # Artifact registry
 
-    # Artifacts + environments + deployments + runtimes: thin facade over
-    # ``self.deploy``. New code should call ``cp.deploy.<method>`` directly.
+    # Artifacts: thin facade over ``self.artifacts``.
 
     def register_artifact(self, *args: Any, **kwargs: Any) -> Artifact:
-        return self.deploy.register_artifact(*args, **kwargs)
+        return self.artifacts.register_artifact(*args, **kwargs)
 
     def get_artifact(self, artifact_id_or_digest: str) -> Artifact:
-        return self.deploy.get_artifact(artifact_id_or_digest)
+        return self.artifacts.get_artifact(artifact_id_or_digest)
 
     def list_artifacts(self, *args: Any, **kwargs: Any) -> List[Artifact]:
-        return self.deploy.list_artifacts(*args, **kwargs)
+        return self.artifacts.list_artifacts(*args, **kwargs)
 
     def delete_artifact(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self.deploy.delete_artifact(*args, **kwargs)
+        return self.artifacts.delete_artifact(*args, **kwargs)
 
-    def register_environment(self, *args: Any, **kwargs: Any) -> Environment:
-        return self.deploy.register_environment(*args, **kwargs)
-
-    def get_environment(self, env_id_or_name: str) -> Environment:
-        return self.deploy.get_environment(env_id_or_name)
-
-    def list_environments(self, *args: Any, **kwargs: Any) -> List[Environment]:
-        return self.deploy.list_environments(*args, **kwargs)
-
-    def deploy_artifact(self, *args: Any, **kwargs: Any) -> Deployment:
-        return self.deploy.deploy_artifact(*args, **kwargs)
-
-    def get_deployment(self, deployment_id: str) -> Deployment:
-        return self.deploy.get_deployment(deployment_id)
-
-    def current_deployment(self, environment_id: str) -> Optional[Deployment]:
-        return self.deploy.current_deployment(environment_id)
-
-    def list_deployments(self, environment_id: str) -> List[Deployment]:
-        return self.deploy.list_deployments(environment_id)
+    # Runtime environments, deltas, and runs: thin facade over
+    # ``self.runtime_environments``.
 
     def create_runtime(self, *args: Any, **kwargs: Any) -> RuntimeEnvironment:
-        return self.deploy.create_runtime(*args, **kwargs)
+        return self.runtime_environments.create_runtime(*args, **kwargs)
 
     def get_runtime(self, runtime_id_or_name: str) -> RuntimeEnvironment:
-        return self.deploy.get_runtime(runtime_id_or_name)
+        return self.runtime_environments.get_runtime(runtime_id_or_name)
 
     def list_runtimes(self) -> List[RuntimeEnvironment]:
-        return self.deploy.list_runtimes()
+        return self.runtime_environments.list_runtimes()
 
     def propose_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.propose_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.propose_runtime_delta(*args, **kwargs)
 
     def get_runtime_delta(self, delta_id: str) -> RuntimeEnvironmentDelta:
-        return self.deploy.get_runtime_delta(delta_id)
+        return self.runtime_environments.get_runtime_delta(delta_id)
 
     def list_runtime_deltas(self, *args: Any, **kwargs: Any) -> List[RuntimeEnvironmentDelta]:
-        return self.deploy.list_runtime_deltas(*args, **kwargs)
+        return self.runtime_environments.list_runtime_deltas(*args, **kwargs)
 
     def validate_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.validate_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.validate_runtime_delta(*args, **kwargs)
 
     def reject_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.reject_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.reject_runtime_delta(*args, **kwargs)
 
     def promote_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
-        return self.deploy.promote_runtime_delta(*args, **kwargs)
+        return self.runtime_environments.promote_runtime_delta(*args, **kwargs)
 
     def create_runtime_run(self, *args: Any, **kwargs: Any) -> RuntimeRun:
-        return self.deploy.create_runtime_run(*args, **kwargs)
+        return self.runtime_environments.create_runtime_run(*args, **kwargs)
 
     def complete_runtime_run(self, *args: Any, **kwargs: Any) -> RuntimeRun:
-        return self.deploy.complete_runtime_run(*args, **kwargs)
+        return self.runtime_environments.complete_runtime_run(*args, **kwargs)
 
     def get_runtime_run(self, run_id: str) -> RuntimeRun:
-        return self.deploy.get_runtime_run(run_id)
+        return self.runtime_environments.get_runtime_run(run_id)
 
     def list_runtime_runs(self) -> List[RuntimeRun]:
-        return self.deploy.list_runtime_runs()
+        return self.runtime_environments.list_runtime_runs()
 
     # Project bridge
 
@@ -24335,11 +21650,6 @@ class ControlPlane:
     def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
         return self.project_repositories.list(enabled)
 
-    def record_repository_merge_capability(
-        self, repo_id_or_name: str, capability: JsonDict
-    ) -> ProjectRepository:
-        return self.project_repositories.record_merge_capability(repo_id_or_name, capability)
-
     def _repository_contract_for_repo(self, repo: ProjectRepository) -> JsonDict:
         return self.project_repositories.contract_for(repo)
 
@@ -24390,7 +21700,7 @@ class ControlPlane:
         return self.memory.add_memory(*args, **kwargs)
 
     def decay_memory(self, *args: Any, **kwargs: Any) -> JsonDict:
-        """dream-04: forget stale, low-salience memory (dry-run by default)."""
+        """Forget stale, low-salience memory (dry-run by default)."""
         return self.memory.decay_memory(*args, **kwargs)
 
     def get_memory(self, memory_id: str) -> MemoryRecord:
@@ -24508,34 +21818,6 @@ class ControlPlane:
 
     def list_eval_runs(self, *args: Any, **kwargs: Any) -> List[EvalRun]:
         return self.evaluations.list_eval_runs(*args, **kwargs)
-
-    # Rollout and rescue
-
-    # Rollouts: thin facade over ``self.rollouts``.
-
-    def create_rollout(self, *args: Any, **kwargs: Any) -> Rollout:
-        return self.rollouts.create_rollout(*args, **kwargs)
-
-    def get_rollout(self, rollout_id: str) -> Rollout:
-        return self.rollouts.get_rollout(rollout_id)
-
-    def list_rollouts(self, *args: Any, **kwargs: Any) -> List[Rollout]:
-        return self.rollouts.list_rollouts(*args, **kwargs)
-
-    def list_rollout_events(self, rollout_id: str) -> List[JsonDict]:
-        return self.rollouts.list_rollout_events(rollout_id)
-
-    def verify_rollout_artifact(self, *args: Any, **kwargs: Any) -> Rollout:
-        return self.rollouts.verify_rollout_artifact(*args, **kwargs)
-
-    def advance_rollout(self, *args: Any, **kwargs: Any) -> Rollout:
-        return self.rollouts.advance_rollout(*args, **kwargs)
-
-    def evaluate_rollout_health(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.rollouts.evaluate_rollout_health(*args, **kwargs)
-
-    def rescue_rollout(self, *args: Any, **kwargs: Any) -> Tuple[Rollout, Task]:
-        return self.rollouts.rescue_rollout(*args, **kwargs)
 
     # Row mapping
 
@@ -25135,6 +22417,41 @@ class ControlPlane:
                 "event_type": event_type,
                 "title": "Task lease expired",
                 "body": "%s was requeued after lease expiry" % task_title,
+                "channels": ["dashboard", "hermes"],
+                "metadata": metadata,
+            }
+        if event_type == "task.transitioned" and to_state == TaskState.NEEDS_INPUT.value:
+            # Parking a task on a human question is the one transition an
+            # operator must see: the work stops until a person answers. Emit it
+            # as `task.question` -- the event type notifier channels subscribe
+            # to -- and carry the answer instructions in the body so the alert
+            # is actionable wherever it lands. The `hermes` hint lets both an
+            # explicit subscription and the auto-discovery fallback deliver it.
+            lines: List[str] = []
+            questions = detail.get("questions") or []
+            for index, item in enumerate(questions, start=1):
+                question = ensure_json_object(item)
+                text = str(question.get("question") or "").strip()
+                if not text:
+                    continue
+                prefix = "%d. " % index if len(questions) > 1 else ""
+                lines.append("%s%s" % (prefix, text))
+                why = str(question.get("why") or "").strip()
+                if why:
+                    lines.append("   why: %s" % why)
+                options = [
+                    str(opt).strip() for opt in (question.get("options") or []) if str(opt).strip()
+                ]
+                if options:
+                    lines.append("   options: %s" % ", ".join(options))
+            why = str(detail.get("why") or "").strip()
+            if why:
+                lines.append("why: %s" % why)
+            lines.append('Answer with: mac task answer %s --answer "..."' % task_id)
+            return {
+                "event_type": "task.question",
+                "title": "Answer needed: %s" % task_title,
+                "body": "\n".join(lines),
                 "channels": ["dashboard", "hermes"],
                 "metadata": metadata,
             }
@@ -25818,6 +23135,73 @@ class ControlPlane:
             and _blocked_attempt_failure_fingerprint(event.detail) == fingerprint
         )
 
+    def _requeue_after_node_fault(
+        self,
+        task: Task,
+        *,
+        agent_id: str,
+        fault: str,
+        fingerprint: str,
+        detail: Mapping[str, Any],
+        now: str,
+    ) -> Task:
+        """Hold the faulty node and reopen the task without charging the attempt."""
+
+        hold_reason = NODE_FAULT_QUARANTINE_PREFIX + fault
+        try:
+            agent: Optional[Agent] = self.get_agent(agent_id)
+        except NotFoundError:
+            agent = None
+        quarantined = False
+        if agent is not None and not agent.dispatch_hold:
+            self.set_agent_dispatch_hold(agent_id, hold_reason)
+            quarantined = True
+            self.record_log(
+                "agent.auto_quarantined",
+                level="warning",
+                layer="control_plane",
+                source="dispatcher",
+                subject_type="agent",
+                subject_id=agent_id,
+                detail={"agent_id": agent_id, "task_id": task.id, "reason": hold_reason},
+            )
+        self._record_retry_worker_exclusion(
+            task,
+            agent_id=agent_id,
+            fingerprint=fingerprint,
+            retry_kind="node_fault",
+            now=now,
+        )
+        self.store.execute(
+            "UPDATE tasks SET attempt_count = CASE WHEN attempt_count > 0 "
+            "THEN attempt_count - 1 ELSE 0 END WHERE id = ?",
+            (task.id,),
+        )
+        reopen_detail = {
+            **detail,
+            "reason": "node fault on %s (%s): requeued without charging an attempt"
+            % (agent_id, fault),
+            "node_fault": fault,
+            "node_fault_agent_id": agent_id,
+            "node_quarantined": quarantined,
+            "attempt_refunded": True,
+        }
+        reopened = self._transition_task_internal(
+            task.id,
+            TaskState.OPEN.value,
+            "dispatcher.tick",
+            reopen_detail,
+        )
+        self._record_history(
+            task.id,
+            "task.auto_reopened",
+            "dispatcher.tick",
+            TaskState.BLOCKED.value,
+            TaskState.OPEN.value,
+            reopen_detail,
+        )
+        return reopened
+
     def _record_retry_worker_exclusion(
         self,
         task: Task,
@@ -25955,7 +23339,23 @@ class ControlPlane:
             "same_failure_count": same_failure_count,
         }
         non_retryable = self._blocked_attempt_non_retryable_marker(task)
-        repeated_failure = same_failure_count >= 2
+        node_fault = _node_fault(latest_detail)
+        if node_fault is not None and not non_retryable and prior_agent_id.startswith("agent_"):
+            # The node failed, not the task: bench the node and give the task
+            # its attempt back, whatever the worker labelled the failure.
+            reopened = self._requeue_after_node_fault(
+                task,
+                agent_id=prior_agent_id,
+                fault=node_fault,
+                fingerprint=fingerprint,
+                detail=base_detail,
+                now=now,
+            )
+            return reopened, None
+        # A failed repository gate carries the same problem text every time
+        # the gate is red, whatever the agent changed; each attempt is new work
+        # against the gate output, so only max_attempts bounds it.
+        repeated_failure = same_failure_count >= 2 and retry_kind != "work"
         exhausted = task.attempt_count >= task.max_attempts
         must_stop = bool(
             non_retryable or retry_kind == "non_retryable" or repeated_failure or exhausted
@@ -26003,8 +23403,36 @@ class ControlPlane:
             return None, None
         detail = {
             **base_detail,
-            "reason": "one bounded cross-worker retry after transient failure",
+            "reason": (
+                "retry after the repository test gate failed"
+                if retry_kind == "work"
+                else "one bounded cross-worker retry after transient failure"
+            ),
         }
+        gate_failure = ensure_json_object(latest_detail.get("repository_gate_failure"))
+        if retry_kind == "work" and gate_failure:
+            # The next attempt's prompt renders this (executor_prompt
+            # _repository_gate_failure_section): which tests failed and how.
+            gate_metadata = ensure_json_object(self.get_task(task.id).metadata)
+            gate_metadata["repository_gate_failure"] = {
+                "name": str(gate_failure.get("name") or "")[:200],
+                "command": str(gate_failure.get("command") or "")[:500],
+                "returncode": gate_failure.get("returncode"),
+                "head_sha": str(gate_failure.get("head_sha") or "")[:64],
+                "failing_lines": [
+                    str(line)[:300]
+                    for line in _metadata_string_list(gate_failure.get("failing_lines"))
+                ][-30:],
+                "output_tail": str(gate_failure.get("output_tail") or "")[-4000:],
+                "failed_attempt": int(task.attempt_count or 0),
+                "max_attempts": int(task.max_attempts or 0),
+                "recorded_at": now,
+            }
+            self.store.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(gate_metadata), now, task.id),
+            )
+            task = self.get_task(task.id)
         self._record_retry_worker_exclusion(
             task,
             agent_id=prior_agent_id,
@@ -26708,7 +24136,7 @@ class ControlPlane:
         )
 
     def _task_dispatch_held(self, task: Task) -> bool:
-        """True when a task is explicitly held from autonomous dispatch (staged).
+        """True when a task is staged or inside a bounded retry backoff.
 
         Set via metadata ``no_dispatch: true`` (e.g. ``mac task create
         --no-dispatch``) so a backlog — a freshly-onboarded project's tickets,
@@ -26718,7 +24146,18 @@ class ControlPlane:
         (``mac task claim`` / ``mac task start``). This is the first-class
         replacement for abusing a sentinel ``required_capabilities`` value.
         """
-        return bool(ensure_json_object(task.metadata).get("no_dispatch"))
+        metadata = ensure_json_object(task.metadata)
+        if metadata.get("no_dispatch"):
+            return True
+        semantic_retry = ensure_json_object(metadata.get("semantic_retry"))
+        not_before = str(semantic_retry.get("not_before") or "").strip()
+        if not_before and semantic_retry.get("status") == "scheduled":
+            try:
+                return parse_time(utcnow()) < parse_time(not_before)
+            except (TypeError, ValueError):
+                # Corrupt controller metadata must not strand useful work.
+                return False
+        return False
 
     def _project_dispatch_paused(self, project: Optional[str]) -> bool:
         """True when the task's project is explicitly dispatch-PAUSED.
@@ -27436,36 +24875,35 @@ class ControlPlane:
             )
         except ValueError:
             max_age = 1200.0
+        # A worker reports the one coding CLI it runs: opencode, or Claude
+        # Code (MAC_CODING_AGENT=claude). An entry for any other is ignored.
+        item = ensure_json_object(clis.get("opencode"))
+        if not item:
+            item = ensure_json_object(clis.get("claude"))
+        if not (item.get("configured") is True and item.get("verified") is True):
+            return False, "coding_agent_route_unverified"
+        verification = ensure_json_object(item.get("verification"))
+        checked_at = str(verification.get("checked_at") or "").strip()
+        try:
+            age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
+        except Exception:  # noqa: BLE001 - malformed proof must fail closed.
+            return False, "coding_agent_route_unverified"
+        if age < 0 or age > max_age:
+            return False, "coding_agent_route_unverified"
+        if verification.get("route_fingerprint") != item.get("route_fingerprint"):
+            return False, "coding_agent_route_unverified"
         pinned_model = self._task_pinned_coding_model(task)
-        saw_fresh_route = False
-        for raw in clis.values():
-            item = ensure_json_object(raw)
-            if not (item.get("configured") is True and item.get("verified") is True):
-                continue
-            verification = ensure_json_object(item.get("verification"))
-            checked_at = str(verification.get("checked_at") or "").strip()
-            try:
-                age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
-            except Exception:  # noqa: BLE001 - malformed proof must fail closed.
-                continue
-            if age < 0 or age > max_age:
-                continue
-            if verification.get("route_fingerprint") != item.get("route_fingerprint"):
-                continue
-            saw_fresh_route = True
-            if not pinned_model:
-                return True, "verified"
-            verified_model = str(verification.get("model") or item.get("model") or "").strip()
-            verified_models = {
-                str(value).strip()
-                for value in (verification.get("verified_models") or [])
-                if str(value).strip()
-            }
-            if verified_model == pinned_model or pinned_model in verified_models:
-                return True, "verified"
-        if pinned_model and saw_fresh_route:
-            return False, "coding_agent_model_unverified"
-        return False, "coding_agent_route_unverified"
+        if not pinned_model:
+            return True, "verified"
+        verified_model = str(verification.get("model") or item.get("model") or "").strip()
+        verified_models = {
+            str(value).strip()
+            for value in (verification.get("verified_models") or [])
+            if str(value).strip()
+        }
+        if verified_model == pinned_model or pinned_model in verified_models:
+            return True, "verified"
+        return False, "coding_agent_model_unverified"
 
     @staticmethod
     def _task_pinned_coding_model(task: Task) -> str:
@@ -27699,45 +25137,21 @@ class ControlPlane:
                         "verification.signature does not verify against signed_by's attestation key"
                     ],
                 }
-        if self._read_only_report_needs_hub_verify(task, evidence):
-            if (
-                not _hub_review_verify_enabled()
-                or self._hub_verify_repo_info(task, evidence) is None
-            ):
-                return {
-                    "valid": False,
-                    "reason": "report_hub_verification_unavailable",
-                    "evidence_type": evidence_type,
-                    "problems": [
-                        "read-only report lacks a valid pending Linux verification contract"
-                    ],
-                }
+        if self._read_only_report_tests_deferred(task, evidence):
+            # A deferred contract test was a request for hub-side
+            # verification, which no longer exists. Nothing else will ever
+            # run that test, so the report cannot be approved.
+            return {
+                "valid": False,
+                "reason": "report_contract_test_deferred",
+                "evidence_type": evidence_type,
+                "problems": [
+                    "read-only report deferred its contract test; reports must carry "
+                    "a verifier-run Linux contract test result"
+                ],
+            }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
-            # Option C — deferred test gate: when hub verify is enabled and the
-            # executor declared its tests as deferred to the hub (at least one
-            # test item carries status="deferred" and no item already passed),
-            # accept the evidence so the hub verify path is triggered.  Hub
-            # verify will run the full contract test and record an authoritative
-            # signed verdict.  The sole expected failure at this point is the
-            # absence of a passing test; any other problem (missing repo anchor
-            # or a dirty worktree) is a real defect that must still be rejected.
-            #
-            # Option A (MAC_REVIEW_HUB_VERIFY unset) is completely unchanged —
-            # the executor must always supply its own passing tests.
-            if (
-                _hub_review_verify_enabled()
-                and self._evidence_tests_are_hub_verify_deferred(evidence)
-                and all("passing test" in p or "passing check" in p for p in type_problems)
-            ):
-                return {
-                    "valid": True,
-                    "reason": "verification_contract_satisfied_pending_hub_verify",
-                    "evidence_type": evidence_type,
-                    "signed_by": signed_by,
-                    "verified_by": "default-review-evidence-v1",
-                    "hub_verify_deferred": True,
-                }
             return {
                 "valid": False,
                 "reason": "verification_contract_failed",
@@ -27758,14 +25172,34 @@ class ControlPlane:
         manifest: JsonDict,
         evidence_type: str,
     ) -> List[str]:
-        if (
-            evidence_type == "investigation"
-            and declared_non_repository_outcome_evidence_type(task.metadata) != "investigation"
-        ):
+        declared_outcome = declared_non_repository_outcome_evidence_type(task.metadata)
+        if evidence_type == "investigation" and declared_outcome != "investigation":
             return [
                 "investigation evidence requires an operator-authored "
                 "investigation execution contract"
             ]
+        if declared_outcome and evidence_type != declared_outcome:
+            # Mirror of the coercion the worker already applies to its own
+            # pre-submit checks (worker.py, "Coerce rather than reject").
+            # The worker corrects the type locally but still SUBMITS the
+            # manifest its executor wrote, so the hub re-validated a
+            # repo-coupled claim at face value and the two halves disagreed.
+            #
+            # Observed live 2026-09-25 on the kit onboarding task: the task
+            # declares evidence_type=investigation with
+            # repository_required=False and instructs "do NOT push or open a
+            # pull request", the executor defaulted to repo_change because it
+            # made a local commit, and RepoChangeValidator then demanded
+            # pushed=true/pr_url -- exactly what the task forbade. The agent
+            # did the work correctly and was refused by the gate for obeying
+            # its instructions; three attempts burned on an unsatisfiable
+            # contract.
+            #
+            # The task's declared contract is the operator's authoritative
+            # intent. An agent cannot unilaterally impose a stricter
+            # requirement than the one it was given, so decode the evidence
+            # with the declared type rather than the claimed one.
+            evidence_type = declared_outcome
         problems = validate_evidence_type(
             evidence_type,
             manifest,
@@ -27773,6 +25207,7 @@ class ControlPlane:
             allow_empty_repo_change=self._allows_empty_repo_change_evidence(task, evidence_type),
             repo_coupled=self._task_is_repo_coupled(task),
             require_tests=self._task_requires_tests(task),
+            require_verifier_tests=bool(_repository_contract_test_command_for_task(task)),
             expected_reconcile_head_sha=expected_head_sha_from_task(
                 {"id": task.id, "metadata": task.metadata}
             ),
@@ -27902,6 +25337,12 @@ class ControlPlane:
             return any(self._verification_item_passed(nested) for nested in item)
         if not isinstance(item, dict):
             return False
+        if item.get("skipped") is True or str(item.get("status") or "").strip().lower() in {
+            "skipped",
+            "deferred",
+        }:
+            # Nothing ran: whatever else the item says, it is not a pass.
+            return False
         if "returncode" in item:
             return self._verification_int_value(item["returncode"]) == 0
         failed = self._verification_int_value(item.get("failed"))
@@ -27968,49 +25409,7 @@ class ControlPlane:
             return None
 
     @staticmethod
-    def _evidence_tests_are_hub_verify_deferred(evidence: "Evidence") -> bool:
-        """Return True when the executor evidence declares its tests as deferred
-        to hub verify — i.e. at least one test item carries status='deferred'
-        and no test item is already passing.  This signals that the executor
-        intentionally skipped the local contract test and expects hub verify
-        (Option C) to supply the authoritative result.
-
-        Only repo_change evidence participates: other evidence types do not
-        have a hub-verify path and must always supply their own passing tests.
-        """
-        meta = ensure_json_object(evidence.metadata)
-        verification = ensure_json_object(meta.get("verification"))
-        evidence_type = str(verification.get("evidence_type") or "").strip().lower()
-        if evidence_type not in {"repo_change", "documentation", "test"}:
-            return False
-        tests = verification.get("tests")
-        if not isinstance(tests, list) or not tests:
-            return False
-        has_deferred = any(
-            isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "deferred"
-            for item in tests
-        )
-        if not has_deferred:
-            return False
-        # If any test already passed, hub verify is not needed — the executor
-        # already completed the test and the deferred item is stale/incidental.
-        has_passing = any(
-            isinstance(item, dict)
-            and str(item.get("status") or "").strip().lower()
-            in {
-                "pass",
-                "passed",
-                "success",
-                "successful",
-                "succeeded",
-                "ok",
-            }
-            for item in tests
-        )
-        return not has_passing
-
-    @staticmethod
-    def _read_only_report_needs_hub_verify(task: Task, evidence: Evidence) -> bool:
+    def _read_only_report_tests_deferred(task: Task, evidence: Evidence) -> bool:
         if not metadata_declares_read_only_report_repository(task.metadata):
             return False
         manifest = ensure_json_object(evidence.metadata.get("verification"))
@@ -28023,792 +25422,6 @@ class ControlPlane:
             )
             for item in tests
         )
-
-    def _hub_verify_repo_info(
-        self, task: Task, executor_evidence: Evidence
-    ) -> Optional[Dict[str, Any]]:
-        """Extract the pushed-branch coordinates the hub verifier needs: the
-        remote (evidence repo.remote_url, else the task's canonical contract
-        remote), the branch, and head_sha. Returns None when the evidence is
-        not a pushed repo change (nothing to independently verify).
-
-        Deferred test items: evidence that carries a test item with
-        status="deferred" (the executor deferred test execution to hub verify)
-        is accepted here provided repo.pushed is True and the branch/sha are
-        present.  The caller will run the contract test and record the verdict.
-        """
-        from . import gitops as _gitops
-
-        meta = ensure_json_object(executor_evidence.metadata)
-        verification = ensure_json_object(meta.get("verification"))
-        repo = ensure_json_object(verification.get("repo"))
-        if self._read_only_report_needs_hub_verify(task, executor_evidence):
-            contract = _nested_json_object(
-                task.metadata, "execution_contract", "repository_contract"
-            )
-            access = ensure_json_object(verification.get("repository_access"))
-            remote = str(contract.get("canonical_remote_url") or "").strip()
-            branch = str(
-                contract.get("default_branch") or contract.get("canonical_branch") or ""
-            ).strip()
-            command = str(ensure_json_object(contract.get("test")).get("command") or "").strip()
-            if (
-                verification.get("evidence_type") != "operator_result"
-                or access.get("schema") != "mac.report_repository_access.v1"
-                or access.get("mode") != "read_only"
-                or not remote
-                or _gitops.strip_git_remote_auth(remote) != remote
-                or not branch
-                or not command
-                or access.get("canonical_remote_url") != remote
-                or access.get("canonical_branch") != branch
-                or not _GIT_SHA_RE.fullmatch(str(access.get("base_sha") or ""))
-                or not _GIT_SHA_RE.fullmatch(str(access.get("base_tree") or ""))
-                or verification.get("tests")
-                != [
-                    {
-                        "name": "repository contract test",
-                        "command": command,
-                        "returncode": None,
-                        "status": "deferred",
-                        "execution_environment": "hub_verify_pending",
-                        "stdout": "",
-                        "stderr": "",
-                    }
-                ]
-            ):
-                return None
-            return {
-                "remote_url": remote,
-                "branch": branch,
-                "head_sha": access["base_sha"],
-                "files_changed": [],
-                "test_command": command,
-                "bootstrap_command": str(
-                    ensure_json_object(contract.get("bootstrap")).get("command") or ""
-                ).strip(),
-                "repository_access": {
-                    key: access[key]
-                    for key in (
-                        "schema",
-                        "mode",
-                        "canonical_remote_url",
-                        "canonical_branch",
-                        "base_sha",
-                        "base_tree",
-                    )
-                },
-            }
-        # The task contract is the canonical, credential-free source of truth.
-        # Executor evidence may contain a display-redacted push URL such as
-        # ``https://x-access-token:<redacted>@github.com/...``; cloning that
-        # literal string fails authentication even for a public repository.
-        remote_url = ""
-        md = ensure_json_object(task.metadata)
-        for path in (
-            ("execution_contract", "repository_contract"),
-            ("origin", "repository_contract"),
-            ("repository_contract",),
-            ("origin",),
-        ):
-            node = _nested_json_object(md, *path)
-            remote_url = str(
-                node.get("canonical_remote_url") or node.get("repository_url") or ""
-            ).strip()
-            if remote_url:
-                break
-        if not remote_url:
-            remote_url = str(repo.get("remote_url") or "").strip()
-        remote_url = _gitops.strip_git_remote_auth(remote_url)
-        head_sha = str(repo.get("head_sha") or "").strip()
-        remote_ref = str(repo.get("remote_ref") or "").strip()
-        branch = (
-            remote_ref[len("refs/heads/") :] if remote_ref.startswith("refs/heads/") else remote_ref
-        )
-        if not remote_url or not _GIT_SHA_RE.match(head_sha) or not branch:
-            return None
-        if repo.get("pushed") is not True:
-            return None
-        files_changed = repo.get("files_changed")
-        trusted_files = (
-            [str(path) for path in files_changed if isinstance(path, str)]
-            if isinstance(files_changed, list)
-            else []
-        )
-        return {
-            "remote_url": remote_url,
-            "head_sha": head_sha,
-            "branch": branch,
-            "files_changed": trusted_files,
-        }
-
-    def _hub_verify_run_contract_test(
-        self,
-        remote_url: str,
-        branch: str,
-        head_sha: str,
-        test_command: str,
-        bootstrap_command: str = "",
-        *,
-        prepared_report: Optional[Mapping[str, Any]] = None,
-        verifier_identity: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[int, str]:
-        """Independently verify the pushed branch on the Linux gateway."""
-        runner = getattr(self, "_hub_verify_runner", None)
-        if runner is not None:
-            return runner(remote_url, branch, head_sha, test_command)
-        return run_repository_contract_test_in_openshell(
-            remote_url,
-            branch,
-            head_sha,
-            test_command,
-            bootstrap_command,
-            prepared_report=prepared_report,
-            verifier_identity=verifier_identity,
-        )
-
-    def _run_hub_review_verification(
-        self, task: Task, review: Review, executor_evidence: Evidence, actor: str
-    ) -> Optional[Evidence]:
-        """Produce a signed review_verdict by running the contract test on the
-        hub (Option C), on behalf of the selected reviewer. No-op returning None
-        when the evidence isn't a pushed repo change or the reviewer has no key
-        (the workflow then falls back to the agent-nudge path)."""
-        try:
-            current_task = self.get_task(task.id)
-            current_review = self.get_review(review.id)
-        except NotFoundError:
-            return None
-        if current_review.status != ReviewStatus.PENDING.value:
-            if current_review.evidence_id:
-                try:
-                    return self.get_evidence(current_review.evidence_id)
-                except NotFoundError:
-                    return None
-            return None
-        if current_task.state == TaskState.COMPLETED.value:
-            return None
-        assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if (
-            assignment.get("schema") == "mac.review_experiment.v1"
-            and _semantic_reviewer_enabled()
-            and not self._read_only_report_needs_hub_verify(task, executor_evidence)
-        ):
-            # Opt-in only. The default review no longer has a semantic
-            # reviewer, so experiments take the same hub-verify path as
-            # every other repository task.
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_skipped",
-                "info",
-                {
-                    "reason": "experiment_requires_semantic_reviewer",
-                    "review_id": review.id,
-                    "experiment_id": str(assignment.get("experiment_id") or ""),
-                },
-                actor,
-            )
-            return None
-        info = self._hub_verify_repo_info(task, executor_evidence)
-        if info is None:
-            return None
-        key = self._agent_attestation_key(review.reviewer_agent_id)
-        if not key:
-            return None
-        existing = self._existing_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if existing is not None:
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_idempotent",
-                "info",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": existing.id,
-                    "reason": "existing_hub_verdict",
-                },
-                actor,
-            )
-            return existing
-        invalid_existing = self._invalid_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if invalid_existing is not None:
-            # The deterministic verdict identity is already occupied by a
-            # hub-verifier-shaped row, but its signature/manifest did not pass
-            # the normal verdict validator. Do not launch another expensive
-            # sandbox for the same review, and never return the invalid row as
-            # an approving verdict. Retract this attempt so the bounded review
-            # workflow can choose a fresh reviewer instead of leaving the task
-            # permanently stuck in REVIEWING.
-            self._retract_default_review(
-                current_review,
-                actor,
-                "reviewer_protocol_failure:hub_verdict_invalid",
-            )
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_invalid_existing",
-                "warning",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": invalid_existing.id,
-                    "reason": "invalid_existing_hub_verdict",
-                },
-                actor,
-            )
-            return None
-        # In-flight guard: the review sweep re-ticks (~30s) while a verify runs
-        # for minutes; without this, each tick would launch another concurrent
-        # sandbox for the same review. One verify per review at a time.
-        inflight = getattr(self, "_hub_verify_inflight", None)
-        if inflight is None:
-            inflight = self._hub_verify_inflight = set()
-        if review.id in inflight:
-            return None
-        inflight.add(review.id)
-        try:
-            return self._run_hub_review_verification_locked(
-                task, review, executor_evidence, actor, info, key
-            )
-        finally:
-            inflight.discard(review.id)
-
-    def _hub_review_verification_uri(self, review_id: str, head_sha: str) -> str:
-        return "hub-verify://%s/%s" % (review_id, head_sha[:12])
-
-    def _hub_review_test_command(self, task: Task, info: Mapping[str, Any]) -> str:
-        """Choose the explicit sanity contract when changed paths are trustworthy.
-
-        Older branches and repositories without the contract still run their
-        full configured command. Unsafe or absent paths also fail closed to the
-        full command rather than becoming shell input.
-        """
-
-        configured = _repository_contract_test_command_for_task(task)
-        full_command = configured or "scripts/run-contract-tests.sh"
-        if configured and configured not in {
-            "scripts/run-contract-tests.sh",
-            "./scripts/run-contract-tests.sh",
-        }:
-            return configured
-        raw_files = info.get("files_changed")
-        if not isinstance(raw_files, list) or not raw_files:
-            return full_command
-        safe_files: list[str] = []
-        for raw in raw_files:
-            value = str(raw or "").strip().replace("\\", "/")
-            parts = value.split("/")
-            if (
-                not value
-                or value.startswith("/")
-                or any(part in {"", ".", ".."} for part in parts)
-                or any(ord(char) < 32 for char in value)
-            ):
-                return full_command
-            safe_files.append(value)
-        changed_args = " ".join(
-            "--changed-file %s" % shlex.quote(path) for path in sorted(set(safe_files))
-        )
-        return (
-            "if [ -x scripts/run-sanity-tests.sh ]; then "
-            "scripts/run-sanity-tests.sh %s; else %s; fi" % (changed_args, full_command)
-        )
-
-    def _matches_hub_review_verification_evidence(
-        self,
-        evidence: Evidence,
-        *,
-        task_id: str,
-        reviewer_agent_id: str,
-        executor_evidence_id: str,
-        review_id: str,
-        head_sha: str,
-    ) -> bool:
-        if evidence.task_id != task_id or evidence.kind != "review":
-            return False
-        if evidence.created_by != reviewer_agent_id:
-            return False
-        if evidence.uri != self._hub_review_verification_uri(review_id, head_sha):
-            return False
-        metadata = ensure_json_object(evidence.metadata)
-        if metadata.get("hub_verified") is not True:
-            return False
-        manifest = metadata.get("verification")
-        if not isinstance(manifest, dict):
-            return False
-        if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
-            return False
-        if str(manifest.get("reviewed_evidence_id") or "").strip() != executor_evidence_id:
-            return False
-        if str(manifest.get("verified_by") or "").strip() != "hub_review_verifier_v1":
-            return False
-        manifest_review_id = str(manifest.get("review_id") or "").strip()
-        if manifest_review_id and manifest_review_id != review_id:
-            return False
-        repo = manifest.get("repo")
-        if isinstance(repo, dict):
-            return str(repo.get("head_sha") or "").strip() == head_sha
-        access = ensure_json_object(manifest.get("repository_access"))
-        return (
-            access.get("schema") == "mac.report_repository_access.v1"
-            and access.get("mode") == "read_only"
-            and access.get("base_sha") == head_sha
-        )
-
-    def _existing_hub_review_verification_evidence(
-        self,
-        task_id: str,
-        review: Review,
-        executor_evidence_id: str,
-        head_sha: str,
-    ) -> Optional[Evidence]:
-        for candidate in self._hub_review_verification_identity_candidates(
-            task_id,
-            review,
-            executor_evidence_id,
-            head_sha,
-        ):
-            verdict, _problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                verdict_evidence_id=candidate.id,
-                not_before=review.created_at,
-            )
-            if verdict is not None:
-                return verdict
-        return None
-
-    def _invalid_hub_review_verification_evidence(
-        self,
-        task_id: str,
-        review: Review,
-        executor_evidence_id: str,
-        head_sha: str,
-    ) -> Optional[Evidence]:
-        """Return a deterministic hub-verdict identity that fails validation."""
-
-        for candidate in self._hub_review_verification_identity_candidates(
-            task_id,
-            review,
-            executor_evidence_id,
-            head_sha,
-        ):
-            verdict, _problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                verdict_evidence_id=candidate.id,
-                not_before=review.created_at,
-            )
-            if verdict is None:
-                return candidate
-        return None
-
-    def _hub_review_verification_identity_candidates(
-        self,
-        task_id: str,
-        review: Review,
-        executor_evidence_id: str,
-        head_sha: str,
-    ) -> List[Evidence]:
-        """Return rows occupying the deterministic hub-verdict identity."""
-
-        candidates: List[Evidence] = []
-        if review.evidence_id:
-            try:
-                candidates.append(self.get_evidence(review.evidence_id))
-            except NotFoundError:
-                pass
-        candidates.extend(reversed(self.list_evidence(task_id)))
-        seen: set[str] = set()
-        matches: List[Evidence] = []
-        for candidate in candidates:
-            if candidate.id in seen:
-                continue
-            seen.add(candidate.id)
-            if not self._matches_hub_review_verification_evidence(
-                candidate,
-                task_id=task_id,
-                reviewer_agent_id=review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                review_id=review.id,
-                head_sha=head_sha,
-            ):
-                continue
-            matches.append(candidate)
-        return matches
-
-    def _run_hub_review_verification_locked(
-        self,
-        task: Task,
-        review: Review,
-        executor_evidence: Evidence,
-        actor: str,
-        info: Mapping[str, Any],
-        key: str,
-    ) -> Optional[Evidence]:
-        # The repository-owned selector combines changed-path tests with public
-        # and process-E2E canaries, and itself falls back to the full
-        # suite for broad or uncertain changes. This keeps the independent hub
-        # environment without unconditionally duplicating mainline coverage.
-        report_access = info.get("repository_access")
-        test_command = (
-            info["test_command"] if report_access else self._hub_review_test_command(task, info)
-        )
-        bootstrap_command = (
-            info["bootstrap_command"]
-            if report_access
-            else _repository_contract_bootstrap_command_for_task(task)
-        )
-        verifier_identity: Dict[str, Any] = {}
-        report_options = (
-            {"prepared_report": report_access, "verifier_identity": verifier_identity}
-            if report_access
-            else {}
-        )
-        try:
-            returncode, output = self._hub_verify_run_contract_test(
-                info["remote_url"],
-                info["branch"],
-                info["head_sha"],
-                test_command,
-                bootstrap_command,
-                **report_options,
-            )
-        except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_error",
-                "warning",
-                {"review_id": review.id, **_hub_verify_exception_detail(exc)},
-                actor,
-            )
-            return None
-        if returncode != 0:
-            unavailable = hub_verification_unavailable_reason(output)
-            if unavailable is not None:
-                # The harness failed, not the change. Take the same path a
-                # verify CRASH already takes -- record and sign nothing -- so
-                # the review stays pending and is retried, instead of a signed
-                # "rejected" that no evidence supports.
-                #
-                # An exception here already returned None; a transport fault
-                # that happens to surface as an exit status deserves the same
-                # treatment, and only did not because the two arrive through
-                # different channels.
-                self._record_default_review_observation(
-                    task.id,
-                    "workflow.default_review.hub_verify_unavailable",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reason": unavailable,
-                        "returncode": int(returncode),
-                        "excerpt": _hub_review_failure_excerpt(output, head=400, tail=400),
-                    },
-                    actor,
-                )
-                return None
-        verdict = "approved" if returncode == 0 else "rejected"
-        current_review = self.get_review(review.id)
-        existing = self._existing_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if existing is not None:
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_idempotent",
-                "info",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": existing.id,
-                    "reason": "existing_hub_verdict_after_run",
-                },
-                actor,
-            )
-            return existing
-        invalid_existing = self._invalid_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if invalid_existing is not None:
-            self._retract_default_review(
-                current_review,
-                actor,
-                "reviewer_protocol_failure:hub_verdict_invalid",
-            )
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_invalid_existing",
-                "warning",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": invalid_existing.id,
-                    "reason": "invalid_existing_hub_verdict_after_run",
-                },
-                actor,
-            )
-            return None
-        if (
-            current_review.status != ReviewStatus.PENDING.value
-            or self.get_task(task.id).state == TaskState.COMPLETED.value
-        ):
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_idempotent",
-                "info",
-                {
-                    "review_id": review.id,
-                    "review_status": current_review.status,
-                    "reason": "review_no_longer_pending",
-                },
-                actor,
-            )
-            return None
-        manifest: Dict[str, Any] = {
-            "schema": VERIFICATION_SCHEMA,
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": verdict,
-            "review_id": review.id,
-            "reviewed_evidence_id": executor_evidence.id,
-            "worktree_digest": "sha256:%s" % hashlib.sha256(info["head_sha"].encode()).hexdigest(),
-            "verified_by": "hub_review_verifier_v1",
-            # Pushed-branch anchor for the verdict — the exact commit the hub
-            # cloned and tested (mirrors the reviewed executor evidence).
-            "repo": {
-                "head_sha": info["head_sha"],
-                "dirty": False,
-                "pushed": True,
-                "remote_ref": "refs/heads/%s" % info["branch"],
-                # Mirror the reviewed change's file set — the verdict attests to
-                # the same commit's files.
-                "files_changed": _nested_json_object(
-                    ensure_json_object(executor_evidence.metadata), "verification", "repo"
-                ).get("files_changed")
-                or [],
-            },
-            "tests": [
-                {
-                    "name": "hub contract verification",
-                    "command": test_command or "scripts/run-contract-tests.sh",
-                    "returncode": int(returncode),
-                    "status": "pass" if returncode == 0 else "fail",
-                }
-            ],
-            "signed_by": review.reviewer_agent_id,
-        }
-        if report_access:
-            manifest.pop("repo")
-            manifest["repository_access"] = dict(report_access)
-            manifest["verifier_runtime"] = verifier_identity
-            manifest["tests"][0]["execution_environment"] = "openshell_sandbox"
-        if verdict == "rejected":
-            # Lead with the command and its exit status. The excerpt that
-            # follows is thousands of lines of mostly-PASSING output -- a
-            # coverage table, a pytest summary -- and a worker reading it saw
-            # success everywhere and concluded it had not tried hard enough.
-            # One task answered a rejection with MORE tests and a bigger diff,
-            # twice, because the reason was on the last line.
-            manifest["feedback"] = "hub contract verification failed (rc=%d): %s\n\n%s" % (
-                int(returncode),
-                str(test_command or "scripts/run-contract-tests.sh")[:200],
-                # Already bounded and relevance-selected at the capture site
-                # (_hub_verify_output_excerpt). Excerpting an excerpt would
-                # cut the middle back out -- and the middle is the anchored
-                # window holding the reason this was rejected.
-                output.strip() or "nonzero exit",
-            )
-        manifest["signature"] = sign_verification_manifest(key, manifest)
-        evidence = self.add_evidence(
-            task.id,
-            "review",
-            self._hub_review_verification_uri(review.id, info["head_sha"]),
-            "hub review verification: %s (rc=%d)" % (verdict, returncode),
-            review.reviewer_agent_id,
-            metadata={"returncode": 0, "verification": manifest, "hub_verified": True},
-        )
-        self._record_default_review_observation(
-            task.id,
-            "workflow.default_review.hub_verified",
-            "info",
-            {
-                "review_id": review.id,
-                "verdict": verdict,
-                "returncode": returncode,
-                "reviewer_agent_id": review.reviewer_agent_id,
-            },
-            actor,
-        )
-        if verdict == "rejected":
-            self._record_review_outcome_lesson(
-                task.id,
-                outcome="review_rejected",
-                detail=str(manifest.get("feedback") or "hub contract verification failed")[:300],
-            )
-        # The verdict is the event that unlocks the next stage (publish on
-        # approval / feedback on rejection) — advance now, not on the next sweep.
-        self._nudge_review_workflow(task.id)
-        return evidence
-
-    def _default_review_for_task(self, task_id: str) -> Optional[Review]:
-        """Return the unambiguous review row to act on, or None.
-
-        Refuses to pick when the task has more than one pending review
-        (mac-d9c) — that's an ambiguous state and in an autonomous
-        swarm there's no operator to break the tie. The caller logs
-        ``workflow.default_review.ambiguous`` and leaves the task
-        alone for explicit resolution.
-        """
-        reviews = self.list_reviews(task_id)
-        if not reviews:
-            return None
-        pending = [review for review in reviews if review.status == ReviewStatus.PENDING.value]
-        if len(pending) > 1:
-            return None
-        if pending:
-            return pending[0]
-        approved = [review for review in reviews if review.status == ReviewStatus.APPROVED.value]
-        if approved:
-            return approved[-1]
-        return None
-
-    def _review_verdict_nudge_payload(
-        self,
-        task_id: str,
-        review: Review,
-        evidence: Evidence,
-    ) -> JsonDict:
-        return {
-            "task_id": task_id,
-            "review_id": review.id,
-            "executor_evidence_id": evidence.id,
-            "reason": "produce_review_verdict",
-        }
-
-    def _ensure_review_verdict_nudge(
-        self,
-        task_id: str,
-        review: Review,
-        evidence: Evidence,
-    ) -> Optional[AgentMessage]:
-        # mac-ykkc: cap the number of times this review can be
-        # re-nudged. Without the cap a reviewer that keeps failing to
-        # produce a verdict (e.g. because the executor's lease branch
-        # never made it to origin) ends up with hundreds of delivered
-        # nudges as the dispatcher recreates the message on every tick.
-        # Count those durable delivery attempts directly: review claims are
-        # idempotent and therefore cannot serve as an attempt counter. After
-        # the cap, retract the review with
-        # a clear reason so the parent task transitions back to OPEN
-        # or FAILED instead of spinning forever.
-        try:
-            attempt_count = int(os.environ.get("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "10"))
-        except ValueError:
-            attempt_count = 10
-        attempt_row = self.store.query_one(
-            """
-            SELECT COUNT(*) AS n FROM messages
-            WHERE task_id = ?
-              AND recipient_agent_id = ?
-              AND message_type = ?
-              AND status = ?
-              AND json_extract(payload, '$.reason') = 'produce_review_verdict'
-              AND json_extract(payload, '$.review_id') = ?
-            """,
-            (
-                task_id,
-                review.reviewer_agent_id,
-                MessageType.NUDGE.value,
-                MessageStatus.DELIVERED.value,
-                review.id,
-            ),
-        )
-        prior_attempts = int(attempt_row["n"]) if attempt_row else 0
-        if prior_attempts >= attempt_count:
-            self._retract_default_review(
-                review,
-                "dispatcher",
-                "reviewer_unable_to_produce_verdict_after_%d_attempts" % prior_attempts,
-            )
-            self.record_log(
-                "workflow.default_review.nudge_capped",
-                layer="control_plane",
-                source="dispatcher",
-                level="warning",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "review_id": review.id,
-                    "reviewer_agent_id": review.reviewer_agent_id,
-                    "attempt_count": prior_attempts,
-                    "cap": attempt_count,
-                },
-            )
-            return None
-        payload = self._review_verdict_nudge_payload(task_id, review, evidence)
-        if self.messaging.has_queued_message(
-            recipient_agent_id=review.reviewer_agent_id,
-            task_id=task_id,
-            message_type=MessageType.NUDGE.value,
-            payload_contains=payload,
-        ):
-            return None
-        # Nudge the reviewer so an autonomous review-executor has something to react to.
-        return self.send_message(
-            "dispatcher",
-            review.reviewer_agent_id,
-            MessageType.NUDGE.value,
-            payload,
-            task_id=task_id,
-        )
-
-    def _dedupe_same_reviewer_pending_reviews(
-        self,
-        pending_reviews: List[Review],
-        actor: str,
-    ) -> List[Review]:
-        kept: List[Review] = []
-        seen_reviewers: set[str] = set()
-        retracted: List[Review] = []
-        for review in sorted(pending_reviews, key=lambda item: (item.created_at, item.id)):
-            if review.reviewer_agent_id in seen_reviewers:
-                self._retract_default_review(
-                    review,
-                    actor,
-                    "duplicate_pending_review_same_reviewer",
-                )
-                retracted.append(review)
-                continue
-            seen_reviewers.add(review.reviewer_agent_id)
-            kept.append(review)
-        if retracted:
-            self._record_default_review_observation(
-                kept[0].task_id if kept else retracted[0].task_id,
-                "workflow.default_review.duplicate_pending_retracted",
-                "warning",
-                {
-                    "retracted_review_ids": [review.id for review in retracted],
-                    "kept_review_ids": [review.id for review in kept],
-                    "reason": "duplicate_pending_review_same_reviewer",
-                },
-                actor,
-            )
-        return kept
 
     def _find_review_verdict_evidence(
         self,
@@ -28933,28 +25546,33 @@ class ControlPlane:
                     "verdict %s cannot resolve executor verification manifest" % evidence.id
                 )
                 continue
-            if self._read_only_report_needs_hub_verify(reviewed_task, executor_evidence):
-                info = self._hub_verify_repo_info(reviewed_task, executor_evidence)
-                tests = manifest.get("tests")
-                if (
-                    info is None
-                    or evidence.metadata.get("hub_verified") is not True
-                    or manifest.get("verified_by") != "hub_review_verifier_v1"
-                    or manifest.get("repository_access") != info["repository_access"]
-                    or not isinstance(tests, list)
-                    or len(tests) != 1
-                    or not isinstance(tests[0], dict)
-                    or tests[0].get("command") != info["test_command"]
-                    or tests[0].get("execution_environment") != "openshell_sandbox"
-                    or (
-                        manifest.get("verdict") == "approved"
-                        and (tests[0].get("returncode") != 0 or tests[0].get("status") != "pass")
+            if str(manifest.get("verdict") or "").strip().lower() == "approved":
+                replayed_acceptance = evaluate_acceptance(
+                    reviewed_task.metadata,
+                    executor_manifest,
+                )
+                if replayed_acceptance.get("required"):
+                    semantic_problems = acceptance_result_problems(
+                        replayed_acceptance,
+                        manifest.get("acceptance"),
                     )
-                ):
-                    problems.append(
-                        "verdict %s lacks independent report contract verification" % evidence.id
-                    )
-                    continue
+                    if semantic_problems:
+                        problems.extend(
+                            "verdict %s %s" % (evidence.id, problem)
+                            for problem in semantic_problems
+                        )
+                        continue
+                    review_status = manifest.get("review_status")
+                    if (
+                        not isinstance(review_status, dict)
+                        or review_status.get("structural") != "pass"
+                        or review_status.get("semantic") != "pass"
+                    ):
+                        problems.append(
+                            "verdict %s must expose passing structural and semantic review status"
+                            % evidence.id
+                        )
+                        continue
             verdict = str(manifest.get("verdict") or "").strip().lower()
             if verdict not in {"approved", "rejected"}:
                 problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
@@ -28982,14 +25600,6 @@ class ControlPlane:
                 semantic_verdict = str(manifest.get("semantic_verdict") or "").strip().lower()
                 if semantic_verdict not in {"approved", "rejected"}:
                     problems.append("verdict %s semantic verdict is invalid" % evidence.id)
-                    continue
-            experiment = manifest.get("review_experiment")
-            if isinstance(experiment, dict) and experiment.get("blind"):
-                protocol = experiment.get("protocol")
-                if not isinstance(protocol, dict) or protocol.get("protocol_compliant") is not True:
-                    problems.append(
-                        "verdict %s blind review protocol is noncompliant" % evidence.id
-                    )
                     continue
             if verdict == "rejected":
                 feedback_problems = rejected_verdict_feedback_problems(manifest)
@@ -29081,50 +25691,6 @@ class ControlPlane:
             return evidence, []
         return None, problems
 
-    def _review_attempt_protocol_failure(
-        self,
-        task_id: str,
-        review: Review,
-        *,
-        executor_evidence_id: str,
-    ) -> Tuple[Optional[Evidence], str]:
-        """Return the review-attempt evidence proving harness/protocol failure.
-
-        Review execution evidence carries the review and executor-evidence IDs
-        even when no valid verdict manifest was produced. Keep this separate
-        from semantic rejection so the workflow can retract the failed
-        reviewer assignment and let selection try a different eligible peer.
-        """
-        for evidence in reversed(self.list_evidence(task_id)):
-            if evidence.created_by != review.reviewer_agent_id:
-                continue
-            try:
-                if parse_time(evidence.created_at) < parse_time(review.created_at):
-                    continue
-            except ValueError:
-                continue
-            metadata = ensure_json_object(evidence.metadata)
-            if str(metadata.get("review_id") or "").strip() != review.id:
-                continue
-            if str(metadata.get("executor_evidence_id") or "").strip() != executor_evidence_id:
-                continue
-            if self._evidence_returncode(evidence) != 0:
-                return evidence, "review_executor_nonzero"
-            manifest = ensure_json_object(metadata.get("verification"))
-            if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
-                continue
-            if str(manifest.get("semantic_verdict") or "").strip().lower() not in {
-                "approved",
-                "rejected",
-            }:
-                return evidence, "semantic_verdict_invalid"
-            experiment = ensure_json_object(manifest.get("review_experiment"))
-            if experiment.get("blind"):
-                protocol = ensure_json_object(experiment.get("protocol"))
-                if protocol.get("protocol_compliant") is not True:
-                    return evidence, "blind_protocol_noncompliant"
-        return None, ""
-
     def _cooperative_review_integration_problems(
         self, task: Task, verdict_manifest: JsonDict
     ) -> List[str]:
@@ -29190,6 +25756,22 @@ class ControlPlane:
                 ReviewStatus.PENDING.value,
             ),
         )
+        # A reviewer that claimed this review is BUSY on the task; nothing
+        # else will release it once the review is withdrawn.
+        if not self._agent_has_active_lease(review.reviewer_agent_id):
+            self.store.execute(
+                """
+                UPDATE agents SET status = ?, current_task_id = NULL, updated_at = ?
+                WHERE id = ? AND status = ? AND current_task_id = ?
+                """,
+                (
+                    AgentStatus.IDLE.value,
+                    now,
+                    review.reviewer_agent_id,
+                    AgentStatus.BUSY.value,
+                    review.task_id,
+                ),
+            )
         self._record_history(
             review.task_id,
             "task.review_retracted",
@@ -29203,231 +25785,214 @@ class ControlPlane:
             },
         )
 
-    def _select_default_reviewer(
-        self,
-        task: Task,
-        *,
-        executor_agent_id: Optional[str] = None,
-        excluded_agent_ids: Optional[Iterable[str]] = None,
-        allow_independence_fallback: bool = False,
-    ) -> Optional[Agent]:
-        """Pick a default reviewer for ``task``.
-
-        Trust boundaries enforced here (autonomous-review context where
-        there is no human in the loop):
-
-        * Tenancy (mac-dyk): the reviewer's persona tenant_id must
-          match the task's tenant. Without a human to catch a misroute,
-          the tenancy boundary IS the safety boundary.
-        * Capability (mac-s1a): ``review`` capability is *required*,
-          not preferred. An agent without it cannot be drafted.
-        * Persona separation / anti-collusion (mac-v2i): the reviewer's
-          persona slug must differ from the executor's persona slug.
-          Two code-reviewer-souled agents cannot approve each other's
-          work — the second-eyes role only matters if it's a different
-          eye.
-        * Never an executor for this task: current and prior lease owners,
-          plus the latest evidence author, are excluded. Small fleets wait
-          for genuinely independent review rather than weakening the gate.
-        """
-        task_tenant = self._task_tenant_id(task)
-        executor_persona_slug = self._task_executor_persona_slug(task)
-        review_policy = self._default_review_policy(task)
-        review_required_capabilities = self._default_review_required_capabilities(
-            task,
-            review_policy,
-        )
-
-        excluded = {str(value) for value in (excluded_agent_ids or []) if str(value)}
-        candidates: List[Agent] = []
-        access_states: Dict[str, str] = {}
-        independence_penalties: Dict[str, int] = {}
-        semantic_reviewer = _semantic_reviewer_enabled()
-        for agent in self.list_agents():
-            if agent.id in excluded:
-                continue
-            if not semantic_reviewer and not self._agent_is_virtual(agent.id):
-                continue
-            reason = self._default_reviewer_unavailable_reason(
-                task,
-                agent,
-                task_tenant=task_tenant,
-                executor_persona_slug=executor_persona_slug,
-                executor_agent_id=executor_agent_id,
-                review_policy=review_policy,
-                review_required_capabilities=review_required_capabilities,
-            )
-            if (
-                reason is not None
-                and allow_independence_fallback
-                and reason in REVIEWER_INDEPENDENCE_REASONS
-                and self._reviewer_independence_fallback_enabled(task)
-            ):
-                reason = self._default_reviewer_unavailable_reason(
-                    task,
-                    agent,
-                    task_tenant=task_tenant,
-                    executor_persona_slug=executor_persona_slug,
-                    executor_agent_id=executor_agent_id,
-                    review_policy=review_policy,
-                    review_required_capabilities=review_required_capabilities,
-                    allow_independence_fallback=True,
-                )
-            if reason is not None:
-                continue
-            candidates.append(agent)
-            access_states[agent.id] = self._reviewer_repository_access_state(
-                task,
-                agent.id,
-            )[0]
-            independence_penalties[agent.id] = self._reviewer_independence_penalty(
-                task, agent, executor_agent_id
-            )
-        if not candidates:
-            return None
-        candidates.sort(
-            key=lambda agent: (
-                independence_penalties.get(agent.id, 0),
-                0 if access_states.get(agent.id) == "success" else 1,
-                0 if agent.status == AgentStatus.IDLE.value else 1,
-                agent.name,
-                agent.id,
-            )
-        )
-        return candidates[0]
-
-    def _record_semantic_reviewer_removed_verdict(
+    def _record_worker_evidence_verdict(
         self,
         task: Task,
         review: Review,
         executor_evidence: Evidence,
         actor: str,
     ) -> Optional[Evidence]:
-        """Sign a hub-reviewer verdict for already-validated non-repo evidence.
+        """Sign the hub-reviewer verdict for already-validated executor evidence.
 
-        Approval still requires a real review_verdict. The semantic reviewer
-        is gone, so the hub-reviewer attests that the executor evidence
-        already satisfied the verification contract.
+        The review verdict is the worker's own evidence: the default workflow
+        only gets here after ``_bound_review_evidence`` accepted it, which for
+        repo changes includes the verifier's pass on the exact pushed commit.
+        The hub re-runs nothing. It evaluates the task acceptance contract
+        against the executor manifest and records that decision under the
+        hub-reviewer key, so publication is authorised by a signed verdict
+        whose signer is not the executor. Returns None when the key is
+        unavailable; the caller waits and retries.
         """
-        key = self._agent_attestation_key(review.reviewer_agent_id)
+        key = self._reviewer_attestation_key_for_signing(review.reviewer_agent_id, actor=actor)
         if key is None:
             return None
         executor_manifest = ensure_json_object(
             ensure_json_object(executor_evidence.metadata).get("verification")
         )
         repo = ensure_json_object(executor_manifest.get("repo"))
+        acceptance = evaluate_acceptance(task.metadata, executor_manifest)
+        # The independent judge (mac.task_judge) read the change against the
+        # task. Its "not_met" is a semantic failure in its own right, and its
+        # next steps become the feedback the next attempt starts from.
+        judge = ensure_json_object(executor_manifest.get("judge"))
+        if judge.get("verdict") == "not_met":
+            judge_problem = "independent judge: not met: %s" % (judge.get("reason") or "")
+            if judge.get("next"):
+                judge_problem += "; next: %s" % judge["next"]
+            acceptance = {
+                **acceptance,
+                "status": "fail",
+                "problems": [*list(acceptance.get("problems") or []), judge_problem],
+            }
+        acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
+        coverage = evaluate_requirement_coverage(
+            getattr(task, "description", None), executor_manifest
+        )
+        coverage_pass = coverage.get("status") in {"pass", REQUIREMENT_COVERAGE_NOT_REQUIRED}
+        approved = acceptance_pass and coverage_pass
+        verdict = "approved" if approved else "rejected"
         digest = str(executor_manifest.get("worktree_digest") or "").strip()
         if not digest.startswith("sha256:"):
             digest = "sha256:%s" % hashlib.sha256(executor_evidence.id.encode()).hexdigest()
+        if approved:
+            summary = "worker evidence validated; structural and task acceptance contracts passed"
+            feedback = ""
+        elif not acceptance_pass:
+            summary = "task semantic acceptance failed: %s" % "; ".join(
+                str(problem) for problem in acceptance.get("problems", [])
+            )
+            feedback = summary
+        else:
+            # Enumerated requirements are the task's definition of done. When
+            # any is unmapped or unaddressed the hub-reviewer must not approve;
+            # it names them so the next attempt can finish the work.
+            summary = "task requirements not addressed: %s" % "; ".join(
+                str(problem) for problem in coverage.get("problems", [])
+            )
+            feedback = summary
         manifest: Dict[str, Any] = {
             "schema": VERIFICATION_SCHEMA,
             "status": "complete",
             "evidence_type": "review_verdict",
-            "verdict": "approved",
+            "verdict": verdict,
             "review_id": review.id,
             "reviewed_evidence_id": executor_evidence.id,
             "worktree_digest": digest,
-            "verified_by": "semantic_reviewer_removed",
+            "verified_by": "worker_evidence_v1",
             "llm_model": "hub-reviewer",
             "llm": {
                 "model": "hub-reviewer",
                 "family": "deterministic",
                 "provider": "hub",
             },
-            "summary": (
-                "semantic reviewer removed; executor evidence satisfied the verification contract"
-            ),
+            "summary": summary,
+            "review_status": {
+                "structural": "pass",
+                "semantic": "pass" if acceptance_pass else "fail",
+            },
+            "acceptance": acceptance,
+            "requirement_coverage": coverage,
             "checks": [
                 {
                     "name": "executor_evidence_contract",
                     "returncode": 0,
                     "status": "pass",
-                }
+                },
+                {
+                    "name": "requirement_coverage",
+                    "returncode": 0 if coverage_pass else 1,
+                    "status": "pass" if coverage_pass else "fail",
+                },
+                {
+                    "name": "task_acceptance",
+                    "returncode": 0 if acceptance_pass else 1,
+                    "status": "pass" if acceptance_pass else "fail",
+                },
             ],
             "signed_by": review.reviewer_agent_id,
         }
+        if feedback:
+            manifest["feedback"] = feedback
         if repo:
             manifest["repo"] = repo
+        if judge:
+            manifest["judge"] = judge
         manifest["signature"] = sign_verification_manifest(key, manifest)
         evidence = self.add_evidence(
             task.id,
             "review",
             "mac://review-verdict/%s" % review.id,
-            "semantic reviewer removed; executor evidence approved",
+            "worker evidence review: %s" % verdict,
             review.reviewer_agent_id,
             metadata={"returncode": 0, "verification": manifest},
         )
-        self._record_default_review_observation(
-            task.id,
-            "workflow.default_review.approved",
-            "info",
-            {
-                "review_id": review.id,
-                "reviewer_agent_id": review.reviewer_agent_id,
-                "executor_evidence_id": executor_evidence.id,
-                "verdict_evidence_id": evidence.id,
-                "reason": "semantic_reviewer_removed",
-            },
-            actor,
-        )
+        if not approved:
+            self._record_default_review_observation(
+                task.id,
+                (
+                    "workflow.default_review.semantic_acceptance_failed"
+                    if not acceptance_pass
+                    else "workflow.default_review.requirement_coverage_failed"
+                ),
+                "warning",
+                {
+                    "review_id": review.id,
+                    "reviewer_agent_id": review.reviewer_agent_id,
+                    "executor_evidence_id": executor_evidence.id,
+                    "verdict_evidence_id": evidence.id,
+                    "reason": (
+                        "semantic_acceptance_failed"
+                        if not acceptance_pass
+                        else "requirement_coverage_failed"
+                    ),
+                },
+                actor,
+            )
         return evidence
 
-    def _ensure_hub_review_verifier_agent(self, task: Task, *, actor: str) -> Optional[Agent]:
-        # The virtual hub-reviewer is the only default reviewer. Register it
-        # whenever the semantic reviewer is off, even if hub-verify is off,
-        # so non-repo evidence has an approval identity. When the semantic
-        # reviewer is opted back in, keep the old rule: only auto-register
-        # when hub-verify will actually use this agent.
-        if _semantic_reviewer_enabled() and not _hub_review_verify_enabled():
-            return None
-        if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
-            return None
-        assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
+    def _ensure_hub_reviewer_agent(self, *, actor: str) -> Optional[Agent]:
+        """Register (idempotently) the virtual hub-reviewer approval identity.
+
+        The hub-reviewer runs nothing. It signs the review verdict that records
+        the hub accepted the worker's validated evidence, so publication has an
+        approved review whose signer is not the executor.
+        """
+        agent_id = DEFAULT_HUB_REVIEWER_AGENT_ID
+        try:
+            existing = self.get_agent(agent_id)
+        except NotFoundError:
+            existing = None
         if (
-            assignment.get("schema") == "mac.review_experiment.v1"
-            and _semantic_reviewer_enabled()
-            and not metadata_declares_read_only_report_repository(task.metadata)
+            existing is not None
+            and self._agent_is_hub_review_verifier(existing)
+            and existing.health_status == HealthStatus.HEALTHY.value
+            and existing.status in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}
         ):
-            return None
-        name = (
-            os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()
-            or DEFAULT_HUB_REVIEWER_AGENT_NAME
-        )
-        agent_id = (
-            os.environ.get("MAC_HUB_REVIEWER_AGENT_ID", "").strip() or DEFAULT_HUB_REVIEWER_AGENT_ID
-        )
-        machine_id = (
-            os.environ.get("MAC_HUB_REVIEWER_MACHINE_ID", "").strip()
-            or DEFAULT_HUB_REVIEWER_MACHINE_ID
-        )
+            # Registered and usable. Its signing key self-heals at signing
+            # time (_reviewer_attestation_key_for_signing), so a sweep does
+            # not re-register it for every task it touches.
+            return existing
         try:
             machine = self.register_machine(
                 "operator-review",
                 labels={
-                    "source": "mac-hub-review-verifier",
+                    "source": "mac-hub-reviewer",
                     "role": "hub-reviewer",
                     "virtual": True,
                 },
-                resources={"virtual": True, "review": {"mode": "hub_verify"}},
+                resources={"virtual": True, "review": {"mode": "worker_evidence"}},
                 trusted=True,
-                machine_id=machine_id,
+                machine_id=DEFAULT_HUB_REVIEWER_MACHINE_ID,
             )
-            return self.register_agent(
+            reviewer = self.register_agent(
                 machine.id,
-                name,
+                DEFAULT_HUB_REVIEWER_AGENT_NAME,
                 capabilities=["review"],
                 resources={
                     "virtual": True,
                     "hub_review_verifier": {
                         "schema": HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA,
                         "enabled": True,
-                        "mode": "hub_verify",
+                        "mode": "worker_evidence",
                     },
                 },
                 agent_id=agent_id,
                 actor=actor,
             )
-        except Exception as exc:  # noqa: BLE001 - verifier setup must not break review sweeps.
+            try:
+                self.ensure_hub_reviewer_attestation_key(reviewer.id, actor=actor)
+            except ValidationError as exc:
+                self.observability.record_log(
+                    "workflow.default_review.hub_reviewer_key_unhealthy",
+                    level="error",
+                    layer="control_plane",
+                    source="default-review-workflow",
+                    subject_type="agent",
+                    subject_id=reviewer.id,
+                    detail={"actor": actor, "error": str(exc)[:300]},
+                )
+            return self.get_agent(reviewer.id)
+        except Exception as exc:  # noqa: BLE001 - reviewer setup must not break review sweeps.
             self.observability.record_log(
                 "workflow.default_review.hub_reviewer_register_failed",
                 level="warning",
@@ -29446,58 +26011,21 @@ class ControlPlane:
             and marker.get("enabled") is not False
         )
 
-    def _default_reviewer_unavailable_reason_for_id(
-        self,
-        task: Task,
-        reviewer_agent_id: str,
-        *,
-        executor_agent_id: Optional[str] = None,
-        allow_conditional_independence_fallback: bool = False,
-    ) -> Optional[str]:
-        try:
-            agent = self.get_agent(reviewer_agent_id)
-        except NotFoundError:
-            return "reviewer_missing"
-        reason = self._default_reviewer_unavailable_reason(
-            task,
-            agent,
-            executor_agent_id=executor_agent_id,
-            review_policy=self._default_review_policy(task),
-        )
-        if (
-            allow_conditional_independence_fallback
-            and reason in REVIEWER_INDEPENDENCE_REASONS
-            and self._reviewer_independence_fallback_reason(
-                task, agent, executor_agent_id=executor_agent_id
-            )
-        ):
-            return None
-        return reason
-
     def _default_reviewer_unavailable_reason(
         self,
         task: Task,
         agent: Agent,
         *,
-        task_tenant: Optional[str] = None,
-        executor_persona_slug: Optional[str] = None,
         executor_agent_id: Optional[str] = None,
         review_policy: Optional[JsonDict] = None,
-        review_required_capabilities: Optional[Iterable[str]] = None,
-        allow_independence_fallback: bool = False,
     ) -> Optional[str]:
-        if (
-            agent.id in self._coordination_excluded_agent_ids(task)
-            and not allow_independence_fallback
-        ):
+        if agent.id in self._coordination_excluded_agent_ids(task):
             return "reviewer_cooperative_family_participant"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
-        hub_review_verifier = _hub_review_verify_enabled() and self._agent_is_hub_review_verifier(
-            agent
-        )
+        hub_review_verifier = self._agent_is_hub_review_verifier(agent)
         if (
             metadata_declares_read_only_report_repository(task.metadata)
             and not hub_review_verifier
@@ -29508,13 +26036,9 @@ class ControlPlane:
             agent, self._default_reviewer_stale_after_seconds()
         ):
             return "reviewer_stale"
-        if self.reviews.agent_has_owned_task(task.id, agent.id) and not allow_independence_fallback:
+        if self.reviews.agent_has_owned_task(task.id, agent.id):
             return "reviewer_previously_owned_task"
-        if (
-            executor_agent_id is not None
-            and agent.id == executor_agent_id
-            and not allow_independence_fallback
-        ):
+        if executor_agent_id is not None and agent.id == executor_agent_id:
             return "reviewer_created_executor_evidence"
         if "review" not in set(agent.capabilities):
             return "reviewer_missing_capability"
@@ -29529,18 +26053,12 @@ class ControlPlane:
         ).strip()
         if target_agent_name and agent.name != target_agent_name:
             return "reviewer_not_target_agent"
-        required = set(
-            review_required_capabilities
-            if review_required_capabilities is not None
-            else self._default_review_required_capabilities(task, policy)
-        )
+        required = set(self._default_review_required_capabilities(task, policy))
         missing = sorted(required - set(agent.capabilities))
         if missing:
             return "reviewer_missing_capabilities:%s" % ",".join(missing)
-        if task_tenant is None:
-            task_tenant = self._task_tenant_id(task)
-        if executor_persona_slug is None:
-            executor_persona_slug = self._task_executor_persona_slug(task)
+        task_tenant = self._task_tenant_id(task)
+        executor_persona_slug = self._task_executor_persona_slug(task)
         agent_tenant, agent_persona_slug = self._agent_tenant_and_persona(agent)
         if task_tenant is not None:
             if agent_tenant is None:
@@ -29565,7 +26083,6 @@ class ControlPlane:
             executor_persona_slug is not None
             and agent_persona_slug is not None
             and agent_persona_slug == executor_persona_slug
-            and not allow_independence_fallback
         ):
             return "reviewer_same_persona"
         if hub_review_verifier:
@@ -29576,106 +26093,6 @@ class ControlPlane:
             failure_class = str((learning or {}).get("failure_class") or "authentication")
             return "reviewer_repository_access_%s:%s" % (failure_class, host)
         return None
-
-    def _reviewer_independence_fallback_enabled(self, task: Task) -> bool:
-        # Repository reports are conclusions drawn from observed source rather
-        # than mechanically integrated code. Their executor cannot also serve
-        # as the independent check on those conclusions.
-        if metadata_declares_read_only_report_repository(task.metadata):
-            return False
-        policy = self._default_review_policy(task)
-        return not (
-            policy.get("require_independent_reviewer") is True
-            or policy.get("allow_independence_fallback") is False
-            or review_diversity_requirements(task).get("high_risk") is True
-        )
-
-    def _reviewer_independence_penalty(
-        self,
-        task: Task,
-        agent: Agent,
-        executor_agent_id: Optional[str],
-    ) -> int:
-        penalty = 0
-        if agent.id in self._coordination_excluded_agent_ids(task):
-            penalty += 1
-        executor_persona = self._task_executor_persona_slug(task)
-        _tenant, reviewer_persona = self._agent_tenant_and_persona(agent)
-        if (
-            executor_persona is not None
-            and reviewer_persona is not None
-            and executor_persona == reviewer_persona
-        ):
-            penalty += 1
-        if self.reviews.agent_has_owned_task(task.id, agent.id):
-            penalty += 4
-        if executor_agent_id is not None and agent.id == executor_agent_id:
-            penalty += 4
-        return penalty
-
-    def _reviewer_independence_fallback_reason(
-        self,
-        task: Task,
-        reviewer: Agent,
-        *,
-        executor_agent_id: Optional[str] = None,
-        excluded_agent_ids: Optional[Iterable[str]] = None,
-    ) -> Optional[str]:
-        """Authorize independence relaxation only when no strict peer exists."""
-        if not self._reviewer_independence_fallback_enabled(task):
-            return None
-        effective_excluded = {
-            str(agent_id) for agent_id in (excluded_agent_ids or []) if str(agent_id)
-        }
-        evidence, _assessment = self._bound_review_evidence(task)
-        if evidence is not None:
-            effective_excluded.update(
-                str(row["reviewer_agent_id"])
-                for row in self.store.query_all(
-                    "SELECT reviewer_agent_id FROM reviews "
-                    "WHERE task_id = ? AND status = ? AND created_at >= ? "
-                    "AND reason LIKE 'reviewer_protocol_failure:%'",
-                    (
-                        task.id,
-                        ReviewStatus.RETRACTED.value,
-                        evidence.created_at or "",
-                    ),
-                )
-            )
-        if reviewer.id in effective_excluded:
-            return None
-        resolved_executor = (
-            executor_agent_id
-            if executor_agent_id is not None
-            else self.reviews.latest_executor_evidence_author(task.id)
-        )
-        strict_reason = self._default_reviewer_unavailable_reason(
-            task,
-            reviewer,
-            executor_agent_id=resolved_executor,
-            review_policy=self._default_review_policy(task),
-        )
-        if strict_reason not in REVIEWER_INDEPENDENCE_REASONS:
-            return None
-        relaxed_reason = self._default_reviewer_unavailable_reason(
-            task,
-            reviewer,
-            executor_agent_id=resolved_executor,
-            review_policy=self._default_review_policy(task),
-            allow_independence_fallback=True,
-        )
-        if relaxed_reason is not None:
-            return None
-        if (
-            self._select_default_reviewer(
-                task,
-                executor_agent_id=resolved_executor,
-                excluded_agent_ids=effective_excluded,
-            )
-            is not None
-        ):
-            return None
-        return strict_reason
 
     def _reviewer_repository_access_state(
         self,
@@ -29781,10 +26198,6 @@ class ControlPlane:
             executor_agent_id=executor_agent_id,
             review_policy=self._default_review_policy(task),
         )
-        if reason in REVIEWER_INDEPENDENCE_REASONS and self._reviewer_independence_fallback_reason(
-            task, reviewer, executor_agent_id=executor_agent_id
-        ):
-            return None
         if reason is None:
             return None
         readable = {
@@ -29798,31 +26211,6 @@ class ControlPlane:
             ),
         }
         return readable.get(reason, reason.replace("_", " "))
-
-    def _reviewer_independence_problem(self, task: Task, reviewer: Agent) -> Optional[str]:
-        """Compatibility form of the former independence-only policy."""
-        if reviewer.id in self._coordination_excluded_agent_ids(task):
-            return "reviewer executed another task in the same cooperative work family"
-        task_tenant = self._task_tenant_id(task)
-        reviewer_tenant, reviewer_persona = self._agent_tenant_and_persona(reviewer)
-        if task_tenant is not None:
-            if reviewer_tenant is None:
-                try:
-                    machine = self.get_machine(reviewer.machine_id)
-                except NotFoundError:
-                    return "reviewer machine is missing"
-                if not self._machine_allows_tenant(machine, task_tenant):
-                    return "reviewer is outside the task tenant boundary"
-            elif reviewer_tenant != task_tenant:
-                return "reviewer is outside the task tenant boundary"
-        executor_persona = self._task_executor_persona_slug(task)
-        if (
-            executor_persona is not None
-            and reviewer_persona is not None
-            and executor_persona == reviewer_persona
-        ):
-            return "reviewer and executor use the same persona"
-        return None
 
     def _task_executor_persona_slug(self, task: Task) -> Optional[str]:
         """Find the persona slug of whichever agent owned the task last
@@ -29860,7 +26248,7 @@ class ControlPlane:
         (mac-w29). Previously this synthesized ``mac://tasks/{id}`` which
         is filler — no resolver exists for that URI. The auto-review
         workflow now treats ``None`` as "no publication destination
-        configured; leave the task in REVIEWING and emit a waiting
+        configured; leave the approved task in review and emit a waiting
         observability event."
         """
         metadata = task.metadata
@@ -29891,7 +26279,7 @@ class ControlPlane:
         if project_target and eligible(project_target):
             return project_target
         # Fleet-wide default (opt-in): when set, routine approved tasks publish
-        # via this target and auto-complete instead of parking in REVIEWING for
+        # via this target and auto-complete instead of parking in review for
         # want of a per-task/per-project destination. Unset => unchanged (mac-w29
         # hold). e.g. MAC_DEFAULT_PUBLICATION_TARGET=git://main
         #
@@ -29957,9 +26345,9 @@ class ControlPlane:
         evidence_id: Optional[str] = None,
         actor: str = "control-plane",
     ) -> None:
-        """Stamp a REVIEWING task with WHY it cannot leave that state.
+        """Stamp an approved task with WHY it cannot leave review.
 
-        Approval does not complete a task: ``REVIEWING -> COMPLETED`` happens
+        Approval does not complete a task: ``-> COMPLETED`` happens
         only inside :meth:`publish_task`, which needs a resolved publication
         target.  When none resolves the task parks, and until this marker
         existed the reason lived only in a code comment and a transient
@@ -30003,11 +26391,13 @@ class ControlPlane:
         min_age_seconds: float = 0.0,
         limit: int = 50,
     ) -> List[JsonDict]:
-        """REVIEWING tasks that cannot reach COMPLETED as things stand.
+        """Approved tasks that cannot reach COMPLETED as things stand.
 
-        A task is parked when it is in REVIEWING, nobody holds it, and no
-        publication target resolves for it — so nothing downstream will ever
-        move it on.  Resolution is re-evaluated live rather than trusted from
+        A task is parked when it is approved and still in review, nobody holds
+        it, and no publication target resolves for it — so nothing downstream
+        will ever move it on. The default workflow approves in NEEDS_REVIEW and
+        stamps ``metadata.publication_block`` when it parks; a legacy or
+        human-reviewed task parks in REVIEWING, possibly without the marker.  Resolution is re-evaluated live rather than trusted from
         the stored marker, because the marker is written when a task parks and
         an operator may have set ``metadata.publication_target`` (or a project
         target, or the fleet default) since; such a task is recoverable and must
@@ -30019,8 +26409,11 @@ class ControlPlane:
         ``updated_at`` otherwise, so a task keeps its original park time.
         """
         rows = self.store.query_all(
-            "SELECT id FROM tasks WHERE state = ? AND owner_agent_id IS NULL ORDER BY updated_at",
-            (TaskState.REVIEWING.value,),
+            "SELECT id FROM tasks WHERE owner_agent_id IS NULL AND ("
+            "state = ? OR (state = ? AND "
+            "json_extract(metadata, '$.publication_block.reason') IS NOT NULL)"
+            ") ORDER BY updated_at",
+            (TaskState.REVIEWING.value, TaskState.NEEDS_REVIEW.value),
         )
         now = parse_time(utcnow())
         parked: List[JsonDict] = []
@@ -30069,43 +26462,6 @@ class ControlPlane:
             subject_type="task",
             subject_id=task_id,
             detail={"actor": actor, **detail},
-        )
-
-    def _record_publication_deferred_once(
-        self,
-        task_id: str,
-        *,
-        barrier: JsonDict,
-        target: str,
-        review_id: str,
-        evidence_id: str,
-        actor: str,
-    ) -> None:
-        """Record one explanation per task/epoch without sweep-driven log churn."""
-
-        latest = self.store.query_one(
-            "SELECT detail FROM observability_events "
-            "WHERE kind = 'log' AND name = ? AND subject_type = 'task' "
-            "AND subject_id = ? ORDER BY sequence DESC LIMIT 1",
-            ("workflow.default_review.publication_deferred", task_id),
-        )
-        previous = (
-            ensure_json_object(json_loads(latest["detail"], {})) if latest is not None else {}
-        )
-        if str(previous.get("epoch_id") or "") == str(barrier.get("epoch_id") or ""):
-            return
-        self._record_default_review_observation(
-            task_id,
-            "workflow.default_review.publication_deferred",
-            "info",
-            {
-                "reason": "fleet_release_epoch_active",
-                "target": target,
-                "review_id": review_id,
-                "evidence_id": evidence_id,
-                **barrier,
-            },
-            actor,
         )
 
     def _record_project_failure_lesson(
@@ -30200,6 +26556,14 @@ class ControlPlane:
             "UPDATE agents SET status = ?, current_task_id = ?, updated_at = ? WHERE id = ?",
             (status, current_task_id, now, agent_id),
         )
+
+    def _agent_held_by_deployment(self, agent: Agent) -> bool:
+        """Whether a deploy is holding this worker down rather than its host leaving."""
+
+        if not agent.dispatch_hold:
+            return False
+        reason = str(agent.dispatch_hold_reason or "")
+        return reason.startswith(DEPLOYMENT_HOLD_REASON_PREFIXES)
 
     def _agent_has_active_lease(self, agent_id: str) -> bool:
         row = self.store.query_one(
@@ -30483,12 +26847,11 @@ class ControlPlane:
     def reconcile_service_roles(self) -> JsonDict:
         """Periodic (called from tick): seed desired ops from MAC_SERVICE_ROLE_OPS
         (opt-in; unset = no election, agents advertise as before), expire silent/
-        overloaded holders, drop offline holders, and emit a provisioning demand
-        signal for any desired op with zero live holders ("the cluster needs a
-        <op> agent")."""
+        overloaded holders, drop offline holders, and report every desired op
+        with zero live holders as ``unheld``."""
         self._ensure_service_roles_seeded()
         expired = self.service_roles.expire_service_claims()
-        requested: List[str] = []
+        unheld: List[str] = []
         for role in self.service_roles.desired_services(tenant_id=None):
             live = [
                 c
@@ -30499,18 +26862,8 @@ class ControlPlane:
                 if not self._service_holder_live(claim.agent_id):
                     self.service_roles.release_service_claim(claim.id, reason="holder_offline")
             if not live:
-                try:
-                    self.provisioning.request_agent(
-                        reason="service_role:%s" % role.slug,
-                        capabilities=role.required_capabilities,
-                        hardware=role.hardware_requirements,
-                        detail={"op": role.op, "model_id": role.model_id},
-                        requested_by="service-role-reconciler",
-                    )
-                    requested.append(role.op)
-                except Exception:  # noqa: BLE001 - demand signal is best-effort
-                    pass
-        return {"expired": len(expired), "requested": requested}
+                unheld.append(role.op)
+        return {"expired": len(expired), "unheld": unheld}
 
     def reconcile_openshell_task_sandbox_lifecycle(
         self,
@@ -30549,7 +26902,7 @@ class ControlPlane:
                 return self.get_task(task_id).to_dict()
             except NotFoundError:
                 # A task the store cannot resolve fails closed downstream (the
-                # sandbox is preserved), matching the k8s controller discipline.
+                # sandbox is preserved).
                 return None
 
         try:

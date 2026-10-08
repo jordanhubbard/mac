@@ -91,15 +91,14 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     # ``tree_sha`` is the load-bearing field on ``git.merged``. Every merge
     # this fleet performs is a SQUASH, which mints a new commit sha, so a
     # consumer keyed on the commit sha would miss every one of them. Tree
-    # identity is what the native merge queue lands on (see
-    # ``native_merge_queue.landing_is_safe``) and it survives squashing.
+    # identity survives squashing.
     "git.merged",
     # The canonical branch moved. Distinct from ``git.merged``: the merge is
     # about ONE task's work, this is about the trunk every other worktree was
     # cut from. A worker that hears it and recognises its own base knows it
     # must rebase before it pushes, instead of discovering it at push time.
     "git.canonical_advanced",
-    # Capacity pressure, consumed by the HGX autoscaler.
+    # Capacity pressure: a worker reporting it cannot take more work.
     "capacity.saturated",
     # The sandbox guardrail moved. ``sandbox.policy_changed`` says WHICH
     # direction it moved in (see mac.openshell_policy_diff); a worker that
@@ -112,9 +111,6 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     # the policy it was told to stop using, or sit out a fixed sleep that has
     # nothing to do with when the policy actually landed.
     "sandbox.policy_published",
-    # Durable hub-mediated self-upgrade phase changes. The payload is a
-    # secret-free pointer/digest; full evidence remains in the transaction.
-    "fleet.upgrade.progress",
 )
 
 BROADCAST_EVENT_TYPE_SET = frozenset(BROADCAST_EVENT_TYPES)
@@ -166,8 +162,7 @@ BROADCAST_COALESCE_SECONDS = 10.0
 #: the terminal git events for the same reason. Two squash merges landing on
 #: the same branch inside the window are DIFFERENT facts, and the field that
 #: distinguishes them for a consumer is the resulting tree — the commit sha is
-#: minted fresh by the squash, which is precisely why tree identity is what
-#: the merge queue trusts.
+#: minted fresh by the squash.
 BROADCAST_COALESCE_FIELDS = (
     "project",
     "task_id",

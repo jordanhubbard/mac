@@ -843,14 +843,12 @@ jobs:
             --kind openshell-runtime \
             --requested-revision "$GITHUB_SHA" \
             --build-arg BUILDX_VERSION=0.30.1 \
+            --build-arg RUST_VERSION=1.95.0 \
             --build-arg GH_VERSION=2.95.0 \
             --build-arg NODE_VERSION=22.23.1 \
             --build-arg PNPM_VERSION=11.13.1 \
-            --build-arg CODEX_VERSION=0.140.0 \
-            --build-arg CLAUDE_VERSION=2.1.220 \
-            --build-arg CURSOR_VERSION=2026.07.23-e383d2b \
             --build-arg OPENCODE_VERSION=1.18.18 \
-            --build-arg PI_VERSION=0.84.2 \
+            --build-arg CLAUDE_CODE_VERSION=2.1.292 \
             --output openshell-runtime-publication/plan.json \
             --github-output "$GITHUB_OUTPUT"
       - id: image-reuse
@@ -885,14 +883,11 @@ jobs:
         if: steps.image-reuse-eligibility.outputs.reuse != 'true'
         env:
           BUILDX_VERSION: "0.30.1"
+          RUST_VERSION: "1.95.0"
           GH_VERSION: "2.95.0"
           NODE_VERSION: "22.23.1"
           PNPM_VERSION: "11.13.1"
-          CODEX_VERSION: "0.140.0"
-          CLAUDE_VERSION: "2.1.220"
-          CURSOR_VERSION: "2026.07.23-e383d2b"
           OPENCODE_VERSION: "1.18.18"
-          PI_VERSION: "0.84.2"
         run: deploy/openshell/prepare-runtime-image-assets.sh
       - name: Set up QEMU for cross-architecture image execution
         # docker/setup-qemu-action v3
@@ -917,14 +912,12 @@ jobs:
             ${{ steps.image-plan.outputs.content_tag }}
           build-args: |
             BUILDX_VERSION=0.30.1
+            RUST_VERSION=1.95.0
             GH_VERSION=2.95.0
             NODE_VERSION=22.23.1
             PNPM_VERSION=11.13.1
-            CODEX_VERSION=0.140.0
-            CLAUDE_VERSION=2.1.220
-            CURSOR_VERSION=2026.07.23-e383d2b
             OPENCODE_VERSION=1.18.18
-            PI_VERSION=0.84.2
+            CLAUDE_CODE_VERSION=2.1.292
           labels: |
             org.opencontainers.image.source=https://github.com/jordanhubbard/mac
             org.opencontainers.image.revision=${{ github.sha }}
@@ -1220,7 +1213,8 @@ jobs:
     # silently, which is worse than the outage it fixes.
     #
     # This adds a `tested-<frozen-inputs-sha>` tag pointing at the SAME digest,
-    # only once every code gate is green. deploy-mac-fleet.sh requires it.
+    # only once every code gate is green. Pin a host's runtime image only to a
+    # digest that carries this tag.
     needs: [openshell-runtime-image, dead-code, mainline, compatibility, postgres-contract, upfront-validation, container-contract]
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
@@ -1296,4 +1290,3 @@ jobs:
           else
             gh issue create --title "$title" --body "$body"
           fi
-

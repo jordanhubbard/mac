@@ -51,7 +51,6 @@ dev = [
     "coverage[toml]>=7.10,<8.0",
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
-    "kubernetes>=30.1,<33",
     # Shared lint/format toolchain; see [tool.ruff] and scripts/run-lint.sh.
     # `make lint` fetches this on demand via `uv run --with ruff`, but pinning
     # it in the dev extra keeps the enforced version consistent across hosts.
@@ -66,9 +65,6 @@ postgres = [
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
 ]
-k8s = [
-    "kubernetes>=30.1,<33",
-]
 relay = [
     "nemo-relay==0.3.0",
 ]
@@ -77,14 +73,6 @@ mac = "mac.cli:main"
 mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
-mac-hub-upgrade-supervisor = "mac.hub_upgrade_supervisor:main"
-# K8s Phase 4/5 binaries (require the [k8s] optional extra at runtime).
-# `mac-k8s-orchestrator` is the long-running dispatcher: it folds the
-# previous claim/launch and stuck-Job reconciliation loops into one
-# process, served by a single Deployment + ServiceAccount.
-mac-k8s-orchestrator = "mac.k8s.orchestrator:main"
-mac-k8s-bootstrap = "mac.k8s.bootstrap:main"
-mac-task-runner = "mac.k8s.job_executor:main"
 mac-webdav-server = "mac.webdav_server:main"
 # Standalone LLM router (MAC_ROUTER_BACKEND=standalone): same router as the
 # in-hub inproc mount, in its own process so ledger restarts don't drop
@@ -94,9 +82,9 @@ mac-router = "mac.router_service:main"
 # mac-ledger-backup entry point went with its module.
 mac-pg-backup = "mac.pg_backup:main"
 mac-schema-migrate = "mac.schema_migrations:main"
-# Thin CLI shared by host-mode workers and the Job-pod codex stubs to
+# Thin CLI shared by host-mode workers and the Job-pod task-runner stubs to
 # sign worker_evidence manifests without re-implementing the canonical
-# HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).
+# HMAC in bash heredocs (see deploy/task-runner/mac-task-executor-*).
 mac-evidence = "mac.evidence_cli:main"
 mac-openshell-supervisor = "mac.openshell_supervisor:main"
 mac-openshell-collector = "mac.openshell_collector:main"

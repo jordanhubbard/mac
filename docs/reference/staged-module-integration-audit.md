@@ -17,10 +17,11 @@
 > `openclaw_checkpoint_gc`, `openclaw_delivery_continuity`,
 > `openshell_static_runtime_refresh`, `remote_session`, `reported_version`,
 > `skill_auto_repair` — and their tests are **deleted** in the current tree; git
-> history retains them if any is wanted for real. The two survivors,
-> `predispatch_conflict` and `investigation_artifacts`, are **not** abandoned:
-> each is wired to a real, behaviour-exercising test and carries a dated owner
-> and a concrete wiring plan in §0.
+> history retains them if any is wanted for real. Of the two survivors,
+> `investigation_artifacts` is **not** abandoned: it is wired to a real,
+> behaviour-exercising test and carries a dated owner and a concrete wiring plan
+> in §0. The other, `predispatch_conflict`, passed its 2026-09-30 re-audit date
+> still unwired and was **deleted** with its test on 2026-10-01 (§0.2).
 
 ## 0. Current-tree resolution (2026-08-18) — supersedes §4/§5
 
@@ -58,7 +59,7 @@ caller and design contract.
 
 | module | owner (role, dated) | real test today | wiring plan: named integration point + trigger | re-audit by |
 |---|---|---|---|---|
-| `predispatch_conflict` | fleet dead-code steward, recorded 2026-08-18 | `tests/test_predispatch_conflict.py` drives `check_predispatch_conflict` against a real temp git repo (real `git merge-tree`, not mocked) | Consumed by dispatch-time ready-task selection as the symmetric, earlier counterpart to the land-time gate: `check_predispatch_conflict` wraps `mac.merge_queue.validate_projected_merge` (`src/mac/merge_queue.py`) the way `mac.auto_land.decide_land` wraps the land-time gate. Integration point: the ready-task selection / scheduler path (`mac.dispatch.ready_tasks` and the hub-side selector it fronts), which attaches the advisory verdict to task evidence or re-orders to prefer non-conflicting tasks. Design contract and intended behaviour: `docs/archive/field-notes/investigation-predispatch-conflict-5a43ad.md`. Trigger to wire: the first dispatch task that adds conflict-aware ordering. | 2026-09-30 |
+| `predispatch_conflict` | **DELETED 2026-10-01** | — | Never wired by its 2026-09-30 re-audit date. Deleted with `tests/test_predispatch_conflict.py` when the review/merge pipeline was simplified; git history retains it. | — |
 | `investigation_artifacts` | fleet dead-code steward, recorded 2026-08-18 | `tests/test_per_run_artifact_gitignore.py` imports `PER_RUN_INVESTIGATION_ARTIFACTS` and asserts the checked-in `.gitignore` root-anchors every name and masks no nested product file (real `git check-ignore`) | Single source of truth for the per-run artifact filename set the `.gitignore` publication-merge guard depends on. The module derives `PER_RUN_INVESTIGATION_ARTIFACT_GITIGNORE_PATTERNS` from `PER_RUN_INVESTIGATION_ARTIFACTS`; `tests/test_per_run_artifact_gitignore.py` enforces `.gitignore` against it so the two cannot drift. Trigger to fully wire in `src/`: replace the second, hand-maintained copy of the list in `tests/test_gitignore_investigation_artifacts.py` (and any `.gitignore` generator) with an import of this module, collapsing to one SSOT. | 2026-09-30 |
 
 Re-audit rule: on each subsequent dead-code pass, re-run the §1 enumeration and
@@ -183,14 +184,14 @@ design reference, or roadmap trace).
 
 | module | classification | evidence (file:line) | has_test | verdict |
 |---|---|---|---|---|
-| `evidence_cli` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:101` (`mac-evidence = "mac.evidence_cli:main"`); also `deploy/codex-runner/mac-task-executor-codex:48` | `tests/test_evidence_cli.py` (pass) | keep-wired |
+| `evidence_cli` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:101` (`mac-evidence = "mac.evidence_cli:main"`); also `deploy/task-runner/mac-task-executor-opencode-build:83` | `tests/test_evidence_cli.py` (pass) | keep-wired |
 | `git_askpass` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:107` (`mac-git-askpass = "mac.git_askpass:main"`) | `tests/test_git_askpass.py` (pass) | keep-wired |
 | `hermes_gateway` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:102` (`mac-hermes-gateway = "mac.hermes_gateway:main"`); `main` at `src/mac/hermes_gateway.py:122` | `tests/test_hermes_gateway_sandbox.py`, `tests/test_hermes_vendor.py` (pass) | keep-wired |
 | `openshell_supervisor` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:103` (`mac-openshell-supervisor = "mac.openshell_supervisor:main"`) | `tests/test_openshell_management.py`, `tests/test_infrastructure_coverage.py` (pass) | keep-wired |
 | `openshell_collector` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:104` (`mac-openshell-collector = "mac.openshell_collector:main"`) | `tests/test_openshell_management.py`, `tests/test_infrastructure_coverage.py` (pass) | keep-wired |
 | `webdav_server` | WIRED-VIA-ENTRYPOINT | `pyproject.toml:91` (`mac-webdav-server = "mac.webdav_server:main"`); also `deploy/install-webdav-server.sh:193` | `tests/test_webdav_server.py` (pass) | keep-wired |
 | `project_inception` | WIRED-VIA-SCRIPT/DEPLOY | `scripts/prove-c26-inception.py:9` (`from mac.project_inception import run_c26_project_inception_proof`) | `tests/test_project_inception.py` (pass) | keep-wired |
-| `review_finalizer` | WIRED-VIA-SCRIPT/DEPLOY | `deploy/codex-runner/mac-task-executor-opencode-review:449` (`python3 -m mac.review_finalizer`) | `tests/test_review_finalizer.py` (pass) | keep-wired |
+| `review_finalizer` | WIRED-VIA-SCRIPT/DEPLOY | `deploy/task-runner/mac-task-executor-opencode-review:449` (`python3 -m mac.review_finalizer`) | `tests/test_review_finalizer.py` (pass) | keep-wired |
 | `hermes_chat_config` | WIRED-VIA-SCRIPT/DEPLOY | `deploy/fleet-node-install.sh:8755` (`python -m mac.hermes_chat_config ...`) | `tests/test_hermes_chat_config.py` (pass) | keep-wired |
 | `ide_launcher` | WIRED-VIA-SCRIPT/DEPLOY | `Makefile:302` (`"$(PYTHON)" -m mac.ide_launcher`) | `tests/test_ide_launcher.py` (pass) | keep-wired |
 | `dream_scanner` | WIRED-VIA-DESIGN-SURFACE | design ref `src/mac/dream_repair_tasks.py:22`; in `src/mac/data/test_impact_map.json`; §6.1 `docs/audit.md:259` | `tests/test_dream_scanner.py` (pass) | stage-with-tracking |

@@ -2,10 +2,9 @@
 # scripts/build-and-push-image.sh
 #
 # Build the `mac` container image with `docker buildx` (linux/amd64 by
-# default so it runs cleanly on K8s nodes even when built from an Apple
-# Silicon dev machine), optionally push it to a registry of your
-# choice, and optionally rewrite the K8s deployment manifests to pin
-# the resulting digest.
+# default so it runs cleanly on amd64 hosts even when built from an Apple
+# Silicon dev machine), and optionally push it to a registry of your
+# choice.
 #
 # Defaults can be overridden via flags or env vars; flags win.
 #
@@ -14,8 +13,7 @@
 #     --registry ghcr.io/your-org \
 #     --image-name mac \
 #     --tag v0.1.0 \
-#     --push \
-#     --update-manifests
+#     --push
 #
 # Env overrides (all optional):
 #   MAC_IMAGE_REGISTRY      default: ghcr.io/anthropics
@@ -33,10 +31,6 @@
 #   * --push triggers `docker buildx build --push`. Without --push the
 #     image is loaded into the local engine via --load (which only
 #     works for a single platform; that's fine, we pin one platform).
-#   * --update-manifests rewrites the three deploy/k8s/*/deployment.yaml
-#     image: fields in place to the pushed `repo@sha256:digest`. The
-#     digest is captured from the build metadata file, so this flag
-#     implies --push.
 
 set -euo pipefail
 
@@ -54,11 +48,10 @@ DOCKERFILE="${MAC_IMAGE_DOCKERFILE:-Dockerfile}"
 BUILD_CONTEXT="${MAC_IMAGE_BUILD_CONTEXT:-${REPO_ROOT}}"
 BUILDER_NAME="${MAC_IMAGE_BUILDER:-mac-builder}"
 PUSH=0
-UPDATE_MANIFESTS=0
 NO_CACHE=0
 
 usage() {
-    sed -n '2,40p' "${BASH_SOURCE[0]}"
+    sed -n '2,33p' "${BASH_SOURCE[0]}"
     exit "${1:-0}"
 }
 
@@ -79,7 +72,6 @@ while [[ $# -gt 0 ]]; do
         --builder)          BUILDER_NAME="$2"; shift 2 ;;
         --builder=*)        BUILDER_NAME="${1#*=}"; shift ;;
         --push)             PUSH=1; shift ;;
-        --update-manifests) UPDATE_MANIFESTS=1; PUSH=1; shift ;;
         --no-cache)         NO_CACHE=1; shift ;;
         -h|--help)          usage 0 ;;
         *) echo "unknown flag: $1" >&2; usage 2 ;;
@@ -239,42 +231,6 @@ echo "==> built ${IMAGE_REF}"
 if [[ -n "${DIGEST}" ]]; then
     PINNED="${IMAGE}@${DIGEST}"
     echo "==> registry digest: ${PINNED}"
-fi
-
-# ----------------------------------------------------------------------
-# Optionally rewrite the K8s deployment manifests to pin the digest.
-# Targets the three Deployments that consume the mac image.
-# ----------------------------------------------------------------------
-
-if [[ "${UPDATE_MANIFESTS}" == "1" ]]; then
-    if [[ -z "${DIGEST}" ]]; then
-        echo "--update-manifests requested but the build did not return a digest; skipping" >&2
-        exit 1
-    fi
-    PINNED="${IMAGE}@${DIGEST}"
-    echo "==> rewriting image: lines in deploy/k8s/{mac-api,mac-runner}/deployment.yaml"
-    # Portable in-place sed for both macOS and GNU. The pattern matches
-    # the whole image: line (everything from `image:` through the rest
-    # of the line) and replaces it with the new pinned reference.
-    for f in \
-        "${REPO_ROOT}/deploy/k8s/mac-api/deployment.yaml" \
-        "${REPO_ROOT}/deploy/k8s/mac-runner/deployment.yaml"; do
-        if [[ ! -f "${f}" ]]; then
-            echo "    skip (missing): ${f}"
-            continue
-        fi
-        sed -i.bak -E "s|(^[[:space:]]*image:[[:space:]]*).*|\1${PINNED}|" "${f}"
-        rm -f "${f}.bak"
-        # Also rewrite any literal MAC_RUNNER_DEFAULT_IMAGE env value
-        # pointing at the same repo, so task Jobs use the new digest too.
-        sed -i.bak -E "/name: MAC_RUNNER_DEFAULT_IMAGE/{n;s|(value:[[:space:]]*).*|\1\"${PINNED}\"|;}" "${f}"
-        rm -f "${f}.bak"
-        echo "    updated: ${f#${REPO_ROOT}/}"
-    done
-    echo
-    echo "==> review the diff and commit:"
-    echo "    git diff -- deploy/k8s"
-    echo "    git commit -m 'deploy: pin mac image to ${DIGEST}'"
 fi
 
 echo

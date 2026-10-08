@@ -13,7 +13,7 @@ src/mac/observability_console.py   the snapshot the console reads
 ## Views
 
 `Live` (movement now) · `Stuck work` (dwell, not counts) · `Agents` (belief vs
-evidence) · `Projects` · `Pipelines` · `Dream & nap` · `Telemetry` — plus a
+evidence) · `Projects` · `Pipelines` · `Telemetry` — plus a
 per-task drill-down reached by clicking any task, at `?view=task&task=<id>`.
 
 ### The drill-down is partial, and looks it

@@ -299,18 +299,17 @@ mac task stats
 mac agent list
 ```
 
-If the client already has a home-scoped `~/.mac/fleets.yaml` entry with a
-verified SSH route to the hub, it can refresh the fleet-scoped token and use
-the legacy fleet selector:
+If the client already has a home-scoped `~/.mac/fleets.yaml` entry and
+`MAC_API_TOKEN__<FLEET>` in `~/.mac/.env`, it can use the legacy fleet
+selector:
 
 ```console
-mac admin fleet sync-token --fleet my-fleet
 mac --fleet my-fleet diagnostics
 mac --fleet my-fleet task stats
 ```
 
-`mac admin fleet sync-token` copies the historical shared administrator token. Treat
-it as existing-operator recovery, not new-client enrollment. Do not copy
+That token is the historical shared administrator token. Treat it as
+existing-operator recovery, not new-client enrollment. Do not copy
 database credentials, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a different
 operator's complete `~/.mac` directory. New clients should use the scoped SSH
 enrollment and mode-`0600` profile credential above.
@@ -403,96 +402,23 @@ and write completed operational context back to MAC.
 
 ## Deploy A Real Fleet
 
-After the local quickstart makes sense, deploy a hub. The fleet registry is
-home-scoped at `~/.mac/fleets.yaml`; it is not checked into the repository.
+After the local quickstart makes sense, build a fleet. Hosts are provisioned
+by hand from the "Provision a new host" checklist in
+[Updating the fleet with `fleet-update`](operations/fleet-update.md), and
+updated with `scripts/fleet-update`, run on the hub. The client-side fleet
+registry is home-scoped at `~/.mac/fleets.yaml`; it is not checked into the
+repository.
 
-For an LLM-driven setup, start from a generic, per-CSP sample instead of writing
-a `mac.fleet_setup.v1` spec from scratch. The repo ships de-personalized samples
-under `deploy/fleet/samples/` (GKE is the worked example); your real, named fleet
-spec lives outside git in `~/.mac/specs/<fleet>.fleet.yaml`:
-
-```console
-scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
-scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
-$EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
-
-mac admin fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml
-mac admin fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml
-make setup ARGS="--spec ~/.mac/specs/my-gke.fleet.yaml --force"
-```
-
-See `deploy/fleet/samples/README.md` for the per-CSP convention. Never check a
-named fleet into the repo.
-
-The doctor report is JSON and calls out missing provider env vars, bad targets,
-sample-config mistakes, and the exact next commands.
-
-For a new hub:
-
-```console
-make deploy ARGS="--new-hub horde --target horde@20.115.163.162:2201"
-```
-
-Use `--ssh-port 2201` instead of an inline `:2201` when the target is an SSH
-alias or otherwise contains a colon:
-
-```console
-make deploy ARGS="--new-hub horde --target horde@20.115.163.162 --ssh-port 2201"
-```
-
-Re-run deployment for an existing hub:
-
-```console
-make deploy HUB=horde
-```
-
-The deploy opens SSH with `BatchMode=yes`, so it can never prompt to accept an
-unknown host key. On a brand-new box (no `~/.ssh/known_hosts` entry for the
-target yet) the route probe therefore fails; it reports the classified cause —
-`host-key-untrusted` — with the tail of the OpenSSH transcript and the fix.
-Trust the key deliberately before deploying:
-
-```console
-ssh-keyscan -H <host> >> ~/.ssh/known_hosts
-```
-
-Alternatively, give the fleet an explicit `ssh_known_hosts_file` /
-`ssh_host_key_fingerprint`, or set `ssh_host_key_policy: accept-new` in
-`~/.mac/fleets.yaml` for a host you control. The other classified causes are
-`host-key-changed` (the target's key no longer matches the pinned entry — never
-paper over this one), `auth-rejected`, `unreachable`, and `timeout`.
-
-The Make targets select `.venv/bin/python`, `python3.14`, `python3`, or `python`
-only when it matches the exact version in `.python-version`:
-
-```console
-make setup
-make deploy HUB=horde
-```
-
-MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`. The
-in-mac LLM router, Qdrant, Firecrawl, the MAC API, worker services, and Hermes
-bridge files are bootstrapped as part of the fleet service picture. Standalone
-TokenHub is retired from the default fleet topology.
+MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`.
 
 Private GitHub HTTPS repositories require a credential on every host or task
-runner that performs Git work. An explicit deploy token may be kept in the
-host-local `~/.mac/.env` (mode `0600`), never in `~/.mac/fleets.yaml` or a
-committed fleet spec:
+runner that performs Git work. Put it in the host-local `~/.mac/mac.env`
+(mode `0600`) as `GH_TOKEN`, never in `~/.mac/fleets.yaml` or a committed file:
 
 ```console
-# ~/.mac/.env -- placeholder only; supply the real value out of band.
-MAC_DEPLOY_GH_TOKEN=<github-token-authorized-for-the-organization>
+# ~/.mac/mac.env -- placeholder only; supply the real value out of band.
+GH_TOKEN=<github-token-authorized-for-the-organization>
 ```
-
-Fleet deploy resolves `MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then an
-existing `gh` keychain login. It reports only the source name, streams the value
-over SSH stdin, and writes it to the owner-only managed runtime as `GH_TOKEN`.
-Pure `gateway_impl: none` workers verify the credential before drain or source
-replacement and forward it to OpenShell through a private mode-`0600` file.
-Kubernetes task and review Jobs instead read optional `GH_TOKEN`,
-`GITHUB_TOKEN`, and `GITEA_TOKEN` keys from the runner's configured Kubernetes
-Secret. Review Jobs do not receive `MAC_SECRET_KEY`.
 
 ## Where To Go Next
 

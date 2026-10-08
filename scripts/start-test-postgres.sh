@@ -62,10 +62,32 @@ require_sql() {
     echo "error: psql is required to verify test PostgreSQL SQL readiness." >&2
     exit 1
   fi
-  if ! PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=5000' \
-      "$client" -X -w -qAt -v ON_ERROR_STOP=1 "$@" -c 'SELECT 1' >/dev/null 2>&1; then
-    echo "error: test PostgreSQL failed SQL readiness for the requested database." >&2
-    echo "       Check database existence, authentication and server storage before retrying." >&2
+  local sql_err
+  if ! sql_err=$(PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=5000' \
+      "$client" -X -w -qAt -v ON_ERROR_STOP=1 "$@" -c 'SELECT 1' 2>&1 >/dev/null); then
+    # Keep the server's own complaint: a connection that dies after being
+    # accepted (Docker Desktop's port forward closing under us) is a different
+    # failure from a database that answers with an error (missing storage,
+    # auth, no such database). Reporting both as "check the database" sent an
+    # operator chasing Postgres while the forward was the problem.
+    case "$sql_err" in
+      *"server closed the connection unexpectedly"*|\
+      *"could not connect to server"*|\
+      *"Connection refused"*|\
+      *"connection to server"*"failed"*|\
+      *"timeout expired"*|\
+      *"SSL SYSCALL error"*)
+        echo "error: test PostgreSQL dropped SELECT 1 after accepting the connection." >&2
+        echo "       This is a dead port forward, not a broken database: on macOS" >&2
+        echo "       Docker Desktop can stop relaying 127.0.0.1:${PORT} while the" >&2
+        echo "       container stays healthy. Restart Docker Desktop or the container," >&2
+        echo "       or start a native server, then retry." >&2
+        ;;
+      *)
+        echo "error: test PostgreSQL failed SQL readiness for the requested database." >&2
+        echo "       Check database existence, authentication and server storage before retrying." >&2
+        ;;
+    esac
     exit 1
   fi
 }
@@ -129,6 +151,25 @@ for engine in docker podman; do
     fi
   fi
 done
+
+# Homebrew postgresql@17 refuses to launch when the shell has no valid LC_ALL:
+#
+#     FATAL: postmaster became multithreaded during startup
+#
+# initdb's locale below does not cover it: pg_ctl start spawns the postmaster,
+# which inherits the locale of the pg_ctl process rather than initdb's. Pick a
+# UTF-8 locale this host actually has -- Debian/OpenShell ship C.utf8, macOS
+# ships en_US.UTF-8 -- instead of hardcoding one that may not exist.
+pg_utf8_locale() {
+  local candidate
+  for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | grep -qxF "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  printf 'C.UTF-8\n'
+}
 
 # 4. No engine -- start a server from local binaries. This is the task sandbox:
 # it carries the postgresql packages (the derived BOM installs them) but has no
@@ -215,7 +256,9 @@ if [ -n "$PGBIN" ]; then
     "$PGBIN/pg_ctl" -D "$DATADIR" -m fast stop >/dev/null 2>&1 || true
   fi
   # -w waits for readiness, so returning success means the emitted DSN resolves.
-  if ! start_log=$("$PGBIN/pg_ctl" -D "$DATADIR" -l "$LOGFILE" -w -t 60 start \
+  pg_locale="$(pg_utf8_locale)"
+  if ! start_log=$(LC_ALL="$pg_locale" LANG="$pg_locale" \
+      "$PGBIN/pg_ctl" -D "$DATADIR" -l "$LOGFILE" -w -t 60 start \
       -o "-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$DATADIR -c max_locks_per_transaction=$LOCKS -c max_connections=$CONNS" 2>&1); then
     echo "error: pg_ctl could not start a server in $DATADIR:" >&2
     echo "$start_log" >&2

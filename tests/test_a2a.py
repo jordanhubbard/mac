@@ -1,4 +1,4 @@
-"""Tests for inbound A2A (Agent2Agent) federation (ACP roadmap Phase 4).
+"""Tests for inbound A2A (Agent2Agent) federation.
 
 Exercises the A2A package against an in-memory control plane via the FastAPI
 TestClient (no pytest-asyncio), mirroring tests/api/test_api.py. Covers the
@@ -49,7 +49,7 @@ def test_agent_card_strips_trailing_slash():
 
 
 def test_well_known_agent_card_is_public(monkeypatch):
-    # Unauthenticated even when the hub is token-protected (like /.well-known/acp).
+    # Unauthenticated even when the hub is token-protected (like /health).
     monkeypatch.setenv("MAC_API_TOKEN", "secret-token")
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
 

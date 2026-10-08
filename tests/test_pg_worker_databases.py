@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg
@@ -71,9 +72,20 @@ def test_database_isolation_preserves_same_database_lock_exclusion(databases):
 def test_reaper_preserves_live_owner_and_removes_abandoned_owned_database(databases):
     abandoned = WorkerDatabases(databases.dsn)
     name = conninfo_to_dict(abandoned.create())["dbname"]
+    owner_pid = abandoned.conn.info.backend_pid
     try:
         assert name not in databases.reap()
         abandoned.conn.close()  # Simulate controller termination, no teardown.
+        # Wait on the condition itself (the owner's backend has exited), with
+        # a generous anti-hang bound rather than a wall-clock assertion.
+        for _ in range(3000):
+            if not databases.conn.execute(
+                "SELECT 1 FROM pg_stat_activity WHERE pid=%s", (owner_pid,)
+            ).fetchone():
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("controller backend did not exit")
         assert name in databases.reap()
     finally:
         if not abandoned.conn.closed:
@@ -86,10 +98,12 @@ def test_worker_lease_protects_database_after_controller_exit(databases):
     abandoned = WorkerDatabases(databases.dsn)
     name = conninfo_to_dict(abandoned.create())["dbname"]
     with psycopg.connect(databases.dsn, autocommit=True) as worker:
-        worker.execute("SELECT pg_advisory_lock_shared(%s)", (lock_key(abandoned.run_id),))
+        key = lock_key(abandoned.run_id)
+        worker.execute("SELECT pg_advisory_lock_shared(%s)", (key,))
         abandoned.conn.close()
         assert name not in databases.reap()
-    assert name in databases.reap()
+        assert worker.execute("SELECT pg_advisory_unlock_shared(%s)", (key,)).fetchone()[0]
+        assert name in databases.reap()
 
 
 def test_reaper_does_not_drop_unmarked_or_mismatched_databases(databases):

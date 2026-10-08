@@ -5,11 +5,12 @@ import { duration } from "./lib/format";
 import { LiveView } from "./views/Live";
 import { StuckView } from "./views/Stuck";
 import { AgentsView, ProjectsView } from "./views/Fleet";
-import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
+import { PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
-import { MergeQueueView } from "./views/MergeQueue";
 import { MissionControlView } from "./views/MissionControl";
-import { NewsView } from "./views/News";
+import { ConversationsView } from "./views/Conversations";
+import { createBoardPoster } from "./lib/board";
+import type { PostToBoard } from "./components/TaskBoard";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -18,15 +19,13 @@ import { NewsView } from "./views/News";
 const TOKEN_KEY = "mac.dashboard.token";
 
 const VIEWS = [
+  { id: "conversations", label: "Conversations", group: "Movement" },
   { id: "live", label: "Live", group: "Movement" },
-  { id: "news", label: "News board", group: "Movement" },
   { id: "stuck", label: "Stuck work", group: "Movement" },
   { id: "agents", label: "Agents", group: "Fleet" },
   { id: "projects", label: "Projects", group: "Fleet" },
   { id: "mission-control", label: "Mission Control", group: "Fleet" },
   { id: "pipelines", label: "Pipelines", group: "Delivery" },
-  { id: "merge-queue", label: "Merge queue", group: "Delivery" },
-  { id: "cycles", label: "Dream & nap", group: "Delivery" },
   { id: "telemetry", label: "Telemetry", group: "Health" },
 ] as const;
 
@@ -89,6 +88,7 @@ export function App() {
   const [draftToken, setDraftToken] = useState("");
 
   const client = useMemo(() => new ConsoleClient(() => token), [token]);
+  const postToBoard = useMemo<PostToBoard>(() => createBoardPoster(() => token), [token]);
   const live = useLive(client, windowHours, 60);
 
   // Keep ?view= (and ?task= / ?project= / ?selected=) in the URL so a view is
@@ -236,6 +236,7 @@ export function App() {
             view={view}
             snap={snap}
             client={client}
+            postToBoard={postToBoard}
             taskId={taskId}
             project={project}
             selectedId={selectedId}
@@ -257,6 +258,7 @@ function Router({
   view,
   snap,
   client,
+  postToBoard,
   taskId,
   project,
   selectedId,
@@ -269,6 +271,7 @@ function Router({
   view: ViewId;
   snap: Snapshot;
   client: ConsoleClient;
+  postToBoard: PostToBoard;
   taskId: string | null;
   project: string;
   selectedId: string | null;
@@ -281,18 +284,18 @@ function Router({
   switch (view) {
     case "task":
       return (
-        <TaskView client={client} taskId={taskId} snap={snap} onBack={onBack} />
-      );
-    case "stuck":
-      return <StuckView snap={snap} onOpenTask={onOpenTask} />;
-    case "news":
-      return (
-        <NewsView
+        <TaskView
           client={client}
-          refreshKey={snap.observability_sequence}
-          onOpenTask={onOpenTask}
+          taskId={taskId}
+          snap={snap}
+          onBack={onBack}
+          postToBoard={postToBoard}
         />
       );
+    case "conversations":
+      return <ConversationsView client={client} onOpenTask={onOpenTask} />;
+    case "stuck":
+      return <StuckView snap={snap} onOpenTask={onOpenTask} />;
     case "agents":
       return <AgentsView snap={snap} />;
     case "projects":
@@ -312,10 +315,6 @@ function Router({
       );
     case "pipelines":
       return <PipelinesView snap={snap} />;
-    case "merge-queue":
-      return <MergeQueueView snap={snap} />;
-    case "cycles":
-      return <CyclesView snap={snap} />;
     case "telemetry":
       return <TelemetryView snap={snap} />;
     case "live":

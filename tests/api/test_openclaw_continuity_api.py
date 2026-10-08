@@ -4,19 +4,15 @@ from mac.api import create_app
 from mac.services import ControlPlane
 
 
-def test_bound_agent_reads_own_mood_and_scoped_memory(monkeypatch) -> None:
+def test_bound_agent_reads_own_mood_without_vector_recall() -> None:
+    """The vector memory tier is gone: continuity still serves the agent's mood,
+    and ``memories`` carries only AgentBus history (none here)."""
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("continuity-host")
     agent = cp.register_agent(machine.id, "continuity-agent")
     peer = cp.register_agent(machine.id, "peer-agent")
     cp.set_mood(agent.id, "warm", reason="continuity test")
-    captured = []
-
-    def recall(query, **kwargs):
-        captured.append({"query": query, **kwargs})
-        return [{"summary": "remember the test", "score": 0.9}]
-
-    monkeypatch.setattr(cp, "recall_memory", recall)
+    assert not hasattr(cp, "recall_memory")
     app = create_app(
         control_plane=cp,
         auth_tokens={
@@ -36,42 +32,9 @@ def test_bound_agent_reads_own_mood_and_scoped_memory(monkeypatch) -> None:
     assert payload["schema"] == "mac.openclaw_continuity_context.v1"
     assert payload["mood"]["mode"] == "warm"
     assert "Current mood: **warm**" in payload["mood_prompt"]
-    assert payload["memories"][0]["summary"] == "remember the test"
-    # Provenance + score are attached so OpenClaw can label the item.
-    assert payload["memories"][0]["source"] == "memory"
-    assert payload["memories"][0]["score"] == 0.9
-    # A calibrated minimum-relevance floor is now pushed into recall so the
-    # vector store never returns filler to reach the limit.
-    assert len(captured) == 2
-    assert captured[0]["query"] == "what matters"
-    assert captured[0]["tier"] == "medium"
-    assert captured[0]["limit"] == 3
-    assert captured[0]["agent_id"] == agent.id
-    assert captured[0]["min_score"] is not None and captured[0]["min_score"] > 0.0
-    assert captured[1]["tier"] == "long"
-    # Observability now carries a source mix without query contents.
-    assert payload["recall_metrics"]["source_memory"] == 1
+    assert payload["memories"] == []
+    assert payload["recall_metrics"]["source_memory"] == 0
     assert refused.status_code == 403
-
-
-def test_bound_agent_cannot_recall_peer_memory(monkeypatch) -> None:
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("recall-host")
-    agent = cp.register_agent(machine.id, "recall-agent")
-    peer = cp.register_agent(machine.id, "recall-peer")
-    monkeypatch.setattr(cp, "recall_memory", lambda *_a, **_k: [])
-    app = create_app(
-        control_plane=cp,
-        auth_tokens={
-            "agent-token": {"scopes": ["agent"], "agent_id": agent.id},
-        },
-    )
-    with TestClient(app) as client:
-        response = client.get(
-            f"/v1/memory/recall?q=x&agent_id={peer.id}",
-            headers={"Authorization": "Bearer agent-token"},
-        )
-    assert response.status_code == 403
 
 
 def test_bound_openclaw_agent_can_set_and_clear_only_its_own_mood() -> None:
@@ -338,8 +301,8 @@ def test_bound_agent_can_store_only_its_own_learnings() -> None:
     assert masquerade.status_code == 400
     assert empty.status_code == 400
 
-    # The record lands in the population nap consolidation summarizes
-    # (created_by = agent), and the write is observable.
+    # The record is attributed to the agent (created_by = agent), and the
+    # write is observable.
     memories = cp.search_memory(content_contains="threaded replies")
     assert any(m.created_by == agent.id for m in memories)
     events = cp.list_observability(name="memory.stored_by_agent", limit=5)

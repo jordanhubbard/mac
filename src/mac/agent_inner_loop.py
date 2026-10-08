@@ -16,8 +16,6 @@ PROGRESS_STATUSES = frozenset(
         "decomposed",
         "failed",
         "needs_review",
-        "review_nudge_invalid",
-        "review_verdict_failed",
         "stale_result",
         "submitted_for_review",
     }

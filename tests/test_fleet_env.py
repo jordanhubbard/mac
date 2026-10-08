@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,29 @@ def test_migrate_env_file_is_idempotent(tmp_path: Path):
     assert "MAC_API_TOKEN__JORDANH_HUB" in added3
 
 
+def test_migrate_env_file_uses_shell_safe_renderer_for_scoped_value(tmp_path: Path):
+    env_path = tmp_path / ".env"
+    value = "token|with;operators&$(touch should-not-exist)"
+    env_path.write_text("MAC_API_TOKEN='%s'\n" % value)
+
+    fleet_env.migrate_env_file(env_path, "rocky")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -eu; source "$1"; printf "%s\\0" "$MAC_API_TOKEN__ROCKY"',
+            "bash",
+            str(env_path),
+        ],
+        check=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert completed.stdout == value.encode() + b"\x00"
+    assert not (tmp_path / "should-not-exist").exists()
+
+
 def test_two_fleets_in_one_env_file_do_not_collide(tmp_path: Path):
     """Acceptance scenario from mac-g55y: after migration, a workstation
     that participates in both rocky and jordanh-hub keeps both tokens
@@ -169,9 +193,8 @@ def test_two_fleets_in_one_env_file_do_not_collide(tmp_path: Path):
     env_path = tmp_path / ".env"
     env_path.write_text("MAC_API_TOKEN=rocky-token\n")
     fleet_env.migrate_env_file(env_path, "rocky", keep_legacy=False)
-    # Now jordanh-hub's setup writes its token — into the SCOPED form,
-    # not the legacy form. (This mirrors what the updated setup-fleet.py
-    # would do.)
+    # Now jordanh-hub's token is written in the SCOPED form, not the
+    # legacy form.
     contents = env_path.read_text() + "MAC_API_TOKEN__JORDANH_HUB=jh-token\n"
     env_path.write_text(contents)
     parsed = fleet_env.parse_env_file(env_path)

@@ -19,9 +19,8 @@ Three capabilities beyond the original:
 * **Memory feed (deployment gets smarter over time)** — before running, the
   executor *recalls* prior "deployment lessons" for the project and injects
   them into the agent prompt; after running, it *records* a structured
-  ``deployment_learning`` memory from the outcome. The nap consolidator
-  (mem-08) later promotes those records into the vector tier, so recall
-  improves with every task the fleet completes.
+  ``deployment_learning`` memory from the outcome, so recall improves with
+  every task the fleet completes.
 * **Automatic task sizing** — before running the agent, the executor inspects
   the task title and description for "plan" signals (conjunctions of verbs,
   numbered steps, multi-phase language, excessive scope).  When signals are
@@ -76,15 +75,19 @@ from mac.models import (
     metadata_declares_report_deliverable,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.requirement_coverage import evaluate_requirement_coverage
+from mac.semantic_acceptance import evaluate_acceptance
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
     repository_host,
     task_repository_remote,
 )
+from mac.evidence_validators import verifier_test_item_problems
 from mac.gitops import (
     CanonicalFreshnessResult,
     agent_pull_request,
+    canonical_sync_selection_base,
     check_canonical_freshness,
     guarded_push,
     resolve_canonical_publication_target,
@@ -370,7 +373,6 @@ from mac.executor_hub_io import (  # noqa: E402,F401 - compatibility re-exports
 )
 from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
     DEPLOYMENT_LEARNING_PREFIX,
-    _LESSON_CURATION_PROMPT,
     _LESSON_PROMPT_BUDGET,
     _LESSON_STOPWORDS,
     _PLAN_LEARNING_SCHEMA,
@@ -385,12 +387,10 @@ from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
     build_learning_record,
     build_plan_learning_record,
     build_telemetry_record,
-    curate_lessons_from_outcome,
     emit_telemetry,
     recall_deployment_lessons,
     recall_plan_lessons,
     recall_prior_attempt_lessons,
-    record_curated_lessons,
     record_deployment_learning,
     record_plan_outcome,
 )
@@ -416,8 +416,6 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
 )
 from mac.executor_prompt import (
     _run_captured,
-    _blind_review_protocol,
-    _read_json_object,
     _repository_contract_canonical_branch,
     _repository_contract_canonical_remote,
     _repository_contract_test_command,
@@ -427,7 +425,6 @@ from mac.executor_prompt import (
     _repository_prepared_base,
     _repository_publication_remote,
     _repository_task_branch,
-    _review_experiment_assignment,
     clip_process_text,
     task_evidence_type,
     task_is_repo_coupled,
@@ -808,6 +805,23 @@ def _read_executor_evidence_payload(task_workspace: Path) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _carry_requirement_coverage(
+    manifest: Dict[str, Any], agent_evidence: Mapping[str, Any]
+) -> None:
+    """Carry the agent's requirement coverage mapping into finalizer evidence.
+
+    The review maps a task statement's enumerated requirements to the change or
+    a check. That mapping lives in the agent's pre-finalize mac-evidence.json,
+    which the deterministic finalizer replaces; preserve it so a complete
+    change can still prove coverage.
+    """
+    requirements = (
+        agent_evidence.get("requirements") if isinstance(agent_evidence, Mapping) else None
+    )
+    if isinstance(requirements, list) and requirements:
+        manifest["requirements"] = requirements
+
+
 def _canonical_reconcile_from_evidence(evidence: Mapping[str, Any]) -> Dict[str, Any]:
     block = evidence.get("canonical_reconcile") if isinstance(evidence, Mapping) else None
     return dict(block) if isinstance(block, dict) else {}
@@ -883,6 +897,7 @@ def _finalize_no_change_reconcile(
                 }
             ],
         }
+        _carry_requirement_coverage(manifest, agent_evidence)
         (task_workspace / "mac-evidence.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -929,6 +944,7 @@ def _finalize_no_change_reconcile(
             }
         ],
     }
+    _carry_requirement_coverage(manifest, agent_evidence)
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -1044,56 +1060,6 @@ def _write_git_finalizer_refusal_manifest(
     )
 
 
-def _load_harness_recovery_log(task_workspace: Path) -> List[Dict[str, Any]]:
-    """Read harness-recovery-log.json from task_workspace if present.
-
-    Returns a list of recovery step records [{step, choice, result}, ...].
-    Returns an empty list when the file is absent, empty, or unparseable.
-    """
-    log_path = task_workspace / "harness-recovery-log.json"
-    if not log_path.exists():
-        return []
-    try:
-        raw = json.loads(log_path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return []
-    if isinstance(raw, list):
-        return [r for r in raw if isinstance(r, dict)]
-    return []
-
-
-def _record_recovery_learnings(
-    task_workspace: Path,
-    task: Dict[str, Any],
-    outcome: Dict[str, Any],
-) -> None:
-    """Feed each harness recovery choice+outcome into the deployment-learning loop.
-
-    Reads harness-recovery-log.json and posts one learning record per entry so
-    the fleet's selection algorithm can improve future recovery choices.
-    Best-effort: silently returns on any error.
-    """
-    recovery_log = _load_harness_recovery_log(task_workspace)
-    if not recovery_log:
-        return
-    for entry in recovery_log:
-        if not isinstance(entry, dict):
-            continue
-        recovery_outcome = {
-            "evidence_type": outcome.get("evidence_type", "recovery"),
-            "outcome": outcome.get("outcome", "unknown"),
-            "signals": dict(outcome.get("signals") or {}),
-            "error_signature": outcome.get("error_signature") or "",
-            "recovery_step": entry.get("step"),
-            "recovery_choice": entry.get("choice"),
-            "recovery_result": entry.get("result"),
-        }
-        try:
-            record_deployment_learning(task, recovery_outcome)
-        except Exception:  # noqa: BLE001
-            pass
-
-
 _FINALIZER_PHASE_DEFAULTS: Dict[str, float] = {
     "repository_snapshot": 60.0,
     "canonical_sync": 300.0,
@@ -1103,7 +1069,7 @@ _FINALIZER_PHASE_DEFAULTS: Dict[str, float] = {
     "publication_preflight": 180.0,
     "guarded_push": 180.0,
     "evidence_writeback": 60.0,
-    "lesson_curation": 60.0,
+    "deployment_learning": 60.0,
 }
 
 
@@ -1361,6 +1327,139 @@ def open_task_pull_request(
     return outcome if isinstance(outcome, dict) else {"opened": False}
 
 
+@dataclass(frozen=True)
+class _StaleHeadRebase:
+    """Outcome of rebasing a verified head whose canonical tip moved on."""
+
+    head_sha: str
+    tests: Dict[str, Any]
+    canonical_sync: Dict[str, Any]
+    target: Any
+    freshness: CanonicalFreshnessResult
+    record: Dict[str, Any]
+
+
+def _rebase_stale_head_and_reverify(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    task_id: Optional[str],
+    worktree_path: Path,
+    *,
+    head_sha: str,
+    tests: Dict[str, Any],
+    canonical_sync: Dict[str, Any],
+    target: Any,
+    freshness: CanonicalFreshnessResult,
+    isolation_key: str,
+    partial_evidence_fn: Callable[..., None],
+) -> _StaleHeadRebase:
+    """Carry a verified head whose canonical tip moved on to the new tip.
+
+    Another task landed while this one's verifier ran. A clean rebase is
+    re-verified before it can replace the verified head: the evidence
+    invariant is that ``tests.executed_head_sha == repo.head_sha`` is the head
+    that is pushed and reviewed, so an unverified rebased head is never
+    published. A conflict, a failing re-run, or anything else leaves the
+    verified head in place (the caller publishes it marked ``stale_base`` and
+    landing sends it back to rebase).
+    """
+    from mac.services import verify_unpublished_repository
+
+    unchanged = _StaleHeadRebase(head_sha, tests, canonical_sync, target, freshness, {})
+    record: Dict[str, Any] = {
+        "schema": "mac.freshness_rebase.v1",
+        "verified_head_sha": head_sha,
+        "canonical_tip": freshness.canonical_tip_sha,
+    }
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "canonical_sync",
+        partial_evidence_fn=partial_evidence_fn,
+    ) as phase:
+        sync = sync_worktree_with_canonical(
+            worktree_path,
+            _repository_publication_remote(task),
+            _repository_contract_canonical_branch(task),
+            timeout=phase.remaining,
+        )
+        record["status"] = str(sync.get("status") or "")
+        if sync.get("reason"):
+            record["reason"] = str(sync.get("reason"))
+        if sync.get("status") != "rebased":
+            phase.mark_failed(str(sync.get("reason") or sync.get("status")))
+    if sync.get("status") != "rebased":
+        return replace(unchanged, record=record)
+    rebased_head = _git(
+        ["rev-parse", "HEAD"], worktree_path, timeout=_finalizer_phase_timeout("canonical_sync")
+    ).stdout.strip()
+    record["rebased_head_sha"] = rebased_head
+
+    def restore(status: str, reason: str) -> _StaleHeadRebase:
+        record["status"] = status
+        record["reason"] = clip_process_text(reason)
+        reset = _git(
+            ["reset", "--hard", head_sha],
+            worktree_path,
+            timeout=_finalizer_phase_timeout("canonical_sync"),
+        )
+        if reset.returncode != 0:
+            # HEAD stays on the unverified rebase; guarded_push then refuses
+            # it because it is not the target's verified head.
+            record["restore_error"] = clip_process_text(reset.stderr or reset.stdout)
+        return replace(unchanged, record=record)
+
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "contract_tests",
+        partial_evidence_fn=partial_evidence_fn,
+    ) as phase:
+        retest = verify_unpublished_repository(
+            worktree_path,
+            (_repository_contract_test_command(task) or "").strip(),
+            str(_repository_contract_bootstrap(task).get("command") or ""),
+            timeout_seconds=phase.remaining,
+            selection_base_sha=canonical_sync_selection_base(sync, _repository_prepared_base(task)),
+        )
+        retest_problems = verifier_test_item_problems(retest, rebased_head)
+        if retest_problems:
+            phase.mark_failed("; ".join(retest_problems))
+    if retest_problems:
+        record["retest"] = {
+            "status": retest.get("status"),
+            "returncode": retest.get("returncode"),
+            "stderr": clip_process_text(retest.get("stderr") or retest.get("stdout") or ""),
+        }
+        return restore("retest_failed", "; ".join(retest_problems))
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "publication_preflight",
+        partial_evidence_fn=partial_evidence_fn,
+    ) as phase:
+        preflight_error = ""
+        try:
+            new_target = resolve_canonical_publication_target(
+                worktree=worktree_path,
+                canonical_remote=target.canonical_remote_url,
+                canonical_branch=target.canonical_branch,
+                destination_branch=target.destination_branch,
+                prepared_base_sha=target.prepared_base_sha,
+                isolation_key=isolation_key,
+                timeout=phase.remaining,
+            )
+            new_freshness = check_canonical_freshness(new_target, timeout=phase.remaining)
+        except (OSError, ValueError) as exc:
+            phase.mark_failed(str(exc))
+            new_target = None
+            preflight_error = str(exc)
+    if new_target is None:
+        return restore("preflight_failed", preflight_error)
+    record["status"] = "rebased_and_reverified"
+    return _StaleHeadRebase(rebased_head, retest, sync, new_target, new_freshness, record)
+
+
 def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) -> None:
     """mac-jfns: deterministic repo_change evidence from REAL git state for
     tasks declaring publication_target=git://main."""
@@ -1503,7 +1602,13 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             test_cmd,
             str(_repository_contract_bootstrap(task).get("command") or ""),
             timeout_seconds=phase.remaining,
-            prepared_base_sha=_repository_prepared_base(task),
+            # Select against the canonical tip HEAD was just rebased onto, so
+            # the scoped gate covers this task's change and only that. The
+            # lease's prepared base would also pull in everything that landed
+            # since, making the selection depend on how long the task ran.
+            selection_base_sha=canonical_sync_selection_base(
+                canonical_sync, _repository_prepared_base(task)
+            ),
         )
         progress["tests"] = tests
         if tests.get("returncode") != 0:
@@ -1513,12 +1618,15 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 )
             )
     bootstrap_ok = True  # The combined remote gate includes the bootstrap.
-    tests_ok = tests.get("returncode") == 0 and tests.get("status") == "pass"
+    # Only the verifier's own record of running the gate on this exact commit
+    # counts; a result for another head (or one where nothing ran) does not.
+    tests_ok = not verifier_test_item_problems(tests, head_sha)
     canonical_remote_raw = _repository_publication_remote(task)
     canonical_branch = _repository_contract_canonical_branch(task)
     prepared_base_sha = _repository_prepared_base(task)
     lease_id = _repository_lease_id(task)
     destination_branch = branch if branch != "HEAD" else ""
+    isolation_key = "%s-%s" % (str(task.get("id") or "task"), lease_id)
     publication_target = None
     with _FinalizerPhaseContext(
         task_workspace,
@@ -1535,7 +1643,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 canonical_branch=canonical_branch,
                 destination_branch=destination_branch,
                 prepared_base_sha=prepared_base_sha,
-                isolation_key="%s-%s" % (str(task.get("id") or "task"), lease_id),
+                isolation_key=isolation_key,
                 timeout=phase.remaining,
             )
             freshness = check_canonical_freshness(publication_target, timeout=phase.remaining)
@@ -1546,16 +1654,56 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 head_sha=head_sha,
                 error=str(exc),
             )
-        if not freshness.ok:
+        if not freshness.ok and not freshness.stale_base:
             phase.mark_failed(freshness.error)
-        freshness_error: Optional[str] = None if freshness.ok else freshness.error
-        base_sha = freshness.canonical_tip_sha or prepared_base_sha
-        files_changed = list(freshness.files_changed)
-        progress["base_sha"] = base_sha
-        progress["files_changed"] = files_changed
-    # Record the diff base (canonical tip) so the reviewer can compute a
-    # non-empty base..head diff. Without base_sha the review snapshot's
-    # files_changed is always [] (which the repo_change validator rejects).
+    # The canonical tip moved on while the verifier ran (another task landed).
+    # That is a stale base, not a reason to strand finished, tested work: try
+    # a clean rebase + re-verify, and otherwise publish the verified head
+    # marked stale_base below. Landing re-checks it against the tip and sends
+    # it back to rebase (_LandingRebaseRequiredError); required checks re-run
+    # on the pull request.
+    freshness_rebase: Dict[str, Any] = {}
+    if (
+        freshness.stale_base
+        and not freshness.ok
+        and publication_target is not None
+        and tests_ok
+        and publication_target.task_head_sha == tests.get("executed_head_sha")
+    ):
+        moved = _rebase_stale_head_and_reverify(
+            task_workspace,
+            task,
+            task_id,
+            worktree_path,
+            head_sha=head_sha,
+            tests=tests,
+            canonical_sync=canonical_sync,
+            target=publication_target,
+            freshness=freshness,
+            isolation_key=isolation_key,
+            partial_evidence_fn=_partial_evidence,
+        )
+        head_sha, tests, canonical_sync = moved.head_sha, moved.tests, moved.canonical_sync
+        publication_target, freshness = moved.target, moved.freshness
+        freshness_rebase = moved.record
+        tests_ok = not verifier_test_item_problems(tests, head_sha)
+        progress["head_sha"] = head_sha
+        progress["tests"] = tests
+    # A stale base is publishable (guarded_push still refuses rewritten
+    # canonical history and the canonical branch as destination).
+    freshness_error: Optional[str] = (
+        None if freshness.ok or freshness.stale_base else freshness.error
+    )
+    # The task's own change is measured from where it left canonical history
+    # (merge-base), so a moved tip never empties files_changed.
+    base_sha = freshness.merge_base_sha or freshness.canonical_tip_sha or prepared_base_sha
+    files_changed = list(freshness.files_changed)
+    progress["base_sha"] = base_sha
+    progress["files_changed"] = files_changed
+    # Record the diff base (merge-base with the canonical tip) so the reviewer
+    # can compute a non-empty base..head diff. Without base_sha the review
+    # snapshot's files_changed is always [] (which the repo_change validator
+    # rejects).
     final_status = _git(
         ["status", "--porcelain"],
         worktree_path,
@@ -1567,6 +1715,21 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     pull_request: Optional[dict] = None
     publication: Optional[CanonicalFreshnessResult] = None
     push_remote_display = freshness.target.remote_display if freshness.target is not None else ""
+    # Landing order is rebase -> verify -> guarded_push, and nothing may move
+    # HEAD in between: the commit pushed must be the commit verified.
+    # guarded_push refuses any HEAD other than the target's task_head_sha, so
+    # binding that to the verified head closes the chain.
+    if (
+        tests_ok
+        and publication_target is not None
+        and publication_target.task_head_sha != tests.get("executed_head_sha")
+    ):
+        tests_ok = False
+        freshness_ok = False
+        freshness_error = "verified head %s is not the head being pushed %s" % (
+            str(tests.get("executed_head_sha") or "")[:12],
+            publication_target.task_head_sha[:12],
+        )
     if bootstrap_ok and tests_ok and clean and freshness_ok:
         assert publication_target is not None
         with _FinalizerPhaseContext(
@@ -1575,7 +1738,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "guarded_push",
             partial_evidence_fn=_partial_evidence,
         ) as phase:
-            publication = guarded_push(publication_target, timeout=phase.remaining)
+            publication = guarded_push(
+                publication_target, allow_stale_base=True, timeout=phase.remaining
+            )
             if not publication.ok or not publication.remote_verified:
                 phase.mark_failed(publication.error)
         push_remote_display = (
@@ -1584,8 +1749,10 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             else push_remote_display
         )
         pushed = publication.ok and publication.remote_verified
-        if publication.canonical_tip_sha:
-            base_sha = publication.canonical_tip_sha
+        if publication.merge_base_sha or publication.canonical_tip_sha:
+            base_sha = publication.merge_base_sha or publication.canonical_tip_sha
+        if publication.ok:
+            files_changed = list(publication.files_changed)
         if not publication.ok:
             freshness_error = publication.error
             freshness_ok = False
@@ -1595,6 +1762,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "status": "pass" if pushed else "fail",
             "stderr": clip_process_text(publication.push_stderr or publication.error),
         }
+        if pushed and publication.stale_base:
+            push_evidence["freshness"] = "stale_base"
+            push_evidence["canonical_tip_sha"] = publication.canonical_tip_sha
         if pushed:
             # THE AGENT OPENS ITS OWN PULL REQUEST. The branch is on the
             # remote; the request to land it onto the task's canonical branch
@@ -1670,6 +1840,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "files_changed": files_changed,
             "freshness": (publication or freshness).evidence(),
             "canonical_sync": canonical_sync,
+            **({"freshness_rebase": freshness_rebase} if freshness_rebase else {}),
             **({"pull_request": pull_request} if pull_request else {}),
         },
         "canonical_integration": canonical_integration,
@@ -1687,13 +1858,11 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             }
         ],
     }
+    _carry_requirement_coverage(manifest, agent_evidence)
     if freshness_error is not None:
         manifest["freshness_error"] = freshness_error
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
-    recovery_log = _load_harness_recovery_log(task_workspace)
-    if recovery_log:
-        manifest["recovery"] = recovery_log
     stamped = host_still_valid_reconcile(task, reconcile_block)
     _stamp_canonical_reconcile(manifest, stamped)
     with _FinalizerPhaseContext(
@@ -1920,7 +2089,7 @@ def run_deterministic_review_verdict(
                 test_cmd,
                 str(_repository_contract_bootstrap(task).get("command") or ""),
                 allow_untracked=True,
-                prepared_base_sha=_repository_prepared_base(task),
+                selection_base_sha=_repository_prepared_base(task),
             )
             integration = _cooperative_integration_check(task, review_worktree_path)
             integration_ok = integration is None or integration.get("status") == "pass"
@@ -1936,11 +2105,16 @@ def run_deterministic_review_verdict(
     elif repo_review:
         independent_problem = "exact review checkout is unavailable"
 
-    verdict = (
-        "approved"
-        if semantic_valid and semantic_verdict == "approved" and independent_pass
-        else "rejected"
+    acceptance = evaluate_acceptance(task.get("metadata"), exec_verification)
+    acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
+    requirement_coverage = evaluate_requirement_coverage(
+        task.get("description"), exec_verification, semantic_manifest
     )
+    coverage_pass = requirement_coverage.get("status") in {"pass", "not_required"}
+    semantic_pass = (
+        semantic_valid and semantic_verdict == "approved" and acceptance_pass and coverage_pass
+    )
+    verdict = "approved" if semantic_pass and independent_pass else "rejected"
     digest_head = str(exec_access.get("base_sha") or "") if read_only_report_review else exec_head
     digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode(
         "utf-8"
@@ -1955,6 +2129,12 @@ def run_deterministic_review_verdict(
         "evidence_type": "review_verdict",
         "verdict": verdict,
         "semantic_verdict": semantic_verdict or "invalid",
+        "review_status": {
+            "structural": "pass" if independent_pass else "fail",
+            "semantic": "pass" if semantic_pass else "fail",
+        },
+        "acceptance": acceptance,
+        "requirement_coverage": requirement_coverage,
         "result": "review_completed",
         "returncode": 0,
         "review_id": review_id,
@@ -1965,6 +2145,16 @@ def run_deterministic_review_verdict(
                 "name": "semantic_review",
                 "returncode": 0 if semantic_valid else 1,
                 "status": "pass" if semantic_valid else "fail",
+            },
+            {
+                "name": "task_acceptance",
+                "returncode": 0 if acceptance_pass else 1,
+                "status": "pass" if acceptance_pass else "fail",
+            },
+            {
+                "name": "requirement_coverage",
+                "returncode": 0 if coverage_pass else 1,
+                "status": "pass" if coverage_pass else "fail",
             },
             *(
                 [
@@ -2012,6 +2202,14 @@ def run_deterministic_review_verdict(
             manifest["feedback"] = "review agent did not produce a valid semantic verdict"
         elif semantic_verdict == "rejected":
             manifest["feedback"] = "semantic reviewer rejected the executor result"
+        elif not acceptance_pass:
+            manifest["feedback"] = "task semantic acceptance failed: %s" % "; ".join(
+                str(problem) for problem in acceptance.get("problems", [])
+            )
+        elif not coverage_pass:
+            manifest["feedback"] = "task requirements not addressed: %s" % "; ".join(
+                str(problem) for problem in requirement_coverage.get("problems", [])
+            )
         else:
             manifest["feedback"] = independent_problem or "independent verification failed"
     elif verdict == "rejected" and independent_problem and semantic_verdict == "approved":
@@ -2021,32 +2219,6 @@ def run_deterministic_review_verdict(
         manifest["bootstrap"] = bootstrap
     if integration is not None:
         manifest["integration"] = integration
-    assignment = _review_experiment_assignment(task)
-    if assignment:
-        protocol = _read_json_object(task_workspace / "review-protocol.json")
-        independent = _read_json_object(task_workspace / "review-independent-findings.json")
-        experiment_record = dict(assignment)
-        if assignment.get("blind"):
-            experiment_record["protocol"] = protocol or {
-                "schema": "mac.review_protocol.v1",
-                "mode": "blind_discovery_then_adjudication",
-                "protocol_compliant": False,
-                "problem": "blind discovery protocol record is missing",
-            }
-        else:
-            experiment_record["protocol"] = {
-                "schema": "mac.review_protocol.v1",
-                "mode": "standard_evidence_aware",
-                "protocol_compliant": True,
-            }
-        manifest["review_experiment"] = experiment_record
-        if independent.get("schema") == "mac.independent_review_findings.v1":
-            manifest["independent_findings"] = (
-                independent.get("findings") if isinstance(independent.get("findings"), list) else []
-            )
-            manifest["independent_no_findings_reason"] = str(
-                independent.get("no_findings_reason") or ""
-            ).strip()
     manifest["signature"] = _sign_verdict(attestation_key, manifest)
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -2061,7 +2233,7 @@ def write_fallback_evidence_manifest(
     (never a fake repo_change/test, no synthetic passing check), so a
     proof-requiring task with no real evidence fails the verification gate
     honestly instead of auto-publishing chatter."""
-    if result.returncode != 0 or isinstance(review_context, dict):
+    if isinstance(review_context, dict):
         return
     if task_is_repo_coupled(task):
         return
@@ -2085,9 +2257,20 @@ def write_fallback_evidence_manifest(
         },
         "task": {"id": task.get("id"), "title": task.get("title"), "project": task.get("project")},
     }
-    recovery_log = _load_harness_recovery_log(task_workspace)
-    if recovery_log:
-        manifest["recovery"] = recovery_log
+    if result.returncode != 0:
+        # A provider or harness can fail during teardown after emitting the
+        # complete deliverable. Preserve that output only when the task's
+        # deterministic, typed acceptance contract proves the exact result.
+        # Generic prose and optional/advisory acceptance never qualify.
+        from mac.semantic_acceptance import evaluate_acceptance
+
+        acceptance = evaluate_acceptance(task.get("metadata"), manifest)
+        if acceptance.get("required") is not True or acceptance.get("status") != "pass":
+            return
+        manifest["late_exit_candidate"] = {
+            "schema": "mac.late_exit_candidate.v1",
+            "original_returncode": result.returncode,
+        }
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

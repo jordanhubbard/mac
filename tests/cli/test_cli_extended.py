@@ -3,18 +3,15 @@
 Covers:
   - diagnostics: basic health report
   - artifact: register, list, show, delete
-  - env: deploy, current, history
   - notifier: configure, list, delete, deliver
   - command-audit: list
   - observability: list, prune
-  - rollout extended: verify-artifact, health
   - nap extended: cycle, due
   - agentbus extended: publish, repo-update, artifact-publish, traffic, roll-call
   - secret: access (with trusted machine)
   - task extended: detect-beads, detect-ticketing
 
-Duplicate smoke-tests for memory (health/recall/recall-dreams/decay/
-summarize-actions), ``env register/list/show``, ``env current`` (empty), and
+Duplicate smoke-tests for memory (decay/summarize-actions) and
 ``action-events list`` were removed: they executed identical code paths to the
 stronger dedicated suites in ``tests/cli/test_cli_memory.py`` and
 ``tests/cli/test_domains_cli.py``.
@@ -264,55 +261,6 @@ def test_artifact_register_with_signers_and_sbom(tmp_path):
 
 
 # ===========================================================================
-# env (environments + deployments)
-# ===========================================================================
-
-
-def test_env_deploy_current_history(tmp_path):
-    """env deploy records a deployment; current and history reflect it."""
-    rc, env = _run(tmp_path, "admin", "env", "register", "prod", "--created-by", "ops")
-    assert rc == 0
-
-    rc, artifact = _run(
-        tmp_path,
-        "admin",
-        "artifact",
-        "register",
-        "image",
-        "sha256:v1hash",
-        "ghcr.io/example/app:v1",
-        "--created-by",
-        "ci",
-    )
-    assert rc == 0
-
-    rc, deployment = _run(
-        tmp_path,
-        "admin",
-        "env",
-        "deploy",
-        env["id"],
-        artifact["id"],
-        "--actor",
-        "ops",
-    )
-    assert rc == 0
-    assert deployment["environment_id"] == env["id"]
-    assert deployment["artifact_id"] == artifact["id"]
-
-    # current
-    rc, current = _run(tmp_path, "admin", "env", "current", env["id"])
-    assert rc == 0
-    assert current["artifact_id"] == artifact["id"]
-
-    # history
-    rc, history = _run(tmp_path, "admin", "env", "history", env["id"])
-    assert rc == 0
-    assert isinstance(history, list)
-    assert any(d["id"] == deployment["id"] for d in history)
-
-
-# ===========================================================================
 # notifier
 # ===========================================================================
 
@@ -406,97 +354,6 @@ def test_observability_prune_returns_count(tmp_path):
     assert isinstance(result, dict)
     assert "removed" in result
     assert isinstance(result["removed"], int)
-
-
-# ===========================================================================
-# rollout extended: verify-artifact, health
-# ===========================================================================
-
-
-def test_rollout_verify_artifact(tmp_path):
-    """rollout verify-artifact records verification result against a rollout."""
-    rc, rollout = _run(
-        tmp_path,
-        "admin",
-        "rollout",
-        "create",
-        "v2.0.0",
-        "canary",
-        "--created-by",
-        "ci",
-    )
-    assert rc == 0
-
-    rc, result = _run(
-        tmp_path,
-        "admin",
-        "rollout",
-        "verify-artifact",
-        rollout["id"],
-        "--artifact-uri",
-        "ghcr.io/example/app:v2.0.0",
-        "--artifact-hash",
-        "sha256:v2hash",
-        "--actor",
-        "ops",
-    )
-    assert rc == 0
-    assert isinstance(result, dict)
-
-
-def test_rollout_health(tmp_path):
-    """rollout health evaluates health checks and returns a health report."""
-    rc, rollout = _run(
-        tmp_path,
-        "admin",
-        "rollout",
-        "create",
-        "v2.1.0",
-        "canary",
-        "--created-by",
-        "ci",
-    )
-    assert rc == 0
-
-    rc, result = _run(
-        tmp_path,
-        "admin",
-        "rollout",
-        "health",
-        rollout["id"],
-        "--checks",
-        '{"error_rate": "ok", "latency_p99": "ok"}',
-        "--actor",
-        "monitor",
-    )
-    assert rc == 0
-    assert isinstance(result, dict)
-    # health report always has a 'healthy' key
-    assert "healthy" in result
-
-
-# ===========================================================================
-# nap extended: cycle, due
-# ===========================================================================
-
-
-def test_nap_cycle_runs_all_due(tmp_path):
-    """nap cycle for a configured agent runs the full cycle."""
-    agent = _make_agent(tmp_path, "cycle-napper", agent_id="agent_cycle")
-    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
-
-    rc, result = _run(tmp_path, "admin", "nap", "cycle", agent["id"])
-    # cycle may fail if Qdrant is unavailable; accept non-zero but no crash
-    assert isinstance(rc, int)
-
-
-def test_nap_due_returns_agents(tmp_path):
-    """nap due lists agents with upcoming nap windows."""
-    agent = _make_agent(tmp_path, "due-napper", agent_id="agent_due")
-    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
-    rc, result = _run(tmp_path, "admin", "nap", "due")
-    assert rc == 0
-    assert isinstance(result, (list, dict))
 
 
 # ===========================================================================
@@ -726,7 +583,6 @@ def test_extended_cli_coverage_gate():
     extended_covered = {
         "diagnostics",
         "artifact",
-        "env",
         "notifier",
         "command-audit",
         "observability",

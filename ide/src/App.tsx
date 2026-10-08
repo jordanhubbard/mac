@@ -32,7 +32,7 @@ const EMPTY_STATE: DashboardState = {
   overview: { counts: {}, task_states: {}, agent_statuses: {} },
   project_summaries: [], agents: [], tasks: [], fleets: [], workflows: [], workflow_drafts: [],
   workflow_runs: {}, events: [], messages: [], notifications: [], observability: {}, action_events: [],
-  command_audit: [], runtimes: [], runtime_deltas: [], runtime_runs: [], rollouts: [], secrets: [],
+  command_audit: [], runtimes: [], runtime_deltas: [], runtime_runs: [], secrets: [],
   secret_audits: [], service_links: [], integration_findings: [], artifacts: [], terminal_sessions: [],
 };
 

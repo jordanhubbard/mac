@@ -134,7 +134,7 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
         for match in run_pattern.finditer(content):
             first, second, third = match.group(1), match.group(2), match.group(3)
             # The administrative commands moved under `mac admin`, so their
-            # calls read _run(tmp, "admin", "optimizer", "status"). Without
+            # calls read _run(tmp, "admin", "fleet", "status"). Without
             # this the gate sees domain="admin" for all of them and reports
             # every one as untested -- fifty false alarms, which would train
             # whoever hits them to add allowlist entries instead of tests.
@@ -154,10 +154,6 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
     [
-        # fleet model-selection: hub-only (calls the running ModelSelectionService,
-        # not the local ControlPlane), so it can't run in the --db CLI harness;
-        # the endpoints it wraps are exercised by the API route-coverage gate.
-        ("fleet", "model-selection"),
         # action-events domain
         ("action-events", "export-otlp"),
         ("action-events", "list"),
@@ -169,7 +165,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("agent", "tell"),
         ("agent", "hardware"),
         ("agent", "heartbeat"),
-        ("agent", "migrate"),
         # agentbus sub-commands (open/append/close covered in test_mac_cli.py indirectly;
         # explicit coverage of the remaining commands still needed)
         ("agentbus", "append"),
@@ -199,13 +194,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # dispatch domain
         ("dispatch", "assign"),
         ("dispatch", "tick"),
-        # env domain
-        ("env", "current"),
-        ("env", "deploy"),
-        ("env", "history"),
-        ("env", "list"),
-        ("env", "register"),
-        ("env", "show"),
         # eval domain
         ("eval", "run"),
         ("eval", "set"),
@@ -213,18 +201,11 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("events", "list"),
         # fleet domain
         ("fleet", "build-distribution"),
-        ("fleet", "doctor"),
-        ("fleet", "memory-export"),
-        ("fleet", "memory-prune"),
-        ("fleet", "move-agent"),
         ("fleet", "refresh-context"),
-        ("fleet", "rotate-token"),
         ("fleet", "snapshot"),
         ("fleet", "soul-pull"),
         ("fleet", "soul-audit"),
         ("fleet", "soul-push"),
-        ("fleet", "sync-token"),
-        ("fleet", "validate"),
         # hermes domain
         ("persona-instance", "context"),
         ("persona-instance", "register"),
@@ -239,19 +220,11 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("journal", "list"),
         ("journal", "restore"),
         ("journal", "snapshot"),
-        # memory domain -- recall-dreams and backfill need external deps
-        ("memory", "backfill"),
-        ("memory", "embed"),
-        ("memory", "recall-dreams"),
         # message domain
         ("message", "inbox"),
         ("message", "send"),
         # migrate domain
         ("migrate", "import"),
-        # nap consolidate/cycle require an LLM for memory summarisation;
-        # the simpler nap lifecycle commands are covered in test_cli_nap.py
-        ("nap", "consolidate"),
-        ("nap", "cycle"),
         # notifier domain
         ("notifier", "configure"),
         ("notifier", "delete"),
@@ -276,13 +249,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # review domain
         ("review", "decision"),
         ("review", "request"),
-        # rollout domain
-        ("rollout", "advance"),
-        ("rollout", "create"),
-        ("rollout", "health"),
-        ("rollout", "list"),
-        ("rollout", "rescue"),
-        ("rollout", "verify-artifact"),
         # runtime sub-commands
         ("runtime", "list"),
         # secret sub-commands

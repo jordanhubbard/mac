@@ -228,16 +228,32 @@ set_env_key() {
 }
 
 get_env_key() {
-  local file="$1" key="$2"
+  local file="$1" key="$2" value=""
   [ -f "$file" ] || return 0
-  # grep exits 1 on no match (the normal, expected case on a first-ever run,
-  # before any password has been written yet) -- under set -o pipefail that
-  # failure propagates through the pipeline and this function's return
-  # status, and `var="$(get_env_key ...)"` at the call site is a bare
-  # command-substitution assignment, which set -e treats as fatal. Swallow
-  # the no-match case explicitly so "not found yet" behaves as "empty", not
-  # as a silent script abort.
-  grep "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true
+  # Linux service env files are deliberately installed root-owned and 0600.
+  # A retry therefore cannot read ENV_DEST as the deploy user even though the
+  # first run's password is the authority baked into the persistent volume.
+  # Read that existing file through the same privilege boundary used to write
+  # it. Capture stdout directly into a shell variable: neither the command nor
+  # diagnostics contain the secret value.
+  if [ -r "$file" ]; then
+    value="$(awk -v key="$key" '
+      index($0, key "=") == 1 { value = substr($0, length(key) + 2); found = 1 }
+      END { if (found) print value }
+    ' "$file")" || {
+      echo "[postgres] ERROR: could not read existing environment file: $file" >&2
+      return 1
+    }
+  else
+    value="$(maybe_sudo awk -v key="$key" '
+      index($0, key "=") == 1 { value = substr($0, length(key) + 2); found = 1 }
+      END { if (found) print value }
+    ' "$file")" || {
+      echo "[postgres] ERROR: could not read existing protected environment file: $file" >&2
+      return 1
+    }
+  fi
+  printf '%s\n' "$value"
 }
 
 # The database volume bakes in whatever password created it -- restarting
@@ -350,9 +366,8 @@ maybe_sudo install -m 0600 "$tmp_env" "$ENV_DEST"
 rm -f "$tmp_env"
 
 # Persisted twice: MAC_CONTROL_PLANE_DB_PASSWORD is this script's own source
-# of truth for "reuse the existing password" on the next run (mac.env is
-# rewritten wholesale by `mac.deploy_env write-mac-env`, which does not know
-# about this password and would otherwise drop it); MAC_DATABASE_URL is what
+# of truth for "reuse the existing password" on the next run;
+# MAC_DATABASE_URL is what
 # the mac CLI/store actually read to reach the database.
 set_env_key "${MAC_HOME}/mac.env" MAC_CONTROL_PLANE_DB_PASSWORD "$POSTGRES_PASSWORD"
 set_env_key "${MAC_HOME}/mac.env" MAC_DATABASE_URL "$dsn"
@@ -455,12 +470,36 @@ stop_postgres_container_if_present() {
   done
 }
 
+render_systemd_unit() {
+  local output="$1" env_dest_sed="" runtime_sed=""
+  case "$CONTAINER_CMD_ABS" in
+    /*) ;;
+    *)
+      echo "[postgres] ERROR: selected container runtime is not an absolute path: $CONTAINER_CMD_ABS" >&2
+      return 1
+      ;;
+  esac
+  if ! grep -Fq '@POSTGRES_CONTAINER_RUNTIME@' "$UNIT_TEMPLATE"; then
+    echo "[postgres] ERROR: systemd unit template has no container-runtime placeholder" >&2
+    return 1
+  fi
+  env_dest_sed="$(printf '%s' "$ENV_DEST" | sed 's/[&|\\]/\\&/g')"
+  runtime_sed="$(printf '%s' "$CONTAINER_CMD_ABS" | sed 's/[&|\\]/\\&/g')"
+  sed \
+    -e "s|/etc/mac/postgres.env|${env_dest_sed}|g" \
+    -e "s|@POSTGRES_CONTAINER_RUNTIME@|${runtime_sed}|g" \
+    "$UNIT_TEMPLATE" > "$output"
+  if grep -Fq '@POSTGRES_CONTAINER_RUNTIME@' "$output"; then
+    echo "[postgres] ERROR: systemd unit retained an unresolved container-runtime placeholder" >&2
+    return 1
+  fi
+}
+
 case "$SUPERVISOR_KIND" in
   systemd)
     echo "[postgres] Installing systemd unit"
     unit_tmp="$(mktemp)"
-    env_dest_sed="$(printf '%s' "$ENV_DEST" | sed 's/[&|]/\\&/g')"
-    sed "s|/etc/mac/postgres.env|${env_dest_sed}|g" "$UNIT_TEMPLATE" > "$unit_tmp"
+    render_systemd_unit "$unit_tmp"
     sudo install -m 0644 "$unit_tmp" "$UNIT_DEST"
     rm -f "$unit_tmp"
     sudo systemctl daemon-reload

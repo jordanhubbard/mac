@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import html
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -31,6 +32,14 @@ USER_AGENT = os.environ.get(
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MAC_FIRECRAWL_GATEWAY_TIMEOUT", "15"))
 MAX_RESPONSE_BYTES = int(os.environ.get("MAC_FIRECRAWL_GATEWAY_MAX_BYTES", str(2 * 1024 * 1024)))
 MAX_SEARCH_LIMIT = int(os.environ.get("MAC_FIRECRAWL_GATEWAY_MAX_SEARCH_LIMIT", "25"))
+# DuckDuckGo serves an anti-bot anomaly page (no parsable results) to obvious
+# bot user agents, so its keyless fallback is fetched as a real browser.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+BRAVE_MAX_RESULTS = 20
 _CRAWL_JOBS: dict[str, dict[str, Any]] = {}
 
 
@@ -217,8 +226,72 @@ def create_app() -> FastAPI:
 
 
 def search_web(query: str, limit: int) -> list[dict[str, str]]:
+    """Search the web, preferring Brave and falling back to DuckDuckGo.
+
+    Brave is used when an API key is configured; DuckDuckGo remains the
+    keyless fallback and is fetched with a browser user agent so it is not
+    served an anti-bot anomaly page.
+    """
+    api_key = _brave_api_key()
+    if api_key:
+        try:
+            results = _search_brave(query, limit, api_key)
+        except HTTPException:
+            results = []
+        if results:
+            return results
+    return _search_duckduckgo(query, limit)
+
+
+def _brave_api_key() -> str:
+    for name in ("BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _search_brave(query: str, limit: int, api_key: str) -> list[dict[str, str]]:
+    params = urllib.parse.urlencode({"q": query, "count": max(1, min(limit, BRAVE_MAX_RESULTS))})
+    request = urllib.request.Request(
+        f"{BRAVE_SEARCH_URL}?{params}",
+        headers={
+            "Accept": "application/json",
+            "X-Subscription-Token": api_key,
+            "User-Agent": USER_AGENT,
+        },
+    )
+    payload = _fetch_json(request)
+    web = payload.get("web") if isinstance(payload, dict) else None
+    raw_results = web.get("results") if isinstance(web, dict) else None
+    if not isinstance(raw_results, list):
+        return []
+    results: list[dict[str, str]] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        results.append(
+            {
+                "url": url,
+                "title": _strip_html(str(item.get("title") or "")) or url,
+                "description": _strip_html(str(item.get("description") or "")),
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _search_duckduckgo(query: str, limit: int) -> list[dict[str, str]]:
     params = urllib.parse.urlencode({"q": query})
-    body = _fetch_text(f"https://html.duckduckgo.com/html/?{params}", allow_private=False)
+    body = _fetch_text(
+        f"https://html.duckduckgo.com/html/?{params}",
+        allow_private=False,
+        user_agent=BROWSER_USER_AGENT,
+    )
     parser = DuckDuckGoHTMLParser()
     parser.feed(body)
     seen: set[str] = set()
@@ -280,25 +353,38 @@ def crawl_url(seed_url: str, limit: int, formats: set[str]) -> list[dict[str, An
     return documents[:limit]
 
 
-def _fetch_text(url: str, *, allow_private: bool) -> str:
+def _fetch_text(url: str, *, allow_private: bool, user_agent: str = USER_AGENT) -> str:
     if not allow_private:
         _validate_public_http_url(url)
     request = urllib.request.Request(
-        url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"}
+        url, headers={"User-Agent": user_agent, "Accept": "text/html,*/*"}
     )
+    raw, charset = _fetch_bytes(request)
+    return raw.decode(charset, errors="replace")
+
+
+def _fetch_json(request: urllib.request.Request) -> Any:
+    raw, charset = _fetch_bytes(request)
+    try:
+        return json.loads(raw.decode(charset, errors="replace"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="upstream returned invalid JSON") from exc
+
+
+def _fetch_bytes(request: urllib.request.Request) -> tuple[bytes, str]:
     try:
         with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 raw = raw[:MAX_RESPONSE_BYTES]
-            content_type = response.headers.get_content_charset() or "utf-8"
+            charset = response.headers.get_content_charset() or "utf-8"
     except urllib.error.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"upstream returned HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise HTTPException(status_code=502, detail=f"upstream fetch failed: {exc.reason}") from exc
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail="upstream fetch timed out") from exc
-    return raw.decode(content_type, errors="replace")
+    return raw, charset
 
 
 def _validate_public_http_url(url: str) -> None:
@@ -381,6 +467,10 @@ def _absolute_links(base_url: str, links: list[str]) -> list[str]:
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(value)).strip()
+
+
+def _strip_html(value: str) -> str:
+    return _clean_text(re.sub(r"<[^>]*>", " ", value))
 
 
 def main() -> None:

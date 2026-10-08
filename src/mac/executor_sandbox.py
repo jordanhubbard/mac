@@ -19,9 +19,8 @@ Three capabilities beyond the original:
 * **Memory feed (deployment gets smarter over time)** — before running, the
   executor *recalls* prior "deployment lessons" for the project and injects
   them into the agent prompt; after running, it *records* a structured
-  ``deployment_learning`` memory from the outcome. The nap consolidator
-  (mem-08) later promotes those records into the vector tier, so recall
-  improves with every task the fleet completes.
+  ``deployment_learning`` memory from the outcome, so recall improves with
+  every task the fleet completes.
 * **Automatic task sizing** — before running the agent, the executor inspects
   the task title and description for "plan" signals (conjunctions of verbs,
   numbered steps, multi-phase language, excessive scope).  When signals are
@@ -53,7 +52,6 @@ import contextlib
 import ctypes
 import hashlib
 import json
-import logging
 import os
 import re as _re
 import shlex
@@ -65,9 +63,10 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from mac import mac_paths
 from mac import relay_observability
@@ -102,7 +101,11 @@ from mac.trusted_artifact import (
 )
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
+    assert_exec_argv_single_line,
+    openshell_create_keepalive_args,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
+    single_line_shell_script,
+    split_sandbox_create_command,
     truthy as _truthy,
     verifier_resource_profile,
     verifier_profile_create_args,
@@ -154,7 +157,6 @@ from mac.executor_hub_io import (  # noqa: E402,F401 - compatibility re-exports
 )
 from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
     DEPLOYMENT_LEARNING_PREFIX,
-    _LESSON_CURATION_PROMPT,
     _LESSON_PROMPT_BUDGET,
     _LESSON_STOPWORDS,
     _PLAN_LEARNING_SCHEMA,
@@ -169,12 +171,10 @@ from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
     build_learning_record,
     build_plan_learning_record,
     build_telemetry_record,
-    curate_lessons_from_outcome,
     emit_telemetry,
     recall_deployment_lessons,
     recall_plan_lessons,
     recall_prior_attempt_lessons,
-    record_curated_lessons,
     record_deployment_learning,
     record_plan_outcome,
 )
@@ -202,12 +202,10 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
     should_enter_planning_phase,
 )
 from mac.executor_prompt import (  # noqa: E402,F401 - compatibility re-exports
-    _blind_review_protocol,
     _cooperative_integration_section,
     _error_signature,
     _is_truthy,
     _is_untracked_new_files_refusal,
-    _read_json_object,
     _repository_bootstrap_timeout,
     _repository_contract_bootstrap,
     _repository_contract_canonical_branch,
@@ -217,10 +215,8 @@ from mac.executor_prompt import (  # noqa: E402,F401 - compatibility re-exports
     _repository_prepared_base,
     _repository_publication_remote,
     _repository_task_branch,
-    _review_experiment_assignment,
     _run_repository_bootstrap_if_needed,
     _run_captured,
-    build_blind_review_discovery_prompt,
     build_review_prompt,
     build_task_prompt,
     classify_outcome,
@@ -242,11 +238,9 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
     _cooperative_integration_check,
     _finalizer_phase_timeout,
     _git,
-    _load_harness_recovery_log,
     _new_file_finalize_message,
     _preserve_executor_state_before_refusal,
     _read_executor_evidence_payload,
-    _record_recovery_learnings,
     _sign_verdict,
     _split_porcelain_status,
     _untracked_finalize_message,
@@ -344,9 +338,9 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
     # Keep the exchange itself, not just its fingerprint. The audit record below
     # stores sha256(stdout) and a byte count, which proves an output existed and
     # supports nothing else -- no summary, no knowledge base, no answering "why
-    # did the agent do that". The prompt is the LAST argv element for every
-    # supported CLI (claude -p, codex exec, cursor -p), and it never reaches the
-    # audit record because audit_safe_argv truncates anything over 512 chars.
+    # did the agent do that". The prompt is the LAST argv element of
+    # `opencode run`, and it never reaches the audit record because
+    # audit_safe_argv truncates anything over 512 chars.
     post_task_transcript(
         task_id,
         {
@@ -511,16 +505,10 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # sandboxed hermes can authenticate (the *_BASE_URL values have their host
     # loopback rewritten to the sandbox host alias in the private env file).
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
-    "OPENAI_BASE_URL,OPENAI_API_KEY,CODEX_API_KEY,"
-    "MAC_CODEX_BASE_URL,MAC_CODEX_TOKEN,MAC_CODEX_PROVIDER,MAC_CODEX_WIRE_API,MAC_CODEX_MODEL,"
-    # Coding-agent CLI credentials (see mac.coding_agent). A sandboxed coding
-    # agent authenticates safely via these env keys. File-based Codex auth is not
-    # forwarded by default because OpenShell uploads are copies: a throwaway
-    # sandbox can consume and rotate the refresh token without persisting the
-    # replacement back to the host.
-    "ANTHROPIC_API_KEY,ANTHROPIC_AUTH_TOKEN,ANTHROPIC_BASE_URL,ANTHROPIC_MODEL,"
-    "CLAUDE_CODE_OAUTH_TOKEN,CLAUDE_CODE_USE_BEDROCK,CLAUDE_CODE_USE_VERTEX,CLAUDE_CODE_USE_FOUNDRY,"
-    "CURSOR_AUTH_TOKEN,CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL,"
+    "OPENAI_BASE_URL,OPENAI_API_KEY,"
+    # The coding CLI (opencode) authenticates with the per-task
+    # MAC_INFERENCE_TOKEN written into the private environment file, not with
+    # a provider key forwarded from the host.
     # Repository credentials are separate from model-route credentials.  They
     # use the same private mode-0600 upload as the other sandbox secrets so git
     # and gh work inside the confined executor without copying host SSH keys.
@@ -635,9 +623,213 @@ def _openshell_environment() -> Dict[str, str]:
     # of those things as the host identity.
     for name in _HOST_ONLY_HUB_CREDENTIALS:
         values.pop(name, None)
+    # What the sandbox gets instead: this task's inference-only token, which
+    # reaches the hub's model router and nothing else (mac.inference_tokens).
+    inference_token = os.environ.get(_INFERENCE_TOKEN_ENV)
+    if inference_token:
+        values[_INFERENCE_TOKEN_ENV] = inference_token
     if read_only_repository:
         fence_read_only_repository_environment(values)
     return values
+
+
+# ---------------------------------------------------------------------------
+# Per-task inference token and the opencode router config
+# ---------------------------------------------------------------------------
+_INFERENCE_TOKEN_ENV = "MAC_INFERENCE_TOKEN"
+_OPENCODE_CONFIG_FILENAME = ".mac-opencode.json"
+#: A preflight probe is one short completion; its token lives minutes, not hours.
+_PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS = 15 * 60
+#: This executor process's task token: {"id": ..., "token": ...}. One executor
+#: process runs one task, so this is the task's token.
+_TASK_INFERENCE_TOKEN: Dict[str, str] = {}
+
+
+def _uses_router_opencode(choice: Any) -> bool:
+    """Whether the route authenticates to the hub router with a task token.
+
+    Both coding CLIs do: opencode through /v1/chat/completions and Claude
+    Code through /v1/messages. (The name predates Claude Code.)
+    """
+    return getattr(choice, "agent", "") in ("opencode", "claude") and (
+        getattr(choice, "provider", "") == "mac-router"
+    )
+
+
+#: The image's Python, which the sandbox policy lets reach the hub. Claude
+#: Code's hooks run under it.
+_SANDBOX_AGENT_PYTHON = "/opt/mac-venv/bin/python"
+
+
+def _write_claude_agent_files(
+    directory: Path, config_directory: str, env_values: Mapping[str, str], *, python: str
+) -> Dict[str, str]:
+    """Write Claude Code's settings, hooks and board command; return its env.
+
+    Everything goes under ``.mac-agent/`` in the task workspace, which sits
+    outside the repository, so none of it can be committed. The hook script is
+    a copy of :mod:`mac.claude_hooks` (standard library only), so the hooks are
+    this MAC version's even inside an older sandbox image. Claude Code's own
+    state (``CLAUDE_CONFIG_DIR``, including the session transcript) lives
+    there too, so it comes back with the workspace and a later run can resume
+    the session. Nothing is written without an inference token and a hub URL.
+    """
+    from . import coding_agent as _ca
+
+    token = str(env_values.get(_INFERENCE_TOKEN_ENV) or "")
+    hub = _ca.router_hub_url(env_values)
+    if not token or not hub:
+        return {}
+    agent_dir = directory / _ca.CLAUDE_AGENT_DIR
+    (agent_dir / "state").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "claude").mkdir(parents=True, exist_ok=True)
+    hooks_source = Path(__file__).resolve().parent / "claude_hooks.py"
+    (agent_dir / "claude_hooks.py").write_text(hooks_source.read_text(encoding="utf-8"), encoding="utf-8")
+    board = agent_dir / "board"
+    board.write_text(
+        "#!/bin/sh\n"
+        'exec "${MAC_AGENT_PYTHON:-python3}" "$(dirname "$0")/claude_hooks.py" board "$@"\n',
+        encoding="utf-8",
+    )
+    board.chmod(0o755)
+
+    def _hook(event: str) -> Dict[str, Any]:
+        return {
+            "type": "command",
+            "command": '"$MAC_AGENT_PYTHON" "$MAC_AGENT_DIR/claude_hooks.py" %s' % event,
+            "timeout": 30,
+        }
+
+    settings = {
+        "hooks": {
+            "SessionStart": [{"hooks": [_hook("session-start")]}],
+            "PostToolUse": [{"matcher": "*", "hooks": [_hook("post-tool")]}],
+            "Stop": [{"hooks": [_hook("stop")]}],
+        }
+    }
+    settings_path = directory / _ca.CLAUDE_SETTINGS_FILE
+    settings_path.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    settings_path.chmod(0o600)
+    sandbox_agent_dir = "%s/%s" % (config_directory.rstrip("/"), _ca.CLAUDE_AGENT_DIR)
+    overlay = {
+        # Claude Code appends /v1/messages itself.
+        "ANTHROPIC_BASE_URL": hub,
+        "ANTHROPIC_AUTH_TOKEN": token,
+        "CLAUDE_CONFIG_DIR": sandbox_agent_dir + "/claude",
+        "MAC_AGENT_DIR": sandbox_agent_dir,
+        "MAC_AGENT_STATE_DIR": sandbox_agent_dir + "/state",
+        "MAC_AGENT_PYTHON": python,
+        "DISABLE_AUTOUPDATER": "1",
+        "DISABLE_TELEMETRY": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    }
+    task_id = str(env_values.get("MAC_TASK_ID") or "").strip()
+    if task_id:
+        overlay["ANTHROPIC_CUSTOM_HEADERS"] = "X-MAC-Task-ID: %s" % task_id
+    return overlay
+
+
+def _write_coding_agent_config(
+    directory: Path, config_directory: str, env_values: Mapping[str, str], *, python: str
+) -> Dict[str, str]:
+    """Write the selected coding CLI's router config; return its env overlay."""
+    from . import coding_agent as _ca
+
+    if _ca.selected_agent() == _ca.CLAUDE_AGENT:
+        return _write_claude_agent_files(directory, config_directory, env_values, python=python)
+    return _write_opencode_router_config(directory, config_directory, env_values)
+
+
+def _mint_inference_token(*, task_id: str, ttl_seconds: int) -> Dict[str, Any]:
+    """Ask the hub, as this worker, for an inference-only token bound to it."""
+    from mac.inference_tokens import request_inference_token
+
+    base_url, worker_token = _hub_env()
+    if not base_url or not worker_token:
+        raise RuntimeError("no hub URL or worker token to mint an inference token with")
+    return request_inference_token(
+        base_url,
+        worker_token,
+        local_agent_id(),
+        task_id=task_id,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def _revoke_inference_token(token_id: str) -> None:
+    """Best effort: expiry still ends the token if the hub cannot be reached."""
+    from mac.inference_tokens import revoke_inference_token
+
+    base_url, worker_token = _hub_env()
+    if not token_id or not base_url or not worker_token:
+        return
+    try:
+        revoke_inference_token(base_url, worker_token, local_agent_id(), token_id)
+    except Exception as exc:  # noqa: BLE001 - revocation must never fail a task
+        sys.stderr.write(
+            "[executor] inference token %s not revoked (%s); it expires on its own\n"
+            % (token_id, exc.__class__.__name__)
+        )
+
+
+def _ensure_task_inference_token(task_id: str) -> None:
+    """Mint this task's inference token once and expose it to the sandbox env."""
+    from mac.inference_tokens import DEFAULT_TTL_SECONDS
+
+    if _TASK_INFERENCE_TOKEN.get("token"):
+        return
+    issued = _mint_inference_token(task_id=task_id, ttl_seconds=DEFAULT_TTL_SECONDS)
+    _TASK_INFERENCE_TOKEN.update(id=str(issued.get("id") or ""), token=str(issued["token"]))
+    os.environ[_INFERENCE_TOKEN_ENV] = _TASK_INFERENCE_TOKEN["token"]
+
+
+def revoke_task_inference_token() -> None:
+    """Revoke the task's inference token once the task has finished."""
+    token_id = _TASK_INFERENCE_TOKEN.get("id") or ""
+    _TASK_INFERENCE_TOKEN.clear()
+    os.environ.pop(_INFERENCE_TOKEN_ENV, None)
+    _revoke_inference_token(token_id)
+
+
+def host_opencode_router_env(
+    directory: Path, *, task_id: str, ttl_seconds: int
+) -> Tuple[Dict[str, str], str]:
+    """Mint a token and write the router config for opencode run on the HOST.
+
+    Returns the environment overlay (``MAC_INFERENCE_TOKEN`` and
+    ``OPENCODE_CONFIG``) and the token id for revocation. Used by the
+    host-install route probe, which has no sandbox to hand the token to.
+    """
+    issued = _mint_inference_token(task_id=task_id, ttl_seconds=ttl_seconds)
+    overlay = {_INFERENCE_TOKEN_ENV: str(issued["token"])}
+    overlay.update(
+        _write_opencode_router_config(directory, str(directory), {**os.environ, **overlay})
+    )
+    return overlay, str(issued.get("id") or "")
+
+
+def _write_opencode_router_config(
+    directory: Path, config_directory: str, env_values: Mapping[str, str]
+) -> Dict[str, str]:
+    """Write the ``machub`` opencode config and return ``OPENCODE_CONFIG`` for it.
+
+    ``directory`` is where the file is written; ``config_directory`` is the
+    same directory as the CLI will see it (the sandbox path when uploaded).
+    Nothing is written without an inference token and a hub URL. The file
+    holds no secret: the API key is an ``{env:MAC_INFERENCE_TOKEN}`` reference.
+    """
+    from . import coding_agent as _ca
+
+    if not env_values.get(_INFERENCE_TOKEN_ENV) or not _ca.router_hub_url(env_values):
+        return {}
+    path = directory / _OPENCODE_CONFIG_FILENAME
+    path.write_text(
+        json.dumps(_ca.opencode_router_config(env_values), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return {"OPENCODE_CONFIG": "%s/%s" % (config_directory.rstrip("/"), _OPENCODE_CONFIG_FILENAME)}
 
 
 _LANDLOCK_CREATE_RULESET_SYSCALL = 444
@@ -897,7 +1089,9 @@ def _resolve_task_openshell_policy(task: Any) -> str:
 # worktree must be UPLOADED in and the agent's results DOWNLOADED back out — a
 # plain ``create -- argv`` would run the agent against an empty /sandbox and lose
 # its edits + evidence on teardown. The run is therefore a lifecycle:
-#   create (--upload workspace, run agent in it, KEEP) -> download -> delete.
+#   create (--upload workspace, kept alive) -> exec agent -> download -> delete.
+# Create and agent are separate steps: OpenShell 0.1 rejects --upload with a
+# command, and a create command would be the main process whose exit ends Ready.
 # ``include_workdir`` in the policy only grants Landlock access to the path; it
 # does not copy files. /sandbox is OpenShell's writable workspace root (uploads
 # and downloads must live under it).
@@ -1022,7 +1216,12 @@ def _sandbox_identity_labels() -> List[str]:
     return labels
 
 
-def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
+def _sandbox_label_argv(
+    kind: str,
+    *,
+    keep: bool = False,
+    process_identity: Optional[Callable[[int], Tuple[str, str]]] = None,
+) -> List[str]:
     # Repository sandboxes carry the only copy of sandbox-local clean commits
     # until harvest creates a durable host bundle. Mark them protected from the
     # stale/dead-PID/lease reapers even when the operator did not request debug
@@ -1038,11 +1237,8 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
     from .openshell_sandbox_gc import _process_identity
 
     pid = os.getpid()
-    state, identity = _process_identity(pid)
-    if state != "present" or ":" not in identity:
-        raise RuntimeError("cannot establish OpenShell creator process identity")
-    boot_id, pid_start = identity.split(":", 1)
-    return [
+    state, identity = (process_identity or _process_identity)(pid)
+    labels = [
         "--label",
         "mac.owner=mac",
         "--label",
@@ -1050,12 +1246,22 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
         "--label",
         "mac.pid=%d" % pid,
         "--label",
-        "mac.pid.start=%s" % pid_start,
-        "--label",
-        "mac.boot.id=%s" % boot_id,
+        "mac.pid.identity=%s" % ("verified" if state == "present" else state),
         "--label",
         "mac.keep=%s" % ("true" if keep or repository_wip_guard else "false"),
-    ] + _sandbox_identity_labels()
+    ]
+    # Process identity strengthens PID reuse detection, but its temporary
+    # unavailability must not prevent unrelated sandbox creation. Omitting the
+    # pair makes the reaper preserve any live/reused PID, which is fail-closed.
+    if state == "present" and ":" in identity:
+        boot_id, pid_start = identity.split(":", 1)
+        labels += [
+            "--label",
+            "mac.pid.start=%s" % pid_start,
+            "--label",
+            "mac.boot.id=%s" % boot_id,
+        ]
+    return labels + _sandbox_identity_labels()
 
 
 def _sandbox_gc_best_effort() -> None:
@@ -1145,8 +1351,7 @@ def _reconcile_task_sandboxes_from_lease_authority_best_effort(
     """Fail-closed reconcile of task sandboxes against durable lease authority.
 
     The dead-PID reaper only proves orphanhood on the *creating* host. This
-    sweep additionally consults the authoritative lease store (the same source
-    of truth the k8s controller uses for stuck Jobs): a Ready task sandbox whose
+    sweep additionally consults the authoritative lease store: a Ready task sandbox whose
     ``mac.task.id`` maps to a terminal, unleased, lease-expired, or
     lease-superseded task is reaped even when its recorded creator PID cannot be
     proven dead. Sandboxes without identity labels, with an unresolvable task,
@@ -1714,26 +1919,11 @@ command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
 # executor's gate_detect_test_command and the hub-review verifier, which already
 # prefer the sanity contract; the report/worker sandbox path had been left on the
 # whole-repo gate, so every code task paid the full ~34-60min suite.
-# NOTHING CHANGED => NOTHING TO VERIFY.
 #
-# A read-only task leaves the worktree exactly as it was uploaded. Running a
-# repository test gate over an unchanged tree cannot say anything about the
-# task's work: it can only report on the state of the repository, which the
-# task did not touch. It is also how a read-only canary came to run the entire
-# ~11,000-test contract suite inside a sandbox with no Postgres and fail.
-#
-# Detected against the sandbox's own baseline commit, which is what the agent
-# was given -- not against the host's history, which is not present here.
-_no_changes = False
-try:
-    _status = subprocess.run(
-        ["git", "-C", worktree, "status", "--porcelain", "-uall"],
-        capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
-    )
-    _no_changes = _status.returncode == 0 and not _status.stdout.strip()
-except Exception:
-    _no_changes = False
-
+# There is deliberately NO "clean tree => pass" shortcut. A clean `git status`
+# only means the agent committed its work; reporting that as a pass recorded
+# 265 test passes in 90 days where nothing ran. Only a HEAD that never moved
+# off the baseline skips the gate, and that is recorded as skipped, not pass.
 # --- baseline-resolver (extracted verbatim by tests/test_sandbox_baseline.py) ---
 def _resolve_baseline_sha(subprocess, worktree, env_base):
     """The commit the agent started from, as this repository can name it.
@@ -1778,6 +1968,35 @@ def _resolve_baseline_sha(subprocess, worktree, env_base):
 _repo_base_sha = _resolve_baseline_sha(
     subprocess, worktree, os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
 )
+
+def _worktree_is_unchanged_baseline(base):
+    """True only when HEAD IS the pre-task baseline and nothing is uncommitted.
+
+    Not "the tree is clean": an agent that committed its work leaves a clean
+    tree on top of new commits. Only an unmoved HEAD proves the task changed
+    nothing, and even then the record says skipped -- never pass.
+    """
+    if not base:
+        return False
+    try:
+        head = subprocess.run(
+            ["git", "-C", worktree, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+        )
+        status = subprocess.run(
+            ["git", "-C", worktree, "status", "--porcelain", "-uall"],
+            capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return (
+        head.returncode == 0
+        and head.stdout.strip() == base
+        and status.returncode == 0
+        and not status.stdout.strip()
+    )
+
+_unchanged_baseline = _worktree_is_unchanged_baseline(_repo_base_sha)
 if command in ("scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh") and _repo_base_sha:
     _sanity = os.path.join(worktree, "scripts", "run-sanity-tests.sh")
     if os.path.isfile(_sanity) and os.access(_sanity, os.X_OK):
@@ -2006,20 +2225,21 @@ elif bootstrap is not None and bootstrap.get("returncode") != 0:
         "environment_delta": delta,
         "bootstrap": bootstrap,
     }
-elif _no_changes:
-    # The task touched nothing, so the gate has nothing of the task's to judge.
-    # Reported as a pass with an explicit reason rather than skipped silently:
-    # "we did not test this, and here is why" is evidence; an absent result is
-    # indistinguishable from a gate that never ran.
+elif _unchanged_baseline:
+    # The task changed nothing, so there is no change of the task's to judge.
+    # Recorded as SKIPPED, not pass: this is not a test result and must never
+    # be read as one (a clean-tree "pass" here once stood in for 265 test runs
+    # that never happened). Repository changes are verified on the exact
+    # commit they publish, by the pre-push verifier, regardless.
     payload = {
         "schema": "mac.sandbox_verification.v1",
-        "status": "pass",
+        "status": "skipped",
         "command": command,
         "returncode": 0,
         "stdout": "",
         "stderr": "",
         "skipped": True,
-        "skipped_reason": "no repository changes to verify",
+        "skipped_reason": "HEAD is the uploaded baseline and the worktree is clean",
         "duration_ms": 0,
         "worktree": worktree,
         "environment_delta": delta,
@@ -2120,6 +2340,11 @@ def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tup
         "MAC_SANDBOX_BASE_PATH": _SANDBOX_BASE_PATH,
         "PATH": _SANDBOX_BASE_PATH,
     }
+    env_values.update(
+        _write_coding_agent_config(
+            workspace, sandbox_workspace, env_values, python=_SANDBOX_AGENT_PYTHON
+        )
+    )
     env_file = _write_private_shell_env(workspace / ".mac-openshell-env.sh", env_values)
 
     toolchain_file = workspace / ".mac-sandbox-toolchain.sh"
@@ -2148,15 +2373,8 @@ def _task_requires_gpu(task: Any) -> bool:
 def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
     """Parse executor-owned OpenShell args and apply task-specific GPU access.
 
-    ``bootstrap-openshell.sh`` only writes the Codex OAuth upload when the
-    operator opts in, but the rendered ``MAC_OPENSHELL_CREATE_ARGS`` can outlive
-    that opt-in.  Never keep copying the rotating host auth file merely because
-    an old recipe still contains it.  File auth is retained only when both
-    explicit risk flags remain enabled *and* no environment API key is present;
-    environment auth wins the coding-agent selection and makes the file both
-    unnecessary and unsafe to copy into a throwaway sandbox. A legacy global
-    ``--gpu`` is always removed: only an explicit GPU task may add it back, and
-    only after bootstrap proved the nested OpenShell GPU path.
+    A legacy global ``--gpu`` is always removed: only an explicit GPU task may
+    add it back, and only after bootstrap proved the nested OpenShell GPU path.
     """
     extra = env_str("MAC_OPENSHELL_CREATE_ARGS")
     if not extra:
@@ -2167,11 +2385,6 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
             "MAC_OPENSHELL_CREATE_ARGS may not contain --env or --; "
             "use MAC_OPENSHELL_ENV_PASSTHROUGH for private environment transfer"
         )
-    permit_codex_file_auth = (
-        not (os.environ.get("OPENAI_API_KEY") or "").strip()
-        and env_bool("MAC_OPENSHELL_UPLOAD_CODEX_AUTH")
-        and env_bool("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH")
-    )
     filtered: List[str] = []
     index = 0
     while index < len(argv):
@@ -2181,12 +2394,6 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
             if token == "--gpu" and index < len(argv) and argv[index].isdigit():
                 index += 1
             continue
-        if token == "--upload" and index + 1 < len(argv):
-            upload = argv[index + 1]
-            _source, separator, destination = upload.rpartition(":")
-            if separator and destination == "/tmp/.codex/auth.json" and not permit_codex_file_auth:
-                index += 2
-                continue
         filtered.append(token)
         index += 1
     if require_gpu:
@@ -2198,54 +2405,71 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
     return filtered
 
 
-# Unlike codex's ~/.codex/auth.json (an OAuth *refresh* token: consuming it
-# inside a disposable sandbox can rotate it and desync the host copy, see
-# _coding_agent_auth_is_safe_for_openshell), these are static API-key files
-# (coding_agent.py's "api_key_file" auth_kind, never "oauth_file"/"oauth").
-# Copying a static key into a throwaway sandbox carries no rotation risk, so
-# -- unlike codex -- there is no env-var-present gate here: the file is the
-# only working credential path for these CLIs on this fleet.
-#
-# opencode.json is not a credential (opencode's auth.json already carries the
-# key) but its absence is just as fatal: without it opencode falls back to
-# its own built-in default model, observed live to be one the configured
-# provider has since retired ("has reached its end of life"), rather than
-# the model this fleet actually provisions in the host config.
-_SANDBOX_SAFE_CREDENTIAL_FILES: Tuple[Tuple[str, str], ...] = (
-    (".local/share/opencode/auth.json", "opencode"),
-    (".config/opencode/opencode.json", "opencode"),
-    (".pi/agent/auth.json", "pi"),
-)
-
-
-def _sandbox_credential_upload_argv() -> List[str]:
-    """``--upload`` args copying safe, non-rotating coding-agent credential
-    files from the host's HOME into the sandbox's HOME (_SANDBOX_HOME).
-
-    Only files that actually exist are forwarded, so a host without opencode/pi
-    configured emits nothing extra.
-    """
-    home = Path.home()
-    argv: List[str] = []
-    for relative, _agent in _SANDBOX_SAFE_CREDENTIAL_FILES:
-        source = home / relative
-        try:
-            if not source.is_file():
-                continue
-        except OSError:
-            continue
-        destination = "%s/%s" % (_SANDBOX_HOME, relative)
-        argv += ["--upload", "%s:%s" % (source, destination)]
-    return argv
-
-
 _MANAGED_OPENSHELL_RUNTIME_REF_RE = _re.compile(
     r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}"
 )
 
 
+def _runtime_executor_config_sha256(
+    *, runtime_image_ref: str, source_bundle_sha256: str, host_install: bool = False
+) -> str:
+    """Digest the effective process-local sandbox contract.
+
+    The service wrapper rotates ``MAC_WORKER_PROCESS_REVISION`` on every start.
+    Including it prevents a startup report cached by the hub from surviving a
+    worker restart even when the image and source happen to be unchanged.
+    """
+
+    create_argv = [] if host_install else _openshell_extra_create_argv()
+    payload = {
+        "create_argv": create_argv,
+        "process_revision": os.environ.get("MAC_WORKER_PROCESS_REVISION") or "unversioned",
+        "runtime_image_ref": runtime_image_ref,
+        "source_bundle_sha256": source_bundle_sha256,
+    }
+    return (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
+
+
 def _managed_openshell_runtime_image_ref() -> str:
-    """Return the deployment-pinned OpenShell image, or fail closed."""
+    """Return the immutable image the worker will actually pass to OpenShell.
+
+    ``MAC_OPENSHELL_CREATE_ARGS`` is the execution authority for ordinary task
+    sandboxes.  The older implementation attested only the sidecar
+    ``runtime-image-ref`` file, so changing ``--from`` could make tasks run one
+    image while the worker continued advertising another.  Prefer the effective
+    create argument and retain the file only as a backwards-compatible fallback
+    for deployments which do not spell out ``--from``.
+    """
+
+    create_argv = _openshell_extra_create_argv()
+    configured_refs: List[str] = []
+    index = 0
+    while index < len(create_argv):
+        token = create_argv[index]
+        if token == "--from":
+            if index + 1 >= len(create_argv):
+                raise RuntimeError("MAC_OPENSHELL_CREATE_ARGS --from requires a value")
+            configured_refs.append(create_argv[index + 1])
+            index += 2
+            continue
+        if token.startswith("--from="):
+            configured_refs.append(token.partition("=")[2])
+        index += 1
+    if len(configured_refs) > 1:
+        raise ValueError("MAC_OPENSHELL_CREATE_ARGS contains duplicate --from arguments")
+    if configured_refs:
+        image_ref = configured_refs[0]
+        if not _MANAGED_OPENSHELL_RUNTIME_REF_RE.fullmatch(image_ref):
+            raise RuntimeError(
+                "read-only repository reports require MAC_OPENSHELL_CREATE_ARGS "
+                "to select the immutable mac-openshell-runtime@sha256 image"
+            )
+        return image_ref
 
     mac_home = mac_paths.mac_home()
     path = Path(
@@ -2282,6 +2506,7 @@ def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None
     expected_script_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256")
     expected_source_root = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT")
     expected_source_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256")
+    expected_runtime_config_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256")
     # macOS nodes are host installs: no image, no policy, no OpenShell binary
     # exists to be approved, so those four fields are legitimately empty and
     # must not be present. Everything that still exists stays digest-bound.
@@ -2295,6 +2520,7 @@ def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None
         expected_script_digest,
         expected_source_root,
         expected_source_digest,
+        expected_runtime_config_digest,
     ]
     container_fields = (
         expected_runtime,
@@ -2345,6 +2571,15 @@ def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None
     source_root, source_digest = nofollow_source_bundle_digest(source_candidate)
     if source_root != expected_source_root or source_digest != expected_source_digest:
         raise RuntimeError("read-only repository report MAC source differs from hub approval")
+    runtime_config_digest = _runtime_executor_config_sha256(
+        runtime_image_ref=runtime_image_ref,
+        source_bundle_sha256=source_digest,
+        host_install=host_install,
+    )
+    if runtime_config_digest != expected_runtime_config_digest:
+        raise RuntimeError(
+            "read-only repository report process/create configuration differs from hub approval"
+        )
     if sys.platform.startswith("linux"):
         if (
             expected_platform != "linux"
@@ -2461,8 +2696,13 @@ def _build_sandbox_create_argv(
     extra_create_argv: Optional[List[str]] = None,
     task: Any = None,
 ) -> List[str]:
-    """``openshell sandbox create`` argv that uploads the task workspace, runs the
-    agent inside it, and KEEPS the sandbox so results can be downloaded.
+    """The task's logical ``sandbox create --upload ... -- <agent>`` argv.
+
+    It is never executed verbatim: OpenShell 0.1 rejects ``--upload`` combined
+    with a command, and a trailing command would become the main process whose
+    exit ends Ready. :func:`_sandbox_launch_argvs` splits it into a kept-alive
+    create (uploading the workspace) and a ``sandbox exec`` running the agent,
+    so the sandbox stays Ready for verification, download and delete.
 
     A policy is ALWAYS passed (explicit -> deployed -> bundled fail-closed
     default) so OpenShell can never silently apply its own image-default profile.
@@ -2488,7 +2728,6 @@ def _build_sandbox_create_argv(
         _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
     )
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
-    argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sub),
@@ -2532,13 +2771,54 @@ def _build_sandbox_create_argv(
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "/bin/bash", "-c", inner]
+    # One line: OpenShell's exec RPC rejects newline-bearing arguments.
+    argv += ["--", "/bin/bash", "-c", single_line_shell_script(inner)]
     return argv
+
+
+#: Bound for the create phase alone (image pull + workspace upload). The agent
+#: itself runs in the following exec under the runner's own timeout.
+_SANDBOX_CREATE_TIMEOUT_SECONDS = 900.0
+
+
+def _sandbox_launch_argvs(create_argv: List[str]) -> "tuple[List[str], List[str]]":
+    """Split a logical create+command argv into (kept-alive create, exec)."""
+    return split_sandbox_create_command(create_argv)
+
+
+def _sandbox_create_detached(
+    create_argv: List[str], *, timeout: float = _SANDBOX_CREATE_TIMEOUT_SECONDS
+) -> "subprocess.CompletedProcess[str]":
+    """Create (and upload into) a sandbox that stays Ready; never raises.
+
+    A timeout maps to 124 and a missing/unrunnable CLI to 127, mirroring what
+    the audited runner reported when create and the agent were one process.
+    """
+    try:
+        return _run_captured(create_argv, Path.cwd(), timeout)
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout or ""
+        err = exc.stderr or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        return subprocess.CompletedProcess(
+            create_argv, 124, out, err + "\n[executor] sandbox create timed out after %ss" % timeout
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(
+            create_argv, 127, "", "[executor] sandbox create could not run: %s" % exc
+        )
 
 
 def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
     """Run an openshell lifecycle step (download/delete) out-of-band of the
-    audited agent run. Best-effort: returns (ok, message), never raises."""
+    audited agent run. Best-effort: returns (ok, message); it raises only
+    :class:`OpenShellExecArgvError` for an exec argv OpenShell would reject,
+    which is a programming error rather than a runtime failure."""
+    if args and args[0] == "exec":
+        assert_exec_argv_single_line(args)
     try:
         proc = _run_captured(
             [_openshell_bin(), "sandbox", *args],
@@ -2603,6 +2883,7 @@ def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 120
         "/bin/cat",
         _SANDBOX_VERIFICATION_FILE,
     ]
+    assert_exec_argv_single_line(argv)
     try:
         proc = subprocess.run(
             argv,
@@ -2709,6 +2990,7 @@ def _sandbox_run_repository_verification_exec(
         "/bin/bash",
         sandbox_script,
     ]
+    assert_exec_argv_single_line(argv)
     started_at = time.monotonic()
     start_deadline = started_at + start_timeout
     total_deadline = started_at + timeout + 90.0
@@ -2916,11 +3198,13 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
         "executor-evidence.json",
         ".mac-executor-policy.txt",
         ".mac-openshell-env.sh",
+        _OPENCODE_CONFIG_FILENAME,
         ".mac-sandbox-toolchain.sh",
         ".mac-sandbox-repository-verify.sh",
         _TRUSTED_READ_ONLY_VERIFICATION_FILE,
         "worker-result.json",
         "review-result.json",
+        _NEEDS_INPUT_MARKER,
         "stdout.txt",
         "stderr.txt",
     }:
@@ -2938,23 +3222,87 @@ _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES = {
 }
 
 
-def _validate_sandbox_download_symlinks(
+def _sandbox_download_path_in_repository(rel_path: Path, repository_roots: set[Path]) -> bool:
+    """True when ``rel_path`` is inside, or is an ancestor of, a repository root.
+
+    Entries there carry the task deliverable, so a problem with one must fail
+    the harvest closed. Everything else in the task workspace is agent scratch
+    (virtualenvs, tool downloads, caches) whose loss never loses repo work.
+    """
+
+    return any(
+        _path_is_under(rel_path, root) or _path_is_under(root, rel_path)
+        for root in repository_roots
+    )
+
+
+def _sandbox_download_special_kind(mode: int) -> str:
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    if stat.S_ISCHR(mode):
+        return "character_device"
+    if stat.S_ISBLK(mode):
+        return "block_device"
+    return "special_file"
+
+
+def _classify_sandbox_download_entries(
     download_root: Path, workspace: Path, repository_roots: set[Path]
-) -> None:
-    """Validate every symlink before the merge mutates host workspace state."""
+) -> Dict[str, List[Dict[str, str]]]:
+    """Vet every entry before the merge mutates host workspace state.
+
+    An entry the host must never materialize (a symlink whose target escapes
+    the task workspace, a FIFO/socket/device node, an unreadable directory) is
+    fatal inside a repository worktree or on a host/evidence control, and is
+    skipped and recorded anywhere else. One stray venv symlink must not discard
+    the repository changes harvested alongside it (live 2026-10-03,
+    task_b3e16b5f).
+    """
 
     download_root_resolved = download_root.resolve()
     workspace_resolved = workspace.resolve()
-    for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
+    skipped_symlinks: List[Dict[str, str]] = []
+    skipped_entries: List[Dict[str, str]] = []
+
+    def _walk_error(error: OSError) -> None:
+        failed = Path(getattr(error, "filename", "") or "")
+        rel = _relative_path_or_none(failed, download_root)
+        if rel is None or rel == Path("."):
+            raise ValueError("sandbox download could not be read: %s" % error) from None
+        if _sandbox_download_path_excluded(rel, repository_roots):
+            return
+        if _sandbox_download_path_in_repository(rel, repository_roots):
+            raise ValueError(
+                "sandbox download directory inside the repository worktree is unreadable: %s" % rel
+            ) from None
+        skipped_entries.append({"path": str(rel), "kind": "directory", "reason": "unreadable"})
+
+    for root, dirs, files in os.walk(
+        download_root, topdown=True, followlinks=False, onerror=_walk_error
+    ):
         root_path = Path(root)
         rel_root = root_path.relative_to(download_root)
         for name in [*dirs, *files]:
             src = root_path / name
-            if not src.is_symlink():
-                continue
             rel = rel_root / name
-            if _sandbox_download_path_is_host_control(rel) or (
-                len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
+            try:
+                mode = os.lstat(src).st_mode
+            except OSError as exc:
+                if _sandbox_download_path_excluded(rel, repository_roots):
+                    continue
+                if _sandbox_download_path_in_repository(rel, repository_roots):
+                    raise ValueError(
+                        "sandbox download entry inside the repository worktree is unreadable: "
+                        "%s (%s)" % (rel, exc)
+                    ) from None
+                skipped_entries.append({"path": str(rel), "kind": "unknown", "reason": str(exc)})
+                continue
+            is_link = stat.S_ISLNK(mode)
+            if is_link and (
+                _sandbox_download_path_is_host_control(rel)
+                or (len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES)
             ):
                 raise ValueError(
                     "sandbox download attempted to replace host/evidence control %s with a symlink"
@@ -2962,18 +3310,50 @@ def _validate_sandbox_download_symlinks(
                 )
             if _sandbox_download_path_excluded(rel, repository_roots):
                 continue
-            target = os.readlink(src)
-            if os.path.isabs(target):
-                raise ValueError("sandbox download symlink has an absolute target: %s" % rel)
-            try:
-                src.resolve(strict=False).relative_to(download_root_resolved)
-                (workspace / rel).parent.joinpath(target).resolve(strict=False).relative_to(
-                    workspace_resolved
-                )
-            except (OSError, RuntimeError, ValueError):
+            in_repository = _sandbox_download_path_in_repository(rel, repository_roots)
+            if is_link:
+                target = os.readlink(src)
+                problem = ""
+                if os.path.isabs(target):
+                    problem = "absolute target"
+                else:
+                    try:
+                        src.resolve(strict=False).relative_to(download_root_resolved)
+                        (workspace / rel).parent.joinpath(target).resolve(strict=False).relative_to(
+                            workspace_resolved
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        problem = "escapes the task workspace"
+                if not problem:
+                    continue
+                if in_repository:
+                    if problem == "absolute target":
+                        raise ValueError(
+                            "sandbox download symlink has an absolute target: %s -> %s"
+                            % (rel, target)
+                        )
+                    raise ValueError(
+                        "sandbox download symlink escapes the task workspace: %s -> %s"
+                        % (rel, target)
+                    )
+                skipped_symlinks.append({"path": str(rel), "target": target, "reason": problem})
+                continue
+            if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+                continue
+            kind = _sandbox_download_special_kind(mode)
+            if in_repository:
                 raise ValueError(
-                    "sandbox download symlink escapes the task workspace: %s" % rel
-                ) from None
+                    "sandbox download contains a %s inside the repository worktree: %s"
+                    % (kind, rel)
+                )
+            if len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES:
+                raise ValueError(
+                    "sandbox download attempted to replace evidence output %s with a %s"
+                    % (rel, kind)
+                )
+            skipped_entries.append({"path": str(rel), "kind": kind, "reason": "special file"})
+
+    return {"skipped_symlinks": skipped_symlinks, "skipped_entries": skipped_entries}
 
 
 def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path]) -> bool:
@@ -3036,7 +3416,9 @@ def _ensure_sandbox_destination_directory(workspace: Path, rel_path: Path) -> No
         os.close(descriptor)
 
 
-def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
+def _merge_sandbox_download_tree(
+    download_root: Path, workspace: Path
+) -> Dict[str, List[Dict[str, str]]]:
     """Merge a downloaded sandbox workspace into the host workspace.
 
     OpenShell downloads a tar archive. Extracting directly over a git worktree is
@@ -3044,10 +3426,21 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
     while the sandbox checkout may contain a ``.git`` directory. Keep host git
     metadata and container-local dependency caches out of the merge; the
     deterministic finalizer rebuilds/tests from the host worktree.
+
+    Returns the scratch entries that were skipped rather than materialized
+    (``skipped_symlinks`` / ``skipped_entries``). A skipped path is absent on
+    the host afterwards, and nothing beneath it is ever written.
     """
     workspace.mkdir(parents=True, exist_ok=True)
     repository_roots = _sandbox_repository_roots(workspace, download_root)
-    _validate_sandbox_download_symlinks(download_root, workspace, repository_roots)
+    report = _classify_sandbox_download_entries(download_root, workspace, repository_roots)
+    skipped_paths = {
+        Path(item["path"]) for item in [*report["skipped_symlinks"], *report["skipped_entries"]]
+    }
+
+    def _skipped(rel_path: Path) -> bool:
+        return any(_path_is_under(rel_path, skipped) for skipped in skipped_paths)
+
     source_files: set[Path] = set()
     source_dirs: set[Path] = {Path(".")}
     source_links: set[Path] = set()
@@ -3060,7 +3453,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         kept_dirs: List[str] = []
         for name in dirs:
             rel = rel_root / name
-            if _sandbox_download_path_excluded(rel, repository_roots):
+            if _sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel):
                 continue
             src = root_path / name
             if src.is_symlink():
@@ -3071,7 +3464,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         dirs[:] = kept_dirs
         for name in files:
             rel = rel_root / name
-            if not _sandbox_download_path_excluded(rel, repository_roots):
+            if not (_sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel)):
                 source_files.add(rel)
 
     for root, dirs, files in os.walk(workspace, topdown=False, followlinks=False):
@@ -3112,7 +3505,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         for name in dirs:
             rel = rel_root / name
             src = root_path / name
-            if _sandbox_download_path_excluded(rel, repository_roots):
+            if _sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel):
                 continue
             if src.is_symlink():
                 _ensure_sandbox_destination_directory(workspace, rel.parent)
@@ -3130,7 +3523,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         dirs[:] = kept_dirs
         for name in files:
             rel = rel_root / name
-            if _sandbox_download_path_excluded(rel, repository_roots):
+            if _sandbox_download_path_excluded(rel, repository_roots) or _skipped(rel):
                 continue
             src = root_path / name
             _ensure_sandbox_destination_directory(workspace, rel.parent)
@@ -3143,8 +3536,23 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if src.is_symlink():
                 dst.symlink_to(os.readlink(src))
-            else:
+                continue
+            try:
                 shutil.copy2(src, dst)
+            except OSError as exc:
+                if _sandbox_download_path_in_repository(rel, repository_roots) or (
+                    len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
+                ):
+                    raise ValueError(
+                        "sandbox download could not copy protected file %s: %s" % (rel, exc)
+                    ) from None
+                with contextlib.suppress(OSError):
+                    dst.unlink()
+                report["skipped_entries"].append(
+                    {"path": str(rel), "kind": "file", "reason": "copy failed: %s" % exc}
+                )
+
+    return report
 
 
 def _read_only_verifier_extra_create_argv() -> List[str]:
@@ -3697,16 +4105,29 @@ def _sandbox_run_read_only_repository_verification(
             *_sandbox_label_argv("read-only-verifier"),
             *verifier_profile_create_args(_read_only_verifier_extra_create_argv()),
             "--no-git-ignore",
-            "--no-tty",
             "--upload",
             "%s:%s" % (verifier_workspace, _SANDBOX_WORKDIR),
-            "--",
-            "/bin/bash",
-            "--noprofile",
-            "--norc",
-            sandbox_script,
+            *openshell_create_keepalive_args(_openshell_bin()),
         ]
+        # Upload on create, then exec the verifier: OpenShell 0.1 rejects an
+        # upload combined with a command. ``created`` still means "the
+        # verifier ran and exited zero", as when both were one create.
         created, create_message = _sandbox_step(create_args, timeout=timeout + 90.0)
+        if created:
+            created, create_message = _sandbox_step(
+                [
+                    "exec",
+                    "--name",
+                    verifier_name,
+                    "--no-tty",
+                    "--",
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc",
+                    sandbox_script,
+                ],
+                timeout=timeout + 90.0,
+            )
         if not created and create_message:
             sys.stderr.write(
                 "[executor] independent read-only verifier returned non-zero: %s\n"
@@ -3989,10 +4410,18 @@ def _sandbox_read_only_repository_violation(
     return "" if ok else (message or "read-only repository sandbox validation failed")
 
 
-def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
+def _sandbox_download(
+    name: str,
+    basename: str,
+    workspace: Path,
+    skipped: Optional[Dict[str, List[Dict[str, str]]]] = None,
+) -> bool:
     """Sync the agent's edits (+ the evidence manifest) from the kept sandbox
     back into the host workspace. Best-effort: a failure is logged, not fatal —
-    completeness is still judged by the evidence manifest on the host."""
+    completeness is still judged by the evidence manifest on the host.
+
+    Scratch entries the merge refused to materialize are added to ``skipped``
+    (``skipped_symlinks`` / ``skipped_entries``) for the salvage record."""
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     repository_roots = _sandbox_repository_roots(workspace, workspace)
     generated_paths = {
@@ -4036,10 +4465,31 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
         ok, msg = _sandbox_step(["download", name, sub, str(download_root)], timeout=300.0)
         if ok:
             try:
-                _merge_sandbox_download_tree(download_root, workspace)
+                report = _merge_sandbox_download_tree(download_root, workspace) or {}
             except Exception as exc:  # noqa: BLE001 - download sync is best-effort
                 ok = False
                 msg = "sandbox download merge failed: %s" % exc
+            else:
+                skipped_symlinks = list(report.get("skipped_symlinks") or [])
+                skipped_entries = list(report.get("skipped_entries") or [])
+                if skipped is not None:
+                    skipped.setdefault("skipped_symlinks", []).extend(skipped_symlinks)
+                    skipped.setdefault("skipped_entries", []).extend(skipped_entries)
+                if skipped_symlinks or skipped_entries:
+                    shown = [
+                        "%s -> %s" % (item["path"], item["target"]) for item in skipped_symlinks
+                    ] + ["%s (%s)" % (item["path"], item["kind"]) for item in skipped_entries]
+                    sys.stderr.write(
+                        "[executor] WARNING: sandbox download skipped %d scratch entr%s "
+                        "outside the repository worktree that cannot be materialized "
+                        "on the host: %s%s\n"
+                        % (
+                            len(shown),
+                            "y" if len(shown) == 1 else "ies",
+                            ", ".join(shown[:5]),
+                            ", ..." if len(shown) > 5 else "",
+                        )
+                    )
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox download failed: %s\n" % msg)
     return ok
@@ -4100,7 +4550,7 @@ def _sandbox_progress_snapshot(
             "--",
             "/bin/bash",
             "-c",
-            script,
+            single_line_shell_script(script),
         ],
         timeout=30.0,
     )
@@ -4266,7 +4716,7 @@ def _run_sandboxed(
     runner: Callable[..., Any], agent_argv: List[str], workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
     """Run the agent through the OpenShell sandbox lifecycle: create (upload the
-    workspace + run the agent, keep) -> download results -> delete. The agent
+    workspace, kept alive) -> exec the agent -> download results -> delete. The agent
     runs confined. Harvest is attempted before teardown on every exit path,
     including runner exceptions and cancellation. Repository failures are
     deleted only after WIP is durably bundled; preservation failure retains the
@@ -4312,6 +4762,7 @@ def _run_sandboxed(
             ),
             task=task,
         )
+        launch_create_argv, launch_exec_argv = _sandbox_launch_argvs(create_argv)
     except Exception:
         for path in runtime_files:
             path.unlink(missing_ok=True)
@@ -4335,7 +4786,25 @@ def _run_sandboxed(
         progress.interval = 0.0
     progress.start()
     try:
-        result = runner(create_argv, workspace, audit_id, opts)
+        # Create (uploading the workspace) and run the agent as two steps: the
+        # sandbox must still be Ready afterwards for verification and harvest.
+        created = _sandbox_create_detached(launch_create_argv)
+        if created.returncode != 0:
+            # Same outcome the combined create used to report: the runner's
+            # result is the failed create, and teardown still runs below.
+            result = created
+            runner_completed = True
+            progress.stop()
+            emit_telemetry(
+                "sandbox_create_failed",
+                task_id=str(audit_id) if audit_id else None,
+                level="warning",
+                sandbox=name,
+                returncode=int(created.returncode),
+                detail=clip_process_text(created.stderr or created.stdout or "", 600),
+            )
+            return result
+        result = runner(launch_exec_argv, workspace, audit_id, opts)
         runner_completed = True
         if read_only_report:
             setattr(
@@ -4508,8 +4977,12 @@ def _run_sandboxed(
         active_error = sys.exc_info()[1]
         progress.stop()
         progress_evidence = progress.evidence()
+        harvest_skipped: Dict[str, List[Dict[str, str]]] = {
+            "skipped_symlinks": [],
+            "skipped_entries": [],
+        }
         try:
-            harvested = _sandbox_download(name, basename, workspace)
+            harvested = _sandbox_download(name, basename, workspace, harvest_skipped)
         except Exception as exc:  # noqa: BLE001 - teardown must continue to delete
             harvested = False
             sys.stderr.write("[executor] WARNING: sandbox download raised unexpectedly: %s\n" % exc)
@@ -4589,6 +5062,8 @@ def _run_sandboxed(
             "runner_completed": runner_completed,
             "harvest_attempted": True,
             "harvested": harvested,
+            "skipped_symlinks": harvest_skipped["skipped_symlinks"],
+            "skipped_entries": harvest_skipped["skipped_entries"],
             "kept": kept,
             "error": str(active_error) if active_error is not None else "",
             "progress": progress_evidence,
@@ -4829,8 +5304,8 @@ def _record_runner_choice(
     """Make the coding-agent-vs-gateway routing decision legible (best-effort).
 
     Mirrors :func:`mac.agent_provider.record_provider_decision`: a secret-free
-    line so an operator (or the agent) can answer "why did this task run on
-    Claude / Codex / Cursor / the gateway?" rather than facing a silent choice.
+    line so an operator (or the agent) can answer "why did this task run, or
+    fail closed?" rather than facing a silent choice.
     """
     sys.stderr.write(
         "[executor] coding-agent routing: %s (%s)\n"
@@ -4860,32 +5335,6 @@ def _record_runner_choice(
         pass
 
 
-def _write_mac_mcp_config(*, task_id: str = "") -> Optional[str]:
-    """Write an MCP client config registering mac's own tool server.
-
-    Best-effort: a coding agent that cannot be handed tools must still run. A
-    failure here returns None, which is exactly the state everything was in
-    before, so the worst case is the previous behaviour rather than a lost task.
-    """
-    try:
-        from mac import coding_agent as _ca
-        from mac.mcp_server import server_command
-
-        document = _ca.mcp_config_document(server_command(), name="mac")
-        directory = Path(tempfile.mkdtemp(prefix="mac-mcp-"))
-        path = directory / "mcp.json"
-        path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
-        return str(path)
-    except Exception:  # noqa: BLE001 - tools are an enhancement, not a gate
-        logging.getLogger("mac.executor_sandbox").warning(
-            "could not write the mac MCP config for task %s; the agent will run "
-            "without ledger tools",
-            task_id or "<unknown>",
-            exc_info=True,
-        )
-        return None
-
-
 def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     msg = (
         "task execution requires an available coding agent and, when confined, "
@@ -4899,29 +5348,6 @@ def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     # contract.  Omitting it made the error path itself raise ValueError before
     # the intended exit-42 diagnostic could run, exhausting task retry budgets.
     return ["python3", "-c", code, PROMPT_SENTINEL]
-
-
-def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
-    """Whether the selected coding-agent auth can be copied into OpenShell safely.
-
-    Codex OAuth state in ``~/.codex/auth.json`` is a rotating credential. Because
-    OpenShell currently supports upload-copy semantics rather than a persistent
-    writable mount for this path, a preflight or task sandbox can consume the
-    refresh token and leave the host copy stale. Treat that auth source as
-    unavailable under OpenShell unless the operator explicitly opts into the
-    risk for a one-off debug run.
-    """
-    if (
-        getattr(choice, "agent", "") == "codex"
-        and getattr(choice, "auth_source", "") == "~/.codex/auth.json"
-        and not env_bool("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH")
-    ):
-        sys.stderr.write(
-            "[executor] coding-agent sandbox preflight (codex): skipped "
-            "(~/.codex/auth.json is rotating file auth; route unavailable)\n"
-        )
-        return False
-    return True
 
 
 # Per-process cache keyed by the full secret-free route fingerprint. A binary-only
@@ -4956,144 +5382,87 @@ def _coding_agent_preflight_ttl(verified: bool) -> float:
         return default
 
 
-def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
-    """Map a failed coding-agent preflight probe onto an actionable class.
+#: Exit statuses with a fixed meaning: the timeout wrapper's and SIGKILL's, and
+#: the shell's "not executable" / "command not found".
+_PREFLIGHT_RETURNCODE_CLASSES: Dict[int, str] = {
+    124: "timeout",
+    137: "timeout",
+    126: "agent_binary_missing",
+    127: "agent_binary_missing",
+}
 
-    The classes are ordered from most specific to most generic so a caller can
-    react without re-parsing the raw probe output. ``probe_failed`` is the
-    catch-all of last resort; every marker added here strictly narrows what
-    would otherwise collapse into it, which is what makes a failed run
-    diagnosable (see the ``rc=1, class=probe_failed`` fleet failures that
-    carried no recovery signal).
+#: Error codes carried by a structured (JSON) error line: OpenShell's egress
+#: proxy (``{"error": "policy_denied", ...}``) and OpenAI-style error bodies
+#: from the hub router (``{"error": {"code": ..., "type": ...}}``).
+_PREFLIGHT_ERROR_CODE_CLASSES: Dict[str, str] = {
+    "policy_denied": "sandbox_policy_denied",
+    "invalid_api_key": "authentication_failed",
+    "invalid_token": "authentication_failed",
+    "unauthorized": "authentication_failed",
+    "authentication_error": "authentication_failed",
+    "rate_limit_exceeded": "rate_limited",
+    "rate_limit_error": "rate_limited",
+}
+
+
+def _structured_error_class(output: str) -> str:
+    """Class of the first JSON error object in ``output``, or ``""``.
+
+    Only a line that ENDS in a complete JSON object with an ``error`` member
+    counts (OpenShell's proxy prefixes its body with ``HTTP 403``). Words in
+    free text never do: matching substrings of a transcript is how a sandbox
+    named ``mac-task-429907755059`` was once classed ``rate_limited``.
     """
-    text = (output or "").lower()
-    if returncode in {124, 137} or "timed out" in text or "timeout" in text:
-        return "timeout"
-    if "nvidia-persistenced" in text or (
-        ("oci runtime create failed" in text or "containerstartfailed" in text)
-        and ("nvidia" in text or "gpu" in text or "cdi" in text)
-    ):
-        return "sandbox_gpu_unavailable"
-    # The OpenShell sandbox itself could not be created/uploaded, so the probe
-    # never reached the coding agent. Check this before generic filesystem and
-    # provider markers: OCI mount failures commonly contain both "no such file"
-    # and a gateway status code.
-    if (
-        "sandbox create" in text
-        or "failed to create sandbox" in text
-        or "oci runtime create failed" in text
-        or "containerstartfailed" in text
-        or "error mounting" in text
-        or "sandbox entered error phase" in text
-    ):
-        return "sandbox_unavailable"
-    # The subscription behind this route has nothing left to spend. Distinct
-    # from throttling: waiting does not help, and it is not a broken route
-    # either -- the binary, endpoint and credential are all correct. The only
-    # useful response is to run somewhere else, so it gets its own class rather
-    # than being folded into rate limiting or the opaque probe_failed.
-    if (
-        "credit balance" in text
-        or "insufficient_quota" in text
-        or "insufficient credit" in text
-        or "out of credit" in text
-        or "quota exceeded" in text
-        or "usage limit" in text
-        or "billing" in text
-        and "limit" in text
-    ):
-        return "credit_exhausted"
-    # Provider throttling. A 429 (or an explicit rate-limit message) is
-    # transient: retry with backoff rather than treating the route as broken.
-    if "429" in text or "rate limit" in text or "too many requests" in text:
-        return "rate_limited"
-    # Provider-side server faults (5xx / gateway errors). Like throttling these
-    # are transient and route-independent: the endpoint, credentials, and model
-    # are all correct, the upstream just failed this call. Steer an automated
-    # retry with backoff instead of collapsing into the opaque ``probe_failed``.
-    # Checked before the generic ``404``/``not found`` protocol test below so a
-    # "502 bad gateway" is not mis-reported as an endpoint/protocol mismatch.
-    if (
-        "500" in text
-        or "502" in text
-        or "503" in text
-        or "504" in text
-        or "internal server error" in text
-        or "bad gateway" in text
-        or "service unavailable" in text
-        or "gateway timeout" in text
-    ):
-        return "provider_server_error"
-    # Coding CLIs commonly translate a deny-by-default OpenShell egress rule
-    # into a generic "proxy unreachable" message.  The process necessarily
-    # launched before it could diagnose the injected sandbox proxy, so this is
-    # both more actionable than ``probe_failed`` and proof that the binary is
-    # present.  Keep this ahead of the generic endpoint checks: the remediation
-    # is the sandbox policy/proxy path, not the provider URL or credential.
-    if "failed to reach the cursor api" in text or (
-        "proxy" in text
-        and (
-            "unreachable" in text
-            or "is reachable" in text
-            or "failed to connect" in text
-            or "connect failed" in text
-        )
-    ):
-        return "sandbox_proxy_unreachable"
-    # A raw HTTP/2/gRPC-style provider stream was allowed by DNS policy but
-    # OpenShell's TLS auto-detection still terminated it without advertising a
-    # mutually supported ALPN protocol. The route and credential were reached;
-    # the endpoint needs `tls: skip` so the no-protocol policy entry remains a
-    # byte-for-byte TCP passthrough.
-    if "no application protocol" in text or "alpn" in text or "tls alert number 120" in text:
-        return "sandbox_proxy_protocol_unsupported"
-    # OpenShell's egress proxy answered the request itself: the destination is
-    # not in the sandbox policy. The CLI launched, resolved a credential, and
-    # opened a socket, so the repair is the policy/route allow-list — never the
-    # credential. Denials are served as HTTP 403 with a policy sentinel in the
-    # body, so this must precede the generic 401/403 test below, which
-    # otherwise sends an operator to rotate a working key (live fleet evidence
-    # 2026-07-29: ``{"error":"policy_denied","detail":"POST
-    # host.openshell.internal:8789/v1/responses not permitted by policy"}``
-    # classified as ``authentication_failed``). It stays behind the proxy
-    # classes above so "HTTPS proxy CONNECT failed: 403 Forbidden" keeps its
-    # more specific ``sandbox_proxy_unreachable`` class.
-    if (
-        "policy_denied" in text
-        or "policy denied" in text
-        or "not permitted by policy" in text
-        or "denied by policy" in text
-        or "blocked by policy" in text
-        or "not allowed by policy" in text
-    ):
-        return "sandbox_policy_denied"
-    if "connection refused" in text or "failed to connect" in text:
-        return "endpoint_unreachable"
-    if (
-        "401" in text
-        or "403" in text
-        or "unauthorized" in text
-        or "forbidden" in text
-        or "provided api key is invalid" in text
-        or "api key is invalid" in text
-        or "invalid api key" in text
-        or "access token is invalid" in text
-        or "invalid access token" in text
-    ):
-        return "authentication_failed"
-    # The coding-agent CLI (or the shell wrapper) is absent from the sandbox
-    # image. This must be checked before the ``not found`` protocol test below,
-    # otherwise a missing binary is mis-reported as an endpoint mismatch and the
-    # operator repairs the wrong layer.
-    if (
-        "command not found" in text
-        or "no such file or directory" in text
-        or "executable file not found" in text
-        or ": not found" in text
-    ):
-        return "agent_binary_missing"
-    if "404" in text or "not found" in text or "unsupported" in text:
-        return "endpoint_protocol_mismatch"
+    for line in (output or "").splitlines():
+        line = line.strip()
+        start = line.find("{")
+        if start < 0 or not line.endswith("}"):
+            continue
+        try:
+            document = json.loads(line[start:])
+        except ValueError:
+            continue
+        if not isinstance(document, dict) or "error" not in document:
+            continue
+        error = document.get("error")
+        codes: List[object] = []
+        status: object = document.get("status")
+        if isinstance(error, dict):
+            codes += [error.get("code"), error.get("type")]
+            status = error.get("status", status)
+        else:
+            codes.append(error)
+        for code in codes:
+            mapped = _PREFLIGHT_ERROR_CODE_CLASSES.get(str(code or "").strip().lower())
+            if mapped:
+                return mapped
+        try:
+            status_code = int(str(status))
+        except ValueError:
+            status_code = 0
+        if status_code in {401, 403}:
+            return "authentication_failed"
+        if status_code == 429:
+            return "rate_limited"
+        if 500 <= status_code <= 599:
+            return "provider_server_error"
+    return ""
+
+
+def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
+    """Map a failed preflight probe onto a class, from exit status and structure.
+
+    Fixed exit statuses (timeout, command not found) come first, then the first
+    whole-line JSON error object. Free-text output is never searched: an exit
+    0 without the sentinel is ``sentinel_missing``, anything else
+    ``probe_failed``.
+    """
+    by_returncode = _PREFLIGHT_RETURNCODE_CLASSES.get(returncode)
+    if by_returncode:
+        return by_returncode
+    structured = _structured_error_class(output)
+    if structured:
+        return structured
     if returncode == 0:
         return "sentinel_missing"
     return "probe_failed"
@@ -5107,14 +5476,9 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
         return "missing"
     if failure_class in {
         "authentication_failed",
-        "credit_exhausted",
-        "endpoint_protocol_mismatch",
-        "endpoint_unreachable",
         "provider_server_error",
         "rate_limited",
         "sandbox_policy_denied",
-        "sandbox_proxy_protocol_unsupported",
-        "sandbox_proxy_unreachable",
         "sentinel_missing",
     }:
         # These failures are emitted only after the CLI launched far enough to
@@ -5125,9 +5489,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
     return "unverified"
 
 
-_SANDBOX_CODING_AGENT_BINARIES = frozenset(
-    {"claude", "codex", "cursor", "cursor-agent", "opencode", "pi"}
-)
+_SANDBOX_CODING_AGENT_BINARIES = frozenset({"opencode", "claude"})
 
 
 def coding_agent_sandbox_which(name: str) -> Optional[str]:
@@ -5142,12 +5504,13 @@ def coding_agent_sandbox_which(name: str) -> Optional[str]:
 
 
 def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Path) -> List[str]:
-    """Build the coding-agent probe's process argv.
+    """Build the coding-agent probe's logical create+command argv.
+
+    :func:`_openshell_probe` runs it as a kept-alive create plus an exec.
 
     No process-visible secrets: the prompt/command are private uploaded files
-    (see agent_argv's mac.agent_command wrapper), and any credential file this
-    probe needs is copied via _sandbox_credential_upload_argv() -- only the
-    static, non-rotating kinds (coding_agent.py's "api_key_file" auth_kind).
+    (see agent_argv's mac.agent_command wrapper), and the probe's inference
+    token travels in the private mode-0600 environment file.
     """
     if "mac.agent_command" not in agent_argv:
         raise ValueError("sandbox probe must use the private-file command wrapper")
@@ -5157,7 +5520,6 @@ def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Pat
     argv += _openshell_extra_create_argv()
     sandbox_dir = "/sandbox/%s" % private_dir.name
     argv += ["--upload", "%s:/sandbox" % private_dir]
-    argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sandbox_dir),
@@ -5168,7 +5530,8 @@ def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Pat
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "/bin/bash", "-lc", inner]
+    # One line: OpenShell's exec RPC rejects newline-bearing arguments.
+    argv += ["--", "/bin/bash", "-lc", single_line_shell_script(inner)]
     return argv
 
 
@@ -5176,9 +5539,9 @@ def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
     """Return a choice whose endpoint and executable resolve inside OpenShell.
 
     Coding-agent detection intentionally runs on the host, where ``which`` returns
-    an absolute host path (for example ``/opt/homebrew/bin/codex``).  Passing that
+    an absolute host path (for example ``/opt/homebrew/bin/opencode``).  Passing that
     path into a Linux sandbox bypasses the sandbox's PATH contract and fails even
-    when the image contains the CLI at ``/usr/local/bin/codex``.  Execute the
+    when the image contains the CLI at ``/usr/local/bin/opencode``.  Execute the
     detected basename through the image-owned PATH instead.  The preflight still
     proves that the corresponding binary is actually present before work routes
     to it.
@@ -5194,43 +5557,36 @@ def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
     return replace(choice, endpoint=rewritten_endpoint, binary=sandbox_binary)
 
 
-def _coding_agent_env_for_sandbox(choice: Any) -> Dict[str, str]:
-    """Normalize an explicit coding-agent command onto the sandbox PATH.
-
-    Command overrides remain useful for CLI flag drift, but their executable may
-    not be a host-only absolute path.  Other explicit arguments are preserved and
-    are validated by the same live sandbox preflight.
-    """
-    from . import coding_agent as _ca
-
-    import shlex
-
-    env = dict(os.environ)
-    key = _ca.COMMAND_ENV.get(str(getattr(choice, "agent", "") or ""))
-    raw = str(env.get(key) or "").strip() if key else ""
-    if not raw:
-        return env
-    argv = shlex.split(raw)
-    if argv:
-        argv[0] = Path(argv[0]).name
-        env[key] = shlex.join(argv)
-    return env
-
-
 def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, str]":
-    """Run a one-shot ``sandbox create`` probe; return (returncode, combined output).
-    Best-effort: any failure returns a non-zero code (never raises)."""
+    """Run a probe given as one logical ``sandbox create ... -- <cmd>`` argv.
+
+    It runs as create (with uploads, kept alive) then ``sandbox exec``, because
+    OpenShell 0.1 rejects an upload combined with a command. Returns the exec's
+    returncode (or the create's, when create fails) and the combined output of
+    both steps; the caller deletes the sandbox. Best-effort: any failure
+    returns a non-zero code (never raises)."""
+    deadline = time.monotonic() + timeout
+    output = ""
     try:
-        proc = subprocess.run(
-            create_argv,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,
-        )
-        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+        for step in _sandbox_launch_argvs(create_argv):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return 124, output + "probe timed out after %ss" % timeout
+            proc = subprocess.run(
+                step,
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+                stdin=subprocess.DEVNULL,
+            )
+            output += (proc.stdout or "") + (proc.stderr or "")
+            if proc.returncode != 0:
+                return proc.returncode, output
+        return 0, output
+    except subprocess.TimeoutExpired as exc:
+        return 124, output + str(exc)
     except Exception as exc:  # noqa: BLE001 - a probe failure must mean "not ready", not a crash
-        return 1, str(exc)
+        return 1, output + str(exc)
 
 
 def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
@@ -5245,31 +5601,51 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="mac-coding-agent-probe-") as tmp:
         private_dir = Path(tmp)
         sandbox_choice = _coding_agent_choice_for_sandbox(choice)
-        probe_argv = _ca.coding_agent_argv(
-            sandbox_choice,
-            PROMPT_SENTINEL,
-            env=_coding_agent_env_for_sandbox(sandbox_choice),
-        )
+        probe_argv = _ca.coding_agent_argv(sandbox_choice, PROMPT_SENTINEL)
         bundle = _write_agent_command_bundle(private_dir, _ca.PREFLIGHT_PROMPT, probe_argv)
-        _write_private_shell_env(
-            private_dir / ".mac-openshell-env.sh",
-            {**_openshell_environment(), "HOME": _SANDBOX_HOME},
-        )
         sandbox_dir = "/sandbox/%s" % private_dir.name
+        env_values = {**_openshell_environment(), "HOME": _SANDBOX_HOME}
+        probe_token: Dict[str, Any] = {}
+        token_failure = ""
+        if _uses_router_opencode(choice):
+            # The probe proves the same path a task takes: an inference-only
+            # token through the hub router. Mint a short one just for it.
+            try:
+                probe_token = _mint_inference_token(
+                    task_id="", ttl_seconds=_PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS
+                )
+            except Exception as exc:  # noqa: BLE001 - an unminted token means "not verified"
+                token_failure = "inference token unavailable: %s" % exc.__class__.__name__
+            else:
+                env_values[_INFERENCE_TOKEN_ENV] = str(probe_token["token"])
+                env_values.update(
+                    _write_coding_agent_config(
+                        private_dir, sandbox_dir, env_values, python=_SANDBOX_AGENT_PYTHON
+                    )
+                )
+        _write_private_shell_env(private_dir / ".mac-openshell-env.sh", env_values)
         try:
-            rc, out = _openshell_probe(
-                _build_sandbox_probe_argv(
-                    name,
-                    bundle.argv(sandbox_workspace=sandbox_dir),
-                    private_dir,
-                ),
-                timeout=_coding_agent_preflight_timeout(),
-            )
+            if token_failure:
+                rc, out = 1, token_failure
+            else:
+                rc, out = _openshell_probe(
+                    _build_sandbox_probe_argv(
+                        name,
+                        bundle.argv(sandbox_workspace=sandbox_dir),
+                        private_dir,
+                    ),
+                    timeout=_coding_agent_preflight_timeout(),
+                )
         finally:
             bundle.cleanup()
-            _sandbox_step(["delete", name], timeout=60.0)
+            if not token_failure:
+                _sandbox_step(["delete", name], timeout=60.0)
+            if probe_token:
+                _revoke_inference_token(str(probe_token.get("id") or ""))
     ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
     failure_class = "" if ok else _classify_coding_agent_preflight_failure(rc, out)
+    if token_failure:
+        failure_class = "inference_token_unavailable"
     result: Dict[str, object] = {
         "schema": "mac.coding_agent.verification.v1",
         "agent": choice.agent,
@@ -5292,10 +5668,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
         "[executor] coding-agent sandbox preflight (%s): %s\n"
         % (
             choice.agent,
-            "OK"
-            if ok
-            else "FAILED (rc=%s, class=%s) — falling back to gateway"
-            % (rc, result["failure_class"]),
+            "OK" if ok else "FAILED (rc=%s, class=%s)" % (rc, result["failure_class"]),
         )
     )
     return result
@@ -5317,15 +5690,6 @@ def coding_agent_sandbox_verification(choice: Any) -> Dict[str, object]:
             "verified": False,
             "checked_at": utcnow(),
             "failure_class": "not_configured",
-        }
-    if not _coding_agent_auth_is_safe_for_openshell(choice):
-        return {
-            **choice.observable(),
-            "schema": "mac.coding_agent.verification.v1",
-            "binary_status": "unverified",
-            "verified": False,
-            "checked_at": utcnow(),
-            "failure_class": "unsafe_rotating_file_auth",
         }
     key = choice.route_fingerprint()
     now = time.monotonic()
@@ -5359,8 +5723,6 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
         return False
     if mode in {"trust", "1", "true", "yes", "skip"}:
         return True
-    if not _coding_agent_auth_is_safe_for_openshell(choice):
-        return False
     return bool(coding_agent_sandbox_verification(choice).get("verified"))
 
 
@@ -5370,29 +5732,20 @@ def _agent_argv(
     *,
     confined: bool,
     task: Any = None,
-    exclude: Optional[Iterable[str]] = None,
     chosen: Optional[Dict[str, str]] = None,
+    resume_session: str = "",
 ) -> List[str]:
-    """Pick the agent runner: a coding-agent CLI when one is available + authed
-    (and — when OpenShell-confined — verified to actually work inside the sandbox),
-    otherwise return a deterministic fail-closed command.
+    """The coding CLI argv for this task, or a deterministic fail-closed command.
 
-    Coding-agent CLIs (Claude Code, Codex, Cursor) authenticate against a
-    subscription/seat rather than a metered API token, so they are preferred for
-    cost (see :mod:`mac.coding_agent`). Full mac-runtime parity on this path: the
-    CLI runs in the prepared checkout (the ``mac`` CLI + runtime context + hub
-    env give it the same hub tool surface Hermes has), receives the same
-    structured task/evidence prompt, and — where the CLI supports per-invocation
-    MCP, on the unconfined path — the messaging MCP server.
+    opencode runs on a ``machub`` model through the hub router with this task's
+    inference-only token (see :mod:`mac.coding_agent`). When OpenShell
+    confinement is in effect (``confined`` -- per-task wrap or the production
+    supervisor) the route must also pass :func:`_coding_agent_sandbox_ok` (a
+    real in-sandbox preflight by default), because a host-side ``which`` does
+    NOT prove the CLI works inside the confined sandbox.
 
-    When OpenShell confinement is in effect (``confined`` — per-task wrap or the
-    production supervisor) enablement is gated on :func:`_coding_agent_sandbox_ok`
-    (a real in-sandbox preflight by default), because a host-side ``which``/cred
-    check does NOT prove the agent works inside the confined sandbox.
-
-    The retired Hermes chat fallback is deliberately not configurable.  A
-    missing or unverified route always selects ``coding-agent-required`` so a
-    worker cannot silently execute through the runtime being removed.
+    There is no fallback runtime and no second CLI: a missing or unverified
+    route selects ``coding-agent-required``.
     """
     from . import coding_agent as _ca
 
@@ -5408,27 +5761,21 @@ def _agent_argv(
     choice = _ca.resolve_coding_agent(
         which=coding_agent_sandbox_which if confined else None,
         accept=_accept_sandbox_route if confined else None,
-        exclude=exclude,
     )
     if chosen is not None:
-        # The caller needs to know which route ran in order to exclude it if
-        # the provider refuses mid-task.
+        # The caller attributes the transcript to the route that actually ran:
+        # `task_agent_transcripts` carries `coding_agent` and `model` columns,
+        # and this is the only truthful source for either.
         chosen["agent"] = choice.agent
         chosen["fingerprint"] = choice.route_fingerprint()
-        # ...and to ATTRIBUTE the transcript. `task_agent_transcripts` has
-        # `coding_agent` and `model` columns that were empty on all 275 live
-        # rows, because the only place either value existed was here, and it
-        # never left this function. The task's own metadata is not a substitute:
-        # on the live hub, 0 of 8,154 tasks carry `coding_agent` and 11 carry
-        # `model`. The route that actually ran is the only truthful source.
         if choice.model:
             chosen["model"] = choice.model
     rationale = list(choice.rationale)
     if not choice.available:
         reason = (
-            "no task-sandbox coding agent is configured and verified"
+            "opencode is not configured and verified inside the task sandbox"
             if confined
-            else "no host coding agent is available/authenticated"
+            else "opencode is not available on this host"
         )
         rationale.append(reason)
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
@@ -5443,29 +5790,24 @@ def _agent_argv(
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
         return _coding_agent_required_failure_argv(reason)
 
-    # Human-facing delivery is owned exclusively by the OpenClaw gateway.  Do
-    # not inject the retired vendored-Hermes messaging MCP into coding agents;
-    # task-to-human messages flow through MAC's durable delivery outbox instead.
-    #
-    # What IS injected is mac's own ledger, as typed tools. `mcp_path` sat at
-    # None from the retirement of the messaging MCP until now, which meant the
-    # whole injection path -- mcp_config_document, supports_per_invocation_mcp,
-    # and the --mcp-config insertion in coding_agent_argv -- was built and
-    # never fed. ADR-0006 records the ACP->AgentBus half being removed after a
-    # census found zero streams on its topic; a wired socket with nothing in it
-    # is the same story told slower.
-    #
-    # UNCONFINED ONLY, deliberately. The previous note here said MCP wiring
-    # cannot work confined because "the host config path + host MCP-server
-    # interpreter do not reliably resolve inside the sandbox". The interpreter
-    # half no longer applies -- `mac admin mcp serve` resolves wherever the CLI
-    # does -- but the CONFIG PATH half is unverified: this writes a file on the
-    # host and hands its path to the agent, and that path is not known to exist
-    # inside the sandbox. Enabling it there needs a check that the file is
-    # visible, not an assumption. Tracked rather than guessed.
-    mcp_path = None
-    if not confined:
-        mcp_path = _write_mac_mcp_config(task_id=task_id)
+    if _uses_router_opencode(choice):
+        # opencode authenticates to the hub router with this task's own
+        # inference-only token; the worker token stays on the host.
+        try:
+            _ensure_task_inference_token(task_id)
+        except Exception as exc:  # noqa: BLE001 - no token means no route
+            reason = "opencode: could not mint the task's inference token (%s)" % (
+                exc.__class__.__name__
+            )
+            rationale.append(reason)
+            _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
+            return _coding_agent_required_failure_argv(reason)
+        if not confined:
+            os.environ.update(
+                _write_coding_agent_config(
+                    workspace, str(workspace), dict(os.environ), python=sys.executable
+                )
+            )
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
     _record_runner_choice(
@@ -5475,212 +5817,18 @@ def _agent_argv(
         route=choice.observable(),
     )
     argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
-    argv_env = _coding_agent_env_for_sandbox(argv_choice) if confined else None
-    return _ca.coding_agent_argv(
-        argv_choice,
-        prompt,
-        env=argv_env,
-        mcp_config_path=mcp_path,
-    )
+    if choice.agent == _ca.CLAUDE_AGENT:
+        if resume_session:
+            return _ca.coding_agent_argv(argv_choice, prompt, resume=resume_session)
+        # Name the session so its transcript can be found, and resumed, later.
+        session_id = str(uuid.uuid4())
+        agent_dir = workspace / _ca.CLAUDE_AGENT_DIR
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "session-id").write_text(session_id + "\n", encoding="utf-8")
+        return _ca.coding_agent_argv(argv_choice, prompt, session_id=session_id)
+    return _ca.coding_agent_argv(argv_choice, prompt)
 
 
-def _executor_backend() -> str:
-    """Which agent runtime drives a task: ``hermes`` (default) or ``acp``.
-
-    ACP (ADR 0006) is opt-in via ``MAC_EXECUTOR_BACKEND=acp`` so Hermes stays the
-    default until parity; the external agent command is ``MAC_ACP_AGENT_CMD``."""
-    return (env_str("MAC_EXECUTOR_BACKEND") or "hermes").lower()
-
-
-def _acp_agent_argv() -> List[str]:
-    """The external ACP agent command (shell-split). Required for backend=acp."""
-    import shlex
-
-    return shlex.split(env_str("MAC_ACP_AGENT_CMD"))
-
-
-def _acp_update_action_event(
-    audit_id: Any, session_id: str, params: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Map one ACP ``session/update`` notification to a mac action-event record."""
-    inner = params.get("update") or {}
-    return {
-        "task_id": audit_id,
-        "session_id": session_id or params.get("sessionId"),
-        "actor": "mac-acp",
-        "action_type": "acp.session_update",
-        "action_name": str(inner.get("sessionUpdate") or "update"),
-        "outcome": "unknown",
-        "severity": "info",
-        "attributes": {"acp_update": inner},
-    }
-
-
-def _acp_permission_handler(audit_id: Any) -> Callable[[Any], Any]:
-    """ACP ``session/request_permission`` handler (Phase 3).
-
-    Evaluates each request through :func:`mac.acp.permission.evaluate_permission`
-    instead of blanket auto-approving. The OpenShell *kernel sandbox* remains the
-    real gate — when sandboxed the decision short-circuits to allow ("sandbox-
-    enforced") and the ACP prompt is advisory. Unsandboxed, the decision consults
-    the parsed OpenShell *policy* (network lockdown denies egress; an empty
-    read_write set denies writes); with no policy it defaults to allow (Phase-1
-    parity), flippable to deny via ``MAC_ACP_PERMISSION_MODE=deny``.
-
-    On *allow* it selects the first ``allow``-kind option the agent offered (else
-    the first option); on *deny* it selects a ``reject``-kind option if one is
-    offered, else returns a CANCELLED outcome. Every decision + its reason is
-    recorded to ``/action-events`` (``attributes.permission_reason``)."""
-    from mac.acp.permission import evaluate_permission, load_openshell_policy
-    from mac.acp.protocol import PermissionOutcome, RequestPermissionResult
-
-    sandboxed = _openshell_enabled()
-    # Load the policy only when it can actually change the decision (unsandboxed
-    # under policy mode). Best-effort: a missing/unreadable policy -> None.
-    policy = None if sandboxed else load_openshell_policy()
-
-    def _handler(params: Any) -> Any:
-        options = list(getattr(params, "options", None) or [])
-        tool_call = getattr(params, "tool_call", {}) or {}
-        decision = evaluate_permission(tool_call, policy=policy, sandboxed=sandboxed)
-
-        if decision.allow:
-            chosen = next((o for o in options if str(o.kind or "").startswith("allow")), None)
-            chosen = chosen or (options[0] if options else None)
-        else:
-            # Prefer an explicit reject option when the agent offered one.
-            chosen = next((o for o in options if str(o.kind or "").startswith("reject")), None)
-
-        _hub_post(
-            "/action-events",
-            {
-                "task_id": audit_id,
-                "session_id": getattr(params, "session_id", None),
-                "actor": "mac-acp",
-                "action_type": "acp.permission",
-                "action_name": str(
-                    tool_call.get("title") or tool_call.get("toolCallId") or "tool_call"
-                ),
-                "outcome": "allowed" if decision.allow else "denied",
-                "severity": "info",
-                "attributes": {
-                    "tool_call": tool_call,
-                    "permission_reason": decision.reason,
-                    "allowed": decision.allow,
-                },
-            },
-        )
-        if chosen is not None:
-            return RequestPermissionResult(
-                outcome=PermissionOutcome.SELECTED, option_id=chosen.option_id
-            )
-        return RequestPermissionResult(outcome=PermissionOutcome.CANCELLED)
-
-    return _handler
-
-
-def _invoke_acp_agent(
-    prompt: str, workspace: Path, audit_id: Any, opts: dict, *, executor: Any = None
-) -> "subprocess.CompletedProcess":
-    """Drive an external ACP agent (ADR 0006) for one task turn.
-
-    Streams every ``session/update`` to the hub's ``/action-events`` ledger and
-    bridges ``session/request_permission`` through :func:`_acp_permission_handler`.
-    Returns a :class:`subprocess.CompletedProcess` so the downstream
-    finalizer/evidence flow is unchanged — the deterministic git finalizer
-    remains the real proof of work regardless of which agent produced it."""
-    from mac.acp import ACPExecutor
-    from mac.acp.protocol import ContentBlockType, SessionUpdateKind, StopReason
-
-    if executor is None:
-        argv = _acp_agent_argv()
-        if not argv:
-            return subprocess.CompletedProcess(
-                ["acp"], 1, "", "MAC_EXECUTOR_BACKEND=acp but MAC_ACP_AGENT_CMD is unset"
-            )
-        executor = ACPExecutor(argv, cwd=str(workspace))
-
-    prompt = _compile_outbound_prompt(prompt, "acp", opts, audit_id=audit_id)
-
-    text_chunks: List[str] = []
-
-    def _on_update(params: Dict[str, Any]) -> None:
-        inner = params.get("update") or {}
-        if inner.get("sessionUpdate") in (
-            SessionUpdateKind.AGENT_MESSAGE_CHUNK,
-            SessionUpdateKind.AGENT_THOUGHT_CHUNK,
-        ):
-            content = inner.get("content") or {}
-            if isinstance(content, dict) and content.get("type") == ContentBlockType.TEXT:
-                text_chunks.append(str(content.get("text") or ""))
-        _hub_post(
-            "/action-events",
-            _acp_update_action_event(audit_id, str(params.get("sessionId") or ""), params),
-        )
-
-    argv_label = list(getattr(executor, "_argv", ["acp"]))
-    try:
-        run = executor.run(
-            prompt,
-            on_update=_on_update,
-            on_permission=_acp_permission_handler(audit_id),
-            timeout=opts.get("timeout"),
-        )
-    except Exception as exc:  # noqa: BLE001 - a backend failure must finalize, not crash the loop
-        return subprocess.CompletedProcess(
-            argv_label, 1, "".join(text_chunks), "ACP agent run failed: %s" % exc
-        )
-    rc = 0 if run.stop_reason == StopReason.END_TURN else 1
-    stderr = "" if rc == 0 else "ACP agent stopped with reason: %s" % run.stop_reason
-    return subprocess.CompletedProcess(argv_label, rc, "".join(text_chunks), stderr)
-
-
-#: Failure classes that mean "this route cannot do the work right now, but
-#: another one can". Credit exhaustion and provider outages are properties of
-#: the SUBSCRIPTION or the SERVICE, not of the task or the sandbox: the binary
-#: ran, reached its provider, and was refused. Retrying the same route is the
-#: one thing guaranteed not to help.
-_ROUTE_FAILOVER_CLASSES = frozenset(
-    {
-        "credit_exhausted",
-        "rate_limited",
-        "provider_server_error",
-        "authentication_failed",
-    }
-)
-
-
-def _forget_coding_agent_route(fingerprint: str) -> None:
-    """Drop a route's cached preflight proof.
-
-    A verified route is cached for five minutes. Without this, a route that
-    ran out of credits one minute after passing its preflight keeps being
-    selected for the next four -- every task in that window failing on a
-    provider that has already said no.
-    """
-
-    if not fingerprint:
-        return
-    with _SANDBOX_PREFLIGHT_CACHE_LOCK:
-        _SANDBOX_PREFLIGHT_CACHE.pop(fingerprint, None)
-
-
-def _route_failover_class(result: Any) -> str:
-    """Name the provider-level reason an agent run failed, if that is why.
-
-    Reuses the preflight classifier: the CLIs report an exhausted subscription
-    or a provider outage the same way whether they are probing or working.
-    """
-
-    returncode = int(getattr(result, "returncode", 0) or 0)
-    if returncode == 0:
-        return ""
-    text = "%s\n%s" % (
-        getattr(result, "stdout", "") or "",
-        getattr(result, "stderr", "") or "",
-    )
-    failure_class = _classify_coding_agent_preflight_failure(returncode, text)
-    return failure_class if failure_class in _ROUTE_FAILOVER_CLASSES else ""
 
 
 def _opts_with_route(opts: dict, route: Dict[str, str]) -> dict:
@@ -5696,9 +5844,7 @@ def _opts_with_route(opts: dict, route: Dict[str, str]) -> dict:
 
     The task's own metadata is not the source: 0 of 8,154 live tasks carry
     `coding_agent`, and 11 carry `model`. `route` is populated by `_agent_argv`
-    with the agent that ACTUALLY ran, including after a mid-task failover to a
-    different provider -- so it stays truthful precisely when attribution
-    matters most.
+    with the route that ACTUALLY ran.
 
     Existing keys win: an explicit value already in `opts` is not overwritten.
     """
@@ -5749,8 +5895,6 @@ def _invoke_agent(
     Invariant: an approval-bypassed coding agent (``--dangerously-*``) is only
     used when the run is confined by OpenShell, so we
     never launch an *unguarded* bypass agent.
-      * backend=acp      -> drive an external ACP agent (ADR 0006); confinement
-        is the OpenShell sandbox + the permission bridge.
       * sandbox enabled  -> full OpenShell lifecycle (upload workspace, run the
         agent confined, download results, delete). Fails closed if no policy
         resolves or the kernel can't enforce Landlock.
@@ -5760,13 +5904,6 @@ def _invoke_agent(
     Returns the runner's result (carries .returncode)."""
     metadata = opts.get("task", {}).get("metadata") if isinstance(opts.get("task"), dict) else None
     read_only_repository = metadata_declares_read_only_report_repository(metadata)
-    if _executor_backend() == "acp":
-        if read_only_repository:
-            raise RuntimeError(
-                "read-only repository reports require per-task OpenShell confinement; "
-                "the ACP backend is not supported"
-            )
-        return _invoke_acp_agent(prompt, workspace, audit_id, opts)
     # `wrap` is the per-task OpenShell wrap launch model; `confined` is whether
     # OpenShell confinement is in effect by EITHER model — the per-task wrap or
     # the production supervisor (which runs this whole process inside a sandbox,
@@ -5792,6 +5929,7 @@ def _invoke_agent(
                 "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
                 "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
                 "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+                "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256",
             )
         )
     )
@@ -5810,12 +5948,14 @@ def _invoke_agent(
         )
     confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
     route: Dict[str, str] = {}
+    resume = str(opts.get("resume_session") or "")
     agent_argv = _agent_argv(
         PROMPT_SENTINEL,
         workspace,
         confined=confined,
         task=opts.get("task"),
         chosen=route,
+        **({"resume_session": resume} if resume else {}),
     )
     compiled_prompt = _compile_outbound_prompt(
         prompt,
@@ -5839,64 +5979,6 @@ def _invoke_agent(
                 audit_id,
                 _opts_with_route(opts, route),
             )
-            # Failover. A subscription that ran dry, or a provider that is
-            # down, refuses the run after the route passed its preflight --
-            # the proof was true when taken and is worthless now. Re-running
-            # the same route is the one thing certain not to work, and the
-            # task would otherwise burn an attempt on a provider that has
-            # already said no.
-            failover_class = _route_failover_class(result)
-            failed_agent = route.get("agent") or ""
-            if failover_class and failed_agent and not _manifest_is_complete(workspace):
-                _forget_coding_agent_route(route.get("fingerprint") or "")
-                sys.stderr.write(
-                    "[executor] coding-agent %s failed with %s; "
-                    "re-routing to the next configured agent\n" % (failed_agent, failover_class)
-                )
-                fallback_route: Dict[str, str] = {}
-                fallback_argv = _agent_argv(
-                    PROMPT_SENTINEL,
-                    workspace,
-                    confined=confined,
-                    task=opts.get("task"),
-                    exclude=(failed_agent,),
-                    chosen=fallback_route,
-                )
-                if fallback_route.get("agent"):
-                    bundle.cleanup()
-                    fallback_prompt = _compile_outbound_prompt(
-                        prompt,
-                        fallback_route.get("agent") or "universal",
-                        opts,
-                        audit_id=audit_id,
-                        model=fallback_route.get("model") or "",
-                        route_fingerprint=fallback_route.get("fingerprint") or "",
-                    )
-                    bundle = _write_agent_command_bundle(workspace, fallback_prompt, fallback_argv)
-                    _record_runner_choice(
-                        fallback_route["agent"],
-                        [
-                            "%s failed with %s" % (failed_agent, failover_class),
-                            "failing over to %s" % fallback_route["agent"],
-                        ],
-                        task_id=str((opts.get("task") or {}).get("id") or "")
-                        if isinstance(opts.get("task"), dict)
-                        else "",
-                    )
-                    result = _run_sandboxed(
-                        runner,
-                        bundle.argv(sandbox_workspace=sandbox_workspace),
-                        workspace,
-                        audit_id,
-                        # fallback_route, not route: after a failover the
-                        # transcript must be attributed to the agent that
-                        # ACTUALLY produced it. Attributing a successful
-                        # fallback run to the provider that already refused is
-                        # worse than no attribution -- it is wrong data that
-                        # looks right, and it would silently corrupt any
-                        # comparison between agents.
-                        _opts_with_route(opts, fallback_route),
-                    )
             return result
         result = runner(
             _unsandboxed_agent_argv(
@@ -5965,11 +6047,6 @@ def _manifest_is_complete(task_workspace: Path) -> bool:
         "rejected",
     }:
         return False
-    experiment = manifest.get("review_experiment")
-    if isinstance(experiment, dict) and experiment.get("blind"):
-        protocol = experiment.get("protocol")
-        if not isinstance(protocol, dict) or protocol.get("protocol_compliant") is not True:
-            return False
     return True
 
 
@@ -6035,9 +6112,6 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
         task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
         task_payload = json.loads(task_file.read_text(encoding="utf-8"))
         task = task_payload.get("task", task_payload)
-        metadata = task.get("metadata") if isinstance(task, dict) else {}
-        review_context = metadata.get("review_context") if isinstance(metadata, dict) else None
-        is_review = isinstance(review_context, dict)
         task_id = task.get("id") if isinstance(task, dict) else None
     except Exception as exc:  # noqa: BLE001 - startup must fail closed, not open
         detail = "%s: %s" % (type(exc).__name__, exc)
@@ -6079,10 +6153,9 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
                 task=task,
                 task_workspace=task_workspace,
                 task_id=task_id,
-                review_context=review_context,
-                is_review=is_review,
             )
         finally:
+            revoke_task_inference_token()
             relay_observability.flush()
     return rc
 
@@ -6238,14 +6311,252 @@ def _write_repository_verification_failure_manifest(
     )
 
 
+# ---------------------------------------------------------------------------
+# Continuation: finish the work in the same Claude Code session
+# ---------------------------------------------------------------------------
+#: How many times one attempt may hand the agent its gate failure or the
+#: judge's next steps and resume the same session before the attempt ends.
+_CONTINUATION_ROUNDS_ENV = "MAC_CLAUDE_CONTINUATION_ROUNDS"
+_DEFAULT_CONTINUATION_ROUNDS = 3
+#: The judge's last verdict for this executor's task. Held in memory, never
+#: in the workspace: the agent can write the workspace, and the verdict must
+#: be the host's own observation when it is signed into the evidence.
+_LAST_JUDGE_VERDICT: Dict[str, Any] = {}
+
+
+def _continuation_rounds() -> int:
+    try:
+        return max(0, int(env_str(_CONTINUATION_ROUNDS_ENV) or _DEFAULT_CONTINUATION_ROUNDS))
+    except ValueError:
+        return _DEFAULT_CONTINUATION_ROUNDS
+
+
+def _task_board_call(task_id: str, method: str, body: Optional[Dict[str, Any]] = None) -> Any:
+    """The task board as this worker (which owns the task), or None."""
+    base_url, token = _hub_env()
+    if not base_url or not token or not task_id:
+        return None
+    from urllib.parse import quote
+
+    url = "%s/tasks/%s/messages" % (base_url.rstrip("/"), quote(task_id, safe=""))
+    if method == "GET":
+        url += "?after=0&limit=500"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        method=method,
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def _board_messages(task_id: str) -> List[Dict[str, Any]]:
+    try:
+        page = _task_board_call(task_id, "GET") or {}
+    except Exception as exc:  # noqa: BLE001 - the board is advisory to the loop
+        sys.stderr.write("[executor] task board unreadable: %s\n" % exc.__class__.__name__)
+        return []
+    return [m for m in page.get("messages") or [] if isinstance(m, dict)]
+
+
+def _post_board_as_hub(task_id: str, kind: str, body: str, **metadata: Any) -> None:
+    try:
+        _task_board_call(
+            task_id,
+            "POST",
+            {"kind": kind, "body": body, "author_kind": "hub", "metadata": metadata},
+        )
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("[executor] could not post %s to the board: %s\n" % (kind, exc))
+
+
+def _open_blocking_question(messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The agent's latest blocking question, if nobody has answered it yet."""
+    answered = {m.get("reply_to") for m in messages if m.get("kind") == "answer"}
+    for message in reversed(messages):
+        if (
+            message.get("kind") == "question"
+            and (message.get("metadata") or {}).get("blocking")
+            and message.get("id") not in answered
+        ):
+            return message
+    return None
+
+
+_NEEDS_INPUT_MARKER = "needs-input.json"
+
+
+def _write_needs_input_marker(workspace: Path, question: Mapping[str, Any]) -> None:
+    """Tell the worker to park the task on this question (see worker)."""
+    metadata = question.get("metadata") if isinstance(question.get("metadata"), dict) else {}
+    item: Dict[str, Any] = {"question": str(question.get("body") or "")[:2000]}
+    if metadata.get("options"):
+        item["options"] = list(metadata["options"])[:12]
+    marker = {
+        "questions": [item],
+        "why": "the agent asked on the task board (message #%s) and cannot continue without "
+        "an answer; reply with `mac task say <task> --answer %s \"...\"`"
+        % (question.get("id"), question.get("id")),
+        "board_message_id": question.get("id"),
+    }
+    try:
+        (workspace / _NEEDS_INPUT_MARKER).write_text(json.dumps(marker, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        sys.stderr.write("[executor] could not record the blocking question: %s\n" % exc)
+
+
+def _latest_agent_handoff(messages: List[Dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("author_kind") == "agent" and message.get("kind") in ("done", "status"):
+            return str(message.get("body") or "")
+    return ""
+
+
+def _owner_direction(messages: List[Dict[str, Any]]) -> str:
+    return "\n".join(
+        "- %s" % m.get("body")
+        for m in messages
+        if m.get("author_kind") == "human" and m.get("kind") in ("directive", "answer")
+    )
+
+
+def _repository_context(workspace: Path) -> Tuple[Optional[Path], str]:
+    try:
+        context = json.loads((workspace / "repository-worktree.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None, ""
+    if not isinstance(context, dict) or not context.get("repository_worktree"):
+        return None, ""
+    return Path(str(context["repository_worktree"])), str(context.get("repository_base_sha") or "")
+
+
+def _judge_task_change(task: Any, workspace: Path, messages: List[Dict[str, Any]]) -> Any:
+    from . import task_judge
+
+    worktree, base_sha = _repository_context(workspace)
+    change = task_judge.collect_change(worktree, base_sha) if worktree is not None else ""
+    base_url, token = _hub_env()
+    if not base_url or not token:
+        return task_judge.Verdict("unavailable", "no hub to reach a judge model through")
+    return task_judge.judge(
+        task if isinstance(task, dict) else {},
+        change,
+        task_judge.hub_completion(base_url, token),
+        model=env_str(task_judge.JUDGE_MODEL_ENV) or task_judge.DEFAULT_JUDGE_MODEL,
+        agent_summary=_latest_agent_handoff(messages),
+        gate_summary="passed",
+        board_direction=_owner_direction(messages),
+    )
+
+
+_CONTINUE_FOOTER = (
+    "\n\nContinue in this session; your earlier work is all still here. When it is "
+    "done, post `.mac-agent/board done \"...\"` again and stop."
+)
+
+
+def _continue_claude_session(
+    runner: Callable[..., Any],
+    task: Any,
+    workspace: Path,
+    task_id: str,
+    result: Any,
+    opts: Dict[str, Any],
+) -> Any:
+    """Hand gate failures and judge verdicts back to the same session.
+
+    A repository test failure, or a ``not_met`` verdict, is not the end of
+    the attempt: the agent resumes the session it worked in with the failure
+    output or the judge's next steps, and keeps going. The attempt ends when
+    the judge says ``met`` (or cannot run), when the agent is waiting on a
+    blocking question, or after ``MAC_CLAUDE_CONTINUATION_ROUNDS`` rounds.
+    """
+    from . import coding_agent as _ca
+
+    if _ca.selected_agent() != _ca.CLAUDE_AGENT:
+        return result
+    try:
+        session_id = (workspace / _ca.CLAUDE_AGENT_DIR / "session-id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return result
+    if not session_id:
+        return result
+    for round_number in range(1, _continuation_rounds() + 1):
+        messages = _board_messages(task_id)
+        question = _open_blocking_question(messages)
+        if question is not None:
+            emit_telemetry("continuation_waiting_on_question", task_id=task_id, round=round_number)
+            _write_needs_input_marker(workspace, question)
+            return result
+        gate_failure = getattr(result, "mac_repository_verification_failure", None)
+        if isinstance(gate_failure, dict):
+            if gate_failure.get("failure_class") != "repository_test_failed":
+                # The verifier itself broke; that is not the agent's to fix.
+                return result
+            feedback = (
+                "The repository's own test gate failed on your change:\n%s\n\nFix the change so "
+                "the gate passes." % str(gate_failure.get("detail") or "")[-6000:]
+            )
+            _post_board_as_hub(task_id, "verdict", "repository gate failed; sent back to the agent", gate="failed")
+        else:
+            verdict = _judge_task_change(task, workspace, messages)
+            _LAST_JUDGE_VERDICT.clear()
+            _LAST_JUDGE_VERDICT.update({**verdict.to_dict(), "round": round_number})
+            emit_telemetry("judge_verdict", task_id=task_id, round=round_number, verdict=verdict.verdict)
+            if verdict.verdict == "unavailable":
+                _post_board_as_hub(task_id, "verdict", "judge unavailable: %s" % verdict.reason, verdict="unavailable")
+                return result
+            _post_board_as_hub(
+                task_id,
+                "verdict",
+                "%s: %s%s"
+                % (
+                    verdict.verdict,
+                    verdict.reason,
+                    ("\nNext: " + verdict.next_steps) if verdict.next_steps and not verdict.met else "",
+                ),
+                verdict=verdict.verdict,
+                model=verdict.model,
+            )
+            if verdict.met:
+                return result
+            feedback = (
+                "An independent judge reviewed your change against the task and found it not "
+                "yet done.\nWhy: %s\nDo this next: %s" % (verdict.reason, verdict.next_steps)
+            )
+        emit_telemetry("continuation_resumed", task_id=task_id, round=round_number)
+        result = _invoke_agent(
+            runner,
+            feedback + _CONTINUE_FOOTER,
+            workspace,
+            task_id or None,
+            {**opts, "resume_session": session_id},
+        )
+    return result
+
+
+def _record_judge_verdict_in_evidence(workspace: Path) -> None:
+    """Put the judge's verdict into the evidence manifest the worker signs."""
+    if not _LAST_JUDGE_VERDICT:
+        return
+    path = workspace / "mac-evidence.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(manifest, dict):
+        return
+    manifest["judge"] = dict(_LAST_JUDGE_VERDICT)
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _run_executor(
     *,
     runner: Callable[..., Any],
     task: Any,
     task_workspace: Path,
     task_id: Any,
-    review_context: Any,
-    is_review: bool,
 ) -> int:
     """Inner executor body extracted so the relay scope wraps the whole run."""
     started = time.monotonic()
@@ -6253,34 +6564,19 @@ def _run_executor(
     # Planning-phase flag — determined after the scope estimate below.
     _is_planning = False
     _wanted_planning = False
-    _hub_capability: Dict[str, Any] = {}
-    if is_review:
-        # Memory feed (in): recall prior deployment lessons (and this task's own
-        # prior-attempt outcomes) so the reviewer works with the fleet's
-        # hindsight, mirroring the task-execution path. Best-effort — never
-        # blocks the run.
-        prior_attempt = recall_prior_attempt_lessons(task)
-        project_lessons = recall_deployment_lessons(task)
-        lessons: List[str] = prior_attempt + [
-            lesson for lesson in project_lessons if lesson not in prior_attempt
-        ]
-        prompt = build_review_prompt(task, task_workspace, review_context, lessons)
-    else:
-        # Memory feed (in): recall prior deployment lessons so the agent works
-        # with the fleet's hindsight. Best-effort — never blocks the run. On a
-        # retry, lead with THIS task's own prior-attempt outcome (exact match,
-        # highest-value hindsight) before the project-wide lessons.
-        prior_attempt = recall_prior_attempt_lessons(task)
-        project_lessons = recall_deployment_lessons(task)
-        lessons = prior_attempt + [
-            lesson for lesson in project_lessons if lesson not in prior_attempt
-        ]
-        # Prompt is built after planning-phase decision below.
-        prompt = ""
+    # Memory feed (in): recall prior deployment lessons so the agent works
+    # with the fleet's hindsight. Best-effort — never blocks the run. On a
+    # retry, lead with THIS task's own prior-attempt outcome (exact match,
+    # highest-value hindsight) before the project-wide lessons.
+    prior_attempt = recall_prior_attempt_lessons(task)
+    project_lessons = recall_deployment_lessons(task)
+    lessons: List[str] = prior_attempt + [
+        lesson for lesson in project_lessons if lesson not in prior_attempt
+    ]
     emit_telemetry(
         "started",
         task_id=task_id,
-        kind="review" if is_review else "task",
+        kind="task",
         recalled_lessons=len(lessons),
         sandboxed=_openshell_enabled() and break_glass_authorization is None,
         execution_boundary=("host" if break_glass_authorization is not None else "sandbox"),
@@ -6289,199 +6585,115 @@ def _run_executor(
         ),
     )
 
-    # Scope-estimate preflight (scope-01): on the FIRST attempt of a non-review
-    # task, compute a deterministic scope estimate and record it as
+    # Scope-estimate preflight (scope-01): on the FIRST attempt of a task,
+    # compute a deterministic scope estimate and record it as
     # metadata.scope_estimate on the hub.  Best-effort — never blocks the run.
-    if not is_review:
-        try:
-            estimate = maybe_preflight_scope_estimate(task)
-            if estimate is not None:
-                emit_telemetry(
-                    "scope_estimated",
-                    task_id=task_id,
-                    size=estimate.get("size"),
-                    estimated_units=estimate.get("estimated_units"),
-                    signals=estimate.get("signals", []),
-                )
-                # Merge the just-computed estimate into the local task dict so
-                # is_planning_phase() can read it without another hub round-trip.
-                metadata_local = task.get("metadata")
-                if not isinstance(metadata_local, dict):
-                    metadata_local = {}
-                    task["metadata"] = metadata_local  # type: ignore[index]
-                metadata_local.setdefault("scope_estimate", estimate)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
+    try:
+        estimate = maybe_preflight_scope_estimate(task)
+        if estimate is not None:
+            emit_telemetry(
+                "scope_estimated",
+                task_id=task_id,
+                size=estimate.get("size"),
+                estimated_units=estimate.get("estimated_units"),
+                signals=estimate.get("signals", []),
+            )
+            # Merge the just-computed estimate into the local task dict so
+            # is_planning_phase() can read it without another hub round-trip.
+            metadata_local = task.get("metadata")
+            if not isinstance(metadata_local, dict):
+                metadata_local = {}
+                task["metadata"] = metadata_local  # type: ignore[index]
+            metadata_local.setdefault("scope_estimate", estimate)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
 
     # Planning-phase execution (plan-01): when scope_estimate=large or
     # metadata.plan_first=true, the first run PLANS instead of executing —
     # but only when this process can actually write children to the hub.
     _hub_capability: Dict[str, Any] = {}
-    if not is_review:
-        try:
-            _hub_capability = hub_write_capability()
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("hub connectivity probe failed: %s\n" % exc)
-            _hub_capability = {
-                "schema": "mac.sandbox_hub_connectivity.v1",
-                "ready": False,
-                "reason": "hub_probe_exception",
-            }
-        try:
-            (task_workspace / "sandbox-hub-connectivity.json").write_text(
-                json.dumps(_hub_capability, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            sys.stderr.write("hub connectivity record failed: %s\n" % exc)
-        emit_telemetry(
-            "sandbox_hub_connectivity",
-            task_id=task_id,
-            level="info" if _hub_capability.get("ready") else "warning",
-            **{key: value for key, value in _hub_capability.items() if key != "schema"},
-        )
-        try:
-            _wanted_planning = is_planning_phase(task)
-            _is_planning = should_enter_planning_phase(task, hub_capability=_hub_capability)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("planning phase check failed: %s\n" % exc)
-            _wanted_planning = False
-            _is_planning = False
-        if _wanted_planning and not _is_planning:
-            emit_telemetry(
-                "planning_phase_skipped",
-                task_id=task_id,
-                level="warning",
-                reason=str(_hub_capability.get("reason") or "hub_writes_unavailable"),
-                environment_fault=True,
-            )
-
-    if not is_review:
-        if _is_planning:
-            # plan-learn-01: enrich the planning prompt with prior decomposition
-            # shapes for similar tasks so the second big migration starts from
-            # the first one's shape.  Best-effort — never blocks the run.
-            try:
-                plan_lessons = recall_plan_lessons(task)
-            except Exception:  # noqa: BLE001
-                plan_lessons = []
-            combined_lessons = (lessons or []) + (plan_lessons or [])
-            prompt = build_planning_prompt(task, combined_lessons)
-            emit_telemetry("planning_phase_started", task_id=task_id, level="info")
-        else:
-            prompt = build_task_prompt(task, lessons)
-            if _wanted_planning:
-                prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
-
-    if break_glass_authorization is not None:
-        if is_review:
-            raise RuntimeError("review tasks cannot execute through host break-glass")
-        prompt += _break_glass_prompt(break_glass_authorization)
-
-    audit_task_id = review_context.get("task_id") if is_review else task_id
-    assignment = _review_experiment_assignment(task) if is_review else {}
-    blind_protocol_failed = False
-    if assignment.get("blind"):
-        executor_evidence = task_workspace / "executor-evidence.json"
-        legacy_withheld_evidence = task_workspace / ".mac-withheld-executor-evidence.json"
-        independent_findings = task_workspace / "review-independent-findings.json"
-        evidence_hidden = False
-        evidence_payload: Optional[bytes] = None
-        discovery_started = time.monotonic()
-        if legacy_withheld_evidence.exists():
-            if not executor_evidence.exists():
-                legacy_withheld_evidence.replace(executor_evidence)
-            else:
-                legacy_withheld_evidence.unlink()
-        if independent_findings.exists():
-            independent_findings.replace(
-                task_workspace / "review-independent-findings.previous.json"
-            )
-        if executor_evidence.exists():
-            # Hold the bounded evidence payload in the host process rather than
-            # renaming it inside the workspace. A dotfile in the workspace is
-            # still visible to both direct and OpenShell agent invocations.
-            evidence_payload = executor_evidence.read_bytes()
-            executor_evidence.unlink()
-            evidence_hidden = True
-        try:
-            discovery_result = _invoke_agent(
-                runner,
-                build_blind_review_discovery_prompt(task, task_workspace, assignment),
-                task_workspace,
-                str(audit_task_id) if audit_task_id else None,
-                {
-                    "execution_kind": "review_discovery",
-                    "timeout": _agent_timeout(),
-                    "task": task,
-                },
-            )
-        finally:
-            if evidence_payload is not None:
-                executor_evidence.write_bytes(evidence_payload)
-        discovery_duration_ms = (time.monotonic() - discovery_started) * 1000.0
-        discovery_manifest = task_workspace / "mac-evidence.json"
-        if discovery_manifest.exists():
-            discovery_manifest.replace(task_workspace / "review-independent-draft-evidence.json")
-        protocol = _blind_review_protocol(
-            task_workspace,
-            assignment,
-            discovery_result,
-            duration_ms=discovery_duration_ms,
-            evidence_hidden=evidence_hidden,
-        )
-        (task_workspace / "review-protocol.json").write_text(
-            json.dumps(protocol, indent=2, sort_keys=True) + "\n",
+    try:
+        _hub_capability = hub_write_capability()
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("hub connectivity probe failed: %s\n" % exc)
+        _hub_capability = {
+            "schema": "mac.sandbox_hub_connectivity.v1",
+            "ready": False,
+            "reason": "hub_probe_exception",
+        }
+    try:
+        (task_workspace / "sandbox-hub-connectivity.json").write_text(
+            json.dumps(_hub_capability, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    except OSError as exc:
+        sys.stderr.write("hub connectivity record failed: %s\n" % exc)
+    emit_telemetry(
+        "sandbox_hub_connectivity",
+        task_id=task_id,
+        level="info" if _hub_capability.get("ready") else "warning",
+        **{key: value for key, value in _hub_capability.items() if key != "schema"},
+    )
+    try:
+        _wanted_planning = is_planning_phase(task)
+        _is_planning = should_enter_planning_phase(task, hub_capability=_hub_capability)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("planning phase check failed: %s\n" % exc)
+        _wanted_planning = False
+        _is_planning = False
+    if _wanted_planning and not _is_planning:
         emit_telemetry(
-            "review_discovery_completed",
-            task_id=task_id,
-            returncode=discovery_result.returncode,
-            protocol_compliant=protocol["protocol_compliant"],
-            findings=protocol["independent_findings_count"],
-            duration_ms=discovery_duration_ms,
-        )
-        blind_protocol_failed = not bool(protocol["protocol_compliant"])
-
-    if blind_protocol_failed:
-        # The blind treatment is already invalid. Running adjudication would
-        # spend a second model budget on a sample that can no longer be used,
-        # and historically allowed a missing discovery artifact to masquerade
-        # as a semantic code rejection. Preserve the discovery output and make
-        # the review attempt fail distinctly so reviewer selection can retry or
-        # choose another eligible reviewer without re-executing the patch.
-        result = subprocess.CompletedProcess(
-            getattr(discovery_result, "args", ["review_discovery"]),
-            65,
-            getattr(discovery_result, "stdout", "") or "",
-            "\n".join(
-                part
-                for part in (
-                    (getattr(discovery_result, "stderr", "") or "").strip(),
-                    "blind review discovery protocol was not completed",
-                )
-                if part
-            ),
-        )
-        emit_telemetry(
-            "review_protocol_failed",
+            "planning_phase_skipped",
             task_id=task_id,
             level="warning",
-            phase="discovery",
-            protocol_compliant=False,
+            reason=str(_hub_capability.get("reason") or "hub_writes_unavailable"),
+            environment_fault=True,
         )
+
+    if _is_planning:
+        # plan-learn-01: enrich the planning prompt with prior decomposition
+        # shapes for similar tasks so the second big migration starts from
+        # the first one's shape.  Best-effort — never blocks the run.
+        try:
+            plan_lessons = recall_plan_lessons(task)
+        except Exception:  # noqa: BLE001
+            plan_lessons = []
+        combined_lessons = (lessons or []) + (plan_lessons or [])
+        prompt = build_planning_prompt(task, combined_lessons)
+        emit_telemetry("planning_phase_started", task_id=task_id, level="info")
     else:
-        result = _invoke_agent(
+        prompt = build_task_prompt(task, lessons)
+        if _wanted_planning:
+            prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
+
+    if break_glass_authorization is not None:
+        prompt += _break_glass_prompt(break_glass_authorization)
+
+    result = _invoke_agent(
+        runner,
+        prompt,
+        task_workspace,
+        str(task_id) if task_id else None,
+        {
+            "execution_kind": "task",
+            "timeout": _agent_timeout(),
+            "task": task,
+        },
+    )
+    _task_metadata = task.get("metadata") if isinstance(task, dict) else None
+    if (
+        not _is_planning
+        and break_glass_authorization is None
+        and not metadata_declares_read_only_report_repository(_task_metadata)
+        and not metadata_declares_report_deliverable(_task_metadata)
+    ):
+        result = _continue_claude_session(
             runner,
-            prompt,
+            task,
             task_workspace,
-            str(audit_task_id) if audit_task_id else None,
-            {
-                "execution_kind": "review" if is_review else "task",
-                "timeout": _agent_timeout(),
-                "task": task,
-            },
+            str(task_id or ""),
+            result,
+            {"execution_kind": "task", "timeout": _agent_timeout(), "task": task},
         )
     emit_telemetry(
         "agent_completed",
@@ -6587,7 +6799,7 @@ def _run_executor(
             reason="clean_agent_failure",
             returncode=result.returncode,
         )
-    elif not is_review and (
+    elif (
         metadata_declares_report_deliverable(
             task.get("metadata") if isinstance(task, dict) else None
         )
@@ -6606,7 +6818,7 @@ def _run_executor(
             ),
             returncode=result.returncode,
         )
-    elif not is_review:
+    else:
         try:
             # Never treat zero-child plan_decomposed as a completed plan.
             reject_empty_plan_decomposed_evidence(task_workspace)
@@ -6630,17 +6842,11 @@ def _run_executor(
                 finalize_with_new_file_recovery(task_workspace, task, task_id)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
-    elif not blind_protocol_failed:
-        try:
-            run_deterministic_review_verdict(task_workspace, task, review_context)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
 
     # Task-sizing: if the agent wrote plan_steps in its evidence, auto-post them
     # as child tasks so the parent blocks on the children.  Best-effort.
     if (
-        not is_review
-        and not clean_agent_failure
+        not clean_agent_failure
         and not authoritative_read_only_failure
         and repository_verification_failure is None
     ):
@@ -6651,7 +6857,8 @@ def _run_executor(
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("auto-decompose failed: %s\n" % exc)
 
-    write_fallback_evidence_manifest(task_workspace, task, result, review_context)
+    write_fallback_evidence_manifest(task_workspace, task, result, None)
+    _record_judge_verdict_in_evidence(task_workspace)
 
     # loop-01 resilience: if the run was bounded/failed (e.g. a wedged TokenHub
     # trailing turn) but the agent or a deterministic finalizer already wrote a
@@ -6669,33 +6876,23 @@ def _run_executor(
         )
         rc = 0
 
-    # Memory feed (out): distill this run's outcome into a deployment lesson the
-    # nap consolidator will promote into the vector tier — so the fleet's recall
-    # gets richer with every task. Reviews don't feed deployment lessons.
-    if not is_review:
-        outcome = classify_outcome(task_workspace, task, rc)
-        emit_telemetry(
-            "finalized",
-            task_id=task_id,
-            level="info" if outcome["outcome"] == "success" else "warning",
-            evidence_type=outcome["evidence_type"],
-            outcome=outcome["outcome"],
-            signals=outcome["signals"],
-        )
-        with _FinalizerPhaseContext(
-            task_workspace,
-            task_id,
-            "lesson_curation",
-        ):
-            record_deployment_learning(task, outcome)
-            record_curated_lessons(task, outcome)
-            # recovery-learn-01: if mid-flight recoveries occurred, feed each
-            # choice+outcome into the deployment-learning loop so selection
-            # quality improves future recovery choices.
-            try:
-                _record_recovery_learnings(task_workspace, task, outcome)
-            except Exception:  # noqa: BLE001
-                pass
+    # Memory feed (out): distill this run's outcome into a deployment lesson so
+    # the fleet's recall gets richer with every task.
+    outcome = classify_outcome(task_workspace, task, rc)
+    emit_telemetry(
+        "finalized",
+        task_id=task_id,
+        level="info" if outcome["outcome"] == "success" else "warning",
+        evidence_type=outcome["evidence_type"],
+        outcome=outcome["outcome"],
+        signals=outcome["signals"],
+    )
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "deployment_learning",
+    ):
+        record_deployment_learning(task, outcome)
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

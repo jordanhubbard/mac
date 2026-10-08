@@ -2,8 +2,7 @@
 
 The overlay encrypts only packets that traverse it. Binding ``0.0.0.0`` (or a
 LAN/public address) lets the same HTTP API, including bearer tokens, arrive on
-every NIC. This module is stdlib-only so ``deploy_env`` can import it before
-FastAPI exists.
+every NIC. This module is stdlib-only, so it imports before FastAPI exists.
 
 Loopback stays allowed so health checks and local enrollment keep working.
 Mesh reachability is the CGNAT address from ``tailscale ip -4`` (Darwin has
@@ -209,51 +208,6 @@ def mesh_bind_problems(
             "(will not listen on 0.0.0.0, LAN, or a public NIC)" % host
         )
     return problems
-
-
-def deploy_mac_bind_host(
-    requested: str,
-    *,
-    network_provider: str,
-    is_hub: bool,
-    tailscale_ip: str,
-) -> str:
-    """Bind value written to mac.env.
-
-    Mesh hubs: loopback plus the Tailscale IPv4. ``0.0.0.0`` is rewritten when
-    the overlay address is known, and refused when it is not. An explicit
-    LAN/public address is an error. Never fall back to all-interfaces.
-    """
-    provider = str(network_provider or "").strip().lower()
-    requested_hosts = parse_bind_hosts(requested)
-    if not mesh_provider_enabled(provider):
-        return format_bind_hosts(requested_hosts)
-    if not is_hub:
-        return "127.0.0.1"
-    mesh_ip = str(tailscale_ip or "").strip()
-    explicit = [
-        host
-        for host in requested_hosts
-        if not is_unspecified_host(host) and not is_loopback_host(host)
-    ]
-    for host in explicit:
-        if not is_allowed_mesh_bind_host(host, mesh_ips=(mesh_ip,) if mesh_ip else ()):
-            raise MeshBindError(
-                "mesh hub bind refused: %r is not loopback or Tailscale/Headscale" % host
-            )
-    if any(is_unspecified_host(host) for host in requested_hosts):
-        if not mesh_ip or not _parse_ip(mesh_ip):
-            raise MeshBindError(
-                "mesh hub bind refused: MAC_TAILSCALE_IP is missing; "
-                "will not bind 0.0.0.0. Join Tailscale/Headscale first."
-            )
-    if mesh_ip:
-        if not is_allowed_mesh_bind_host(mesh_ip, mesh_ips=(mesh_ip,)):
-            raise MeshBindError(
-                "mesh hub bind refused: Tailscale IP %r is not a usable listen address" % mesh_ip
-            )
-        return format_bind_hosts(["127.0.0.1", mesh_ip])
-    return "127.0.0.1"
 
 
 def serve_bind_hosts(

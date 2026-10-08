@@ -448,11 +448,6 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["disable_agent_id"] = agent("disable-route-agent", ["python"])["id"]
     ctx["bulk_agent_id"] = agent("bulk-route-agent", ["python"])["id"]
-    # No real quarantine ledger exists on a CI host, so these only have to be
-    # well-formed: the route answers 404 ("this host has no ledger"), which is
-    # the fail-closed behaviour this inventory is meant to exercise.
-    ctx["curiosity_candidate_id"] = "cur_route_coverage"
-    ctx["curiosity_decision"] = "approve"
     ctx["claim_agent_id"] = agent("claim-route-agent", ["python"])["id"]
     ctx["claim_next_agent_id"] = agent("claim-next-route-agent", ["python"])["id"]
     ctx["lease_agent_id"] = agent("lease-route-agent", ["python"])["id"]
@@ -466,15 +461,14 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     publish_worker = agent("publish-route-worker", ["python"])
     ctx["publish_worker_id"] = publish_worker["id"]
     ctx["publish_worker_key"] = publish_worker["attestation_key"]
-    ctx["nap_agent_id"] = agent("nap-route-agent", ["ops"])["id"]
-    ctx["nap_begin_agent_id"] = agent("nap-begin-route-agent", ["ops"])["id"]
-    ctx["nap_fail_agent_id"] = agent("nap-fail-route-agent", ["ops"])["id"]
     ctx["attest_rotate_agent_id"] = agent("attest-rotate-route-agent", ["python"])["id"]
     attest_verify = agent("attest-verify-route-agent", ["python"])
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
-    attest_recover = agent("attest-recover-route-agent", ["python"])
-    ctx["attest_recover_agent_id"] = attest_recover["id"]
+    from mac.inference_tokens import InferenceTokenLifecycle
+
+    ctx["inference_agent_id"] = agent("inference-route-agent", ["python"])["id"]
+    ctx["inference_token_id"] = InferenceTokenLifecycle(cp.store).mint(ctx["inference_agent_id"]).id
     report_attestation = read_only_report_repository_executor_attestation(
         runtime_image_ref=("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64),
         policy_sha256="sha256:" + "2" * 64,
@@ -515,29 +509,6 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
         },
     )
     ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
-    ctx["dispatch_hold_batch_agent_id"] = agent("dispatch-hold-batch-route-agent", ["python"])["id"]
-    cp.set_agent_dispatch_hold(
-        ctx["dispatch_hold_batch_agent_id"], "route-coverage batch deployment"
-    )
-    cp.heartbeat_agent(
-        ctx["dispatch_hold_batch_agent_id"],
-        status="idle",
-        health_status="healthy",
-        resources={"deployment_generation": "route-coverage-generation"},
-    )
-    ctx["dispatch_hold_transition_agent_id"] = agent(
-        "dispatch-hold-transition-route-agent", ["python"]
-    )["id"]
-    cp.set_agent_dispatch_hold(
-        ctx["dispatch_hold_transition_agent_id"],
-        "route-coverage transition deployment",
-    )
-    cp.heartbeat_agent(
-        ctx["dispatch_hold_transition_agent_id"],
-        status="idle",
-        health_status="healthy",
-        resources={"deployment_generation": "route-coverage-transition-generation"},
-    )
     ctx["transition_agent_id"] = agent("transition-route-agent", ["python"])["id"]
     ctx["evidence_agent_id"] = agent("evidence-route-agent", ["python"])["id"]
 
@@ -563,68 +534,6 @@ network_policies:
         )
     )
     ctx["openshell_policy_id"] = openshell_policy["id"]
-    # Scientific optimizer fixtures (route coverage for /optimizer/*): a
-    # control+treatment policy pair and one experiment, so GET-by-id routes
-    # resolve and action routes act on real rows.
-    sci_control = _ok(
-        client.post(
-            "/optimizer/policies",
-            json={
-                "name": "route-sci-control",
-                "project": ctx["project_name"],
-                "parameters": {"plan_first": True},
-                "created_by": "route-coverage",
-            },
-        )
-    )
-    sci_treatment = _ok(
-        client.post(
-            "/optimizer/policies",
-            json={
-                "name": "route-sci-treatment",
-                "project": ctx["project_name"],
-                "parameters": {"plan_first": False},
-                "created_by": "route-coverage",
-            },
-        )
-    )
-    ctx["sci_policy_id"] = sci_control["id"]
-    ctx["sci_policy2_id"] = sci_treatment["id"]
-    sci_exp = _ok(
-        client.post(
-            "/optimizer/experiments",
-            json={
-                "name": "route-sci-experiment",
-                "project": ctx["project_name"],
-                "hypothesis": "treatment beats control on route coverage",
-                "control_policy_id": sci_control["id"],
-                "treatment_policy_id": sci_treatment["id"],
-                "primary_metric": "accepted_success",
-                "created_by": "route-coverage",
-            },
-        )
-    )
-    ctx["sci_experiment_id"] = sci_exp["id"]
-    sci_exp2 = _ok(
-        client.post(
-            "/optimizer/experiments",
-            json={
-                "name": "route-sci-experiment-promote",
-                "project": ctx["project_name"],
-                "hypothesis": "promote-path route coverage",
-                "control_policy_id": sci_control["id"],
-                "treatment_policy_id": sci_treatment["id"],
-                "primary_metric": "accepted_success",
-                "created_by": "route-coverage",
-            },
-        )
-    )
-    _ok(
-        client.post(
-            "/optimizer/experiments/%s/start" % sci_exp2["id"], json={"actor": "route-coverage"}
-        )
-    )
-    ctx["sci_experiment2_id"] = sci_exp2["id"]
     _ok(
         client.post(
             "/openshell/policies/%s/assignments" % openshell_policy["id"],
@@ -878,41 +787,6 @@ network_policies:
         )
     )
     ctx["draft_id"] = draft["id"]
-
-    provisioning = _ok(
-        client.post(
-            "/provisioning/requests",
-            json={
-                "reason": "route coverage provision",
-                "capabilities": ["python"],
-                "tenant_id": tenant["id"],
-            },
-        )
-    )
-    ctx["request_id"] = provisioning["id"]
-    ctx["cancel_request_id"] = _ok(
-        client.post(
-            "/provisioning/requests",
-            json={
-                "reason": "route coverage cancel",
-                "capabilities": ["ops"],
-                "tenant_id": tenant["id"],
-            },
-        )
-    )["id"]
-
-    _ok(
-        client.post(
-            "/agents/%s/nap-schedule" % ctx["nap_agent_id"],
-            json={"offset_minutes": 15, "window_minutes": 30, "actor": "operator"},
-        )
-    )
-    ctx["nap_run_id"] = _ok(
-        client.post("/agents/%s/nap-runs" % ctx["nap_agent_id"], json={"actor": "operator"})
-    )["id"]
-    ctx["nap_fail_run_id"] = _ok(
-        client.post("/agents/%s/nap-runs" % ctx["nap_fail_agent_id"], json={"actor": "operator"})
-    )["id"]
 
     notification = cp.record_notification(
         "route.coverage",
@@ -1214,13 +1088,6 @@ network_policies:
         )
     )
 
-    environment = _ok(
-        client.post(
-            "/environments",
-            json={"name": "route-env", "tenant_id": tenant["id"], "channel": "fleet"},
-        )
-    )
-    ctx["env_id"] = environment["id"]
     runtime = _ok(
         client.post(
             "/runtimes",
@@ -1300,30 +1167,6 @@ network_policies:
         )
     )
 
-    def rollout(version: str) -> Dict[str, Any]:
-        return _ok(
-            client.post(
-                "/rollouts",
-                json={
-                    "version": version,
-                    "strategy": "full",
-                    "target_percent": 0,
-                    "created_by": "operator",
-                    "tenant_id": tenant["id"],
-                    "runtime_environment_id": runtime["id"],
-                    "artifact_uri": "https://example.test/artifacts/%s.tar" % version,
-                    "artifact_hash": "sha256:" + "2" * 64,
-                    "health_policy": {"required_checks": ["runtime"]},
-                },
-            )
-        )
-
-    ctx["rollout_id"] = rollout("route-rollout")["id"]
-    ctx["advance_rollout_id"] = rollout("route-rollout-advance")["id"]
-    ctx["artifact_rollout_id"] = rollout("route-rollout-artifact")["id"]
-    ctx["health_rollout_id"] = rollout("route-rollout-health")["id"]
-    ctx["rescue_rollout_id"] = rollout("route-rollout-rescue")["id"]
-
     directive_document = {
         "schema": "mac.directive.v1",
         "name": "route.coverage.lifecycle",
@@ -1380,34 +1223,6 @@ network_policies:
     ctx["directive_activation_id"] = activation["id"]
     ctx["directive_ack_digest"] = ack_version["digest"]
 
-    source_release = cp.register_source_release(
-        repository_id="route-coverage-repository",
-        repository_name="mac",
-        canonical_remote_url="https://github.com/example/mac.git",
-        commit_sha="a" * 40,
-        canonical_ref="a" * 40,
-        tree_digest="sha256:" + ("b" * 64),
-        status="reviewed",
-        created_by=ctx["human_id"],
-        metadata={"ci": {"verdict": "success", "required_checks": ["contracts"]}},
-    )
-    ctx["release_id"] = source_release.id
-    fleet_upgrade = cp.request_fleet_upgrade(
-        fleet_id=ctx["fleet_id"],
-        idempotency_key="route-coverage-upgrade-seed",
-        target_policy="approved-current",
-        reason="exercise fleet upgrade route inventory",
-        requested_by_human=ctx["human_id"],
-        requested_by_principal=ctx["human_id"],
-    )
-    ctx["upgrade_id"] = fleet_upgrade["id"]
-    cp.cancel_fleet_upgrade(
-        fleet_upgrade["id"],
-        actor=ctx["human_id"],
-        reason="keep exhaustive route coverage side-effect free",
-    )
-
-    ctx["absent_dispatch_hold_epoch_id"] = "route-coverage-absent-epoch"
     return ctx
 
 
@@ -1439,8 +1254,10 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {
             "agent_id": "attest_verify_agent_id"
         },
-        ("POST", "/agents/{agent_id}/attestation-key/recover"): {
-            "agent_id": "attest_recover_agent_id"
+        ("POST", "/agents/{agent_id}/inference-tokens"): {"agent_id": "inference_agent_id"},
+        ("DELETE", "/agents/{agent_id}/inference-tokens/{token_id}"): {
+            "agent_id": "inference_agent_id",
+            "token_id": "inference_token_id",
         },
         ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
             "agent_id": "report_executor_agent_id"
@@ -1455,27 +1272,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/agentbus/streams/{stream_id}/directive-verification"): {"stream_id": "stream_id"},
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
-        ("POST", "/curiosity/candidates/{candidate_id}/{decision}"): {
-            "candidate_id": "curiosity_candidate_id",
-            "decision": "curiosity_decision",
-        },
-        ("POST", "/agents/dispatch-hold/release-batch"): {},
-        ("GET", "/agents/dispatch-hold/epochs/{epoch_id}"): {
-            "epoch_id": "absent_dispatch_hold_epoch_id"
-        },
-        ("GET", "/agents/dispatch-hold/epochs/{epoch_id}/readiness"): {
-            "epoch_id": "absent_dispatch_hold_epoch_id"
-        },
-        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/prove"): {
-            "epoch_id": "absent_dispatch_hold_epoch_id"
-        },
-        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/commit"): {
-            "epoch_id": "absent_dispatch_hold_epoch_id"
-        },
-        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/abort"): {
-            "epoch_id": "absent_dispatch_hold_epoch_id"
-        },
-        ("POST", "/agents/dispatch-hold/transition-batch"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
@@ -1488,18 +1284,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/crash-reports"): {"agent_id": "agent_id"},
         ("GET", "/crash-reports/{report_id}"): {"report_id": "crash_report_id"},
         ("POST", "/crash-reports/{report_id}/resolve"): {"report_id": "crash_report_id"},
-        ("POST", "/agents/{agent_id}/nap-runs"): {"agent_id": "nap_begin_agent_id"},
-        ("GET", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
-        ("GET", "/agents/{agent_id}/nap-schedule/next"): {"agent_id": "nap_agent_id"},
-        ("POST", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
-        ("PUT", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
-        ("POST", "/agents/{agent_id}/nap-cycle"): {"agent_id": "nap_agent_id"},
-        ("POST", "/agents/{agent_id}/nap-consolidate"): {"agent_id": "nap_agent_id"},
         ("POST", "/agents/{agent_id}/service-claims/sync"): {"agent_id": "agent_id"},
-        ("GET", "/nap-runs/{run_id}"): {"run_id": "nap_run_id"},
-        ("POST", "/nap-runs/{run_id}/complete"): {"run_id": "nap_run_id"},
-        ("POST", "/nap-runs/{run_id}/fail"): {"run_id": "nap_fail_run_id"},
-        ("POST", "/provisioning/requests/{request_id}/cancel"): {"request_id": "cancel_request_id"},
         ("DELETE", "/roles/{role_id}"): {"role_id": "delete_role_id"},
         ("DELETE", "/workflows/{workflow_id}"): {"workflow_id": "delete_workflow_id"},
         ("DELETE", "/artifacts/{artifact_id_or_digest}"): {
@@ -1509,10 +1294,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/runtime-deltas/{delta_id}/reject"): {"delta_id": "reject_delta_id"},
         ("POST", "/runtime-deltas/{delta_id}/promote"): {"delta_id": "promote_delta_id"},
         ("POST", "/runtime-runs/{run_id}/complete"): {"run_id": "runtime_run_id"},
-        ("POST", "/rollouts/{rollout_id}/advance"): {"rollout_id": "advance_rollout_id"},
-        ("POST", "/rollouts/{rollout_id}/artifact"): {"rollout_id": "artifact_rollout_id"},
-        ("POST", "/rollouts/{rollout_id}/health"): {"rollout_id": "health_rollout_id"},
-        ("POST", "/rollouts/{rollout_id}/rescue"): {"rollout_id": "rescue_rollout_id"},
         ("DELETE", "/notifier/channels/{channel_id_or_name}"): {
             "channel_id_or_name": "delete_channel_id"
         },
@@ -1543,30 +1324,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
         ("GET", "/task-groups/{name}"): {"name": "task_group_name"},
         ("DELETE", "/task-groups/{name}"): {"name": "task_group_delete_name"},
-        ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
-        ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
-        ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
-            "policy_id": "sci_policy_id"
-        },
-        ("GET", "/optimizer/experiments/{experiment_id}"): {"experiment_id": "sci_experiment_id"},
-        ("POST", "/optimizer/experiments/{experiment_id}/start"): {
-            "experiment_id": "sci_experiment_id"
-        },
-        ("POST", "/optimizer/experiments/{experiment_id}/pause"): {
-            "experiment_id": "sci_experiment_id"
-        },
-        ("POST", "/optimizer/experiments/{experiment_id}/promote"): {
-            "experiment_id": "sci_experiment2_id"
-        },
-        ("GET", "/optimizer/experiments/{experiment_id}/evidence"): {
-            "experiment_id": "sci_experiment_id"
-        },
-        ("POST", "/optimizer/experiments/{experiment_id}/observe/{task_id}"): {
-            "experiment_id": "sci_experiment_id"
-        },
-        ("POST", "/optimizer/experiments/{experiment_id}/analyze"): {
-            "experiment_id": "sci_experiment_id"
-        },
     }
     values = {
         "service_id": "qdrant",
@@ -1575,14 +1332,12 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "channel_id_or_name": ctx["channel_id"],
         "delta_id": ctx["delta_id"],
         "draft_id": ctx["draft_id"],
-        "env_id": ctx["env_id"],
         "evidence_id": ctx["runtime_evidence_id"],
         "package_id": "wp_route_missing",
         "batch_id": "wpbatch_route_missing",
         "job_id": "wpcjob_route_missing",
         "candidate_id": "wpcandidate_route_missing",
         "finalization_id": "wpfinal_route_missing",
-        "experiment_id": "route-review-experiment",
         "eval_set_id": ctx["eval_set_id"],
         "flag": "show_reasoning",
         "fleet_id_or_name": ctx["fleet_id"],
@@ -1599,16 +1354,11 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "name": ctx["secret_name"],
         "notification_id": ctx["notification_id"],
         "policy_id": ctx["openshell_policy_id"],
-        "sci_policy_id": ctx["sci_policy_id"],
-        "sci_experiment_id": ctx["sci_experiment_id"],
-        "sci_experiment2_id": ctx["sci_experiment2_id"],
         "project": ctx["project_name"],
-        "request_id": ctx["request_id"],
         "review_id": ctx["review_id"],
         "report_id": ctx["crash_report_id"],
         "role_id": ctx["role_id"],
         "role_id_or_slug": ctx["role_slug"],
-        "rollout_id": ctx["rollout_id"],
         "run_id": ctx["workflow_run_id"],
         "secret_id": ctx["secret_id"],
         "session_id": ctx["terminal_session_id"],
@@ -1621,8 +1371,6 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "directive_id": ctx["directive_id"],
         "waiver_id": ctx["directive_waiver_id"],
         "activation_id": ctx["directive_activation_id"],
-        "release_id": ctx["release_id"],
-        "upgrade_id": ctx["upgrade_id"],
     }
     for param, ctx_key in special.get((method, path_template), {}).items():
         values[param] = ctx[ctx_key]
@@ -1637,42 +1385,12 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
     kwargs: Dict[str, Any] = {}
     expected = (200,)
 
-    if method == "POST" and path_template.startswith("/optimizer/experiments/{experiment_id}/"):
-        # Realistic guard responses count as coverage for lifecycle routes:
-        # start (400: one active experiment per project — exp2 is running),
-        # pause of a non-active exp (400), promote without min validated
-        # samples (400), observe of an unassigned task (404). The happy paths
-        # for create/start are exercised by the ctx fixtures themselves.
-        expected = (200, 400, 404)
     if path_template.startswith(("/work-packages", "/work-package-")):
         # The managed-stage happy paths are covered by their dedicated API and
         # real-Git assembly-line suites.  This exhaustive inventory test sends
         # schema-valid requests to explicit missing product identities and
         # treats the fail-closed domain guard as successful route coverage.
         expected = (200, 400, 404, 409)
-    if path_template.startswith("/agents/dispatch-hold/epochs/"):
-        expected = (200, 400, 404)
-    if path_template.startswith(("/source-releases", "/fleet-desired-source")):
-        expected = (200, 400, 403, 409)
-    if path_template.startswith("/fleet-upgrades"):
-        expected = (200, 400, 403, 409, 503)
-    if path_template in {"/v1/memory/promote", "/v1/memory/reconcile-embeddings"}:
-        # Both need a Qdrant endpoint, and a test app has none configured, so
-        # the route answers 400 ("pass qdrant_url or set MAC_QDRANT_URL...").
-        # That fail-closed answer IS the coverage here: it proves the route is
-        # wired to the facade and validating, without pointing an inventory
-        # test at a live vector store. The promotion and reconciliation
-        # behaviour itself is covered in tests/test_memory_promotion.py and
-        # tests/test_memory_embedding_spaces.py against a fake Qdrant.
-        expected = (200, 400)
-    if path_template.startswith("/curiosity/"):
-        # The curiosity ledger lives inside the owning agent's OpenClaw
-        # sandbox, so a machine with no gateway installed has no wrapper to
-        # proxy and the route answers 404 by design ("this host has no
-        # quarantine ledger"). CI hosts are in exactly that state, so treat the
-        # fail-closed answer as coverage rather than pretending a ledger
-        # exists. 400 covers a wrapper that is present but rejects the call.
-        expected = (200, 400, 404)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False
@@ -1706,19 +1424,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/dashboard/stream":
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
-        elif path_template == "/news/stream":
-            kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
-        elif path_template == "/v1/memory/recall":
-            kwargs["params"] = {"q": "route coverage", "limit": 1}
         elif path_template == "/v1/agents/{agent_id}/agentbus-cursor":
             kwargs["params"] = {"topic": "peer.message.v1"}
-        elif path_template in {
-            "/agents/dispatch-hold/epochs/{epoch_id}",
-            "/agents/dispatch-hold/epochs/{epoch_id}/readiness",
-        }:
-            kwargs["params"] = {"identity_sha256": "a" * 64}
-        elif path_template == "/v1/memory/dreams/recall":
-            kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
         elif path_template == "/tasks/search":
             kwargs["params"] = {"q": "route coverage"}
         elif path_template == "/humans/resolve":
@@ -1734,52 +1441,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
-        ("POST", "/source-releases"): {
-            "repository_id": "route-coverage-created-repository",
-            "repository_name": "mac",
-            "canonical_remote_url": "https://github.com/example/mac.git",
-            "commit_sha": "c" * 40,
-            "canonical_ref": "c" * 40,
-            "tree_digest": "sha256:" + ("d" * 64),
-            "status": "reviewed",
-            "metadata": {"ci": {"verdict": "success", "required_checks": ["contracts"]}},
-        },
-        ("POST", "/fleet-desired-source"): {
-            "fleet_id": ctx["fleet_id"],
-            "release_id": ctx["release_id"],
-            "request_id": "route-coverage-desired-source",
-            "reason": "exercise desired source route",
-        },
-        ("POST", "/fleet-upgrades"): {
-            "fleet_id": ctx["fleet_id"],
-            "idempotency_key": "route-coverage-upgrade-request",
-            "target_policy": "registered-release",
-            "requested_release_id": ctx["release_id"],
-            "reason": "exercise fleet upgrade request route",
-        },
-        ("POST", "/fleet-upgrades/{upgrade_id}/cancel"): {
-            "reason": "exercise cancellation route",
-        },
-        ("POST", "/fleet-upgrades/{upgrade_id}/stage"): {
-            "branch": "main",
-            "required_checks": ["contracts"],
-        },
-        ("POST", "/fleet-upgrades/{upgrade_id}/arm"): {
-            "service": "com.mac.control-plane",
-            "health_url": "http://127.0.0.1:8789/health",
-            "attestation_url": "http://127.0.0.1:8789/startup-attestation",
-        },
-        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/open"): {
-            "participants": [],
-        },
-        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/prove"): {
-            "proofs": [],
-        },
-        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/commit"): {},
-        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/abort"): {
-            "reason": "exercise epoch abort route",
-            "disposition": "restore",
-        },
         # Both halves, because the route judges them together: a request whose
         # capabilities and hardware are satisfiable by DIFFERENT agents and by
         # no single agent must not pass.
@@ -1796,14 +1457,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "response": "I changed evaluate_pair and added a case",
             "coding_agent": "claude",
             "returncode": 0,
-        },
-        # A syntactically valid reviewed digest. The endpoint refuses anything
-        # that is not one, so a placeholder here would exercise only the
-        # rejection path and leave the route effectively uncovered.
-        ("POST", "/sandbox/rollout"): {
-            "image": "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:%s" % ("a" * 64),
-            "bom": {},
-            "actor": "route-coverage",
         },
         ("PUT", "/work-packages/{package_id}"): {
             "goal": "route coverage goal",
@@ -1942,19 +1595,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "priority": 5,
             "metadata": {"route_case": True},
         },
-        ("POST", "/tasks/{task_id}/review-experiment"): {
-            "experiment_id": "route-review-experiment",
-            "arm": "standard",
-            "actor": "route-coverage",
-        },
-        ("POST", "/tasks/{task_id}/review-outcomes"): {
-            "kind": "clean_window",
-            "status": "confirmed",
-            "severity_weight": 0,
-            "source": "route-coverage",
-            "detail": {"window_days": 0},
-            "actor": "route-coverage",
-        },
         ("POST", "/projects/register"): {
             "repository_url": "https://github.com/example/route-coverage.git",
             "required_capabilities": ["python"],
@@ -2026,6 +1666,11 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/tasks/{task_id}/answer"): {
             "actor": "operator",
             "answer": "route coverage answer",
+        },
+        ("POST", "/tasks/{task_id}/messages"): {
+            "kind": "directive",
+            "body": "route coverage directive",
+            "author": "operator",
         },
         ("POST", "/tasks/{task_id}/force-complete"): {
             "actor": "operator",
@@ -2139,6 +1784,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "capabilities": ["python"],
         },
         ("PUT", "/agents/{agent_id}"): {"health_status": "healthy", "resources": {"cpu": 8}},
+        ("POST", "/agents/{agent_id}/inference-tokens"): {"task_id": "", "ttl_seconds": 600},
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {
             "challenge": {
                 "schema": "mac.agent_attestation_challenge.v1",
@@ -2156,22 +1802,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                 },
             ),
         },
-        ("POST", "/agents/{agent_id}/attestation-key/recover"): {
-            "probe": {
-                "schema": "mac.agent_attestation_key_probe.v1",
-                "state": "present",
-                "agent_id": ctx["attest_recover_agent_id"],
-                "deployment_id": "route-coverage-deployment",
-                "challenge": {
-                    "schema": "mac.agent_attestation_challenge.v1",
-                    "purpose": "fleet-deploy-attestation-key-proof",
-                    "agent_id": ctx["attest_recover_agent_id"],
-                    "deployment_id": "route-coverage-deployment",
-                    "nonce": "route-coverage-nonce-that-is-at-least-32-bytes",
-                },
-                "signature": "v1:deliberately-stale-route-coverage-signature",
-            }
-        },
         ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
             "expected_attestation": ctx["report_executor_attestation"],
             "expected_startup_timestamp": ctx["report_executor_startup_timestamp"],
@@ -2182,38 +1812,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "route-coverage",
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
-        ("POST", "/curiosity/candidates/{candidate_id}/{decision}"): {
-            "actor": "agent_rocky",
-            "reason": "route coverage",
-            "approval_id": "task_route_coverage",
-        },
-        ("POST", "/agents/dispatch-hold/release-batch"): {
-            "epoch_id": "route-coverage-release-epoch",
-            "holds": [
-                {
-                    "agent_id": ctx["dispatch_hold_batch_agent_id"],
-                    "reason": "route-coverage batch deployment",
-                    "generation": "route-coverage-generation",
-                    "baseline_seen": "2000-01-01T00:00:00+00:00",
-                    "principal_id": None,
-                    "require_authenticated": False,
-                }
-            ],
-        },
-        ("POST", "/agents/dispatch-hold/transition-batch"): {
-            "epoch_id": "route-coverage-transition-epoch",
-            "successor_reason": "route-coverage synchronized successor",
-            "holds": [
-                {
-                    "agent_id": ctx["dispatch_hold_transition_agent_id"],
-                    "reason": "route-coverage transition deployment",
-                    "generation": "route-coverage-transition-generation",
-                    "baseline_seen": "2000-01-01T00:00:00+00:00",
-                    "principal_id": None,
-                    "require_authenticated": False,
-                }
-            ],
-        },
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"reason": "route-coverage quarantine"},
         ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
             "reason": "route-coverage deployment",
@@ -2240,13 +1838,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("PUT", "/roles/{role_id}"): {"description": "updated qa route role"},
         ("POST", "/roles/seed"): {},
         ("POST", "/agents/{agent_id}/role"): {"role_id_or_slug": ctx["role_slug"]},
-        ("POST", "/provisioning/requests"): {
-            "reason": "case provision",
-            "capabilities": ["python"],
-            "tenant_id": ctx["tenant_id"],
-        },
-        ("POST", "/provisioning/requests/{request_id}/fulfill"): {"agent_id": ctx["agent_id"]},
-        ("POST", "/provisioning/requests/{request_id}/cancel"): {"reason": "route coverage cancel"},
         ("POST", "/workflows"): {
             "slug": "route-workflow-case",
             "name": "Route Workflow Case",
@@ -2385,27 +1976,6 @@ edges:
             "content": "route coverage learning: the hub answers on :8789",
             "record_type": "agent_learning:route_coverage",
         },
-        ("POST", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 20, "window_minutes": 30},
-        ("PUT", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 25, "window_minutes": 30},
-        ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},
-        ("POST", "/nap-runs/{run_id}/complete"): {
-            "actor": "operator",
-            "detail": {"summary": "rested"},
-        },
-        ("POST", "/nap-runs/{run_id}/fail"): {
-            "actor": "operator",
-            "reason": "route coverage failure case",
-        },
-        ("POST", "/agents/{agent_id}/nap-cycle"): {
-            "actor": "operator",
-            "embed_into_medium": False,
-            "emit_dream_artifacts": True,
-        },
-        ("POST", "/agents/{agent_id}/nap-consolidate"): {
-            "embed_into_medium": False,
-            "emit_dream_artifacts": True,
-            "created_by": "operator",
-        },
         ("POST", "/agents/{agent_id}/heartbeat"): {
             "status": "idle",
             "health_status": "healthy",
@@ -2489,14 +2059,6 @@ edges:
             "actor": "operator",
         },
         ("POST", "/github-ingest/run"): {},
-        ("POST", "/cicd-monitor/run"): {},
-        ("POST", "/backlog-groom/run"): {},
-        ("POST", "/nap-tick/run"): {},
-        ("POST", "/curiosity-review/run"): {},
-        ("POST", "/self-heal/run"): {},
-        ("POST", "/judgement/run"): {},
-        ("POST", "/model-selection/refresh"): {},
-        ("POST", "/model-selection/promote"): {},
         ("POST", "/observability/metrics"): {
             "name": "route.metric",
             "value": 1.0,
@@ -2524,13 +2086,6 @@ edges:
             "agent_id": ctx["agent_id"],
             "created_by": "operator",
             "write": False,
-        },
-        ("POST", "/dream/import-logs"): {
-            "dream_logs_dir": "/nonexistent-route-coverage-dream-logs",
-            "agent_id": ctx["agent_id"],
-            "created_by": "route-coverage",
-            "embed": False,
-            "dry_run": True,
         },
         ("POST", "/integrations/findings"): {
             "source_kind": "repository",
@@ -2639,7 +2194,6 @@ edges:
             "branch": "main",
             "restart": False,
         },
-        ("POST", "/source-convergence/tick"): {},
         ("POST", "/agentbus/artifact-publish"): {
             "sender_agent_id": ctx["agent_id"],
             "recipient_agent_ids": [ctx["reviewer_agent_id"]],
@@ -2705,16 +2259,6 @@ edges:
             "collection": "mac_memory_medium",
             "point_id": "route-point-case",
         },
-        ("POST", "/environments"): {
-            "name": "route-env-case",
-            "tenant_id": ctx["tenant_id"],
-            "channel": "fleet",
-        },
-        ("POST", "/environments/{env_id}/deploy"): {
-            "artifact_id": ctx["artifact_id"],
-            "actor": "operator",
-            "metadata": {"route_case": True},
-        },
         ("POST", "/runtimes"): {
             "name": "route-runtime-case",
             "manifest": _runtime_manifest(),
@@ -2773,88 +2317,12 @@ edges:
             "target_id": ctx["runtime_id"],
             "score": 0.83,
         },
-        ("POST", "/rollouts"): {
-            "version": "route-rollout-case",
-            "strategy": "full",
-            "target_percent": 0,
-            "created_by": "operator",
-            "tenant_id": ctx["tenant_id"],
-            "runtime_environment_id": ctx["runtime_id"],
-            "artifact_uri": "https://example.test/artifacts/rollout-case.tar",
-            "artifact_hash": "sha256:" + "4" * 64,
-            "health_policy": {"required_checks": ["runtime"]},
-        },
-        ("POST", "/rollouts/{rollout_id}/advance"): {
-            "action": "pause",
-            "actor": "operator",
-            "detail": {"reason": "route coverage"},
-        },
-        ("POST", "/rollouts/{rollout_id}/artifact"): {
-            "artifact_uri": "https://example.test/artifacts/rollout-new.tar",
-            "artifact_hash": "sha256:" + "5" * 64,
-            "actor": "operator",
-        },
-        ("POST", "/rollouts/{rollout_id}/health"): {
-            "actor": "operator",
-            "checks": {"runtime": {"status": "passed"}},
-        },
-        ("POST", "/rollouts/{rollout_id}/rescue"): {
-            "actor": "operator",
-            "reason": "route coverage rescue",
-        },
         # paused=False keeps the shared coverage project claimable for other cases.
         ("POST", "/projects/{project}/dispatch"): {
             "paused": False,
             "actor": "operator",
         },
         ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
-        ("POST", "/optimizer/policies"): {
-            "name": "route-sci-extra",
-            "project": ctx["project_name"],
-            "parameters": {"plan_first": True},
-            "created_by": "route-coverage",
-        },
-        ("POST", "/optimizer/policies/{policy_id}/promote"): {
-            "actor": "route-coverage",
-            "reason": "route coverage",
-        },
-        ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
-            "actor": "route-coverage",
-            "reason": "route coverage",
-        },
-        ("POST", "/optimizer/experiments"): {
-            "name": "route-sci-exp-2",
-            "project": ctx["project_name"],
-            "hypothesis": "route coverage hypothesis",
-            "control_policy_id": ctx["sci_policy_id"],
-            "treatment_policy_id": ctx["sci_policy2_id"],
-            "primary_metric": "accepted_success",
-            "created_by": "route-coverage",
-        },
-        ("POST", "/optimizer/experiments/{experiment_id}/start"): {"actor": "route-coverage"},
-        ("POST", "/optimizer/experiments/{experiment_id}/pause"): {
-            "actor": "route-coverage",
-            "reason": "route coverage",
-        },
-        ("POST", "/optimizer/experiments/{experiment_id}/promote"): {
-            "actor": "route-coverage",
-            "reason": "route coverage",
-        },
-        ("POST", "/agents/dispatch-hold/epochs/open"): {
-            "epoch_id": "route-coverage-open-empty",
-            "participants": [],
-        },
-        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/prove"): {
-            "identity_sha256": "sha256:" + "a" * 64,
-            "proofs": [],
-        },
-        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/commit"): {
-            "identity_sha256": "sha256:" + "a" * 64,
-        },
-        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/abort"): {
-            "identity_sha256": "sha256:" + "a" * 64,
-            "reason": "route coverage absent epoch",
-        },
         ("POST", "/tasks/{task_id}/activity"): {
             "phase": "worker",
             "actor": "operator",
@@ -2878,9 +2346,6 @@ edges:
             "params": {"agent_id": ctx["submit_agent_id"]}
         },
         ("POST", "/workflows/runs/tick"): {},
-        ("POST", "/optimizer/tick"): {},
-        ("POST", "/optimizer/experiments/{experiment_id}/observe/{task_id}"): {},
-        ("POST", "/optimizer/experiments/{experiment_id}/analyze"): {},
         ("POST", "/reviews/default/tick"): {"params": {"limit": 1}},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {},
         ("POST", "/agents/{agent_id}/disable"): {},
@@ -2888,12 +2353,6 @@ edges:
         ("POST", "/agents/{agent_id}/messages/deliver"): {"params": {"limit": 10}},
         ("POST", "/agentbus/streams/{stream_id}/close"): {
             "params": {"sender_agent_id": ctx["agent_id"], "status": "closed"}
-        },
-        # Read-only shapes of both memory-tier maintenance routes, so an
-        # inventory sweep can never re-embed or retire anything.
-        ("POST", "/v1/memory/promote"): {"params": {"dry_run": True}},
-        ("POST", "/v1/memory/reconcile-embeddings"): {
-            "params": {"tier": "medium", "report_only": True}
         },
     }
     key = (method, path_template)
@@ -2919,44 +2378,6 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
     (hermes_home / "config.yaml").write_text("{}\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "fleets.yaml"))
-
-    class FakeVectorWriter:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def recall(self, query, **kwargs):
-            payload = {"dream_confidence": "high", "dream_confidence_score": 1.0}
-            return [
-                {
-                    "memory_id": "mem_route_fake",
-                    "score": 0.99,
-                    "summary": "fake vector recall for %s" % query,
-                    "payload": payload,
-                }
-            ]
-
-        # The memory-tier maintenance routes build their writer through this
-        # class too, so the fake has to answer for them or the sweep dies on an
-        # AttributeError instead of exercising the route.
-        def embedding_space_report(self, *, tier="medium", scan_limit=None):
-            return {
-                "tier": tier,
-                "collection": "mac_memory_%s" % tier,
-                "target_model": "fake/embedder",
-                "scanned": 0,
-                "embedding_models": {},
-                "mismatched": 0,
-            }
-
-        def reconcile_embedding_spaces(self, **kwargs):
-            return {"reembedded": 0, "reembedded_memory_ids": [], "orphaned": []}
-
-        def embed_memory(self, memory_id, **kwargs):
-            raise AssertionError("route coverage must not embed; the promote case is dry_run")
-
-    import mac.vector_writer_service as vector_writer_service
-
-    monkeypatch.setattr(vector_writer_service, "VectorWriterService", FakeVectorWriter)
 
     cp = ControlPlane.in_memory()
     app = create_app(control_plane=cp)

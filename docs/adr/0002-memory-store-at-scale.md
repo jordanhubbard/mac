@@ -1,6 +1,7 @@
 # ADR 0002 — Memory store / vector tier at fleet scale (50–200 agents per hub)
 
-- Status: **Proposed**
+- Status: **Proposed** — the MAC vector memory tier (writer, recall,
+  promotion, nap consolidation) was removed on 2026-09-30
 - Date: 2026-05-31
 - Decision owner: Jordan Hubbard
 - Context: the fleet today is 3 agents (the minimum), but the target is

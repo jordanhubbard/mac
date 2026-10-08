@@ -11,11 +11,6 @@ marked `historical archive` and must not be read as current behaviour.
 
 | Category | Source | Title |
 |---|---|---|
-| supplemental reference | [`activation-probe/calibration-spec.md`](../activation-probe/calibration-spec.md) | Held-out calibration protocol |
-| supplemental reference | [`activation-probe/classifier-spec.md`](../activation-probe/classifier-spec.md) | External activation-probe classifier contract |
-| supplemental reference | [`activation-probe/integration-guide.md`](../activation-probe/integration-guide.md) | External activation-probe worker integration |
-| supplemental reference | [`activation-probe/prototype-report.md`](../activation-probe/prototype-report.md) | External activation-probe prototype |
-| supplemental reference | [`activation-probe/runtime-selection.md`](../activation-probe/runtime-selection.md) | External activation capture runtime |
 | architecture decision | [`adr/0001-unify-hermes-runtime-into-mac.md`](../adr/0001-unify-hermes-runtime-into-mac.md) | ADR 0001 — Unify the Hermes runtime into the `mac` monorepo |
 | architecture decision | [`adr/0002-memory-store-at-scale.md`](../adr/0002-memory-store-at-scale.md) | ADR 0002 — Memory store / vector tier at fleet scale (50–200 agents per hub) |
 | architecture decision | [`adr/0003-tokenhub-core-into-mac.md`](../adr/0003-tokenhub-core-into-mac.md) | ADR 0003 — Optional in-mac model router + vault (revisiting TokenHub's boundary) |
@@ -49,6 +44,7 @@ marked `historical archive` and must not be read as current behaviour.
 | architecture decision | [`adr/0032-cli-session-hooks-not-tmux.md`](../adr/0032-cli-session-hooks-not-tmux.md) | ADR 0032: CLI sessions use each harness's hooks, not tmux, for recording and AgentBus injection |
 | architecture decision | [`adr/0033-local-continuation-hub-supervision.md`](../adr/0033-local-continuation-hub-supervision.md) | ADR 0033: Agents continue locally under independent hub supervision |
 | architecture decision | [`adr/0034-project-mission-control.md`](../adr/0034-project-mission-control.md) | ADR 0034 - Project Mission Control is an additional observe view, not the IDE |
+| architecture decision | [`adr/0035-replace-the-all-fleet-deployment-transaction.md`](../adr/0035-replace-the-all-fleet-deployment-transaction.md) | ADR 0035: The all-fleet deployment transaction is replaced, not extended |
 | supplemental reference | [`agent-lifecycle-proof.md`](../agent-lifecycle-proof.md) | Agent Lifecycle Proof |
 | historical archive | [`archive/field-notes/assessment-2026-08-02.md`](../archive/field-notes/assessment-2026-08-02.md) | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | [`archive/field-notes/assessment-task-1b6783.md`](../archive/field-notes/assessment-task-1b6783.md) | Assessment: task_1b67831356c347c3a91d782982f47d1c |
@@ -154,18 +150,12 @@ marked `historical archive` and must not be read as current behaviour.
 | runbook | [`break-glass-host-recovery.md`](../break-glass-host-recovery.md) | Break-glass host recovery |
 | supplemental reference | [`c26-certifier-phase-profile-example.md`](../c26-certifier-phase-profile-example.md) | c26 certifier phase-profile example |
 | supplemental reference | [`client-bootstrap-contract.md`](../client-bootstrap-contract.md) | Client Bootstrap Contracts |
-| supplemental reference | [`coding-cli-credentials.md`](../coding-cli-credentials.md) | Coding-CLI Credentials and Model Selection |
-| supplemental reference | [`coding-route-ladder.md`](../coding-route-ladder.md) | The coding-route ladder |
-| supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis and autonomous repair |
+| supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis |
 | supplemental reference | [`dashboard-connection.md`](../dashboard-connection.md) | Dashboard Connection Contract |
-| supplemental reference | [`deploy-prerequisite-vs-phase1-audit.md`](../deploy-prerequisite-vs-phase1-audit.md) | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
+| supplemental reference | [`dedicated-vm-verifier.md`](../dedicated-vm-verifier.md) | Dedicated VM repository verification |
 | supplemental reference | [`dispatch-priority-bias-audit.md`](../dispatch-priority-bias-audit.md) | Dispatch priority bias ordering audit |
-| supplemental reference | [`dream-repair-slack-lineage.md`](../dream-repair-slack-lineage.md) | Ground truth: dream finding `dreamrepair:4becfa8d` (slack failure_pattern) |
-| supplemental reference | [`dreaming-rewrite.md`](../dreaming-rewrite.md) | Dreaming, rewritten |
 | supplemental reference | [`env-config-reference.md`](../env-config-reference.md) | MAC environment configuration reference |
-| runbook | [`fleet-cutover-transaction-protocol.md`](../fleet-cutover-transaction-protocol.md) | Fleet Cut-over Transaction Protocol |
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
-| runbook | [`fleet-node-onboarding-checklist.md`](../fleet-node-onboarding-checklist.md) | Fleet node onboarding checklist |
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
 | supplemental reference | [`fleet-registry-schema.md`](../fleet-registry-schema.md) | Fleet registry schema |
 | supplemental reference | [`getting-started.md`](../getting-started.md) | MAC Quickstart |
@@ -180,7 +170,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`hermes-integration.md`](../hermes-integration.md) | Hermes Integration |
 | supplemental reference | [`hermes-retirement-premises.md`](../hermes-retirement-premises.md) | Testing the premises for retiring the vendored Hermes tree |
 | supplemental reference | [`hermes-vendor-fate.md`](../hermes-vendor-fate.md) | Fate of the vendored Hermes tree |
-| supplemental reference | [`hgx-elastic-capacity.md`](../hgx-elastic-capacity.md) | HGX elastic capacity |
 | supplemental reference | [`home-consolidation.md`](../home-consolidation.md) | Home-Directory Consolidation: Analysis & Plan |
 | runbook | [`hub-availability.md`](../hub-availability.md) | Hub Availability |
 | supplemental reference | [`hub-host-saturation-remediation.md`](../hub-host-saturation-remediation.md) | Hub-Host Saturation Remediation |
@@ -189,18 +178,21 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`in-flight-agent-messages.md`](../in-flight-agent-messages.md) | Reaching an agent that is already working |
 | landing page | [`index.md`](../index.md) | MAC: trustworthy work across an agent fleet |
 | supplemental reference | [`integration-authority-contract.md`](../integration-authority-contract.md) | Integration Authority Contract |
+| supplemental reference | [`investigations/2026-09-16-live-trust-acceptance.md`](../investigations/2026-09-16-live-trust-acceptance.md) | Live request and recovery acceptance, 2026-09-16 |
+| runbook | [`investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md`](../investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md) | Ovswarm deployment liveness death spiral RCCA, 2026-09-21 |
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
 | supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
+| supplemental reference | [`investigations/read-only-verifier-process-ownership.md`](../investigations/read-only-verifier-process-ownership.md) | Read-only verifier process ownership |
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
-| supplemental reference | [`memory-tier-schema.md`](../memory-tier-schema.md) | MAC vector memory tier — schema, collections, model, TTLs |
-| supplemental reference | [`memory-tier-verification.md`](../memory-tier-verification.md) | Memory tier — end-to-end verification |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
 | supplemental reference | [`oneshot-isolation-gate-verification.md`](../oneshot-isolation-gate-verification.md) | Oneshot isolation — contract gate verification |
 | supplemental reference | [`openclaw-identities.md`](../openclaw-identities.md) | OpenClaw public identities and fleet representation |
 | supplemental reference | [`openshell-nemo-relay-e2e.md`](../openshell-nemo-relay-e2e.md) | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | [`openshell-nemo-relay-integration.md`](../openshell-nemo-relay-integration.md) | OpenShell + NeMo Relay integration |
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
+| supplemental reference | [`operations/fleet-update.md`](../operations/fleet-update.md) | Updating the fleet with `fleet-update` |
+| supplemental reference | [`peer-repair-design.md`](../peer-repair-design.md) | Peer Repair: agents repairing agents |
 | supplemental reference | [`presentations/agentfabric-overview/README.md`](../presentations/agentfabric-overview/README.md) | AgentFabric overview — authoring package |
 | supplemental reference | [`presentations/agentfabric-overview/SKILL.md`](../presentations/agentfabric-overview/SKILL.md) | AgentFabric overview presentation |
 | supplemental reference | [`presentations/agentfabric-overview/current-deliverables.md`](../presentations/agentfabric-overview/current-deliverables.md) | Current deliverables — AgentFabric overview |
@@ -218,22 +210,17 @@ marked `historical archive` and must not be read as current behaviour.
 | generated reference | [`reference/openapi.md`](../reference/openapi.md) | HTTP API reference |
 | generated reference | [`reference/staged-module-integration-audit.md`](../reference/staged-module-integration-audit.md) | Staged-but-unwired `src/mac` module integration audit |
 | supplemental reference | [`releases/v1.5.0-audit.md`](../releases/v1.5.0-audit.md) | v1.5.0 documentation and contribution audit |
-| supplemental reference | [`repository-cicd-monitor.md`](../repository-cicd-monitor.md) | Repository CI/CD lifecycle monitoring |
 | supplemental reference | [`repository-ref-hygiene.md`](../repository-ref-hygiene.md) | Managed Repository Ref Hygiene |
 | supplemental reference | [`repository-runtime-contract.md`](../repository-runtime-contract.md) | Repository Runtime Contract |
-| supplemental reference | [`review-strategy-experiments.md`](../review-strategy-experiments.md) | Review-strategy experiments |
 | supplemental reference | [`review-tick-stall-diagnosis.md`](../review-tick-stall-diagnosis.md) | Why the hub self-tick fails to drain the REVIEWING backlog |
 | supplemental reference | [`roadmap.md`](../roadmap.md) | MAC Roadmap |
-| supplemental reference | [`scientific-optimizer.md`](../scientific-optimizer.md) | Autonomous scientific optimizer |
 | supplemental reference | [`secrets-management-guide.md`](../secrets-management-guide.md) | Secrets Management Guide |
 | supplemental reference | [`security/openshell-0.0.72-compatibility-review.mdx`](../security/openshell-0.0.72-compatibility-review.mdx) | OpenShell 0.0.72 Compatibility Review |
 | runbook | [`soul-preservation-runbook.md`](../soul-preservation-runbook.md) | Soul Preservation Runbook |
 | supplemental reference | [`structured-task-bodies.md`](../structured-task-bodies.md) | Structured task bodies: actions on a Component |
 | historical archive | [`superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
 | historical archive | [`superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) | Autonomous Project Routing and Review/Fix Loop Design |
-| historical archive | [`superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md`](../superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md) | K8s bootstrap fleet registration — design |
 | historical archive | [`superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md`](../superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md) | Native Darwin OpenClaw and Slack home-channel routing — design |
-| runbook | [`synchronized-fleet-cutover.md`](../synchronized-fleet-cutover.md) | Synchronized Fleet Cut-over |
 | supplemental reference | [`task-dependency-semantics.md`](../task-dependency-semantics.md) | Task dependency failure semantics |
 | supplemental reference | [`task-throughput-observability.md`](../task-throughput-observability.md) | Task throughput observability |
 | supplemental reference | [`testing-strategy.md`](../testing-strategy.md) | Test portfolio strategy |

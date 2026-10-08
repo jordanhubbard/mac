@@ -13,7 +13,7 @@
 # --fail-closed (MAC_ALLOW_UNSANDBOXED_YOLO=0).
 #
 # Knobs (env):
-#   OPENSHELL_VERSION   default 0.0.72        — CLI + gateway version (must match)
+#   OPENSHELL_VERSION   default 0.1.2         — CLI + gateway + supervisor version (must match)
 #   GH_VERSION          default 2.95.0        — GitHub CLI version in runtime image
 #   MAC_HOME            default $HOME/.mac
 #   MAC_SRC             default $MAC_HOME/src/mac    — mac source tree (image build context)
@@ -26,6 +26,9 @@
 #   OSH_GPU             auto|yes|no          — auto: detect nvidia-smi
 #   OSH_HUB_URL         default from mac.env MAC_HUB_URL — the hub the sandbox egresses to
 # Flags: --enable  --fail-closed  --skip-image
+#        --rollback [DIR]  restore the CLIs, gateway, gateway.toml and gateway DB
+#                          from an upgrade backup (default: the newest one) and
+#                          restart the gateway; see "Upgrade backup" below.
 set -euo pipefail
 
 OPENSHELL_ASSET_REGISTRY="$(cd "$(dirname "$0")" && pwd)/reviewed-cli-assets.sh"
@@ -37,17 +40,18 @@ OPENSHELL_ASSET_REGISTRY="$(cd "$(dirname "$0")" && pwd)/reviewed-cli-assets.sh"
 . "$OPENSHELL_ASSET_REGISTRY"
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-$OPENSHELL_REVIEWED_CLI_VERSION}"
 # Multi-platform linux/amd64+linux/arm64 supervisor index reviewed with the
-# OpenShell 0.0.72 fleet baseline. Never let a mutable `latest` image change the
-# certifier's isolation runtime between otherwise identical executions.
-OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d"
+# OpenShell 0.1.2 fleet baseline (the index the v0.1.2 tag resolves to). Never
+# let a mutable `latest` image change the certifier's isolation runtime between
+# otherwise identical executions.
+OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a"
 case "$OPENSHELL_VERSION" in
-  0.0.72)
+  0.1.2)
     IFS='|' read -r _osh_asset OSH_CLI_LINUX_AMD64_SHA256 _osh_cli_sha \
       <<<"$(reviewed_openshell_cli_asset linux x86_64)"
     IFS='|' read -r _osh_asset OSH_CLI_LINUX_ARM64_SHA256 _osh_cli_sha \
       <<<"$(reviewed_openshell_cli_asset linux aarch64)"
-    OSH_GATEWAY_LINUX_AMD64_SHA256="03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
-    OSH_GATEWAY_LINUX_ARM64_SHA256="a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108"
+    OSH_GATEWAY_LINUX_AMD64_SHA256="218d887845b3a020ab7535c9985eb9c666d6938f144044957f8b82b42892aadb"
+    OSH_GATEWAY_LINUX_ARM64_SHA256="8ec1b6ca5b71ef5085fa51f3244d719a541e8f0d58cc569c7a0d6705b6204397"
     ;;
   *)
     echo "unsupported unreviewed OPENSHELL_VERSION=$OPENSHELL_VERSION; add exact release-asset digests before upgrading" >&2
@@ -69,10 +73,14 @@ OSH_GATEWAY_SUPERVISOR_CONFIG="/etc/supervisor/conf.d/openshell-gateway.conf"
 DEPLOYED_SOURCE_REVISION_FILE="${MAC_DEPLOYED_SOURCE_REVISION_FILE:-$MAC_HOME/deployed-source-revision}"
 BIN="$HOME/.local/bin"
 ARCH="$(uname -m)"   # x86_64 | aarch64
-DO_ENABLE=0; DO_FAILCLOSED=0; SKIP_IMAGE=0
-for a in "$@"; do case "$a" in
+DO_ENABLE=0; DO_FAILCLOSED=0; SKIP_IMAGE=0; DO_ROLLBACK=0; ROLLBACK_DIR=""
+while [ "$#" -gt 0 ]; do case "$1" in
   --enable) DO_ENABLE=1;; --fail-closed) DO_FAILCLOSED=1; DO_ENABLE=1;; --skip-image) SKIP_IMAGE=1;;
-  *) echo "unknown arg: $a" >&2; exit 2;; esac; done
+  --rollback)
+    DO_ROLLBACK=1
+    if [ "$#" -gt 1 ] && [ "${2#--}" = "$2" ]; then ROLLBACK_DIR="$2"; shift; fi
+    ;;
+  *) echo "unknown arg: $1" >&2; exit 2;; esac; shift; done
 log(){ printf '[bootstrap-openshell] %s\n' "$*"; }
 truthy(){ case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1|true|yes|on) return 0;; *) return 1;; esac; }
 download(){ curl --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 -fsSL "$@"; }
@@ -223,11 +231,11 @@ resolve_deployed_source_revision(){
     echo "invalid durable deployed-source revision marker" >&2
     return 1
   fi
-  if [ -n "$git_revision" ] && [ -n "$marker_revision" ] \
-      && [ "$git_revision" != "$marker_revision" ]; then
-    echo "deployed Git checkout does not match durable source revision marker" >&2
-    return 1
-  fi
+  # The deployed checkout HEAD is authoritative. The durable marker lost its
+  # writer when the fleet setup tooling was deleted (447f37ca), so a leftover
+  # value can lag the checkout; refusing here would strand a node after its
+  # binaries were already replaced. Keep the marker only as the archive fallback
+  # for sources with no Git metadata.
   revision="${git_revision:-$marker_revision}"
   if [ -z "$revision" ]; then
     echo "cannot verify runtime image: deployed source revision is unavailable" >&2
@@ -241,7 +249,11 @@ build_runtime_image() {
   local image_source_sha image_source_sha_file runtime_digest runtime_config
   local image_revision image_input_sha runtime_ref_file runtime_ref_tmp builder
   local runtime_input_file runtime_input_tmp runtime_build_file runtime_build_tmp
-  image_source_sha="$(resolve_deployed_source_revision)" || return 1
+  image_source_sha="$DEPLOYED_SOURCE_REVISION"
+  [ -n "$image_source_sha" ] || {
+    echo "ERROR: deployed source revision was not resolved before the image build" >&2
+    return 1
+  }
   image_source_sha_file="$OSH_DIR/image-source-sha"
   runtime_ref_file="$OSH_DIR/runtime-image-ref"
   runtime_input_file="$OSH_DIR/runtime-input-sha256"
@@ -316,7 +328,10 @@ build_runtime_image() {
 }
 
 verify_supervisor_image() {
-  local runtime_config version_output container_id entrypoint extracted
+  # OpenShell 0.1 runs the supervisor as its own host-networked container from
+  # this image (it is no longer a static binary bind-mounted into the workload),
+  # so prove the exact digest's identity rather than extracting a binary.
+  local runtime_config version_output entrypoint
   runtime_config="$(mktemp -d)"
   printf '{}' > "$runtime_config/config.json"
   log "pulling and verifying OpenShell supervisor $OSH_SUPERVISOR_IMAGE"
@@ -327,57 +342,21 @@ verify_supervisor_image() {
   fi
   rm -rf "$runtime_config"
   version_output="$("$OSH_DOCKER_BIN" run --rm "$OSH_SUPERVISOR_IMAGE" --version 2>&1 || true)"
-  if [ "$version_output" != "openshell-sandbox $OPENSHELL_VERSION" ]; then
+  if [ "$version_output" != "openshell-supervisor $OPENSHELL_VERSION" ]; then
     echo "ERROR: OpenShell supervisor version mismatch: expected $OPENSHELL_VERSION, got '$version_output'" >&2
     return 1
   fi
   entrypoint="$("$OSH_DOCKER_BIN" image inspect --format '{{json .Config.Entrypoint}}' \
     "$OSH_SUPERVISOR_IMAGE")"
-  entrypoint="$(python3 -c '
+  if ! python3 -c '
 import json, sys
 value = json.loads(sys.argv[1])
-if not isinstance(value, list) or len(value) != 1 or not value[0].startswith("/"):
-    raise SystemExit("reviewed supervisor image has no exact absolute entrypoint")
-print(value[0])
-' "$entrypoint")" || return 1
-  container_id="$("$OSH_DOCKER_BIN" create "$OSH_SUPERVISOR_IMAGE")" || return 1
-  extracted="$(mktemp "${TMPDIR:-/tmp}/openshell-sandbox.XXXXXX")"
-  if ! "$OSH_DOCKER_BIN" cp "$container_id:$entrypoint" "$extracted"; then
-    "$OSH_DOCKER_BIN" rm -f "$container_id" >/dev/null 2>&1 || true
-    rm -f "$extracted"
-    echo "ERROR: failed to extract the reviewed OpenShell supervisor" >&2
+if value != ["/openshell-supervisor"]:
+    raise SystemExit("reviewed supervisor image has an unexpected entrypoint")
+' "$entrypoint"; then
+    echo "ERROR: reviewed OpenShell supervisor image entrypoint is not /openshell-supervisor" >&2
     return 1
   fi
-  "$OSH_DOCKER_BIN" rm -f "$container_id" >/dev/null
-  if ! python3 - "$extracted" <<'PY'
-import struct
-import sys
-from pathlib import Path
-
-raw = Path(sys.argv[1]).read_bytes()
-if raw[:4] != b"\x7fELF" or raw[4] not in (1, 2) or raw[5] not in (1, 2):
-    raise SystemExit("reviewed supervisor is not an ELF binary")
-order = "<" if raw[5] == 1 else ">"
-if raw[4] == 2:
-    (offset,) = struct.unpack_from(order + "Q", raw, 32)
-    entry_size, count = struct.unpack_from(order + "HH", raw, 54)
-else:
-    (offset,) = struct.unpack_from(order + "I", raw, 28)
-    entry_size, count = struct.unpack_from(order + "HH", raw, 42)
-if not entry_size or offset + entry_size * count > len(raw):
-    raise SystemExit("reviewed supervisor has an invalid ELF program table")
-for index in range(count):
-    (kind,) = struct.unpack_from(order + "I", raw, offset + index * entry_size)
-    if kind == 3:  # PT_INTERP means the binary requires a host/container loader.
-        raise SystemExit("reviewed supervisor is dynamically linked")
-PY
-  then
-    rm -f "$extracted"
-    echo "ERROR: reviewed OpenShell supervisor is not statically linked" >&2
-    return 1
-  fi
-  install -m700 "$extracted" "$MAC_HOME/bin/openshell-sandbox"
-  rm -f "$extracted"
   log "OpenShell supervisor: $version_output"
 }
 
@@ -972,6 +951,7 @@ for item in value:
         disposable_patterns = {
             "task": r"mac-task-[A-Za-z0-9._-]+",
             "hubverify": r"mac-hubverify-[A-Za-z0-9._-]+",
+            "hv": r"mac-hv-[A-Za-z0-9._-]+",
             "codingcap": r"mac-codingcap-[A-Za-z0-9._-]+",
             "runtime-smoke": r"mac-runtime-smoke-[A-Za-z0-9._-]+",
             "security-probe": r"mac-security-probe-[A-Za-z0-9._-]+",
@@ -1099,7 +1079,7 @@ retire_managed_sandboxes_via_docker() {
     # the API path: only the historical disposable families already reviewed
     # by mac.openshell_sandbox_gc are eligible, and only after every container
     # is stopped. Any future family fails closed until explicitly reviewed.
-    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
+    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
       action=disposable
     elif [ -n "$expected_openclaw" ] && [ "$sandbox_name" = "$expected_openclaw" ]; then
       action=openclaw
@@ -1207,6 +1187,8 @@ run_live_confinement_probe() {
   [ -f "$probe" ] || { echo "ERROR: missing OpenShell confinement probe: $probe" >&2; return 1; }
   rm -f "$output"
   openshell_local_gateway "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
+  # OpenShell 0.1 rejects --upload combined with a command, so upload on a
+  # detached (kept-alive) create and run the probe through exec.
   if openshell_local_gateway "$cli" sandbox create \
       --no-auto-providers \
       --policy "$MAC_HOME/openshell-policy.yaml" \
@@ -1218,8 +1200,14 @@ run_live_confinement_probe() {
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
       --upload "$probe:/sandbox" \
+      --detach \
+      </dev/null >"$output" 2>&1 \
+    && openshell_local_gateway "$cli" sandbox exec \
+      --name "$name" \
+      --no-tty \
+      --env HOME=/tmp \
       -- /bin/bash /sandbox/live-confinement-probe.sh \
-      >"$output" 2>&1; then
+      </dev/null >>"$output" 2>&1; then
     openshell_local_gateway "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
     grep -q '^CONFINEMENT_PROBE_OK$' "$output" \
       || { echo "ERROR: OpenShell confinement probe omitted success sentinel" >&2; return 1; }
@@ -1239,8 +1227,7 @@ run_live_confinement_probe() {
 # the agent as a plain host application: there is no gateway container, no
 # Docker Desktop requirement, and no runtime image to build or pull. This exit
 # is deliberately successful -- a macOS node with no OpenShell is correctly
-# provisioned, not broken -- and it is the same state fleet-node-install.sh
-# reaches on its "optional OpenShell runtime disabled" path.
+# provisioned, not broken.
 if [ "$(uname -s)" = "Darwin" ]; then
   log "macOS host install: the managed OpenShell runtime is Linux-only (ADR 0015); nothing to bootstrap"
   log "isolation posture on this node is macos_host: a standard macOS application, with no container, VM, seccomp filter or egress proxy"
@@ -1311,9 +1298,13 @@ ensure_docker_engine() {
     if getent group docker >/dev/null 2>&1; then
       sudo usermod -aG docker "$USER" >/dev/null 2>&1 || true
     fi
-    if command -v setfacl >/dev/null && [ -S /var/run/docker.sock ]; then
-      sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock >/dev/null 2>&1 || true
-    fi
+  fi
+  # A non-interactive SSH session can already see a newly granted docker group
+  # while the long-lived systemd user manager still has its older supplementary
+  # group set. The gateway runs under that manager, so grant this exact user
+  # access to the local daemon socket even when the deploy shell's probe passes.
+  if command -v setfacl >/dev/null && [ -S /var/run/docker.sock ]; then
+    sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock >/dev/null 2>&1 || true
   fi
   if ! "$OSH_DOCKER_BIN" info >/dev/null 2>&1; then
     echo "Docker Engine/Moby is installed but this user cannot reach the daemon." >&2
@@ -1382,6 +1373,124 @@ ensure_openshell_docker_bridge() {
   printf '%s\n' "$bridge_iface"
 }
 
+# --- Upgrade backup and rollback ---------------------------------------------
+# OpenShell 0.1 cannot mix with 0.0.x peers, and its gateway migrates the
+# SQLite database in place: a 0.0.x gateway cannot read it back. So before the
+# binaries change version, with every sandbox retired (0.0.x sandboxes are
+# incompatible with 0.1, per the upgrade guide) and the old gateway stopped,
+# copy both CLIs (~/.local/bin/openshell and the reviewed ~/.mac/bin/openshell
+# with its receipt), the gateway binary, gateway.toml, the gateway wrapper and
+# the gateway DB. `--rollback [DIR]` restores exactly that set and restarts the
+# gateway. Validated against a worker canary on 2026-10-03.
+OSH_BACKUP_ROOT="$OSH_DIR/upgrade-backups"
+OSH_GATEWAY_STATE_DIR="${OSH_GATEWAY_STATE_DIR:-$HOME/.local/state/openshell/gateway}"
+# name<TAB>path pairs; the DB files are handled separately (glob + WAL/SHM).
+openshell_rollback_files(){
+  printf '%s\t%s\n' \
+    openshell "$BIN/openshell" \
+    reviewed-openshell "$MAC_HOME/bin/openshell" \
+    reviewed-cli.json "$OSH_DIR/reviewed-cli.json" \
+    openshell-gateway "$BIN/openshell-gateway" \
+    gateway.toml "$OSH_DIR/gateway.toml" \
+    run-gateway.sh "$OSH_DIR/run-gateway.sh"
+}
+
+installed_openshell_gateway_version(){
+  [ -x "$BIN/openshell-gateway" ] || return 0
+  "$BIN/openshell-gateway" --version 2>/dev/null | awk 'NR == 1 { print $NF }'
+}
+
+backup_openshell_install_for_upgrade(){
+  local installed dest name path db
+  installed="$(installed_openshell_gateway_version)"
+  if [ -z "$installed" ]; then
+    log "no installed OpenShell gateway; nothing to back up before install"
+    return 0
+  fi
+  if [ "$installed" = "$OPENSHELL_VERSION" ]; then
+    return 0
+  fi
+  dest="$OSH_BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$installed-to-$OPENSHELL_VERSION"
+  if ! mkdir -p "$dest/state" || ! chmod 700 "$OSH_BACKUP_ROOT" "$dest" "$dest/state"; then
+    echo "ERROR: could not create OpenShell upgrade backup $dest" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r name path; do
+    [ -e "$path" ] || continue
+    if ! cp -p "$path" "$dest/$name"; then
+      echo "ERROR: could not back up $path before the OpenShell upgrade" >&2
+      return 1
+    fi
+  done < <(openshell_rollback_files)
+  for db in "$OSH_GATEWAY_STATE_DIR"/openshell.db*; do
+    [ -e "$db" ] || continue
+    if ! cp -p "$db" "$dest/state/"; then
+      echo "ERROR: could not back up gateway database $db before the OpenShell upgrade" >&2
+      return 1
+    fi
+  done
+  printf 'from=%s\nto=%s\nstate_dir=%s\ncreated_at=%s\n' \
+    "$installed" "$OPENSHELL_VERSION" "$OSH_GATEWAY_STATE_DIR" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dest/MANIFEST"
+  log "backed up OpenShell $installed (CLIs, gateway, gateway.toml, DB) to $dest; rollback: $0 --rollback $dest"
+}
+
+restart_owned_gateway(){
+  if command -v systemctl >/dev/null 2>&1 \
+      && systemctl --user cat openshell-gateway.service >/dev/null 2>&1; then
+    systemctl --user daemon-reload
+    systemctl --user restart openshell-gateway >/dev/null 2>&1 \
+      && systemctl --user is-active --quiet openshell-gateway
+  elif [ -f "$OSH_GATEWAY_SUPERVISOR_CONFIG" ]; then
+    sudo supervisorctl restart openshell-gateway >/dev/null 2>&1 \
+      || sudo supervisorctl start openshell-gateway >/dev/null 2>&1
+  else
+    echo "ERROR: no MAC-owned OpenShell gateway service to restart" >&2
+    return 1
+  fi
+}
+
+rollback_openshell_install(){
+  local dir="$ROLLBACK_DIR" name path db staged
+  if [ -z "$dir" ] && [ -d "$OSH_BACKUP_ROOT" ]; then
+    dir="$(find "$OSH_BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)"
+  fi
+  if [ -z "$dir" ] || [ ! -f "$dir/MANIFEST" ]; then
+    echo "ERROR: no OpenShell upgrade backup to roll back to under $OSH_BACKUP_ROOT" >&2
+    return 1
+  fi
+  log "rolling OpenShell back from $dir ($(tr '\n' ' ' < "$dir/MANIFEST"))"
+  require_owned_gateway_manager_definitions || return 1
+  # Sandboxes created by the newer gateway cannot survive the older one either.
+  retire_managed_sandboxes_before_upgrade || return 1
+  stop_gateway_fail_closed
+  while IFS=$'\t' read -r name path; do
+    [ -e "$dir/$name" ] || continue
+    staged="$path.rollback.$$"
+    mkdir -p "$(dirname "$path")"
+    if ! cp -p "$dir/$name" "$staged" || ! mv -f "$staged" "$path"; then
+      rm -f "$staged"
+      echo "ERROR: could not restore $path from $dir" >&2
+      return 1
+    fi
+  done < <(openshell_rollback_files)
+  mkdir -p "$OSH_GATEWAY_STATE_DIR"
+  rm -f "$OSH_GATEWAY_STATE_DIR"/openshell.db*
+  for db in "$dir"/state/openshell.db*; do
+    [ -e "$db" ] || continue
+    if ! cp -p "$db" "$OSH_GATEWAY_STATE_DIR/"; then
+      echo "ERROR: could not restore gateway database $db" >&2
+      return 1
+    fi
+  done
+  if ! restart_owned_gateway || ! wait_for_local_gateway "$BIN/openshell"; then
+    stop_gateway_fail_closed
+    echo "ERROR: restored OpenShell gateway did not come back; see $OSH_DIR" >&2
+    return 1
+  fi
+  log "rolled back to OpenShell $(openshell --version 2>&1 | head -1); revert the repository pin before re-running bootstrap, or it reinstalls $OPENSHELL_VERSION"
+}
+
 stop_gateway_fail_closed() {
   if command -v systemctl >/dev/null 2>&1 \
       && systemctl --user cat openshell-gateway.service >/dev/null 2>&1; then
@@ -1406,8 +1515,18 @@ stop_gateway_fail_closed() {
 # Stop it before downloads or image builds so bootstrap latency never extends an
 # unauthenticated mesh exposure window. The gateway is restarted only after the
 # strict current rule and its persistence manager have both passed.
+if [ "$DO_ROLLBACK" = 1 ]; then
+  rollback_openshell_install || exit $?
+  exit 0
+fi
+# Resolve the deployed source identity BEFORE the node is touched: retire
+# sandboxes, stop the gateway, or replace any binary. A failed precondition must
+# leave the node on its working version instead of half-upgraded. Resolve once
+# and reuse it for the image build below.
+DEPLOYED_SOURCE_REVISION="$(resolve_deployed_source_revision)" || exit $?
 retire_managed_sandboxes_before_upgrade || exit $?
 stop_gateway_fail_closed
+backup_openshell_install_for_upgrade || exit $?
 verify_supervisor_image || exit $?
 
 mirror_image_for_openshell_runtime() {
@@ -1542,10 +1661,10 @@ validate_openshell_runtime_image() {
       --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
-      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v opencode; opencode --version | grep -F 1.18.18; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/buildx visible through OpenShell"
+    log "runtime image smoke: Bash >=5.2 plus gh/opencode/buildx visible through OpenShell"
   else
     rc=$?
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
@@ -1646,14 +1765,23 @@ log "jwt keys: $(ls "$OSH_DIR/pki/jwt" 2>/dev/null | tr '\n' ' ')"
 OPENSH_BRIDGE_IFACE="$(ensure_openshell_docker_bridge)" || exit $?
 log "OpenShell Docker bridge: $OPENSH_BRIDGE_IFACE"
 
-# --- 6. gateway.toml (Docker driver) ----------------------------------------
-cat > "$OSH_DIR/gateway.toml" <<EOF
+# --- 6. gateway.toml (Docker driver, schema v2) -----------------------------
+# OpenShell 0.1 rejects schema v1. v2 takes a scalar compute_driver and
+# canonical pull-policy spellings. It must NOT set the Docker network_name
+# (a Podman-only field there) or a grpc_endpoint override: 0.1 supervisors are
+# host-networked and reach the gateway over loopback, and the old
+# host.openshell.internal endpoint made sandboxes fail with "Startup
+# configuration fetch failed" (worker canary, 2026-10-03). Render to a
+# temporary file and preflight it with the installed gateway before it
+# replaces the live config, so a rejected file never reaches the service.
+render_gateway_toml(){
+  cat <<EOF
 [openshell]
-version = 1
+version = 2
 [openshell.gateway]
 bind_address = "0.0.0.0:17670"
 log_level = "info"
-compute_drivers = ["docker"]
+compute_driver = "docker"
 disable_tls = true
 [openshell.gateway.auth]
 allow_unauthenticated_users = true
@@ -1664,10 +1792,18 @@ kid_path = "$OSH_DIR/pki/jwt/kid"
 [openshell.drivers.docker]
 default_image = "$OSH_IMAGE_TAG"
 supervisor_image = "$OSH_SUPERVISOR_IMAGE"
-network_name = "openshell-docker"
-grpc_endpoint = "http://host.openshell.internal:17670"
-image_pull_policy = "IfNotPresent"
+image_pull_policy = "if_not_present"
 EOF
+}
+gateway_toml_candidate="$OSH_DIR/gateway.toml.candidate.$$"
+render_gateway_toml > "$gateway_toml_candidate"
+chmod 600 "$gateway_toml_candidate"
+if ! "$BIN/openshell-gateway" config preflight --path "$gateway_toml_candidate"; then
+  rm -f "$gateway_toml_candidate"
+  echo "ERROR: openshell-gateway rejected the rendered gateway.toml (config preflight)" >&2
+  exit 1
+fi
+mv -f "$gateway_toml_candidate" "$OSH_DIR/gateway.toml"
 cat > "$OSH_DIR/run-gateway.sh" <<EOF
 #!/usr/bin/env sh
 # mac.owner=mac; mac.kind=openshell-gateway
@@ -1801,6 +1937,14 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
+  # Hosts with the podman-docker package export DOCKER_HOST=.../podman.sock
+  # from /etc/profile.d, and the Docker driver follows DOCKER_HOST. Pin the
+  # gateway to the Docker Engine/Moby socket this bootstrap standardizes on.
+  mkdir -p "$HOME/.config/systemd/user/openshell-gateway.service.d"
+  cat > "$HOME/.config/systemd/user/openshell-gateway.service.d/docker-host.conf" <<'EOF'
+[Service]
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+EOF
   systemctl --user daemon-reload
   systemctl --user enable openshell-gateway >/dev/null 2>&1
   if ! systemctl --user restart openshell-gateway >/dev/null 2>&1 \
@@ -1817,7 +1961,7 @@ elif command -v supervisorctl >/dev/null 2>&1; then
 command=$OSH_DIR/run-gateway.sh
 directory=$OSH_DIR
 user=$USER
-environment=MAC_OPENSH_GATEWAY_OWNER="mac",HOME="$HOME",PATH="$BIN:/usr/local/bin:/usr/bin:/bin"
+environment=MAC_OPENSH_GATEWAY_OWNER="mac",HOME="$HOME",PATH="$BIN:/usr/local/bin:/usr/bin:/bin",DOCKER_HOST="unix:///var/run/docker.sock"
 autostart=true
 autorestart=true
 startsecs=2
@@ -1874,20 +2018,6 @@ chmod 600 "$MAC_HOME/openshell-policy.yaml"
 
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
 validate_openshell_runtime_image
-codex_uploads=""
-if truthy "${MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0}"; then
-  if [ -s "$HOME/.codex/auth.json" ]; then
-    codex_uploads="$codex_uploads --upload $HOME/.codex/auth.json:/tmp/.codex/auth.json"
-  fi
-  # Deliberately NOT uploading config.toml: its top-level model pin is
-  # specific to the operator workstation's codex version and breaks a worker
-  # on an older codex ("model X requires a newer version of Codex"). auth.json
-  # is the portable credential; the fleet sets the model per task via --model.
-  # (mac admin fleet creds-sync ships a model-pin-stripped config.toml when custom
-  # provider config is genuinely needed.)
-else
-  log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
-fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
 sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
@@ -1899,7 +2029,7 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
   echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref$codex_uploads\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref\""
   echo "MAC_OPENSHELL_GPU_AVAILABLE=$gpu_runtime_available"
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
   # Pin the gateway every mac-agent subprocess talks to, matching what this

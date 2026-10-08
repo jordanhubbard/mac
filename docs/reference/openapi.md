@@ -6,7 +6,6 @@ request and response definitions.
 
 | Method | Path | Operation |
 |---|---|---|
-| `GET` | `/.well-known/acp` | Acp Manifest Route |
 | `GET` | `/.well-known/agent-card.json` | A2A Agent Card Route |
 | `GET` | `/.well-known/agent.json` | A2A Agent Card Route |
 | `POST` | `/a2a` | A2A Rpc Route |
@@ -30,15 +29,6 @@ request and response definitions.
 | `GET` | `/agents` | List Agents |
 | `POST` | `/agents` | Register Agent |
 | `POST` | `/agents/bulk` | Bulk Update Agents |
-| `GET` | `/agents/dispatch-hold/authority` | Dispatch Hold Authority |
-| `POST` | `/agents/dispatch-hold/epochs/open` | Open Fleet Release Epoch |
-| `GET` | `/agents/dispatch-hold/epochs/{epoch_id}` | Dispatch Hold Epoch Status |
-| `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/abort` | Abort Fleet Release Epoch |
-| `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/commit` | Commit Fleet Release Epoch |
-| `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/prove` | Prove Fleet Release Epoch |
-| `GET` | `/agents/dispatch-hold/epochs/{epoch_id}/readiness` | Dispatch Hold Epoch Pre Prove Readiness |
-| `POST` | `/agents/dispatch-hold/release-batch` | Release Dispatch Holds Batch |
-| `POST` | `/agents/dispatch-hold/transition-batch` | Transition Dispatch Holds Batch |
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |
 | `GET` | `/agents/{agent_id}` | Get Agent |
 | `PUT` | `/agents/{agent_id}` | Update Agent |
@@ -48,7 +38,6 @@ request and response definitions.
 | `GET` | `/agents/{agent_id}/agentbus/inbox/pending` | Agentbus Inbox Pending |
 | `GET` | `/agents/{agent_id}/agentbus/roll-call` | Agentbus Roll Call |
 | `GET` | `/agents/{agent_id}/agentbus/traffic` | Read Agentbus Traffic |
-| `POST` | `/agents/{agent_id}/attestation-key/recover` | Recover Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/rotate` | Rotate Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/verify` | Verify Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/claim-next` | Claim Next For Agent |
@@ -64,6 +53,8 @@ request and response definitions.
 | `POST` | `/agents/{agent_id}/dispatch-hold/release` | Release Dispatch Hold |
 | `POST` | `/agents/{agent_id}/heartbeat` | Heartbeat Agent |
 | `GET` | `/agents/{agent_id}/identity` | Get Agent Identity |
+| `POST` | `/agents/{agent_id}/inference-tokens` | Mint Agent Inference Token |
+| `DELETE` | `/agents/{agent_id}/inference-tokens/{token_id}` | Revoke Agent Inference Token |
 | `POST` | `/agents/{agent_id}/installed-packages` | Update Agent Installed Packages |
 | `POST` | `/agents/{agent_id}/messages/deliver` | Deliver Messages |
 | `DELETE` | `/agents/{agent_id}/mood` | Clear Mood |
@@ -71,13 +62,6 @@ request and response definitions.
 | `POST` | `/agents/{agent_id}/mood` | Set Mood |
 | `PUT` | `/agents/{agent_id}/mood` | Set Mood |
 | `GET` | `/agents/{agent_id}/mood/history` | List Mood History |
-| `POST` | `/agents/{agent_id}/nap-consolidate` | Consolidate Nap |
-| `POST` | `/agents/{agent_id}/nap-cycle` | Run Nap Cycle |
-| `POST` | `/agents/{agent_id}/nap-runs` | Begin Nap |
-| `GET` | `/agents/{agent_id}/nap-schedule` | Get Nap Schedule |
-| `POST` | `/agents/{agent_id}/nap-schedule` | Configure Nap |
-| `PUT` | `/agents/{agent_id}/nap-schedule` | Configure Nap |
-| `GET` | `/agents/{agent_id}/nap-schedule/next` | Next Nap Window |
 | `GET` | `/agents/{agent_id}/openshell/policy` | Get Agent Openshell Policy |
 | `GET` | `/agents/{agent_id}/openshell/status` | Get Agent Openshell Status |
 | `POST` | `/agents/{agent_id}/openshell/status` | Report Agent Openshell Status |
@@ -92,15 +76,11 @@ request and response definitions.
 | `POST` | `/artifacts` | Register Artifact |
 | `DELETE` | `/artifacts/{artifact_id_or_digest}` | Delete Artifact |
 | `GET` | `/artifacts/{artifact_id_or_digest}` | Get Artifact |
-| `POST` | `/backlog-groom/run` | Backlog Groom Run |
-| `GET` | `/backlog-groom/status` | Backlog Groom Status |
 | `POST` | `/break-glass-authorizations/{authorization_id}/revoke` | Revoke Break Glass |
 | `GET` | `/bridge/items` | List Project Items |
 | `POST` | `/bridge/items` | Import Project Item |
 | `GET` | `/bridge/repositories` | List Project Repositories |
 | `POST` | `/bridge/repositories` | Register Project Repository |
-| `POST` | `/cicd-monitor/run` | Cicd Monitor Run |
-| `GET` | `/cicd-monitor/status` | Cicd Monitor Status |
 | `GET` | `/command-audit` | List Command Audit |
 | `GET` | `/communication/accounts` | List Communication Accounts |
 | `POST` | `/communication/accounts` | Configure Communication Account |
@@ -128,10 +108,7 @@ request and response definitions.
 | `GET` | `/crash-reports` | List Crash Reports |
 | `GET` | `/crash-reports/{report_id}` | Get Crash Report |
 | `POST` | `/crash-reports/{report_id}/resolve` | Resolve Crash Report |
-| `POST` | `/curiosity-review/run` | Curiosity Review Run |
-| `GET` | `/curiosity-review/status` | Curiosity Review Status |
-| `GET` | `/curiosity/candidates` | List Curiosity Candidates |
-| `POST` | `/curiosity/candidates/{candidate_id}/{decision}` | Decide Curiosity Candidate |
+| `GET` | `/dashboard/board` | Dashboard Board |
 | `GET` | `/dashboard/observe` | Dashboard Observe |
 | `GET` | `/dashboard/observe/projects/{project}/graph` | Dashboard Observe Project Graph |
 | `GET` | `/dashboard/observe/tasks/{task_id}` | Dashboard Observe Task |
@@ -160,13 +137,6 @@ request and response definitions.
 | `GET` | `/dispatch/dead-letters` | Dead Letters |
 | `GET` | `/dispatch/dead-letters/page` | Dead Letters Page |
 | `POST` | `/dispatch/tick` | Dispatch Tick |
-| `POST` | `/dream/import-logs` | Import Dream Logs |
-| `GET` | `/environments` | List Environments |
-| `POST` | `/environments` | Register Environment |
-| `GET` | `/environments/{env_id}` | Get Environment |
-| `GET` | `/environments/{env_id}/current` | Current Deployment |
-| `POST` | `/environments/{env_id}/deploy` | Deploy Artifact |
-| `GET` | `/environments/{env_id}/deployments` | List Deployments |
 | `GET` | `/eval-runs` | List Eval Runs |
 | `POST` | `/eval-runs` | Record Eval Run |
 | `GET` | `/eval-sets` | List Eval Sets |
@@ -178,18 +148,6 @@ request and response definitions.
 | `GET` | `/events/stream` | Stream Events |
 | `GET` | `/evidence/{evidence_id}/artifacts` | List Evidence Artifacts |
 | `GET` | `/evidence/{evidence_id}/artifacts/{artifact_id}` | Get Evidence Artifact |
-| `POST` | `/fleet-desired-source` | Set Fleet Desired Source |
-| `GET` | `/fleet-upgrades` | List Fleet Upgrades |
-| `POST` | `/fleet-upgrades` | Request Fleet Upgrade |
-| `GET` | `/fleet-upgrades/{upgrade_id}` | Get Fleet Upgrade |
-| `POST` | `/fleet-upgrades/{upgrade_id}/arm` | Arm Fleet Upgrade |
-| `POST` | `/fleet-upgrades/{upgrade_id}/cancel` | Cancel Fleet Upgrade |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/abort` | Abort Fleet Upgrade Epoch |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/commit` | Commit Fleet Upgrade Epoch |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/open` | Open Fleet Upgrade Epoch |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/prove` | Prove Fleet Upgrade Epoch |
-| `GET` | `/fleet-upgrades/{upgrade_id}/events` | Get Fleet Upgrade Events |
-| `POST` | `/fleet-upgrades/{upgrade_id}/stage` | Stage Fleet Upgrade |
 | `GET` | `/fleet/build-distribution` | Fleet Build Distribution |
 | `GET` | `/fleet/snapshot` | Fleet Snapshot |
 | `GET` | `/fleets` | List Fleets |
@@ -209,8 +167,6 @@ request and response definitions.
 | `GET` | `/integrations/findings` | List Integration Findings |
 | `POST` | `/integrations/findings` | Record Integration Finding Endpoint |
 | `GET` | `/integrations/observations` | List Integration Observations |
-| `POST` | `/judgement/run` | Judgement Run |
-| `GET` | `/judgement/status` | Judgement Status |
 | `POST` | `/leases/{lease_id}/delegate` | Delegate Lease |
 | `POST` | `/leases/{lease_id}/renew` | Renew Lease |
 | `GET` | `/machines` | List Machines |
@@ -224,19 +180,6 @@ request and response definitions.
 | `POST` | `/memory/summarize-actions` | Memory Summarize Actions |
 | `GET` | `/messages` | List Messages |
 | `POST` | `/messages` | Send Message |
-| `POST` | `/model-selection/promote` | Model Selection Promote |
-| `POST` | `/model-selection/refresh` | Model Selection Refresh |
-| `GET` | `/model-selection/status` | Model Selection Status |
-| `GET` | `/nap-due` | List Due Nap Agents |
-| `GET` | `/nap-runs` | List Nap Runs |
-| `GET` | `/nap-runs/{run_id}` | Get Nap Run |
-| `POST` | `/nap-runs/{run_id}/complete` | Complete Nap |
-| `POST` | `/nap-runs/{run_id}/fail` | Fail Nap |
-| `GET` | `/nap-schedules` | List Nap Schedules |
-| `POST` | `/nap-tick/run` | Nap Tick Run |
-| `GET` | `/nap-tick/status` | Nap Tick Status |
-| `GET` | `/news` | List News |
-| `GET` | `/news/stream` | Stream News |
 | `GET` | `/notifications` | List Notifications |
 | `POST` | `/notifications/{notification_id}/delivered` | Mark Notification Delivered |
 | `GET` | `/notifier/channels` | List Notifier Channels |
@@ -262,22 +205,6 @@ request and response definitions.
 | `POST` | `/openshell/policies/{policy_id}/assignments` | Assign Openshell Policy |
 | `POST` | `/openshell/policies/{policy_id}/render` | Render Openshell Policy |
 | `GET` | `/openshell/policies/{policy_id}/versions` | List Openshell Policy Versions |
-| `GET` | `/optimizer/experiments` | List Scientific Experiments |
-| `POST` | `/optimizer/experiments` | Create Scientific Experiment |
-| `GET` | `/optimizer/experiments/{experiment_id}` | Get Scientific Experiment |
-| `POST` | `/optimizer/experiments/{experiment_id}/analyze` | Analyze Scientific Experiment |
-| `GET` | `/optimizer/experiments/{experiment_id}/evidence` | Get Scientific Experiment Evidence |
-| `POST` | `/optimizer/experiments/{experiment_id}/observe/{task_id}` | Observe Scientific Task |
-| `POST` | `/optimizer/experiments/{experiment_id}/pause` | Pause Scientific Experiment |
-| `POST` | `/optimizer/experiments/{experiment_id}/promote` | Promote Scientific Experiment |
-| `POST` | `/optimizer/experiments/{experiment_id}/start` | Start Scientific Experiment |
-| `GET` | `/optimizer/policies` | List Scientific Policies |
-| `POST` | `/optimizer/policies` | Create Scientific Policy |
-| `GET` | `/optimizer/policies/{policy_id}` | Get Scientific Policy |
-| `POST` | `/optimizer/policies/{policy_id}/promote` | Promote Scientific Policy |
-| `POST` | `/optimizer/projects/{project}/rollback/{policy_id}` | Rollback Scientific Policy |
-| `GET` | `/optimizer/status` | Scientific Optimizer Status |
-| `POST` | `/optimizer/tick` | Scientific Optimizer Tick |
 | `GET` | `/persona-instances` | List Persona Instances |
 | `POST` | `/persona-instances` | Register Persona Instance |
 | `GET` | `/persona-instances/{instance_id}/context` | Persona Context |
@@ -297,15 +224,9 @@ request and response definitions.
 | `GET` | `/projects/{project}` | Get Project |
 | `PUT` | `/projects/{project}` | Update Project |
 | `POST` | `/projects/{project}/dispatch` | Set Project Dispatch |
-| `GET` | `/provisioning/requests` | List Provisioning Requests |
-| `POST` | `/provisioning/requests` | Create Provisioning Request |
-| `GET` | `/provisioning/requests/{request_id}` | Get Provisioning Request |
-| `POST` | `/provisioning/requests/{request_id}/cancel` | Cancel Provisioning Request |
-| `POST` | `/provisioning/requests/{request_id}/fulfill` | Fulfill Provisioning Request |
 | `POST` | `/publications` | Publish |
 | `POST` | `/repository-refs/reconcile` | Reconcile Repository Refs |
 | `GET` | `/repository-refs/reconciler` | Repository Ref Reconciler Status |
-| `GET` | `/review-experiments/{experiment_id}` | Review Experiment Report |
 | `POST` | `/reviews/default/tick` | Default Review Tick |
 | `POST` | `/reviews/{review_id}/claim` | Claim Review |
 | `POST` | `/reviews/{review_id}/decision` | Submit Review |
@@ -315,12 +236,6 @@ request and response definitions.
 | `GET` | `/roles/{role_id_or_slug}` | Get Role |
 | `DELETE` | `/roles/{role_id}` | Delete Role |
 | `PUT` | `/roles/{role_id}` | Update Role |
-| `GET` | `/rollouts` | List Rollouts |
-| `POST` | `/rollouts` | Create Rollout |
-| `POST` | `/rollouts/{rollout_id}/advance` | Advance Rollout |
-| `POST` | `/rollouts/{rollout_id}/artifact` | Verify Rollout Artifact |
-| `POST` | `/rollouts/{rollout_id}/health` | Evaluate Rollout Health |
-| `POST` | `/rollouts/{rollout_id}/rescue` | Rescue Rollout |
 | `GET` | `/runtime-deltas` | List Runtime Deltas |
 | `POST` | `/runtime-deltas` | Propose Runtime Delta |
 | `GET` | `/runtime-deltas/{delta_id}` | Get Runtime Delta |
@@ -331,7 +246,6 @@ request and response definitions.
 | `POST` | `/runtime-runs/{run_id}/complete` | Complete Runtime Run |
 | `GET` | `/runtimes` | List Runtimes |
 | `POST` | `/runtimes` | Create Runtime |
-| `POST` | `/sandbox/rollout` | Roll Out Sandbox Image |
 | `GET` | `/secret-audits` | List Secret Audits |
 | `GET` | `/secrets` | List Secrets |
 | `POST` | `/secrets` | Create Secret |
@@ -340,15 +254,8 @@ request and response definitions.
 | `POST` | `/secrets/{name}/rotate` | Rotate Secret |
 | `POST` | `/secrets/{secret_id}/access` | Request Secret |
 | `POST` | `/secrets/{secret_id}/reveal` | Reveal Secret |
-| `POST` | `/self-heal/run` | Self Heal Run |
-| `GET` | `/self-heal/status` | Self Heal Status |
 | `GET` | `/service-claims` | List Service Claims |
 | `GET` | `/service-roles` | List Service Roles |
-| `GET` | `/source-convergence` | Source Convergence Status |
-| `POST` | `/source-convergence/tick` | Tick Source Convergence |
-| `GET` | `/source-releases` | List Source Releases |
-| `POST` | `/source-releases` | Register Source Release |
-| `GET` | `/source-releases/{release_id}` | Get Source Release |
 | `GET` | `/startup-attestation` | Startup Attestation |
 | `GET` | `/startup/hermes` | Hermes Startup |
 | `GET` | `/task-groups` | List Task Groups |
@@ -359,7 +266,6 @@ request and response definitions.
 | `POST` | `/tasks` | Create Task |
 | `GET` | `/tasks/audit` | Audit Tasks |
 | `POST` | `/tasks/batch` | Apply Task Batch |
-| `GET` | `/tasks/generator-yield` | Task Generator Yield |
 | `GET` | `/tasks/outcomes` | Task Outcome Cohort |
 | `POST` | `/tasks/preflight` | Dispatch Preflight |
 | `GET` | `/tasks/ready` | Ready Tasks |
@@ -384,12 +290,11 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/evidence` | Add Evidence |
 | `GET` | `/tasks/{task_id}/export` | Export Task |
 | `POST` | `/tasks/{task_id}/force-complete` | Force Complete Task |
+| `GET` | `/tasks/{task_id}/messages` | List Task Messages |
+| `POST` | `/tasks/{task_id}/messages` | Post Task Message |
 | `GET` | `/tasks/{task_id}/outcome` | Task Outcome |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
 | `POST` | `/tasks/{task_id}/reopen` | Reopen Task |
-| `POST` | `/tasks/{task_id}/review-experiment` | Assign Review Experiment |
-| `GET` | `/tasks/{task_id}/review-observation` | Review Observation |
-| `POST` | `/tasks/{task_id}/review-outcomes` | Record Review Outcome |
 | `POST` | `/tasks/{task_id}/reviews` | Request Review |
 | `POST` | `/tasks/{task_id}/start` | Start Task |
 | `POST` | `/tasks/{task_id}/stop` | Stop Task |
@@ -414,11 +319,6 @@ request and response definitions.
 | `POST` | `/v1/agents/{agent_id}/memory` | Store Agent Memory |
 | `DELETE` | `/v1/agents/{agent_id}/mood` | Clear Openclaw Agent Mood |
 | `POST` | `/v1/agents/{agent_id}/mood` | Set Openclaw Agent Mood |
-| `GET` | `/v1/memory/dreams/recall` | Recall Dream Artifacts |
-| `GET` | `/v1/memory/health` | Memory Health |
-| `POST` | `/v1/memory/promote` | Promote Memory Tier |
-| `GET` | `/v1/memory/recall` | Recall Memory |
-| `POST` | `/v1/memory/reconcile-embeddings` | Reconcile Memory Embedding Spaces |
 | `GET` | `/vector-refs` | List Vector Refs |
 | `POST` | `/vector-refs` | Record Vector Ref |
 | `GET` | `/workflows` | List Workflows |

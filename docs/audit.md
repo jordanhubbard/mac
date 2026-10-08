@@ -281,6 +281,7 @@ one that should guide any action.
 > `investigation_artifacts` — each with a dated owner and a concrete wiring plan.
 > A design-surface *mention* is not a caller. The authoritative, current-tree
 > resolution is `docs/reference/staged-module-integration-audit.md` §0.
+> `predispatch_conflict` was itself deleted, still unwired, on 2026-10-01.
 
 Nine modules are imported by no `src/mac` module and are reachable, on a static import graph,
 only from their own test files: `dream_scanner.py`, `predispatch_conflict.py`,

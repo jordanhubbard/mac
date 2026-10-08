@@ -24,12 +24,6 @@ from mac.services import ControlPlane
 )
 def test_capability_projection_preserves_custom_and_useful_capabilities(configured, expected):
     assert deploy_env.normalize_worker_capabilities(configured) == expected
-    script = (Path(__file__).resolve().parents[1] / "deploy/deploy-mac-fleet.sh").read_text()
-    source = script[script.index("def text_field(") : script.index("def model_field(")]
-    namespace = {"Any": Any}
-    exec(compile(source, "fleet-capability-projection", "exec"), namespace)
-    assert namespace["worker_capabilities_field"](configured) == expected
-    assert namespace["worker_capabilities_field"](configured.split(",")) == expected
 
 
 def test_default_keeps_all_nonruntime_capabilities():

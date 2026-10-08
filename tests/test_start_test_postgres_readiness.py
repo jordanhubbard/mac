@@ -25,14 +25,17 @@ case "$name" in
     case "$*" in
       *'SELECT 1'*)
         if [ "$PROBE_SQL_RC" != 0 ]; then
-          echo 'FATAL: could not open file global/pg_filenode.map' >&2
+          echo "${PROBE_SQL_ERROR:-FATAL: could not open file global/pg_filenode.map}" >&2
           exit "$PROBE_SQL_RC"
         fi
         echo 1;;
       *max_connections*) echo 400;;
       *) echo 1024;;
     esac;;
-  pg_ctl) case "$*" in *status*) exit 1;; *) exit 0;; esac;;
+  pg_ctl)
+    printf 'pg_ctl-locale LC_ALL=%s LANG=%s args=%s\\n' \
+      "${LC_ALL:-}" "${LANG:-}" "$*" >> "$PROBE_LOG"
+    case "$*" in *status*) exit 1;; *) exit 0;; esac;;
   initdb) echo 'unexpected initdb invocation' >&2; exit 1;;
   docker|podman)
     [ "${PROBE_CONTAINER:-0}" = 1 ] || exit 1
@@ -65,6 +68,11 @@ esac
         "MAC_TEST_PG_PORT": "15432",
     }
     env.pop("MAC_TEST_PG_URL", None)
+    # A shell with no locale is the macOS failure mode (Homebrew postgresql@17
+    # dies with "postmaster became multithreaded during startup"); clear the
+    # caller's locale so only the script can supply a usable one.
+    for marker in ("LANG", "LC_ALL", "LC_CTYPE"):
+        env.pop(marker, None)
 
     def run(**overrides):
         return subprocess.run(
@@ -86,6 +94,45 @@ def test_accepting_but_unusable_local_server_does_not_emit_a_dsn(helper):
     assert "SQL" in result.stderr
     assert "docker" not in log.read_text()
     assert "initdb" not in log.read_text()
+
+
+def test_dead_port_forward_is_reported_as_a_forward_not_a_broken_database(helper):
+    """Docker Desktop can keep the container healthy while its 127.0.0.1
+    forward drops every query. Naming that "failed SQL readiness ... check the
+    database" sent an operator to inspect Postgres while the forward was the
+    problem; the message has to separate the two."""
+    run, log, _ = helper
+    result = run(
+        PROBE_SQL_RC="2",
+        PROBE_SQL_ERROR=(
+            'psql: error: connection to server at "127.0.0.1", port 15432 '
+            "failed: server closed the connection unexpectedly"
+        ),
+    )
+    assert result.returncode != 0
+    assert "MAC_TEST_PG_URL=" not in result.stdout
+    stderr = result.stderr.lower()
+    assert "port forward" in stderr
+    assert "broken database" in stderr
+    assert "storage" not in stderr
+
+
+def test_native_pg_ctl_start_gets_a_utf8_locale(helper):
+    """Homebrew postgresql@17 refuses pg_ctl start under an unset/invalid
+    LC_ALL ("postmaster became multithreaded during startup"). The postmaster
+    inherits pg_ctl's locale, not initdb's, so the native start has to set it."""
+    run, log, data = helper
+    data.mkdir()
+    (data / "PG_VERSION").write_text("17\n")
+    result = run(PROBE_READY_RC="1")
+    assert result.returncode == 0, result.stderr
+    starts = [
+        line
+        for line in log.read_text().splitlines()
+        if line.startswith("pg_ctl-locale ") and " start" in line
+    ]
+    assert starts, log.read_text()
+    assert all("UTF-8" in line or "utf8" in line for line in starts), starts
 
 
 def test_healthy_local_database_requires_successful_sql(helper):

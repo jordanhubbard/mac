@@ -120,7 +120,6 @@ export interface DashboardState {
   runtimes: Array<Record<string, unknown>>;
   runtime_deltas: Array<Record<string, unknown>>;
   runtime_runs: Array<Record<string, unknown>>;
-  rollouts: Array<Record<string, unknown>>;
   secrets: Array<Record<string, unknown>>;
   secret_audits: Array<Record<string, unknown>>;
   service_links: Array<Record<string, unknown>>;

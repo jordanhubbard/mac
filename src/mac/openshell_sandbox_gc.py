@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import time
@@ -17,12 +19,72 @@ DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
 #: sandbox is given.
 DEFAULT_ERROR_GRACE_SECONDS = 15 * 60
 MANAGED_NAME_RE = re.compile(
-    r"^mac-(?:task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+    r"^mac-(?:task|hubverify|hv|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+)
+
+#: OpenShell 0.0.x bounds ``sandbox list`` with ``--limit``; 0.1.2 removed the
+#: flag ("unexpected argument '--limit' found"), which made every sandbox
+#: GC/reconcile sweep fail on that release. A rejection of that one flag means
+#: the CLI lists unbounded sandboxes instead, so retry without it -- but never
+#: mask any other listing failure.
+_LIMIT_FLAG_REJECTED_RE = re.compile(
+    r"--limit.{0,80}(unexpected|unrecognized|unknown|wasn't expected|not expected)"
+    r"|(unexpected|unrecognized|unknown|wasn't expected|not expected).{0,80}--limit",
+    re.IGNORECASE,
 )
 
 
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sandbox_list_rejects_limit(detail: str) -> bool:
+    """Whether a failed ``sandbox list`` reports the removed ``--limit`` flag."""
+    return bool(_LIMIT_FLAG_REJECTED_RE.search(str(detail or "")))
+
+
+def run_sandbox_list(
+    openshell_bin: str,
+    *,
+    limit: int = 1000,
+    run: Optional[Callable[..., Any]] = None,
+    timeout: float = 60.0,
+) -> Any:
+    """Run ``openshell sandbox list --output json`` across CLI generations.
+
+    Tries the bounded listing first so a chatty gateway cannot return an
+    unbounded page on releases that support ``--limit``. When the CLI rejects
+    that now-removed flag, retry once without it. Any other nonzero result is
+    returned unchanged so callers surface the real gateway failure.
+    """
+    runner = run or subprocess.run
+    listed = runner(
+        [
+            openshell_bin,
+            "sandbox",
+            "list",
+            "--limit",
+            str(limit),
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if listed.returncode == 0:
+        return listed
+    detail = (listed.stderr or listed.stdout or "").strip()
+    if not _sandbox_list_rejects_limit(detail):
+        return listed
+    return runner(
+        [openshell_bin, "sandbox", "list", "--output", "json"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
 
 
 def _created_at(value: Any) -> Optional[datetime]:
@@ -50,32 +112,110 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _process_identity(pid: int) -> Tuple[str, str]:
-    """Return (state, identity) for a PID without treating EPERM as liveness.
-
-    Linux's boot id plus proc start time is stable for one process incarnation,
-    unlike a PID. ``state`` is present, absent, or unknown; callers must fail
-    closed on unknown.
-    """
-
+def _probe_pid(pid: int, *, kill: Callable[[int, int], None] = os.kill) -> str:
+    """Return present, absent, or unknown without confusing EPERM with absence."""
     if pid <= 0:
-        return "absent", ""
+        return "absent"
     try:
-        os.kill(pid, 0)
+        kill(pid, 0)
     except ProcessLookupError:
-        return "absent", ""
+        return "absent"
     except PermissionError:
-        return "unknown", ""
+        return "unknown"
+    return "present"
+
+
+def _linux_process_identity(
+    pid: int,
+    *,
+    proc_root: str = "/proc",
+    kill: Callable[[int, int], None] = os.kill,
+) -> Tuple[str, str]:
+    """Return Linux boot-id plus proc start ticks for one PID incarnation."""
+
+    state = _probe_pid(pid, kill=kill)
+    if state != "present":
+        return state, ""
     try:
-        boot_id = open("/proc/sys/kernel/random/boot_id", encoding="ascii").read().strip()
-        stat = open("/proc/%d/stat" % pid, encoding="ascii").read()
+        with open(os.path.join(proc_root, "sys/kernel/random/boot_id"), encoding="ascii") as handle:
+            boot_id = handle.read().strip()
+        with open(os.path.join(proc_root, str(pid), "stat"), encoding="ascii") as handle:
+            stat = handle.read()
         # comm may contain spaces and parentheses, so split only after its final ')'.
         start_time = stat[stat.rfind(")") + 2 :].split()[19]
     except (OSError, IndexError):
+        # The process may have exited between the liveness probe and /proc reads.
+        # Prove that transition when possible; every other failure is unknown.
+        if _probe_pid(pid, kill=kill) == "absent":
+            return "absent", ""
         return "unknown", ""
     if not boot_id or not start_time:
         return "unknown", ""
     return "present", "%s:%s" % (boot_id, start_time)
+
+
+def _identity_digest(prefix: str, value: str) -> str:
+    return "%s-%s" % (prefix, hashlib.sha256(value.encode("utf-8")).hexdigest())
+
+
+def _darwin_process_identity(
+    pid: int,
+    *,
+    kill: Callable[[int, int], None] = os.kill,
+    run: Callable[..., Any] = subprocess.run,
+) -> Tuple[str, str]:
+    """Return a bounded Darwin boot/start identity using stable OS interfaces.
+
+    Darwin has no procfs. ``sysctl kern.boottime`` identifies the boot and
+    ``ps lstart`` identifies the process incarnation. Commands are bounded and
+    their output is digested before it becomes an OpenShell label.
+    """
+
+    state = _probe_pid(pid, kill=kill)
+    if state != "present":
+        return state, ""
+    try:
+        boot = run(
+            ["/usr/sbin/sysctl", "-n", "kern.boottime"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        started = run(
+            ["/bin/ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ("absent", "") if _probe_pid(pid, kill=kill) == "absent" else ("unknown", "")
+    boot_value = str(boot.stdout or "").strip() if boot.returncode == 0 else ""
+    start_value = str(started.stdout or "").strip() if started.returncode == 0 else ""
+    if not boot_value or not start_value:
+        return ("absent", "") if _probe_pid(pid, kill=kill) == "absent" else ("unknown", "")
+    return (
+        "present",
+        "%s:%s" % (_identity_digest("darwin", boot_value), _identity_digest("start", start_value)),
+    )
+
+
+def _process_identity(pid: int, *, system_name: Optional[str] = None) -> Tuple[str, str]:
+    """Return a portable process-incarnation identity.
+
+    ``state`` is ``present``, ``absent``, or ``unknown``. Unknown is a normal,
+    explicit result: creators may continue with conservative labels and reapers
+    must preserve a live or ambiguous owner.
+    """
+
+    system = (system_name or platform.system()).strip().lower()
+    if system == "linux":
+        return _linux_process_identity(pid)
+    if system == "darwin":
+        return _darwin_process_identity(pid)
+    state = _probe_pid(pid)
+    return ("absent", "") if state == "absent" else ("unknown", "")
 
 
 def stale_sandbox_candidates(
@@ -184,21 +324,7 @@ def reconcile_stale_sandboxes(
 ) -> Dict[str, Any]:
     """List and optionally delete stale MAC-owned OpenShell sandboxes."""
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -275,7 +401,11 @@ def reconcile_stale_sandboxes(
 # acceptance: a sandbox that cannot prove full, valid MAC ownership plus a dead
 # recorded PID is never reaped by this path.
 
-MANAGED_KINDS = frozenset({"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"})
+#: ``hubverify`` is retained so sandboxes created before the 19-character
+#: rename to ``mac-hv-`` are still collected.
+MANAGED_KINDS = frozenset(
+    {"task", "hubverify", "hv", "codingcap", "runtime-smoke", "security-probe"}
+)
 
 _FALSEY_KEEP = {"0", "false", "no", "off"}
 
@@ -415,21 +545,7 @@ def reap_orphaned_task_sandboxes(
     secret-free: it records only names, phases, ownership signals, and reasons.
     """
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -488,8 +604,7 @@ def reap_orphaned_task_sandboxes(
 # that exited cleanly, crashed, or ran on a now-unreachable host has a recorded
 # ``mac.pid`` that is either dead-but-unprovable or belongs to an unrelated
 # process on the reaping host. The authoritative source of truth for whether a
-# task is still being worked is the durable lease store, exactly as the k8s
-# controller reconciles stuck Jobs (see ``mac.k8s.controller``).
+# task is still being worked is the durable lease store.
 #
 # This reconciler stamps the same fail-closed discipline onto lease authority: a
 # task sandbox is reaped only when the lease store *positively* proves the work
@@ -655,21 +770,7 @@ def reconcile_task_sandboxes_from_lease_authority(
     evidence is secret-free.
     """
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -927,21 +1028,7 @@ def reconcile_leftover_task_sandboxes(
     after deletion is a no-op. Returned evidence is secret-free.
     """
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
@@ -992,7 +1079,7 @@ def reconcile_leftover_task_sandboxes(
 # This reconciler is meant to run inside the *controller* (the component that
 # already owns the authoritative task/lease store), driven by a lifecycle
 # trigger rather than by a worker's own shutdown. It is deliberately
-# fail-closed on the SAME lease-authority discipline as the k8s controller:
+# fail-closed on lease authority:
 #
 #   * a sandbox is reaped only when the hub *positively proves* the recorded
 #     lease is no longer live for its ``mac.task.id`` -- the task is terminal,
@@ -1167,21 +1254,7 @@ def reconcile_task_sandbox_lifecycle(
     if clean_trigger not in LIFECYCLE_TRIGGERS:
         raise ValueError("unsupported lifecycle trigger: %s" % trigger)
 
-    listed = subprocess.run(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            "1000",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    listed = run_sandbox_list(openshell_bin)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])

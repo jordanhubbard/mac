@@ -2,8 +2,8 @@
 
 Start with the [supported setup](02-getting-started.md): PostgreSQL, the
 configured gateway, one registered repository project, and one executable
-worker. Keep the current generator yield gate and dispatch holds in place
-while validating this path. Additional tasks or workers do not repair an
+worker. Keep the current dispatch holds in place while validating this
+path. Additional tasks or workers do not repair an
 unreliable request-to-result loop.
 
 ## Define one observable result
@@ -73,17 +73,21 @@ history, the existing branch/PR, and the current canonical revision.
 
 | Failure | Smallest safe next step | Evidence of recovery |
 |---|---|---|
-| Worker disappears | Inspect agent health and the task lease. Let the hub reconcile expiry; diagnose with `mac task why-unclaimed` before reopening. Do not start a competing executor. | Old lease loses authority; only the new attempt may submit current evidence. |
+| Worker disappears | Inspect agent health, the supervisor restart and the task lease. A restarted worker may resume its still-valid lease. If it expires, let the hub reconcile expiry; diagnose with `mac task why-unclaimed` before reopening. Do not start a competing executor. | The resumed execution proves its current lease authority, or a newly admitted attempt replaces the expired lease. Expired or revoked authority cannot submit current evidence; recovery must not duplicate publication. |
 | Repository tests fail | Read the full failed gate output. Correct the existing work in an isolated checkout and rerun the repository gate. | Passing results identify the revised evidence; no push from a failed gate. |
 | Task asks a question | Use `mac task edit <id>` to read and answer the pending question. Check the answer disposition before resuming. | Answer and resulting state are durable in task history. |
-| Canonical branch conflicts | Inspect the publication failure and existing PR. Rebase or resolve in the isolated task branch, rerun tests, and submit updated evidence through the review path. | Fresh evidence is verified against the current base; stale approval cannot land the old result. |
+| Canonical branch conflicts | The land loop sends the task back to its worker with a `rebase_onto_tip` directive (at most twice, then it blocks). Inspect the directive and the publication failure; for a blocked task, rebase the branch and re-drive the task. Verify that the PR head matches the current reviewed branch; preserve superseded evidence. | Fresh evidence is verified against the current base, required behaviors survive integration, and the original request is separately accepted. Stale approval cannot land the old result. |
 | Work must stop | Use `mac task stop <id> --reason-file stop.txt`. If abort fails, inspect the reported error before claiming the process stopped. | Hub confirms the stop and records the transition. |
 
 These are recovery procedures, not claims that all live fault scenarios have
-already passed. The repository's HTTP/process, lease, input-state, and native
-merge-queue tests exercise controlled failures. Deployment verification must
+already passed. The repository's HTTP/process, lease, input-state, and land-loop
+tests exercise controlled failures. Deployment verification must
 record the actual revision, worker, task, evidence, publication, and observed
 behavior separately.
+
+The [September 16 live acceptance record](../investigations/2026-09-16-live-trust-acceptance.md)
+identifies observed recoveries, operator interventions, outstanding checks and
+the revisions each result covers.
 
 ## Measure a creation cohort
 

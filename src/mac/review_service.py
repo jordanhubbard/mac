@@ -1,7 +1,10 @@
 """Review + Publication domain service.
 
-A task transitions ``RUNNING → NEEDS_REVIEW → REVIEWING → COMPLETED`` via
-this service. Reviewer independence is preferred and can be required by task
+A task transitions ``RUNNING → NEEDS_REVIEW → COMPLETED`` via this service:
+the default workflow assigns the hub-reviewer identity, decides from the
+worker's evidence and publishes without leaving NEEDS_REVIEW. A
+human-requested review still moves the task to ``REVIEWING`` while the named
+reviewer decides; every decision and publication path accepts either state. Reviewer independence is preferred and can be required by task
 policy, but the control plane may authorize a recorded fallback when no
 independent reviewer is available. Approving still requires signed verdict
 evidence that belongs to the reviewed task and, for agent-generated work, a
@@ -16,8 +19,11 @@ emits the matching observability events, and idles the owning agent.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
@@ -43,6 +49,15 @@ from mac.models import (
 from mac.messaging_service import MessagingService
 from mac.review_failure_classifier import classify_review_failure
 from mac.observability_service import ObservabilityService
+from mac.semantic_acceptance import (
+    ACCEPTANCE_RESULT_SCHEMA,
+    FAILURE_SEMANTIC_WORK,
+)
+
+
+#: States a review can be decided and a task published from. NEEDS_REVIEW is
+#: the default workflow's; REVIEWING is a human-requested review's.
+_REVIEWABLE_STATES = frozenset({TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value})
 
 
 def _state_value(state: Any) -> str:
@@ -155,6 +170,102 @@ def manifest_llm_provider(manifest: Any) -> str:
         if provider in segments:
             return provider
     return _FAMILY_PROVIDER.get(manifest_llm_family(manifest), "")
+
+
+def _semantic_retry_delay_seconds(
+    task_id: str,
+    attempt_count: int,
+    evidence_id: str,
+    *,
+    base_seconds: Optional[int] = None,
+    cap_seconds: Optional[int] = None,
+) -> int:
+    """Return bounded deterministic jitter for a semantic work retry.
+
+    Determinism makes a replay produce the same receipt, while hashing task
+    identity prevents a fleet-wide rejection burst from becoming a synchronized
+    retry herd.
+    """
+    base = max(
+        1,
+        int(
+            base_seconds
+            if base_seconds is not None
+            else os.environ.get("MAC_SEMANTIC_RETRY_BASE_SECONDS", "15")
+        ),
+    )
+    cap = max(
+        base,
+        int(
+            cap_seconds
+            if cap_seconds is not None
+            else os.environ.get("MAC_SEMANTIC_RETRY_CAP_SECONDS", "300")
+        ),
+    )
+    window = min(cap, base * (2 ** max(0, int(attempt_count or 1) - 1)))
+    floor = max(1, window // 2)
+    span = max(1, window - floor + 1)
+    seed = "%s:%s:%s" % (task_id, int(attempt_count or 0), evidence_id)
+    jitter = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16], 16) % span
+    return min(cap, floor + jitter)
+
+
+def _semantic_retry_not_before(now: str, delay_seconds: int) -> str:
+    parsed = datetime.fromisoformat(str(now).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (parsed + timedelta(seconds=max(0, int(delay_seconds)))).isoformat(
+        timespec="microseconds"
+    )
+
+
+def _configured_semantic_retry_routes(metadata: Dict[str, Any]) -> List[Dict[str, str]]:
+    retry = metadata.get("semantic_retry")
+    retry = retry if isinstance(retry, dict) else {}
+    raw = retry.get("routes")
+    if not isinstance(raw, list):
+        raw = metadata.get("model_candidates")
+    if not isinstance(raw, list):
+        raw = metadata.get("retry_models")
+    routes: List[Dict[str, str]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            model = str(item.get("model") or "").strip()
+            provider = str(item.get("provider") or "").strip().lower()
+        else:
+            model = str(item or "").strip()
+            provider = ""
+        if not model:
+            continue
+        if not provider:
+            provider = manifest_llm_provider({"llm_model": model})
+        route = {"model": model, "provider": provider}
+        if route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _select_semantic_retry_route(
+    metadata: Dict[str, Any],
+    failed_routes: List[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """Select a model-addressable alternate, preferring a new provider."""
+    failed_pairs = {
+        (str(item.get("provider") or "").lower(), str(item.get("model") or ""))
+        for item in failed_routes
+    }
+    failed_models = {model for _provider, model in failed_pairs if model}
+    candidates = [
+        route
+        for route in _configured_semantic_retry_routes(metadata)
+        if route["model"] not in failed_models
+        and (route["provider"], route["model"]) not in failed_pairs
+    ]
+    if not candidates:
+        return None
+    failed_providers = {provider for provider, _model in failed_pairs if provider}
+    candidates.sort(key=lambda route: 1 if route.get("provider") in failed_providers else 0)
+    return candidates[0]
 
 
 def review_diversity_requirements(task: Any) -> Dict[str, bool]:
@@ -271,7 +382,6 @@ class ReviewService:
         record_history: Callable[..., None],
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
         reviewer_eligibility_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
-        reviewer_fallback_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
         completion_proof_check: Optional[Callable[[Task], None]] = None,
         drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
     ) -> None:
@@ -290,7 +400,6 @@ class ReviewService:
         # the reviewer themselves — not just any evidence row.
         self._find_verdict_evidence = find_verdict_evidence
         self._reviewer_eligibility_check = reviewer_eligibility_check
-        self._reviewer_fallback_check = reviewer_fallback_check
         self._completion_proof_check = completion_proof_check
         self._drain_task_transition_outbox = drain_task_transition_outbox
         # Compatibility alias for integrations that temporarily disabled the
@@ -301,11 +410,23 @@ class ReviewService:
     # Reviews -----------------------------------------------------------
 
     def request_review(
-        self, task_id: str, reviewer_agent_id: str, actor: str = "dispatcher"
+        self,
+        task_id: str,
+        reviewer_agent_id: str,
+        actor: str = "dispatcher",
+        *,
+        enter_reviewing: bool = True,
     ) -> Review:
+        """Assign ``reviewer_agent_id`` a pending review of ``task_id``.
+
+        ``enter_reviewing`` moves a NEEDS_REVIEW task to REVIEWING, which is
+        what a human-requested review means: someone named now owns the
+        decision. The default workflow passes ``False``: its hub-reviewer
+        decides in the same tick, so the task stays in NEEDS_REVIEW.
+        """
         task = self._get_task(task_id)
         reviewer = self._get_agent(reviewer_agent_id)
-        fallback_reason = self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
+        self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
         if task.state not in {
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
@@ -323,17 +444,10 @@ class ReviewService:
                 raise NotFoundError("task not found: %s" % task_id)
             current = conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
             current_state = str(current["state"])
-            if current_state == TaskState.NEEDS_REVIEW.value:
+            if current_state == TaskState.NEEDS_REVIEW.value and enter_reviewing:
                 if self._transition_task_in_transaction is None:
                     raise TransitionError("transactional task transition is unavailable")
                 transition_detail = {"reviewer_agent_id": reviewer_agent_id}
-                if fallback_reason:
-                    transition_detail.update(
-                        {
-                            "reviewer_independence": "fallback",
-                            "reviewer_independence_reason": fallback_reason,
-                        }
-                    )
                 self._transition_task_in_transaction(
                     conn,
                     task_id,
@@ -341,7 +455,7 @@ class ReviewService:
                     actor,
                     transition_detail,
                 )
-            elif current_state != TaskState.REVIEWING.value:
+            elif current_state not in _REVIEWABLE_STATES:
                 raise TransitionError("task must need review before requesting review")
             existing = conn.execute(
                 """
@@ -366,10 +480,7 @@ class ReviewService:
                 history_detail = {
                     "review_id": review_id,
                     "reviewer_agent_id": reviewer_agent_id,
-                    "reviewer_independence": ("fallback" if fallback_reason else "independent"),
                 }
-                if fallback_reason:
-                    history_detail["reviewer_independence_reason"] = fallback_reason
                 self._record_history(
                     task_id,
                     "task.review_requested",
@@ -392,11 +503,7 @@ class ReviewService:
             "dispatcher",
             reviewer_agent_id,
             MessageType.REVIEW_REQUEST.value,
-            {
-                "task_id": task_id,
-                "review_id": review_id,
-                "reviewer_independence": ("fallback" if fallback_reason else "independent"),
-            },
+            {"task_id": task_id, "review_id": review_id},
             task_id=task_id,
         )
         return self.get_review(review_id)
@@ -406,29 +513,23 @@ class ReviewService:
         task: Task,
         reviewer: Agent,
         reviewer_agent_id: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         reviewer_id = str(getattr(reviewer, "id", None) or reviewer_agent_id or "").strip()
         if not reviewer_id:
             raise AuthorizationError("reviewer agent identity is required")
         if "review" not in set(reviewer.capabilities):
             raise AuthorizationError("reviewer agent requires the review capability")
-        fallback_reason = (
-            self._reviewer_fallback_check(task, reviewer)
-            if self._reviewer_fallback_check is not None
-            else None
-        )
-        if self.agent_has_owned_task(task.id, reviewer_id) and not fallback_reason:
+        if self.agent_has_owned_task(task.id, reviewer_id):
             raise AuthorizationError(
                 "reviewer cannot review a task it currently or previously owned"
             )
-        if self.latest_executor_evidence_author(task.id) == reviewer_id and not fallback_reason:
+        if self.latest_executor_evidence_author(task.id) == reviewer_id:
             raise AuthorizationError("reviewer cannot review its own latest evidence")
         eligibility_check = self._reviewer_independence_check
         if eligibility_check is not None:
             problem = eligibility_check(task, reviewer)
             if problem:
                 raise AuthorizationError("reviewer eligibility check failed: %s" % problem)
-        return fallback_reason
 
     def submit_review(
         self,
@@ -462,10 +563,19 @@ class ReviewService:
             raise ValidationError("review is already completed with a different decision")
         if status_value == ReviewStatus.APPROVED.value and evidence_id is None:
             raise ValidationError("approving a review requires an evidence_id")
+        decision_manifest: Dict[str, Any] = {}
         if evidence_id is not None:
             evidence = self._get_evidence(evidence_id)
             if evidence.task_id != review.task_id:
                 raise ValidationError("review evidence must belong to reviewed task")
+            raw_decision_manifest = (
+                evidence.metadata.get("verification")
+                if isinstance(evidence.metadata, dict)
+                else None
+            )
+            decision_manifest = (
+                raw_decision_manifest if isinstance(raw_decision_manifest, dict) else {}
+            )
             # mac-5u1f: an APPROVED review must point at a real signed
             # review_verdict authored by the reviewer, not at any
             # task-attached evidence (which would let the executor's
@@ -555,44 +665,26 @@ class ReviewService:
         task_for_feedback = reviewed_task if rejected_feedback is not None else None
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
-        refund_attempt = False
+        semantic_retry_update: Optional[Dict[str, Any]] = None
         if status_value in {
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,
         }:
-            # A rejection caused by the review HARNESS is not evidence about the
-            # work, so it must not consume the work's retry budget.
-            #
-            # Observed on task_4ce995cb (2026-08-13): a worker submitted a
-            # correct one-line regression test three times; all three reviews
-            # rejected with "hub contract verification failed" carrying 588
-            # collection errors and, on attempt 2, the sandbox UnicodeEncodeError
-            # that PR #352 fixed eleven hours later. attempt_count reached 3/3,
-            # the task went terminal, and the post-mortem classifier labelled it
-            # "scope" -- whose operator remediation is "decompose", advice that
-            # was actively wrong for a one-line change. An equivalent task filed
-            # afterwards succeeded unchanged (PR #353).
-            #
-            # classify_review_failure already separates these correctly; it was
-            # simply never consulted here. evidence_type is deliberately NOT
+            # A rejection that names the review HARNESS rather than the work
+            # says nothing about the change, so re-executing the task cannot
+            # fix it. It parks for an operator instead of reopening: reopening
+            # re-ran the whole task for a fault the task never had (275 times
+            # in the hub-verify era). evidence_type is deliberately NOT
             # passed: "review_verdict" short-circuits to semantic_rejection
-            # before the free-text rules run, which is precisely the reasoning
-            # that treated a blown-up harness as a judgement about the work.
+            # before the free-text rules run.
             classification = classify_review_failure(
                 reason or "",
                 error=str((rejected_feedback or {}).get("feedback") or "") or None,
             )
-            refund_attempt = bool(classification.is_infrastructure)
-            metadata = ensure_json_object(reviewed_task.metadata)
-            infrastructure_failures = int(metadata.get("review_infrastructure_failure_count") or 0)
-            if refund_attempt:
-                infrastructure_failures += 1
-            effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
-            exhausted = effective_attempts >= reviewed_task.max_attempts
-            infrastructure_exhausted = refund_attempt and infrastructure_failures >= 3
+            exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
             transition_target = (
                 TaskState.BLOCKED.value
-                if exhausted or infrastructure_exhausted
+                if exhausted or classification.is_infrastructure
                 else TaskState.OPEN.value
             )
             transition_detail = {
@@ -601,30 +693,172 @@ class ReviewService:
                 "reason": "review rejected after max attempts" if exhausted else "review rejected",
                 "review_failure_class": classification.failure_class,
                 "review_failure_is_infrastructure": classification.is_infrastructure,
-                "review_infrastructure_failure_count": infrastructure_failures,
             }
-            if refund_attempt:
-                # Name the refund in the transition detail so the ledger shows
-                # why this rejection did not cost the task an attempt.
-                transition_detail["attempt_refunded"] = True
-                transition_detail["reason"] = (
-                    "review harness failed (%s); attempt refunded" % classification.failure_class
+            acceptance = ensure_json_object(decision_manifest.get("acceptance"))
+            acceptance_rejection = (
+                acceptance.get("schema") == ACCEPTANCE_RESULT_SCHEMA
+                and acceptance.get("required") is True
+                and acceptance.get("status") == "fail"
+            )
+            if acceptance_rejection and self._find_verdict_evidence is not None:
+                reviewed_evidence_id = str(
+                    decision_manifest.get("reviewed_evidence_id") or ""
+                ).strip()
+                current_target = self.current_review_target_evidence_id(review.task_id)
+                verdict, _problems = self._find_verdict_evidence(
+                    review.task_id,
+                    reviewer_agent_id,
+                    executor_evidence_id=reviewed_evidence_id,
+                    verdict_evidence_id=evidence_id,
+                    not_before=review.created_at,
                 )
+                acceptance_rejection = bool(
+                    reviewed_evidence_id
+                    and reviewed_evidence_id == current_target
+                    and verdict is not None
+                )
+            if acceptance_rejection:
+                failure_class = str(acceptance.get("failure_class") or "").strip()
+                metadata = ensure_json_object(reviewed_task.metadata)
+                existing_retry = ensure_json_object(metadata.get("semantic_retry"))
+                failed_routes = [
+                    {
+                        "provider": str(item.get("provider") or "").strip().lower(),
+                        "model": str(item.get("model") or "").strip(),
+                    }
+                    for item in existing_retry.get("failed_routes", [])
+                    if isinstance(item, dict) and str(item.get("model") or "").strip()
+                ]
+                executor_evidence_id = str(
+                    decision_manifest.get("reviewed_evidence_id") or ""
+                ).strip()
+                executor_manifest: Dict[str, Any] = {}
+                if executor_evidence_id:
+                    executor_evidence = self._get_evidence(executor_evidence_id)
+                    raw_executor_manifest = (
+                        executor_evidence.metadata.get("verification")
+                        if isinstance(executor_evidence.metadata, dict)
+                        else None
+                    )
+                    if isinstance(raw_executor_manifest, dict):
+                        executor_manifest = raw_executor_manifest
+                failed_route = {
+                    "provider": manifest_llm_provider(executor_manifest),
+                    "model": manifest_llm_model(executor_manifest),
+                }
+                if failed_route["model"] and failed_route not in failed_routes:
+                    failed_routes.append(failed_route)
+                attempts = list(existing_retry.get("attempts") or [])
+                attempt_record: Dict[str, Any] = {
+                    "attempt_count": reviewed_task.attempt_count,
+                    "executor_evidence_id": executor_evidence_id,
+                    "verdict_evidence_id": evidence_id,
+                    "review_id": review_id,
+                    "failure_class": failure_class,
+                    "problems": [str(item)[:500] for item in acceptance.get("problems", [])][:10],
+                    "failed_route": failed_route,
+                    "recorded_at": now,
+                }
+                attempts.append(attempt_record)
+                semantic_retry_update = dict(existing_retry)
+                semantic_retry_update.update(
+                    {
+                        "schema": "mac.semantic_retry.v1",
+                        "failed_routes": failed_routes,
+                        "attempts": attempts[-max(1, int(reviewed_task.max_attempts)) :],
+                        "last_failure_class": failure_class,
+                    }
+                )
+                if failure_class == FAILURE_SEMANTIC_WORK:
+                    exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
+                    if exhausted:
+                        transition_target = TaskState.NEEDS_REVIEW.value
+                        semantic_retry_update.pop("not_before", None)
+                        semantic_retry_update["status"] = "exhausted"
+                        transition_detail = {
+                            "review_id": review_id,
+                            "review_status": status_value,
+                            "reason": "semantic retry budget exhausted",
+                            "semantic_failure_class": failure_class,
+                            "executor_evidence_id": executor_evidence_id,
+                            "verdict_evidence_id": evidence_id,
+                            "attempt_count": reviewed_task.attempt_count,
+                            "max_attempts": reviewed_task.max_attempts,
+                            "manual_review_required": True,
+                        }
+                    else:
+                        delay_seconds = _semantic_retry_delay_seconds(
+                            reviewed_task.id,
+                            reviewed_task.attempt_count,
+                            str(evidence_id or executor_evidence_id),
+                        )
+                        not_before = _semantic_retry_not_before(now, delay_seconds)
+                        alternate = _select_semantic_retry_route(metadata, failed_routes)
+                        semantic_retry_update.update(
+                            {
+                                "status": "scheduled",
+                                "not_before": not_before,
+                                "delay_seconds": delay_seconds,
+                                "next_attempt": reviewed_task.attempt_count + 1,
+                                "selected_route": alternate,
+                            }
+                        )
+                        transition_target = TaskState.OPEN.value
+                        transition_detail = {
+                            "review_id": review_id,
+                            "review_status": status_value,
+                            "reason": "bounded semantic work retry",
+                            "semantic_failure_class": failure_class,
+                            "executor_evidence_id": executor_evidence_id,
+                            "verdict_evidence_id": evidence_id,
+                            "attempt_count": reviewed_task.attempt_count,
+                            "max_attempts": reviewed_task.max_attempts,
+                            "retry_not_before": not_before,
+                            "retry_delay_seconds": delay_seconds,
+                            "failed_route": failed_route,
+                            "selected_route": alternate,
+                        }
+                else:
+                    # Verifier absence/version drift and malformed contracts are
+                    # operator defects.  Park immediately without burning more
+                    # model attempts or publishing the rejected candidate. A
+                    # human review parks back in NEEDS_REVIEW; the default
+                    # workflow already decides from NEEDS_REVIEW, where the
+                    # next tick would re-review and re-reject the same
+                    # evidence, so it parks in BLOCKED.
+                    transition_target = (
+                        TaskState.BLOCKED.value
+                        if reviewed_task.state == TaskState.NEEDS_REVIEW.value
+                        else TaskState.NEEDS_REVIEW.value
+                    )
+                    semantic_retry_update.pop("not_before", None)
+                    semantic_retry_update["status"] = "operator_repair_required"
+                    transition_detail = {
+                        "review_id": review_id,
+                        "review_status": status_value,
+                        "reason": "semantic acceptance operator defect",
+                        "semantic_failure_class": failure_class,
+                        "executor_evidence_id": executor_evidence_id,
+                        "verdict_evidence_id": evidence_id,
+                        "manual_review_required": True,
+                    }
+                    if transition_target == TaskState.BLOCKED.value:
+                        transition_detail["manual_repair_required"] = True
             if exhausted:
                 transition_detail["manual_repair_required"] = True
-            if infrastructure_exhausted:
+            if classification.is_infrastructure and transition_target == TaskState.BLOCKED.value:
                 transition_detail["manual_repair_required"] = True
                 transition_detail["reason"] = (
-                    "review harness failed %d consecutive times; operator repair required"
-                    % infrastructure_failures
+                    "review harness failed (%s); operator repair required"
+                    % classification.failure_class
                 )
         with self.store.transaction() as conn:
             locked_task = conn.execute(
                 """
                 UPDATE tasks SET updated_at = updated_at
-                WHERE id = ? AND state = ?
+                WHERE id = ? AND state IN (?, ?)
                 """,
-                (review.task_id, TaskState.REVIEWING.value),
+                (review.task_id, TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value),
             )
             if locked_task.rowcount != 1:
                 raise TransitionError("reviewed task state changed during submission; retry")
@@ -647,43 +881,34 @@ class ReviewService:
             )
             if changed.rowcount != 1:
                 raise ValidationError("review state changed during submission; retry")
-            if rejected_feedback is not None:
-                metadata = dict(task_for_feedback.metadata)
+            if rejected_feedback is not None or semantic_retry_update is not None:
+                metadata = dict(
+                    task_for_feedback.metadata
+                    if task_for_feedback is not None
+                    else reviewed_task.metadata
+                )
                 block = (
                     metadata.get("review_feedback")
                     if isinstance(metadata.get("review_feedback"), dict)
                     else {}
                 )
-                history = list(block.get("history") or [])
-                latest = block.get("latest")
-                if isinstance(latest, dict):
-                    history.insert(0, latest)
-                metadata["review_feedback"] = self._bounded_review_feedback_block(
-                    rejected_feedback,
-                    history,
-                )
-                if refund_attempt:
-                    metadata["review_infrastructure_failure_count"] = infrastructure_failures
+                if rejected_feedback is not None:
+                    history = list(block.get("history") or [])
+                    latest = block.get("latest")
+                    if isinstance(latest, dict):
+                        history.insert(0, latest)
+                    metadata["review_feedback"] = self._bounded_review_feedback_block(
+                        rejected_feedback,
+                        history,
+                    )
+                if semantic_retry_update is not None:
+                    metadata["semantic_retry"] = semantic_retry_update
+                    selected_route = semantic_retry_update.get("selected_route")
+                    if isinstance(selected_route, dict) and selected_route.get("model"):
+                        metadata["model"] = str(selected_route["model"])
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),
-                )
-            if refund_attempt:
-                # attempt_count increments at CLAIM time, so a harness failure
-                # has already spent one before any judgement about the work
-                # exists. Give it back, clamped at zero, in the same
-                # transaction as the review row and the transition.
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET attempt_count = CASE
-                            WHEN attempt_count > 0 THEN attempt_count - 1
-                            ELSE 0
-                        END,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (now, review.task_id),
                 )
             self._record_history(
                 review.task_id,
@@ -695,14 +920,6 @@ class ReviewService:
                     "review_id": review_id,
                     "status": status_value,
                     "reason": reason,
-                    **(
-                        {
-                            "attempt_refunded": True,
-                            "review_failure_class": classification.failure_class,
-                        }
-                        if refund_attempt
-                        else {}
-                    ),
                 },
                 conn=conn,
             )
@@ -762,7 +979,7 @@ class ReviewService:
         evidence_id: Optional[str] = None,
     ) -> Publication:
         task = self._get_task(task_id)
-        if task.state != TaskState.REVIEWING.value:
+        if task.state not in _REVIEWABLE_STATES:
             raise TransitionError("task must be in review before publication")
         if not self.completion_authorized(task_id):
             raise ValidationError("publication requires approved review and evidence")
@@ -817,7 +1034,7 @@ class ReviewService:
                     completed_at = COALESCE(completed_at, ?), updated_at = ?
                 WHERE id = ? AND state = ?
                 """,
-                (TaskState.COMPLETED.value, now, now, task_id, TaskState.REVIEWING.value),
+                (TaskState.COMPLETED.value, now, now, task_id, task.state),
             )
             if cursor.rowcount != 1:
                 raise TransitionError("task state changed during publish; retry")
@@ -850,7 +1067,7 @@ class ReviewService:
                 task_id,
                 "task.transitioned",
                 created_by,
-                TaskState.REVIEWING.value,
+                task.state,
                 TaskState.COMPLETED.value,
                 {"publication_id": publication_id},
                 conn=conn,

@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
+ulimit -c unlimited 2>/dev/null || true
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$HOME/.mac/node_modules/.bin:$HOME/.cargo/bin:$PATH"
+export PYTHONFAULTHANDLER=1
+export PYTHONUNBUFFERED=1
+
+# Resolve the hub bearer fleet-aware, mirroring mac.fleet_env (mac-g55y). A node
+# migrated to fleet-scoped credentials keeps the correct token in
+# MAC_WORKER_TOKEN__<FLEET> while the legacy flat MAC_WORKER_TOKEN is stale or
+# absent; without this the wrapper's `Bearer $MAC_WORKER_TOKEN` heartbeat 403s.
+# Prefer the scoped form across the whole chain (MAC_WORKER_TOKEN, MAC_TOKEN,
+# MAC_API_TOKEN) before any flat form so a stale flat token cannot shadow the
+# correct scoped one; a scoped var that is *set* wins even when its value is
+# empty (matching mac.fleet_env). Export the result as MAC_WORKER_TOKEN so
+# downstream uses (the :? guard, the Bearer header, and the sourced self-test)
+# all agree. Un-migrated nodes fall back to the flat token for one deprecation
+# cycle. Inlined (no shell function) so the wrapper body carries no top-level `}`.
+mac_token_value=""
+mac_token_found=""
+mac_token_fleet="${MAC_FLEET:-${MAC_FLEET_NAME:-}}"
+mac_token_suffix=""
+if [ -n "$mac_token_fleet" ]; then
+  mac_token_suffix="$(printf '%s' "$mac_token_fleet" \
+    | LC_ALL=C sed -e 's/[^A-Za-z0-9]\{1,\}/_/g' -e 's/^_//' -e 's/_$//' \
+    | LC_ALL=C tr 'a-z' 'A-Z')"
+fi
+if [ -n "$mac_token_suffix" ]; then
+  for mac_token_base in MAC_WORKER_TOKEN MAC_TOKEN MAC_API_TOKEN; do
+    if eval "[ \"\${${mac_token_base}__${mac_token_suffix}+set}\" = set ]"; then
+      eval "mac_token_value=\${${mac_token_base}__${mac_token_suffix}}"
+      mac_token_found=1
+      break
+    fi
+  done
+fi
+if [ -z "$mac_token_found" ]; then
+  for mac_token_base in MAC_WORKER_TOKEN MAC_TOKEN MAC_API_TOKEN; do
+    if eval "[ \"\${${mac_token_base}+set}\" = set ]"; then
+      eval "mac_token_value=\${${mac_token_base}}"
+      mac_token_found=1
+      break
+    fi
+  done
+fi
+MAC_WORKER_TOKEN="$mac_token_value"
+export MAC_WORKER_TOKEN
+unset mac_token_value mac_token_found mac_token_fleet mac_token_suffix mac_token_base 2>/dev/null || true
+
+: "${MAC_HUB_URL:?MAC_HUB_URL is required}"
+: "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"
+
+# One generation spans the startup self-test and the worker process that follows
+# it. Rotate on every service invocation so a hub-cached report from a previous
+# process can never authorize the replacement, even when source and image are
+# otherwise identical.
+MAC_WORKER_PROCESS_REVISION="$("$HOME/.mac/venv/bin/python" -c 'import uuid; print(uuid.uuid4().hex)')"
+export MAC_WORKER_PROCESS_REVISION
+
+agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
+workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
+mode="${MAC_WORKER_MODE:-heartbeat}"
+capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+# Hardware capability probes: always append cpu; append gpu/cuda only when a
+# host GPU is present AND the bootstrap proved a nested OpenShell sandbox can
+# actually use it.
+#
+# Advertising on nvidia-smi alone is a lie the dispatcher believes. Tasks run
+# INSIDE OpenShell sandboxes, so host-visible hardware is not the capability
+# being offered. src/mac/executor_sandbox.py refuses a GPU task outright unless
+# MAC_OPENSHELL_GPU_AVAILABLE is set ("task requires GPU but bootstrap did not
+# verify OpenShell GPU access"), so a host advertising gpu without that flag
+# gets matched, claims the work, and fails it -- instead of the hub routing it
+# to a host that can run it.
+#
+# Measured on all five GKE workers 2026-08-05: nvidia-smi reports an RTX PRO
+# 6000 MIG device, while the GPU smoke fails because
+# /run/nvidia-persistenced/socket does not exist in the pod, so no nested GPU
+# container can start. Real GPU, unusable through the sandbox.
+#
+# Unset is treated as unproved, matching env_bool's default=False, so this
+# advertises exactly what the executor will honor.
+case "$(printf '%s' "${MAC_OPENSHELL_GPU_AVAILABLE:-}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) openshell_gpu_proved=1 ;;
+  *) openshell_gpu_proved=0 ;;
+esac
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "^GPU"; then
+  if [ "$openshell_gpu_proved" = 1 ]; then
+    capabilities="$capabilities,gpu,cuda"
+  else
+    echo "mac-agent: host GPU present but OpenShell GPU access is unproved (MAC_OPENSHELL_GPU_AVAILABLE=${MAC_OPENSHELL_GPU_AVAILABLE:-unset}); not advertising gpu/cuda so GPU work routes to a host that can run it" >&2
+  fi
+fi
+capabilities="$capabilities,cpu"
+
+# Toolchain capability probes, on the same principle as the GPU block above:
+# advertise what the SANDBOX can do, because that is where tasks run.
+#
+# The default capability list is a hardcoded string that never mentioned `c`,
+# `make` or `python3`, so no standard worker advertised them however capable
+# the machine was. Measured 2026-08-08: every fleet host had cc, gcc, clang,
+# make and python3 installed, and exactly ONE agent advertised `c` -- because
+# someone had set MAC_WORKER_CAPABILITIES on it by hand. Every C task in the
+# ledger could therefore match only that one worker, and when a transient
+# failure excluded it (see the retry ratchet), the work became permanently
+# undispatchable while eight idle agents watched.
+#
+# Probed rather than declared, and probed INSIDE the sandbox rather than on the
+# host: a host toolchain the sandbox cannot reach is the same lie the GPU
+# comment describes -- the dispatcher believes it, routes the work, and the
+# task fails on a box that was never able to run it.
+#
+# Fails closed. If the sandbox cannot be probed, nothing is advertised, so work
+# routes to a host that has proven it can run it.
+probe_sandbox_tool() {
+  local tool="$1"
+  [ -n "${MAC_OPENSHELL_BIN:-}" ] || return 1
+  command -v "$MAC_OPENSHELL_BIN" >/dev/null 2>&1 || return 1
+  "$MAC_OPENSHELL_BIN" run --quiet -- command -v "$tool" >/dev/null 2>&1
+}
+
+for probe_pair in "cc:c" "make:make" "python3:python3"; do
+  probe_tool="${probe_pair%%:*}"
+  probe_cap="${probe_pair##*:}"
+  case ",$capabilities," in
+    *",$probe_cap,"*) continue ;;
+  esac
+  if probe_sandbox_tool "$probe_tool"; then
+    capabilities="$capabilities,$probe_cap"
+  else
+    echo "mac-agent: sandbox cannot run '$probe_tool'; not advertising '$probe_cap' so that work routes to a host that can" >&2
+  fi
+done
+mkdir -p "$workspace"
+
+stable_agent_id() {
+  "$HOME/.mac/venv/bin/python" - "$agent_name" <<'PY'
+import re
+import sys
+safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", sys.argv[1].lower()).strip("_") or "default"
+print("agent_%s" % safe)
+PY
+}
+
+mark_worker_offline() {
+  local agent_id
+  agent_id="${MAC_WORKER_AGENT_ID:-$(stable_agent_id)}"
+  curl -fsS --max-time 10 -X POST \
+    -H "Content-Type: application/json" \
+    --config - \
+    --data '{"status":"offline","health_status":"degraded"}' \
+    "$MAC_HUB_URL/agents/$agent_id/heartbeat" >/dev/null <<CURL || true
+header = "Authorization: Bearer $MAC_WORKER_TOKEN"
+CURL
+}
+
+stop_worker_wrapper() {
+  # The wrapper can still be running its startup self-test when the supervisor
+  # asks it to stop. Merely recording the offline heartbeat and returning from
+  # the trap lets the shell continue into exec(mac-agent), losing the one-shot
+  # termination signal and leaving systemd/launchd stuck until its hard stop
+  # timeout. Latch the stop by exiting before the worker can be exec'd.
+  trap - TERM INT
+  mark_worker_offline
+  exit 143
+}
+trap stop_worker_wrapper TERM INT
+
+if [ "${MAC_AGENT_STARTUP_SELF_TEST:-1}" != "0" ]; then
+  # The self-test declares its verdict through its exit code: 0 = passed or
+  # degraded (non-blocking), 1 = a genuine blocking misconfiguration.  Guard the
+  # unguarded invocation so 'set -e' only kills mac-agent-service on a real
+  # blocking verdict; any other non-zero exit (a transient probe blip that the
+  # self-test itself already downgrades, or an internal self-test fault) leaves
+  # the worker degraded but running instead of crash-looping the service.
+  selftest_rc=0
+  "$HOME/.mac/bin/mac-agent-startup-self-test" || selftest_rc=$?
+  if [ "$selftest_rc" -eq 1 ]; then
+    exit 1
+  elif [ "$selftest_rc" -ne 0 ]; then
+    echo "mac-agent-service: startup self-test exited $selftest_rc; continuing degraded" >&2
+  fi
+fi
+
+common=(
+  "$HOME/.mac/venv/bin/mac-agent"
+  --url "$MAC_HUB_URL"
+  --register
+  --agent-id "${MAC_AGENT_ID:-$(stable_agent_id)}"
+  --agent-name "$agent_name"
+  --hostname "$host_name"
+  --capabilities "$capabilities"
+  --workspace "$workspace"
+  --lease-seconds "${MAC_WORKER_LEASE_SECONDS:-900}"
+  # Hard cap on one whole task attempt (coding agent + repository gate). It
+  # must cover MAC_EXECUTOR_AGENT_TIMEOUT plus MAC_WORKER_REPOSITORY_TEST_TIMEOUT;
+  # the worker's built-in 3600s default silently cut both 5400s budgets short
+  # (nanolang's attempts died at exactly 60m on 2026-10-03).
+  --timeout "${MAC_WORKER_TIMEOUT:-10800}"
+  --poll-interval "${MAC_WORKER_POLL_INTERVAL:-2}"
+  --attestation-key-env "$HOME/.mac/mac.env"
+)
+worker_resources="${MAC_WORKER_RESOURCES:-}"
+if [ -n "${MAC_WORKER_RESOURCES_FILE:-}" ] && [ -f "$MAC_WORKER_RESOURCES_FILE" ]; then
+  worker_resources="$(< "$MAC_WORKER_RESOURCES_FILE")"
+fi
+if [ -n "$worker_resources" ]; then
+  common+=(--resources "$worker_resources")
+fi
+if [ -n "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}" ]; then
+  common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")
+fi
+if [ -n "${MAC_WORKER_ALLOWED_PROJECTS:-}" ]; then
+  common+=(--allowed-projects "$MAC_WORKER_ALLOWED_PROJECTS")
+fi
+if [ -n "${MAC_WORKER_REQUIRED_METADATA:-}" ]; then
+  common+=(--required-metadata "$MAC_WORKER_REQUIRED_METADATA")
+fi
+case "${MAC_WORKER_CLAIM_ONLY_CANARY_TASKS:-}" in
+  1|true|TRUE|yes|YES|on|ON)
+    common+=(--claim-only-canary-tasks)
+    ;;
+esac
+
+case "$mode" in
+  heartbeat)
+    interval="${MAC_WORKER_HEARTBEAT_INTERVAL:-30}"
+    while :; do
+      "${common[@]}" --heartbeat-only || true
+      sleep "$interval"
+    done
+    ;;
+  dry-run)
+    interval="${MAC_WORKER_HEARTBEAT_INTERVAL:-30}"
+    while :; do
+      "${common[@]}" --dry-run-claim || true
+      sleep "$interval"
+    done
+    ;;
+  loop)
+    executor="${MAC_WORKER_EXECUTOR:-$HOME/.mac/bin/mac-task-executor}"
+    if [ "$executor" = "$HOME/.mac/bin/mac-task-executor" ]; then
+      test -x "$HOME/.mac/venv/bin/python"
+      test -f "$HOME/.mac/bin/mac-task-executor.py"
+    fi
+    exec "${common[@]}" --loop --executor "$executor"
+    ;;
+  *)
+    echo "unsupported MAC_WORKER_MODE=$mode" >&2
+    exit 2
+    ;;
+esac

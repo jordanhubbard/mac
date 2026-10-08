@@ -19,8 +19,9 @@ from mac.fleet_learning import (
     classify_repository_access_failure,
     resolve_git_remote_access,
 )
-from mac.gitops import redact_git_remote_auth_in_text
+from mac.gitops import redact_git_remote_auth_in_text, scrub_check_log
 from mac.models import EVIDENCE_KINDS, JsonDict, ValidationError, ensure_json_object
+from mac.persistence_redaction import redact_for_persistence
 
 
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -36,6 +37,207 @@ def repo_files_changed_problem(value: Any) -> Optional[str]:
     ):
         return "repo.files_changed must be a list of non-empty path strings"
     return None
+
+
+# Where ``verify_unpublished_repository`` records that a repository gate ran:
+# the OpenShell verifier sandbox, or the dedicated KVM verifier.
+VERIFIER_EXECUTION_ENVIRONMENTS = frozenset({"openshell_sandbox", "dedicated_kvm"})
+_FULL_GIT_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def verifier_test_item_problems(item: Any, head_sha: str) -> List[str]:
+    """Why *item* is not a verifier-produced pass for commit *head_sha*.
+
+    A repository change counts as tested only when the pre-push verifier ran
+    the contract gate on a fresh clone of the exact commit being published and
+    recorded that it did. Everything else that looks like a pass is not one:
+    a sandbox receipt for a clean tree where nothing ran, a ``deferred`` item
+    waiting on another gate, or a ``tests`` list the agent wrote itself. 64% of
+    the hub's second-run "catches" over 90 days were such items.
+    """
+    if not isinstance(item, dict):
+        return ["test item is not an object"]
+    problems: List[str] = []
+    status = str(item.get("status") or "").strip().lower()
+    if status != "pass":
+        problems.append("status is %r, not 'pass'" % (status or None))
+    returncode = item.get("returncode")
+    if isinstance(returncode, bool) or returncode != 0:
+        problems.append("returncode is %r, not 0" % (returncode,))
+    if item.get("skipped"):
+        problems.append("the gate was skipped, nothing ran")
+    environment = str(item.get("execution_environment") or "").strip()
+    if environment not in VERIFIER_EXECUTION_ENVIRONMENTS:
+        problems.append("execution_environment %r is not a repository verifier" % (environment,))
+    executed_head = str(item.get("executed_head_sha") or "").strip().lower()
+    expected_head = str(head_sha or "").strip().lower()
+    if not executed_head:
+        problems.append("executed_head_sha is missing")
+    elif executed_head != expected_head:
+        problems.append(
+            "executed_head_sha %s is not repo.head_sha %s"
+            % (executed_head[:12], expected_head[:12])
+        )
+    if not _FULL_GIT_SHA_RE.match(str(item.get("executed_tree_sha") or "").strip().lower()):
+        problems.append("executed_tree_sha is missing")
+    test_count = item.get("test_count")
+    has_count = isinstance(test_count, int) and not isinstance(test_count, bool) and test_count > 0
+    if not str(item.get("stdout") or "").strip() and not has_count:
+        problems.append("no verifier output or test count was recorded")
+    return problems
+
+
+def verifier_tests_problems(
+    manifest: Mapping[str, Any], head_sha: Optional[str] = None
+) -> List[str]:
+    """[] when ``verification.tests`` holds a verifier pass for the repo head.
+
+    *head_sha* defaults to ``manifest.repo.head_sha``. ``checks`` never count:
+    they carry finalizer/push bookkeeping, not a test run.
+    """
+    if head_sha is None:
+        repo = manifest.get("repo")
+        head_sha = str(repo.get("head_sha") or "") if isinstance(repo, dict) else ""
+    tests = manifest.get("tests")
+    if isinstance(tests, dict):
+        tests = [tests]
+    if not isinstance(tests, list) or not tests:
+        return [
+            "repo_change evidence requires a repository verifier test result for "
+            "repo.head_sha; verification.tests is empty"
+        ]
+    reasons: List[str] = []
+    for index, item in enumerate(tests):
+        item_problems = verifier_test_item_problems(item, head_sha)
+        if not item_problems:
+            return []
+        name = str(item.get("name") or "") if isinstance(item, dict) else ""
+        reasons.append(
+            "tests[%d]%s: %s" % (index, " (%s)" % name if name else "", "; ".join(item_problems))
+        )
+    return [
+        "repo_change evidence requires a repository verifier test result for "
+        "repo.head_sha; none qualifies (%s)" % " | ".join(reasons[:3])
+    ]
+
+
+# Bounds on the gate output a failed repository gate carries into a retry.
+GATE_FAILURE_MAX_LINES = 60
+GATE_FAILURE_MAX_CHARS = 4000
+_GATE_FAILURE_MAX_FAILING_LINES = 30
+_GATE_FAILING_LINE_RE = re.compile(
+    r"^(?:FAILED|FAIL|ERROR)\b|^E\s|\bAssertionError\b|\bassert(?:ion)?\b.*(?:==|!=|failed)"
+    r"|\b(?:FAIL|FAILED|failed)\s*[:\-]|\bError:|\bnot ok\b|^make(?:\[\d+\])?: \*\*\*",
+)
+# Problems that are the CONSEQUENCE of a repository gate that ran and failed:
+# the finalizer refuses to push a red head, so the evidence is unpushed and has
+# no passing test. Anything else stays a structural evidence problem.
+_GATE_CONSEQUENCE_PROBLEMS = (
+    "repo evidence requires pushed=true with remote_ref, or pr_url",
+    "repo code evidence requires at least one passing test/check",
+)
+_VERIFIER_TESTS_PROBLEM_PREFIX = (
+    "repo_change evidence requires a repository verifier test result for repo.head_sha; "
+    "none qualifies"
+)
+
+
+def _scrub_gate_output(text: str) -> str:
+    return scrub_check_log(str(redact_for_persistence(str(text or "").replace("\x00", ""))))
+
+
+def _ran_and_failed_gate_item(item: Any, head_sha: str) -> bool:
+    """The verifier ran the contract gate on *head_sha* and it exited non-zero."""
+    if not isinstance(item, dict):
+        return False
+    returncode = item.get("returncode")
+    executed_head = str(item.get("executed_head_sha") or "").strip().lower()
+    return (
+        str(item.get("status") or "").strip().lower() == "fail"
+        and isinstance(returncode, int)
+        and not isinstance(returncode, bool)
+        and returncode != 0
+        and not item.get("skipped")
+        and str(item.get("execution_environment") or "").strip() in VERIFIER_EXECUTION_ENVIRONMENTS
+        and bool(executed_head)
+        and executed_head == str(head_sha or "").strip().lower()
+        and bool(_FULL_GIT_SHA_RE.match(str(item.get("executed_tree_sha") or "").strip().lower()))
+    )
+
+
+def repository_gate_failure(manifest: Any, problems: List[str]) -> Optional[JsonDict]:
+    """What a retry needs when the repository gate RAN and FAILED, else None.
+
+    A submission is an ordinary work failure -- retryable, like a failing
+    executor run -- only when the verifier's own record shows it ran the
+    contract gate on the exact ``repo.head_sha`` and the gate exited non-zero,
+    and every problem is that failure or its consequence (the head was not
+    pushed, nothing passed). Structurally invalid evidence -- a missing or
+    malformed manifest, a wrong head, a gate that never ran, a scope or policy
+    problem -- returns None and keeps its manual repair.
+
+    The result carries a bounded, secret-scrubbed tail of the gate output and
+    the lines that name failing tests and assertions, for the next attempt.
+    """
+    if not isinstance(manifest, dict) or not problems:
+        return None
+    repo = manifest.get("repo")
+    head_sha = str(repo.get("head_sha") or "").strip() if isinstance(repo, dict) else ""
+    if not GIT_SHA_RE.match(head_sha):
+        return None
+    tests = manifest.get("tests")
+    if isinstance(tests, dict):
+        tests = [tests]
+    if not isinstance(tests, list):
+        return None
+    failed = next((item for item in tests if _ran_and_failed_gate_item(item, head_sha)), None)
+    if failed is None:
+        return None
+    saw_gate_problem = False
+    for problem in problems:
+        text = str(problem or "")
+        if text.startswith(_VERIFIER_TESTS_PROBLEM_PREFIX):
+            saw_gate_problem = True
+        elif text not in _GATE_CONSEQUENCE_PROBLEMS:
+            return None
+    if not saw_gate_problem:
+        return None
+    output = "\n".join(
+        part
+        for part in (
+            str(failed.get("stdout") or ""),
+            str(failed.get("stderr") or ""),
+        )
+        if part.strip()
+    )
+    if not output.strip():
+        output = "\n".join(
+            part
+            for part in (str(failed.get("output_head") or ""), str(failed.get("output_tail") or ""))
+            if part.strip()
+        )
+    lines = _scrub_gate_output(output).splitlines()
+    failing: List[str] = []
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped and _GATE_FAILING_LINE_RE.search(stripped) and stripped not in failing:
+            failing.append(stripped[:300])
+    failing = failing[-_GATE_FAILURE_MAX_FAILING_LINES:]
+    tail = "\n".join(lines[-GATE_FAILURE_MAX_LINES:])
+    if len(tail) > GATE_FAILURE_MAX_CHARS:
+        tail = tail[-GATE_FAILURE_MAX_CHARS:]
+        newline = tail.find("\n")
+        if 0 <= newline < len(tail) - 1:
+            tail = tail[newline + 1 :]
+    return {
+        "schema": "mac.repository_gate_failure.v1",
+        "name": str(failed.get("name") or "repository contract test"),
+        "command": _scrub_gate_output(str(failed.get("command") or ""))[:500],
+        "returncode": failed.get("returncode"),
+        "head_sha": head_sha,
+        "failing_lines": failing,
+        "output_tail": tail,
+    }
 
 
 def normalize_manifest_tests(raw: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -178,6 +380,9 @@ class EvidenceValidationContext:
     repo_coupled: bool = False
     # mac-wjy3: a task whose contract requires tests must record a tests list.
     require_tests: bool = False
+    # The task's repository contract defines a test command, so a repo_change
+    # passes only on a verifier-produced test result for repo.head_sha.
+    require_verifier_tests: bool = False
     # Prepared canonical HEAD the worker attached. Empty means this run did
     # not snapshot a worktree (unit tests of bare manifests stay fail-open).
     expected_reconcile_head_sha: str = ""
@@ -266,6 +471,12 @@ class RepoChangeValidator(EvidenceValidator):
                 "this task's contract requires tests, but verification.tests is "
                 "null/missing — run the repository test command and record results"
             )
+        # An allowed empty change (a no-op source refresh) has nothing to test.
+        no_op = context.allow_empty_repo_change and not (
+            manifest.repo is not None and manifest.repo.files_changed
+        )
+        if context.require_verifier_tests and not no_op:
+            problems.extend(verifier_tests_problems(manifest.raw))
         return problems
 
 
@@ -504,6 +715,7 @@ def validate_evidence_type(
     allow_empty_repo_change: bool = False,
     repo_coupled: bool = False,
     require_tests: bool = False,
+    require_verifier_tests: bool = False,
     expected_reconcile_head_sha: str = "",
 ) -> List[str]:
     typed = VerificationManifest.parse(manifest)
@@ -517,6 +729,7 @@ def validate_evidence_type(
             allow_empty_repo_change=allow_empty_repo_change,
             repo_coupled=repo_coupled,
             require_tests=require_tests,
+            require_verifier_tests=require_verifier_tests,
             expected_reconcile_head_sha=expected_reconcile_head_sha,
         ),
     )

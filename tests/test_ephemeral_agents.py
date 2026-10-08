@@ -82,6 +82,43 @@ def test_ephemeral_holding_active_lease_is_not_swept(cp: ControlPlane) -> None:
     assert cp.get_agent(ephemeral.id).deleted_at is None
 
 
+@pytest.mark.parametrize(
+    "hold_reason",
+    [
+        "fleet-update 0123456789ab",
+        "mac admin fleet deployment abc123:worker:20260927T000000Z:def456",
+        "mac:fleet-release:0ec009281acc92b5c7fb292fb14913cd",
+    ],
+)
+def test_worker_held_by_a_deploy_is_not_swept(cp: ControlPlane, hold_reason: str) -> None:
+    """A deploy stopping a worker is not its host departing.
+
+    fleet-update holds a worker, restarts it, and then waits for that agent to
+    report the new commit. A deploy that fails part-way leaves the node stopped,
+    silent and still held. Sweeping its agent row strands the host: the update
+    cannot see it come back, and a worker with no agent row cannot rejoin
+    without being re-registered. The hold is the durable signal, so every shape
+    a deploy places is honoured, including a hold an aborted release epoch left.
+    """
+    worker = _ephemeral(cp, "retained", ttl=60)
+    cp.set_agent_dispatch_hold(worker.id, hold_reason)
+    _age_last_seen(cp, worker.id, 3600)
+
+    assert cp.expire_ephemeral_agents() == []
+    assert cp.get_agent(worker.id).deleted_at is None
+
+
+def test_lapsed_worker_under_an_unrelated_hold_is_still_swept(cp: ControlPlane) -> None:
+    """Only a deployment hold defers the sweep; an ordinary hold does not."""
+
+    worker = _ephemeral(cp, "quarantined", ttl=60)
+    cp.set_agent_dispatch_hold(worker.id, "operator investigation")
+    _age_last_seen(cp, worker.id, 3600)
+
+    assert [agent.id for agent in cp.expire_ephemeral_agents()] == [worker.id]
+    assert cp.get_agent(worker.id).deleted_at is not None
+
+
 def test_deregister_leaves_a_final_message_that_outlives_the_agent(
     cp: ControlPlane,
 ) -> None:

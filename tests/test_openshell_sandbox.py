@@ -63,7 +63,6 @@ _OPENSHELL_ENVS = [
     "MAC_TASK_REPO_ACCESS_MODE",
     "MAC_HERMES_PYTHON",
     "MAC_ALLOW_UNSANDBOXED_YOLO",
-    "MAC_EXECUTOR_BACKEND",
     "HERMES_YOLO_MODE",
 ]
 
@@ -82,6 +81,13 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
     monkeypatch.setenv("MAC_OPENSHELL_REAP_ORPHANS", "0")
     monkeypatch.setenv("MAC_OPENSHELL_RECONCILE_LEASES", "0")
+    # The kept-alive create that precedes the agent exec never reaches a real
+    # gateway; lifecycle tests that care about it install their own fake.
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
     # Hard test isolation: an accidental opt-in cannot reach the developer's
     # live OpenShell gateway. Individual tests may replace these fakes with
     # scenario-specific reports.
@@ -172,7 +178,9 @@ def _inner(out):
     """The non-login `/bin/bash -c <inner>` after the `--` separator."""
     i = out.index("--")
     assert out[i + 1 : i + 3] == ["/bin/bash", "-c"]
-    return out[i + 3]
+    from tests.test_openshell_exec_single_line import decode_shell_argument
+
+    return decode_shell_argument(out[i + 3])
 
 
 @pytest.fixture(scope="module")
@@ -479,15 +487,29 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
         "emit_telemetry",
         lambda event, **detail: events.append((event, detail)) or True,
     )
+    created = []
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: (
+            created.append(list(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
     r = FakeRunner()
     workspace = tmp_path / "task-7"
     workspace.mkdir()
     te._invoke_agent(r, "do it", workspace, "tid", {})
-    # 1 audited create call (runs the agent), then generated-state cleanup,
-    # download, and delete out-of-band.
-    assert len(r.calls) == 1
-    create = r.calls[0][0]
+    # A kept-alive create uploads the workspace (OpenShell 0.1 rejects
+    # --upload with a command), then 1 audited exec runs the agent, then
+    # generated-state cleanup, download, and delete out-of-band.
+    assert len(created) == 1
+    create = created[0]
     assert create[:3] == ["openshell", "sandbox", "create"] and "--upload" in create
+    assert "--" not in create and create[-1] == "--detach"
+    assert len(r.calls) == 1
+    agent = r.calls[0][0]
+    assert agent[:6] == ["openshell", "sandbox", "exec", "--name", "sb1", "--no-tty"]
+    assert agent[agent.index("--") + 1 : agent.index("--") + 3] == ["/bin/bash", "-c"]
     assert steps[0][:3] == ["exec", "--name", "sb1"]
     assert steps[0][-3:-1] == ["/bin/sh", "-c"]
     assert ".mac-toolchain" in steps[0][-1]
@@ -510,16 +532,24 @@ def test_sandbox_create_argv_is_small_and_contains_no_prompt_or_tokens(monkeypat
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     workspace = tmp_path / "task-large"
     prompt = "private-task-prompt-" + ("x" * 25000)
+    created = []
+    monkeypatch.setattr(
+        te,
+        "_sandbox_create_detached",
+        lambda argv, **_kwargs: (
+            created.append(list(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
     runner = FakeRunner()
 
     te._invoke_agent(runner, prompt, workspace, "tid", {})
 
-    create = runner.calls[0][0]
-    joined = " ".join(create)
-    assert "mac-super-secret-token" not in joined
-    assert "private-task-prompt" not in joined
-    assert "--env" not in create
-    assert len(joined) < 4000
+    for argv in (created[0], runner.calls[0][0]):
+        joined = " ".join(argv)
+        assert "mac-super-secret-token" not in joined
+        assert "private-task-prompt" not in joined
+        assert "--env" not in argv
+        assert len(joined) < 4000
 
 
 def test_progress_monitor_emits_state_transitions_from_sandbox_snapshot(monkeypatch, tmp_path):
@@ -741,6 +771,158 @@ def test_merge_rejects_symlinked_host_and_evidence_controls(tmp_path, name):
         _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
 
 
+def _repo_workspace_with_tracked_change(tmp_path: Path):
+    workspace = tmp_path / "task-7"
+    repo = workspace / "repo-lease_abc"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text("old\n", encoding="utf-8")
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps({"repository_worktree": str(repo)}), encoding="utf-8"
+    )
+    return workspace, repo
+
+
+def _download_with_repo_change(download: Path) -> None:
+    sandbox_repo = download / "repo-lease_abc"
+    (sandbox_repo / ".github" / "workflows").mkdir(parents=True)
+    (sandbox_repo / ".github" / "workflows" / "ci.yml").write_text("new\n", encoding="utf-8")
+
+
+def test_harvest_skips_escaping_scratch_venv_symlink_and_keeps_repo_change(
+    monkeypatch, tmp_path, capsys
+):
+    # Live 2026-10-03 (task_b3e16b5f): a venv the agent built in its task
+    # workspace aborted the whole harvest and lost the repo edits beside it.
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    (workspace / "pip-audit-venv" / "bin").mkdir(parents=True)
+    (workspace / "pip-audit-venv" / "bin" / "python").write_text("stale\n", encoding="utf-8")
+    monkeypatch.setattr(te, "_merge_sandbox_download_tree", _REAL_MERGE_SANDBOX_DOWNLOAD_TREE)
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-venv")
+    monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    monkeypatch.setattr(te, "_reap_orphaned_task_sandboxes_best_effort", lambda *_: None)
+    monkeypatch.setattr(
+        te,
+        "_reconcile_task_sandboxes_from_lease_authority_best_effort",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(te, "_sandbox_delete", lambda name: True)
+
+    def step(args, *, timeout):
+        del timeout
+        if args[0] == "download":
+            download = Path(args[3])
+            _download_with_repo_change(download)
+            venv_bin = download / "pip-audit-venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            (venv_bin / "python").symlink_to("../../../../usr/bin/python3")
+            (venv_bin / "\U0001d70bthon").symlink_to("/usr/bin/python3")
+            (venv_bin / "python3").symlink_to("python")
+            (venv_bin / "activate").write_text("# venv\n", encoding="utf-8")
+        return True, ""
+
+    monkeypatch.setattr(te, "_sandbox_step", step)
+
+    te._run_sandboxed(FakeRunner(), _ARGV, workspace, "tid", {})
+
+    salvage = json.loads((workspace / "openshell-salvage.json").read_text(encoding="utf-8"))
+    assert salvage["harvested"] is True
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "new\n"
+    venv_bin = workspace / "pip-audit-venv" / "bin"
+    assert not os.path.lexists(venv_bin / "python")
+    assert not os.path.lexists(venv_bin / "\U0001d70bthon")
+    # A link that only reaches the outside through a skipped link is skipped too.
+    assert not os.path.lexists(venv_bin / "python3")
+    assert (venv_bin / "activate").read_text(encoding="utf-8") == "# venv\n"
+    skipped = {item["path"]: item for item in salvage["skipped_symlinks"]}
+    assert skipped["pip-audit-venv/bin/python"]["target"] == "../../../../usr/bin/python3"
+    assert skipped["pip-audit-venv/bin/\U0001d70bthon"]["target"] == "/usr/bin/python3"
+    assert set(skipped) == {
+        "pip-audit-venv/bin/python",
+        "pip-audit-venv/bin/\U0001d70bthon",
+        "pip-audit-venv/bin/python3",
+    }
+    assert salvage["skipped_entries"] == []
+    err = capsys.readouterr().err
+    assert err.count("sandbox download skipped") == 1
+    assert "sandbox download failed" not in err
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["../../../outside", "/etc/passwd"],
+)
+def test_merge_fails_closed_on_escaping_symlink_inside_repository(tmp_path, target):
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    download = tmp_path / "download"
+    _download_with_repo_change(download)
+    (download / "repo-lease_abc" / "tools").mkdir()
+    (download / "repo-lease_abc" / "tools" / "python").symlink_to(target)
+
+    with pytest.raises(ValueError, match="repo-lease_abc/tools/python -> %s" % target):
+        _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "old\n"
+    assert not os.path.lexists(repo / "tools" / "python")
+
+
+def test_merge_skips_scratch_directory_symlink_without_writing_through_it(tmp_path):
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    # A stale host-side copy of the escaping link must not survive either.
+    (workspace / "cache").symlink_to(outside, target_is_directory=True)
+    download = tmp_path / "download"
+    _download_with_repo_change(download)
+    (download / "cache").symlink_to("../../outside", target_is_directory=True)
+
+    report = _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+    assert report["skipped_symlinks"] == [
+        {"path": "cache", "target": "../../outside", "reason": "escapes the task workspace"}
+    ]
+    assert not os.path.lexists(workspace / "cache")
+    assert list(outside.iterdir()) == []
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "new\n"
+
+
+def test_merge_skips_scratch_fifo_but_fails_closed_on_repository_fifo(tmp_path):
+    workspace, repo = _repo_workspace_with_tracked_change(tmp_path)
+    download = tmp_path / "download"
+    _download_with_repo_change(download)
+    (download / "scratch").mkdir()
+    os.mkfifo(download / "scratch" / "pipe")
+
+    report = _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+    assert report["skipped_entries"] == [
+        {"path": "scratch/pipe", "kind": "fifo", "reason": "special file"}
+    ]
+    assert not os.path.lexists(workspace / "scratch" / "pipe")
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == "new\n"
+
+    os.mkfifo(download / "repo-lease_abc" / "pipe")
+    with pytest.raises(
+        ValueError, match="fifo inside the repository worktree: repo-lease_abc/pipe"
+    ):
+        _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+
+def test_merge_fails_closed_on_escaping_symlink_above_repository_root(tmp_path):
+    workspace = tmp_path / "task-7"
+    repo = workspace / "work" / "repo"
+    repo.mkdir(parents=True)
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps({"repository_worktree": str(repo)}), encoding="utf-8"
+    )
+    download = tmp_path / "download"
+    download.mkdir()
+    (download / "work").symlink_to("/tmp", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="absolute target: work -> /tmp"):
+        _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
+
+
 # ---------------------------------------------------------------------------
 # --yolo <-> sandbox coupling (never an unguarded YOLO agent)
 # ---------------------------------------------------------------------------
@@ -934,6 +1116,8 @@ def test_read_only_verification_uses_second_secret_free_sandbox(monkeypatch, tmp
             assert "mac.read_only_report_verifier" in verifier_script
             assert "MAC_READ_ONLY_AUTHORITATIVE_VERIFIER" in verifier_script
             return True, ""
+        if args[0] == "exec":
+            return True, ""
         if args[0] == "download":
             Path(args[3]).write_text(json.dumps(payload), encoding="utf-8")
             return True, ""
@@ -944,7 +1128,14 @@ def test_read_only_verification_uses_second_secret_free_sandbox(monkeypatch, tmp
     monkeypatch.setattr(te, "_sandbox_step", step)
 
     assert te._sandbox_run_read_only_repository_verification("mac-task-agent", workspace, task)
-    assert [call[0] for call in calls] == ["create", "download", "delete"]
+    assert [call[0] for call in calls] == ["create", "exec", "download", "delete"]
+    # OpenShell 0.1 rejects --upload with a command: create uploads and stays
+    # alive, and the verifier script runs in the same sandbox through exec.
+    create, verify = calls[0], calls[1]
+    assert "--" not in create and create[-1] == "--detach"
+    assert verify[:4] == ["exec", "--name", create[create.index("--name") + 1], "--no-tty"]
+    assert verify[-4:-1] == ["/bin/bash", "--noprofile", "--norc"]
+    assert verify[-1].endswith("/.mac-sandbox-repository-verify.sh")
     trusted = workspace / te._TRUSTED_READ_ONLY_VERIFICATION_FILE
     assert json.loads(trusted.read_text(encoding="utf-8"))["stdout"] == ("trusted-smoke\n")
 
@@ -1316,24 +1507,6 @@ def test_controller_approved_macos_host_report_may_run_without_openshell(
     )
 
 
-def test_read_only_report_rejects_acp_backend(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAC_EXECUTOR_BACKEND", "acp")
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(
-        te,
-        "_invoke_acp_agent",
-        lambda *_args, **_kwargs: pytest.fail("ACP backend was invoked"),
-    )
-    with pytest.raises(RuntimeError, match="ACP backend is not supported"):
-        te._invoke_agent(
-            FakeRunner(),
-            "inspect",
-            tmp_path / "task",
-            "tid",
-            {"task": _read_only_report_task()},
-        )
-
-
 def test_read_only_report_rejects_host_break_glass(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setattr(
@@ -1491,7 +1664,7 @@ def test_landlock_precheck_passes_when_present(monkeypatch, tmp_path):
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     r = FakeRunner()
     te._invoke_agent(r, "do it", tmp_path / "t", "tid", {})
-    assert r.calls[0][0][:3] == ["openshell", "sandbox", "create"]
+    assert r.calls[0][0][:3] == ["openshell", "sandbox", "exec"]
 
 
 # --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---

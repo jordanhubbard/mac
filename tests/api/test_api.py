@@ -186,22 +186,6 @@ def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):
     assert reconciler.status()["thread_alive"] is False
 
 
-def test_cicd_monitor_follows_app_lifecycle(monkeypatch):
-    monkeypatch.setenv("MAC_CICD_MONITOR_ENABLED", "1")
-    monkeypatch.setenv("MAC_CICD_MONITOR_INTERVAL_SECONDS", "999")
-    monkeypatch.setenv("MAC_CICD_MONITOR_INITIAL_DELAY_SECONDS", "999")
-    app = create_app(control_plane=ControlPlane.in_memory())
-    monitor = app.state.cicd_monitor
-    assert monitor.status()["thread_alive"] is False
-
-    with TestClient(app) as client:
-        assert client.get("/cicd-monitor/status").status_code == 200
-        assert client.post("/cicd-monitor/run").status_code == 200
-        assert monitor.status()["thread_alive"] is True
-
-    assert monitor.status()["thread_alive"] is False
-
-
 def test_task_ledger_audit_route_is_static_and_covers_every_task():
     cp = ControlPlane.in_memory()
     first = cp.create_task("first audit task", project="demo")
@@ -334,26 +318,6 @@ def test_dead_letter_page_exposes_bounded_cursor():
     assert second.json()["has_more"] is False
 
 
-def test_well_known_acp_manifest_is_public_and_advertises_mac_extensions(monkeypatch):
-    # ADR 0006 Phase 3: the discovery manifest is unauthenticated even when the
-    # hub is token-protected, and carries protocolVersion + mac's _meta extensions.
-    monkeypatch.setenv("MAC_API_TOKEN", "secret-token")
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
-
-    resp = client.get("/.well-known/acp")  # no Authorization header
-    assert resp.status_code == 200
-    manifest = resp.json()
-    assert manifest["protocolVersion"] == 1
-    assert isinstance(manifest["protocolVersion"], int)
-    assert manifest["_meta"]["mac"] == {
-        "sandbox": True,
-        "decomposition": True,
-        "evidence": True,
-    }
-    assert manifest["agentCapabilities"]["loadSession"] is False
-    assert manifest["agentCapabilities"]["_meta"]["mac"]["evidence"] is True
-
-
 def test_post_tasks_accepts_summary_alias_for_description():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
 
@@ -461,46 +425,6 @@ def test_task_create_idempotency_survives_token_renewal_for_same_client():
     assert after.status_code == 200
     assert after.json()["id"] == before.json()["id"]
     assert cp.store.query_one("SELECT COUNT(*) AS n FROM task_create_idempotency")["n"] == 1
-
-
-def test_review_experiment_api_persists_assignment_observation_and_outcome():
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
-    task = client.post(
-        "/tasks", json={"title": "review experiment API task", "project": "demo"}
-    ).json()
-
-    assigned = client.post(
-        "/tasks/%s/review-experiment" % task["id"],
-        json={
-            "experiment_id": "api-review-exp",
-            "arms": {"blind": 1, "standard": 1},
-            "blind_arms": ["blind"],
-            "actor": "operator",
-        },
-    )
-    assert assigned.status_code == 200
-    assert assigned.json()["assignment_method"] == "deterministic_weighted"
-    assert assigned.json()["assignment_probability"] == 0.5
-
-    outcome = client.post(
-        "/tasks/%s/review-outcomes" % task["id"],
-        json={
-            "kind": "clean_window",
-            "status": "confirmed",
-            "severity_weight": 0,
-            "detail": {"window_days": 7},
-            "actor": "operator",
-        },
-    )
-    assert outcome.status_code == 200
-
-    observation = client.get("/tasks/%s/review-observation" % task["id"]).json()
-    assert observation["experiment"]["experiment_id"] == "api-review-exp"
-    assert observation["outcomes"][0]["kind"] == "clean_window"
-
-    report = client.get("/review-experiments/api-review-exp", params={"project": "demo"}).json()
-    assert report["task_count"] == 1
-    assert report["policy"]["status"] == "insufficient_evidence"
 
 
 def test_evidence_artifacts_are_retrievable_via_api():
@@ -2101,7 +2025,7 @@ def test_fastapi_can_require_scoped_bearer_tokens():
     assert client.get("/machines", headers={"Authorization": "Bearer reader"}).status_code == 200
 
 
-def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
+def test_deploy_scope_is_required_for_runtimes_and_runtime_deltas():
     cp = ControlPlane.in_memory()
     client = TestClient(
         create_app(
@@ -2175,25 +2099,6 @@ def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
             json={"actor": "ops"},
         ).json()["status"]
         == "validated"
-    )
-
-    # /environments also requires deploy.
-    tenant = cp.register_tenant("team-a")
-    assert (
-        client.post(
-            "/environments",
-            headers={"Authorization": "Bearer writer"},
-            json={"name": "prod", "tenant_id": tenant.id},
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            "/environments",
-            headers={"Authorization": "Bearer deployer"},
-            json={"name": "prod", "tenant_id": tenant.id},
-        ).status_code
-        == 200
     )
 
 
@@ -2489,7 +2394,6 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert "integration_findings" in state
     assert "integration_observations" in state
     assert "roles" in state
-    assert "provisioning_requests" in state
     assert "workflows" in state
     assert "workflow_runs" in state
     assert "agentbus_streams" in state
@@ -2508,8 +2412,6 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert unscoped["ready_count"] == 1
     assert state["swarm_summary"]["agent_total"] == 1
     assert "memory_records" in state
-    assert "nap_schedules" in state
-    assert "nap_runs" in state
 
     streamed = client.get("/dashboard/stream", params={"timeout_seconds": 0})
     assert streamed.status_code == 200

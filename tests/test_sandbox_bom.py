@@ -58,6 +58,18 @@ def test_a_contract_supplies_its_required_commands():
     }
 
 
+def test_rust_contract_uses_reviewed_distribution_not_distro_packages():
+    commands = {"cargo", "rustc", "rustfmt"}
+    bom = derive_bom([_registration("agentos", commands | {"pkg-config", "libssl-dev"})])
+    assert commands <= set(bom["commands"])
+    assert not (commands & set(bom["unmapped_commands"]))
+    assert not (commands & set(bom["packages"]))
+    assert {"pkg-config", "libssl-dev"} <= set(bom["packages"])
+    gaps = bom_gaps(bom, CONTAINERFILE.read_text())
+    assert not (commands & set(gaps["missing_commands"]))
+    assert not ({"pkg-config", "libssl-dev"} & set(gaps["missing_packages"]))
+
+
 @pytest.mark.parametrize("record", [None, {}, "junk", {"metadata": "not-a-mapping"}])
 def test_a_record_with_no_contract_contributes_nothing(record):
     assert contract_commands(record) == set()
@@ -261,3 +273,79 @@ def test_the_image_installs_it():
         / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
     assert "postgresql" in containerfile
+
+
+def test_nanolang_native_build_headers_are_mapped_committed_and_installed():
+    """nanolang's src/interpreter_ffi.c #includes <ffi.h>; sign.c needs OpenSSL.
+
+    No sandbox image ever shipped libffi, so nanolang's `make build` bootstrap
+    died with "ffi.h: No such file or directory" and the project could not be
+    built in the sandbox at all. Each link in the chain is asserted separately:
+    a contract may declare the library, the mapping must turn it into a package
+    rather than an unmapped gap, the reviewed manifest must carry it, and the
+    Containerfile's apt line (not a comment) must install it.
+    """
+    from mac.sandbox_bom import COMMAND_PACKAGES
+
+    needed = {"libffi-dev", "libssl-dev", "pkg-config"}
+    bom = derive_bom([_registration("nanolang", ["cc", "make", *sorted(needed)])])
+    assert bom["unmapped_commands"] == []
+    assert needed <= set(bom["packages"])
+    assert COMMAND_PACKAGES["libffi-dev"] == ("libffi-dev",)
+
+    committed = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert needed <= set(committed["packages"])
+    assert needed <= set(committed["contributing_projects"]["nanolang"])
+
+    image_text = CONTAINERFILE.read_text(encoding="utf-8")
+    assert needed <= installed_packages(image_text)
+    # The build fails closed if the header is not actually compilable.
+    assert "pkg-config --exists libffi" in image_text
+    assert "#include <ffi.h>" in image_text
+
+
+def test_nanolang_test_quick_dependencies_are_mapped_committed_and_installed():
+    """nanolang's gate runs `make test-quick`, which needs its CI's packages.
+
+    #921 shipped only the bootstrap headers and judged SDL optional, so the gate
+    failed in the sandbox with "I require SDL2_mixer development headers for
+    this integration gate." The whole of nanolang's Linux CI list must be
+    mapped, recorded against nanolang, and on a real apt line.
+    """
+    from mac.sandbox_bom import COMMAND_PACKAGES
+
+    needed = {
+        "valgrind",
+        "gforth",
+        "libsdl2-dev",
+        "libsdl2-image-dev",
+        "libsdl2-mixer-dev",
+        "libsdl2-ttf-dev",
+        "libncurses-dev",
+        "libreadline-dev",
+        "libevent-dev",
+        "libuv1-dev",
+        "libbullet-dev",
+        "libglfw3-dev",
+        "libglew-dev",
+        "freeglut3-dev",
+        "libutf8proc-dev",
+        "libsqlite3-dev",
+        "libcurl4-openssl-dev",
+    }
+    bom = derive_bom([_registration("nanolang", sorted(needed))])
+    assert bom["unmapped_commands"] == []
+    assert needed <= set(bom["packages"])
+    assert all(COMMAND_PACKAGES[name] == (name,) for name in needed)
+
+    committed = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert needed <= set(committed["packages"])
+    assert needed <= set(committed["contributing_projects"]["nanolang"])
+
+    image_text = CONTAINERFILE.read_text(encoding="utf-8")
+    assert needed <= installed_packages(image_text)
+    assert "pkg-config --exists SDL2_mixer" in image_text
+    # PyYAML must reach the login shell's python3 (/usr/local/bin), which
+    # Debian's python3-yaml would not.
+    assert "/usr/local/bin/python3 -m pip install" in image_text
+    assert "python3 -c 'import yaml'" in image_text

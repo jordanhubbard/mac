@@ -89,13 +89,6 @@ from mac.hub_load_shed import (
     default_control_plane_sampler,
     is_hub_host,
 )
-from mac.fleet_learning import (
-    RepositoryAccessError,
-    build_repository_access_learning,
-    build_repository_access_memory_payload,
-    classify_repository_access_failure,
-    resolve_git_remote_access,
-)
 from mac.api_client import MacApiClient, MacApiError
 from mac.repository_contract import (
     normalize_repo_relative_path as _normalize_repo_relative_path,
@@ -104,6 +97,8 @@ from mac.repository_contract import (
 )
 from mac.repository_access_env import read_only_repository_content_digest
 from mac.persistence_redaction import redact_for_persistence
+from mac.evidence_validators import repository_gate_failure
+from mac.semantic_acceptance import evaluate_acceptance
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -125,9 +120,9 @@ from mac.models import (
 )
 from mac.gitops import (
     agent_pull_request,
+    canonical_sync_selection_base,
     guarded_push,
     resolve_canonical_publication_target,
-    strip_git_remote_auth,
     sync_worktree_with_canonical,
     validate_git_ref,
     validate_git_remote_url,
@@ -156,7 +151,6 @@ from mac.worker_directable import DirectableMixin
 from mac.worker_workspace_gc import WorkspaceGCMixin
 from mac.agentbus_service import HUMAN_DIRECTIVE_TOPIC
 from mac.worker_repo_prep import RepoPrepMixin
-import mac.harness_recovery_reflex as _hrr
 from mac.worker_runtime_deps import (
     REQUIRED_RUNTIME_PIP,
     RuntimeDepsMixin,
@@ -198,6 +192,20 @@ DEFAULT_COMMAND_INVENTORY_NAMES = (
 DEFAULT_COMMAND_INVENTORY_MAX = 10000
 DEFAULT_COMMAND_INVENTORY_INTERVAL_SECONDS = 300.0
 
+# Route probes execute a real provider request. Fifty workers restarted at the
+# same time used to make that request immediately and then repeat it on the
+# same 60-second boundary after every failure. That traffic is enough to keep a
+# recovering provider's circuit breaker open indefinitely. Keep the policy
+# local to the worker (there is no hub round-trip on this failure path), but
+# give every agent a stable phase and make repeated failures progressively
+# quieter.
+CODING_ROUTE_PROBE_SUCCESS_INTERVAL_SECONDS = 600.0
+CODING_ROUTE_PROBE_FAILURE_INTERVAL_SECONDS = 60.0
+CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS = 60.0
+CODING_ROUTE_PROBE_MAX_FAILURE_BACKOFF_SECONDS = 3600.0
+CODING_ROUTE_PROBE_JITTER_FRACTION = 0.20
+CODING_ROUTE_PROBE_MAX_FAILURE_EXPONENT = 10
+
 
 def _validate_git_remote_url(value: str) -> str:
     return validate_git_remote_url(value)
@@ -225,6 +233,65 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _coding_route_probe_phase(agent_id: str) -> float:
+    """Return a stable agent-specific value in the half-open range [0, 1).
+
+    Python's built-in hash is deliberately process-randomized, which would
+    re-form a herd after every fleet restart. A digest keeps each worker in the
+    same phase without shared state or runtime randomness.
+    """
+
+    digest = hashlib.sha256(agent_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") / float(1 << 64)
+
+
+def _coding_route_probe_delay(
+    agent_id: str,
+    *,
+    verified: bool,
+    consecutive_failures: int,
+) -> float:
+    """Return the next completed-probe delay for one worker.
+
+    The existing interval override remains authoritative for the base cadence.
+    Failed probes back off exponentially and cap at one hour. A stable positive
+    jitter keeps workers that happen to finish together from retrying together.
+    """
+
+    default_interval = (
+        CODING_ROUTE_PROBE_SUCCESS_INTERVAL_SECONDS
+        if verified
+        else CODING_ROUTE_PROBE_FAILURE_INTERVAL_SECONDS
+    )
+    base = max(
+        1.0,
+        _env_float("MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS", default_interval),
+    )
+    if verified:
+        bounded = base
+        cap = base * (1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION)
+    else:
+        exponent = min(
+            max(0, int(consecutive_failures) - 1),
+            CODING_ROUTE_PROBE_MAX_FAILURE_EXPONENT,
+        )
+        cap = max(
+            base * (1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION),
+            CODING_ROUTE_PROBE_MAX_FAILURE_BACKOFF_SECONDS,
+        )
+        # Leave room below the hard cap for the per-agent phase. Otherwise all
+        # workers converge on exactly ``cap`` after a long outage and recreate
+        # the herd at the point where the provider is most fragile.
+        bounded = min(
+            cap / (1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION),
+            base * (2**exponent),
+        )
+    jittered = bounded * (
+        1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION * _coding_route_probe_phase(agent_id)
+    )
+    return min(cap, jittered)
 
 
 #: Bounded retry for a fenced-write conflict on a state-mutating API call
@@ -437,6 +504,65 @@ class WorkerExecution:
         return self.returncode == 0
 
 
+def _salvage_accepted_late_exit(
+    task: JsonDict,
+    task_dir: Path,
+    execution: WorkerExecution,
+) -> tuple[WorkerExecution, Optional[JsonDict]]:
+    """Promote a late nonzero exit only when typed acceptance already passes.
+
+    Some harnesses can exit nonzero after writing their complete deliverable.
+    The process return code remains useful diagnostic evidence, but it must not
+    discard a deterministically accepted result. Conversely, ordinary output
+    or a merely well-shaped manifest is never enough to turn failure into
+    success: salvage is available only to tasks with a required acceptance
+    contract whose verifier passes against the exact manifest we will sign.
+    """
+
+    if execution.succeeded:
+        return execution, None
+    manifest_path = task_dir / "mac-evidence.json"
+    if not manifest_path.exists():
+        # Subprocess-backed executors normally call this before returning, but
+        # direct/custom executors share the same salvage contract. The fallback
+        # itself writes only when typed acceptance passes.
+        from mac.executor_finalizer import write_fallback_evidence_manifest
+
+        write_fallback_evidence_manifest(task_dir, task, execution, None)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return execution, None
+    if not isinstance(manifest, dict):
+        return execution, None
+    if (
+        str(manifest.get("schema") or "").strip() != VERIFICATION_SCHEMA
+        or str(manifest.get("status") or "").strip().lower() != "complete"
+        or not str(manifest.get("evidence_type") or "").strip()
+    ):
+        return execution, None
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    acceptance = evaluate_acceptance(metadata, manifest)
+    if acceptance.get("required") is not True or acceptance.get("status") != "pass":
+        return execution, acceptance
+    original_returncode = execution.returncode
+    salvage = {
+        "schema": "mac.late_exit_salvage.v1",
+        "original_returncode": original_returncode,
+        "acceptance": acceptance,
+    }
+    return (
+        WorkerExecution(
+            returncode=0,
+            summary=execution.summary,
+            stdout=execution.stdout,
+            stderr=execution.stderr,
+            metadata={**execution.metadata, "late_exit_salvage": salvage},
+        ),
+        acceptance,
+    )
+
+
 def _redact_worker_execution(execution: WorkerExecution) -> WorkerExecution:
     return WorkerExecution(
         returncode=execution.returncode,
@@ -468,7 +594,7 @@ def _emit_task_progress(
     """Emit a coarse progress boundary when the host supports AgentBus.
 
     ``execute_assignment`` is intentionally reusable by small harnesses in
-    tests and K8s adapters. Those hosts implement the execution contract but
+    tests. Those hosts implement the execution contract but
     do not necessarily mix in worker observability, so progress remains
     best-effort rather than becoming a new execution prerequisite.
     """
@@ -619,40 +745,29 @@ def _resources_with_command_inventory(
     resources: Optional[JsonDict],
     coding_verification: Optional[JsonDict] = None,
     source_repo: Optional[Path] = None,
-    agent_id: Optional[str] = None,
 ) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
     if source_repo is not None:
         merged["source_state"] = _worker_source_state(source_repo)
-    if agent_id:
-        from mac.worker_credentials import credential_resource_from_env
-
-        proof = credential_resource_from_env(agent_id)
-        if proof:
-            merged["worker_credential"] = proof
-    # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
-    # hub — and `mac admin fleet creds status` on any workstation — can see which
-    # agents have lost or never had claude/codex/cursor credentials and need a
-    # sync from the operator's current environment.
+    # The coding route's status (secret-free) rides the same refresh cycle so
+    # the hub can see whether this worker has a verified coding route. The
+    # wire shape keeps a per-CLI map with one entry: the CLI this worker runs
+    # (opencode, or claude when MAC_CODING_AGENT=claude).
     try:
-        from mac.coding_agent import detect_all as _detect_coding_clis
+        from mac.coding_agent import route_status, selected_agent
 
-        verification_by_agent: JsonDict = {}
+        CODING_AGENT = selected_agent()
+
+        verification: JsonDict = {}
         if isinstance(coding_verification, dict):
             reports = coding_verification.get("reports")
             if isinstance(reports, dict):
-                for report in reports.values():
-                    if not isinstance(report, dict):
-                        continue
-                    checked_agent = str(report.get("agent") or "")
-                    if checked_agent:
-                        verification_by_agent[checked_agent] = report
-            else:
-                # Backward compatibility with the original single-route report.
-                checked_agent = str(coding_verification.get("agent") or "")
-                if checked_agent:
-                    verification_by_agent[checked_agent] = coding_verification
+                report = reports.get(CODING_AGENT)
+                if isinstance(report, dict):
+                    verification = report
+            elif str(coding_verification.get("agent") or "") == CODING_AGENT:
+                verification = coding_verification
         execution_which = None
         if isinstance(coding_verification, dict):
             from mac.task_executor import coding_agent_sandbox_which
@@ -661,10 +776,12 @@ def _resources_with_command_inventory(
         merged["coding_clis"] = {
             "schema": "mac.coding_clis.v2",
             "refreshed_at": _utcnow(),
-            "clis": _detect_coding_clis(
-                which=execution_which,
-                verification=verification_by_agent,
-            ),
+            "clis": {
+                CODING_AGENT: route_status(
+                    which=execution_which,
+                    verification=verification,
+                )
+            },
         }
     except Exception:  # noqa: BLE001 - status is best-effort, never blocks registration
         pass
@@ -691,7 +808,7 @@ def _read_only_report_executor_attestation(
     """Describe the hardened report executor only when it is usable *now*.
 
     The hub converts this worker-side claim into a separate controller-owned
-    marker.  Keep the probe fail-closed: the legacy executor alias, ACP,
+    marker.  Keep the probe fail-closed: the legacy executor alias,
     supervisor-only confinement, retained sandboxes, unsafe create arguments,
     missing policy/binary, and unenforceable Landlock posture all remain
     ineligible for repository-bearing reports.
@@ -711,8 +828,6 @@ def _read_only_report_executor_attestation(
     if len(argv) != 1 or Path(argv[0]).name != "mac-task-executor":
         return None
     host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
-    if (os.environ.get("MAC_EXECUTOR_BACKEND") or "hermes").strip().lower() != "hermes":
-        return None
     # Environment hygiene is platform-independent and stays enforced on a host
     # install; only the container artifacts below are Linux-only.
     if _env_truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
@@ -736,6 +851,7 @@ def _read_only_report_executor_attestation(
         from mac.executor_sandbox import (
             _kernel_has_landlock,
             _managed_openshell_runtime_image_ref,
+            _runtime_executor_config_sha256,
             _read_only_report_environment_passthrough_valid,
             _read_only_report_extra_create_argv,
             _resolve_openshell_policy,
@@ -801,6 +917,16 @@ def _read_only_report_executor_attestation(
             os.environ.get("MAC_SELF_UPDATE_REPO") or str(_default_self_update_repo())
         ).strip()
         source_root, source_bundle_sha256 = nofollow_source_bundle_digest(source_candidate)
+        # Bind the claim to the exact process generation and effective sandbox
+        # create configuration.  The value is secret-free (only a digest is
+        # published) and changes on service restart, source replacement, or any
+        # create-argument/image change, so a cached startup report cannot be
+        # mistaken for proof about the new worker process.
+        runtime_config_sha256 = _runtime_executor_config_sha256(
+            runtime_image_ref=runtime_image_ref,
+            source_bundle_sha256=source_bundle_sha256,
+            host_install=host_install,
+        )
         if sys.platform.startswith("linux") and _kernel_has_landlock():
             platform = "linux"
             isolation_posture = REPORT_REPOSITORY_LINUX_POSTURE
@@ -828,6 +954,7 @@ def _read_only_report_executor_attestation(
         executor_script_sha256=executor_script_sha256,
         source_root=source_root,
         source_bundle_sha256=source_bundle_sha256,
+        runtime_config_sha256=runtime_config_sha256,
     )
 
 
@@ -846,6 +973,7 @@ _REPORT_EXECUTOR_APPROVAL_ENV = {
     "executor_script_sha256": "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
     "source_root": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
     "source_bundle_sha256": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+    "runtime_config_sha256": "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256",
 }
 _REPORT_EXECUTOR_RUNTIME_PATH_ENV = {
     "python_path": "MAC_TASK_EXECUTOR_PYTHON",
@@ -1013,7 +1141,6 @@ def register_worker(
     resources = _resources_with_command_inventory(
         resources,
         source_repo=_default_self_update_repo(),
-        agent_id=resolved_agent_id,
     )
     machine = client.post(
         "/machines",
@@ -1116,12 +1243,6 @@ class MacWorker(
         # Rate-limit self-heal rotations: one per window, so a non-key cause of
         # signature rejections can never drive a rotation loop.
         self._last_attestation_heal_at = 0.0
-        # Rate-limit the post-verdict review-tick failure log: a genuine,
-        # ongoing outage (not the routine "token lacks required scope: admin"
-        # rejection this used to hit before every worker credential carried
-        # `review:advance`) should still be visible, but not as a warning per
-        # verdict recorded.
-        self._last_review_advance_failure_logged_at = 0.0
         self.poll_interval_seconds = float(poll_interval_seconds)
         self._inner_loop_wake = threading.Event()
         self._inner_loop = PersistentAgentLoop(
@@ -1161,6 +1282,9 @@ class MacWorker(
         self._coding_route_report: JsonDict = {}
         self._coding_route_report_dirty = True
         self._last_coding_route_probe_at = 0.0
+        self._next_coding_route_probe_at = 0.0
+        self._coding_route_probe_initial_stagger_set = False
+        self._coding_route_probe_consecutive_failures = 0
         # Workspace GC (task_02ebb6c4): prune completed-task worktrees on every
         # worker so an unbounded backlog never fills the disk and silently
         # breaks the coding-route probe. Runs off the poll thread.
@@ -1625,9 +1749,7 @@ class MacWorker(
             return policy_gate
         self._maintain_openclaw_gateway_leases()
         self._process_human_delivery_outbox()
-        review_result = self._process_review_nudges()
-        if review_result is not None:
-            return review_result
+        self._process_control_messages()
         # A deferred repo update applies here — after the previous task
         # finished, before the next claim — so no task ever starts on a
         # stale pin while an update is pending.
@@ -1680,13 +1802,11 @@ class MacWorker(
 
         Caller is responsible for the claim; this method only does
         start -> prepare -> execute -> record -> publish -> submit-for-review.
-        Suitable for K8s-mode where the runner has pre-claimed the task
-        and the Job pod just needs to execute it.
+        Suitable when something else has pre-claimed the task.
         """
         task_id = task["id"]
         lease_id = str(lease["id"])
         task_dir: Optional[Path] = None
-        attempt_state: JsonDict = {"recovery_count": 0, "recovery_log": []}
         # Published for the shutdown watchdog: this is the lease that must be
         # released if the process is torn down mid-execution.
         self._set_active_assignment(task_id, lease_id)
@@ -1720,41 +1840,7 @@ class MacWorker(
                 ),
                 {},
             )
-            try:
-                task_dir = self._prepare_task_workspace(task, lease)
-            except Exception as _prep_exc:
-                # Workspace preparation is an environment-prerequisite step:
-                # it fetches/rebases the canonical repo and lays out the task
-                # worktree. Historically only ``RuntimeError``/``OSError`` were
-                # routed through the harness-recovery reflex, so any OTHER
-                # exception (a git ``subprocess.CalledProcessError``, a
-                # ``MacApiError`` from the fetch/rebase API round-trip, a
-                # ``KeyError``/``TypeError`` from malformed task metadata) skipped
-                # just-in-time recovery entirely and wedged the assignment into a
-                # bare ``worker_exception`` -> blocked loop with no remediation
-                # (observed live: three consecutive environment-class failures on
-                # a dream-repair prerequisite, all with empty diagnostics). Triage
-                # every prep failure through the reflex; the unrecovered branch
-                # re-raises so the outer handler still captures the traceback.
-                if isinstance(_prep_exc, OSError):
-                    _step = "disk_io"
-                elif any(kw in str(_prep_exc) for kw in ("fetch", "rebase", "clone", "checkout")):
-                    _step = "fetch_rebase"
-                else:
-                    _step = "worktree_preparation"
-                _wt_dir = self.workspace / _safe_path_component(task_id)
-                _wt_dir.mkdir(parents=True, exist_ok=True)
-                _recovered, _choice, _msg = _hrr.try_recovery(
-                    attempt_state,
-                    str(_prep_exc),
-                    None,  # no remediation dispatcher wired
-                    lambda _s, _c, _r: self._emit_recovery_observability(task_id, _s, _c, _r),
-                )
-                self._append_harness_recovery_log(_wt_dir, _step, _choice, _msg)
-                if _recovered:
-                    task_dir = self._prepare_task_workspace(task, lease)
-                else:
-                    raise
+            task_dir = self._prepare_task_workspace(task, lease)
             if not self._assignment_is_current(task_id, lease_id):
                 return self._stale_result(
                     task_id, lease, "assignment no longer current after workspace preparation"
@@ -1797,34 +1883,47 @@ class MacWorker(
                     "assignment no longer current after executor completed",
                     execution=execution,
                 )
-            _bootstrap_meta = execution.metadata.get("bootstrap") or {}
-            _boot_failed = isinstance(_bootstrap_meta, dict) and (
-                (_bootstrap_meta.get("returncode") not in (None, 0))
-                or bool(_bootstrap_meta.get("error"))
-                or bool(_bootstrap_meta.get("status"))
+            parked = _blocking_question_marker(task_dir)
+            if parked is not None:
+                # The agent stopped on a question only a person can answer.
+                # That is not a failure and not finished work: park the task
+                # (NEEDS_INPUT keeps it out of every sweeper) until the answer
+                # arrives on the board, which returns it to the queue.
+                parked_task = self.client.post(
+                    "/tasks/%s/transition" % quote(task_id, safe=""),
+                    {
+                        "target_state": "needs_input",
+                        "actor": self.agent_id,
+                        "lease_id": lease_id,
+                        "detail": parked,
+                    },
+                )
+                return WorkerRunResult(status="needs_input", task=parked_task, lease=lease)
+            recorded_execution, late_exit_acceptance = _salvage_accepted_late_exit(
+                task,
+                task_dir,
+                execution,
             )
-            if not execution.succeeded and _boot_failed:
-                _boot_info = "bootstrap failed: %s" % (
-                    _bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown"
+            if late_exit_acceptance is not None:
+                self._observe_log(
+                    "worker.execution.late_exit_acceptance",
+                    level=("info" if late_exit_acceptance.get("status") == "pass" else "warning"),
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={
+                        "original_returncode": execution.returncode,
+                        "required": late_exit_acceptance.get("required"),
+                        "status": late_exit_acceptance.get("status"),
+                        "problems": late_exit_acceptance.get("problems") or [],
+                    },
                 )
-                _b_recovered, _b_choice, _b_msg = _hrr.try_recovery(
-                    attempt_state,
-                    _boot_info,
-                    None,  # no remediation dispatcher wired
-                    lambda _s, _c, _r: self._emit_recovery_observability(task_id, _s, _c, _r),
-                )
-                self._append_harness_recovery_log(task_dir, "bootstrap", _b_choice, _b_msg)
-                if _b_recovered:
-                    started = time.monotonic()
-                    execution = self._execute_task(task, lease, task_dir)
             evidence = self._record_execution(
                 task_id,
                 task_dir,
-                execution,
+                recorded_execution,
                 lease_id=lease_id,
-                attempt_state=attempt_state,
             )
-            if execution.succeeded:
+            if recorded_execution.succeeded:
                 evidence_metadata = ensure_json_object(evidence.get("metadata"))
                 manifest = ensure_json_object(evidence_metadata.get("verification"))
                 evidence_type = str(manifest.get("evidence_type") or "").strip().lower()
@@ -1909,23 +2008,55 @@ class MacWorker(
                             "problems": submission_problems,
                         },
                     )
+                    blocked_detail: JsonDict = {
+                        "reason": "verification_contract_failed",
+                        "manual_repair_required": True,
+                        "evidence_id": evidence.get("id"),
+                        "problems": submission_problems,
+                        # Without this the ledger records only
+                        # "transition supplied no stdout, stderr,
+                        # output, log, or tail field" and the failure
+                        # is undiagnosable after the fact.
+                        "output_tail": _executor_output_tail(execution),
+                    }
+                    # The repository gate ran on this head and failed: the
+                    # agent's change is red, which is ordinary retryable work
+                    # (like executor_failed), not tampered evidence. Live
+                    # 2026-10-03/04 (Aviation task_6c9f4ab2, nanolang
+                    # task_2739cdd5 and task_44cc86fa) each went BLOCKED with
+                    # manual repair on attempt 1 of 3 for one failing test.
+                    gate_failure = repository_gate_failure(
+                        ensure_json_object(
+                            ensure_json_object(evidence.get("metadata")).get("verification")
+                        ),
+                        submission_problems,
+                    )
+                    if gate_failure is not None:
+                        blocked_detail.update(
+                            reason="repository_gate_failed",
+                            failure="repository_gate_failed",
+                            manual_repair_required=False,
+                            repository_gate_failure=gate_failure,
+                        )
+                    elif _only_harness_finalization_problems(submission_problems):
+                        # Every problem restates a decision the harness made
+                        # (it did not push, or recorded no verifier result),
+                        # not a defect in the agent's change. On 2026-10-04
+                        # nanolang task_44cc86fa was failed twice this way after
+                        # the agent implemented and tested the change; such a
+                        # block retries, it does not end the task.
+                        blocked_detail.update(
+                            reason="harness_finalization_incomplete",
+                            failure="harness_finalization_incomplete",
+                            manual_repair_required=False,
+                        )
                     blocked_task = self.client.post(
                         "/tasks/%s/transition" % quote(task_id, safe=""),
                         {
                             "target_state": "blocked",
                             "actor": self.agent_id,
                             "lease_id": lease_id,
-                            "detail": {
-                                "reason": "verification_contract_failed",
-                                "manual_repair_required": True,
-                                "evidence_id": evidence.get("id"),
-                                "problems": submission_problems,
-                                # Without this the ledger records only
-                                # "transition supplied no stdout, stderr,
-                                # output, log, or tail field" and the failure
-                                # is undiagnosable after the fact.
-                                "output_tail": _executor_output_tail(execution),
-                            },
+                            "detail": blocked_detail,
                         },
                     )
                     return WorkerRunResult(
@@ -1965,9 +2096,8 @@ class MacWorker(
                     evidence = self._record_execution(
                         task_id,
                         task_dir,
-                        execution,
+                        recorded_execution,
                         lease_id=lease_id,
-                        attempt_state=attempt_state,
                     )
                     reviewed_task = self.client.post(submit_path, {})
                 return WorkerRunResult(
@@ -2298,28 +2428,6 @@ class MacWorker(
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
 
-    def _review_heartbeat_interval_seconds(self) -> float:
-        """Cadence for the review liveness ticker — well inside the stale window."""
-        interval = self.lease_renew_interval_seconds
-        if interval is None or interval <= 0:
-            interval = max(5.0, min(60.0, float(self.lease_seconds or 120) / 4.0))
-        return float(interval)
-
-    def _heartbeat_until_stopped(self, stop: threading.Event, interval_seconds: float) -> None:
-        """Heartbeat busy on a background thread while a long REVIEW runs.
-
-        Reviews have no lease (so no lease ticker), yet a heavy review rebuilds and
-        runs the full contract suite for minutes, blocking this single-threaded
-        worker. Without this ping the hub flips the agent out of IDLE/BUSY and
-        retracts the review claim as `reviewer_not_available` before the verdict
-        lands. Best effort: a liveness ping must never disturb the review.
-        """
-        while not stop.wait(interval_seconds):
-            try:
-                self._heartbeat(status_override="busy")
-            except Exception:  # noqa: BLE001 - liveness ping is best-effort
-                pass
-
     def _claim_next_for_agent(self) -> Optional[JsonDict]:
         return self.client.post(
             "/agents/%s/claim-next" % quote(self.agent_id, safe=""),
@@ -2358,7 +2466,13 @@ class MacWorker(
         )
         return assignment
 
-    def _process_review_nudges(self) -> Optional[WorkerRunResult]:
+    def _process_control_messages(self) -> None:
+        """Drain the agent mailbox and forward hub status updates.
+
+        The only message this worker acts on is a ``status_update`` carrying a
+        task-progress notification; anything else is acknowledged by delivery
+        and ignored.
+        """
         try:
             messages = self.client.post(
                 "/agents/%s/messages/deliver?%s"
@@ -2367,34 +2481,19 @@ class MacWorker(
             )
         except Exception as exc:  # noqa: BLE001 - message polling must not break task polling.
             self._observe_log(
-                "worker.review_nudge.poll_failed",
+                "worker.control_messages.poll_failed",
                 level="warning",
                 detail={"agent_id": self.agent_id, "error": str(exc)},
             )
-            return None
+            return
 
         if not isinstance(messages, list):
-            return None
-        skipped_result: Optional[WorkerRunResult] = None
+            return
         for message in messages:
             if not isinstance(message, dict):
                 continue
             if str(message.get("message_type") or "") == "status_update":
                 self._handle_status_update_message(message)
-                continue
-            if str(message.get("message_type") or "") != "nudge":
-                continue
-            payload = message.get("payload")
-            if not isinstance(payload, dict):
-                continue
-            if str(payload.get("reason") or "") != "produce_review_verdict":
-                continue
-            result = self._handle_review_verdict_nudge(message, payload)
-            if result.status in {"review_not_claimable", "review_nudge_invalid"}:
-                skipped_result = result
-                continue
-            return result
-        return skipped_result
 
     def _handle_status_update_message(self, message: JsonDict) -> None:
         payload = message.get("payload")
@@ -2736,170 +2835,6 @@ class MacWorker(
                     subject_type="human_message_delivery",
                     subject_id=delivery_id,
                     detail={"error": str(exc)},
-                )
-
-    def _handle_review_verdict_nudge(self, message: JsonDict, payload: JsonDict) -> WorkerRunResult:
-        task_id = str(payload.get("task_id") or "").strip()
-        review_id = str(payload.get("review_id") or "").strip()
-        executor_evidence_id = str(payload.get("executor_evidence_id") or "").strip()
-        if not task_id or not review_id or not executor_evidence_id:
-            error = "review verdict nudge missing task_id, review_id, or executor_evidence_id"
-            self._observe_log(
-                "worker.review_nudge.invalid",
-                level="warning",
-                detail={"message_id": message.get("id"), "error": error, "payload": payload},
-            )
-            return WorkerRunResult(status="review_nudge_invalid", error=error)
-
-        try:
-            claim = self.client.post(
-                "/reviews/%s/claim" % quote(review_id, safe=""),
-                {
-                    "reviewer_agent_id": self.agent_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "actor": self.agent_id,
-                },
-            )
-            if isinstance(claim, dict) and claim.get("status") != "claimed":
-                return WorkerRunResult(
-                    status="review_not_claimable",
-                    task=(claim.get("task") if isinstance(claim.get("task"), dict) else None),
-                    error=str(claim.get("reason") or "review is not claimable"),
-                )
-            task_detail = self.client.get("/tasks/%s" % quote(task_id, safe=""))
-            task_dir = self._prepare_review_workspace(
-                task_id,
-                review_id,
-                executor_evidence_id,
-                task_detail if isinstance(task_detail, dict) else {},
-                message,
-                claim if isinstance(claim, dict) else {},
-            )
-            started = time.monotonic()
-            # Keep this agent alive while the (minutes-long) review runs, so the
-            # hub does not retract the claim as reviewer_not_available mid-review.
-            review_hb_stop = threading.Event()
-            review_hb = threading.Thread(
-                target=self._heartbeat_until_stopped,
-                args=(review_hb_stop, self._review_heartbeat_interval_seconds()),
-                daemon=True,
-            )
-            review_hb.start()
-            try:
-                execution = self._call_executor(
-                    self._review_task_payload(task_dir),
-                    task_dir,
-                    {
-                        "agent_id": self.agent_id,
-                        "task_id": task_id,
-                        "metadata": {
-                            "execution_kind": "review",
-                            "review_id": review_id,
-                            "executor_evidence_id": executor_evidence_id,
-                            "nudge_message_id": message.get("id"),
-                        },
-                    },
-                )
-            finally:
-                review_hb_stop.set()
-                review_hb.join(timeout=1.0)
-            duration_ms = (time.monotonic() - started) * 1000.0
-            self._observe_metric(
-                "worker.review.duration_ms",
-                duration_ms,
-                unit="ms",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "returncode": execution.returncode,
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                },
-            )
-            evidence = self._record_review_execution(
-                task_id,
-                task_dir,
-                execution,
-                review_id=review_id,
-                executor_evidence_id=executor_evidence_id,
-                message_id=str(message.get("id") or ""),
-            )
-            if execution.succeeded:
-                self._advance_review_workflow_after_verdict(task_id)
-            else:
-                self._heartbeat()
-            status = "review_verdict_recorded" if execution.succeeded else "review_verdict_failed"
-            self._observe_log(
-                "worker.%s" % status,
-                level="info" if execution.succeeded else "error",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "evidence_id": evidence.get("id"),
-                    "returncode": execution.returncode,
-                    "summary": execution.summary,
-                },
-            )
-            return WorkerRunResult(
-                status=status,
-                task=(task_detail.get("task") if isinstance(task_detail, dict) else None),
-                evidence=evidence,
-                error=None if execution.succeeded else execution.summary,
-            )
-        except Exception as exc:
-            error_text = str(redact_for_persistence(str(exc)))
-            if isinstance(exc, RepositoryAccessError):
-                # The repository-access learning is written before the
-                # exception is raised. Re-run reviewer selection immediately
-                # so the control plane can prefer a known-successful peer
-                # instead of re-nudging this reviewer with the same pattern.
-                self._advance_review_workflow_after_verdict(task_id)
-                try:
-                    self._heartbeat()
-                except Exception:  # noqa: BLE001 - the failure is already recorded.
-                    pass
-            self._observe_log(
-                "worker.review_nudge.exception",
-                level="error",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "message_id": message.get("id"),
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "error": error_text,
-                    "failure_class": getattr(exc, "failure_class", ""),
-                },
-            )
-            return WorkerRunResult(status="review_verdict_failed", error=error_text)
-
-    def _advance_review_workflow_after_verdict(self, task_id: str) -> None:
-        try:
-            self.client.post(
-                "/reviews/default/tick?%s" % urlencode({"limit": 10, "actor": self.agent_id}),
-                {},
-            )
-        except Exception as exc:  # noqa: BLE001 - verdict evidence is already recorded.
-            # This used to fire on every verdict recorded fleet-wide (any
-            # worker token lacked the scope for /reviews/default/tick,
-            # rejected "token lacks required scope: admin") -- a permanent,
-            # expected failure, not a transient one, so it was pure log spam
-            # rather than a signal anyone could act on. Now that
-            # `review:advance` is minted into every worker credential
-            # (WORKER_SCOPES), a failure here is a real, actionable signal
-            # again -- but still rate-limit it, since a genuine outage would
-            # otherwise still log once per verdict across the whole fleet.
-            now = time.monotonic()
-            if now - self._last_review_advance_failure_logged_at >= 300.0:
-                self._last_review_advance_failure_logged_at = now
-                self._observe_log(
-                    "worker.review_workflow.advance_failed",
-                    level="warning",
-                    subject_type="task",
-                    subject_id=task_id,
-                    detail={"agent_id": self.agent_id, "error": str(exc)},
                 )
 
     def _process_agentbus_control(
@@ -4433,11 +4368,6 @@ class MacWorker(
         )
         return snapshot
 
-    def _review_task_payload(self, task_dir: Path) -> JsonDict:
-        loaded = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
-        task = loaded.get("task", loaded)
-        return task if isinstance(task, dict) else loaded
-
     def _record_execution(
         self,
         task_id: str,
@@ -4445,7 +4375,6 @@ class MacWorker(
         execution: WorkerExecution,
         *,
         lease_id: str,
-        attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
         execution = _redact_worker_execution(execution)
         self._redact_verification_manifest(task_dir)
@@ -4456,7 +4385,6 @@ class MacWorker(
                 task_id,
                 task_dir,
                 execution,
-                attempt_state=attempt_state,
             )
             if not self._assignment_is_current(task_id, lease_id):
                 raise RuntimeError("assignment no longer current after finalization")
@@ -4611,7 +4539,6 @@ class MacWorker(
         task_id: str,
         task_dir: Path,
         execution: WorkerExecution,
-        attempt_state: Optional[JsonDict] = None,
     ) -> bool:
         task = _task_payload_from_workspace(task_dir)
         serialized_context = _load_repository_context(task_dir)
@@ -4667,7 +4594,12 @@ class MacWorker(
         # non-canonical shape the strict validator treats as missing. Re-finalize
         # from the adopted host worktree to re-run the contract test and emit a
         # valid manifest. Otherwise keep an existing agent manifest untouched.
-        if manifest_path.exists() and not adopted and not is_dirty:
+        if (
+            manifest_path.exists()
+            and not adopted
+            and not is_dirty
+            and not _agent_manifest_lacks_verifier_tests(manifest_path, task)
+        ):
             return False
 
         try:
@@ -4676,7 +4608,6 @@ class MacWorker(
                 task_dir,
                 execution,
                 context,
-                attempt_state=attempt_state,
             )
         except Exception as exc:  # noqa: BLE001 - evidence must record finalizer failures.
             manifest = {
@@ -4785,7 +4716,6 @@ class MacWorker(
         task_dir: Path,
         execution: WorkerExecution,
         context: JsonDict,
-        attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
         task = _task_payload_from_workspace(task_dir)
         worktree = Path(str(context.get("repository_worktree") or "")).expanduser()
@@ -4820,9 +4750,14 @@ class MacWorker(
         files_changed = _repository_context_changed_files(worktree, diff_context)
 
         test_command = _repository_contract_test_command(task)
-        hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
         test_item = self._run_repository_contract_test(
-            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify, task=task
+            worktree,
+            test_command,
+            task_dir=task_dir,
+            task=task,
+            # The tip HEAD was just rebased onto: the scoped gate then selects
+            # this task's change, not everything landed since the lease.
+            selection_base_sha=canonical_sync_selection_base(canonical_sync, prepared_base_sha),
         )
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
@@ -4868,26 +4803,44 @@ class MacWorker(
             task,
             repo,
             test_item,
-            hub_verify=hub_verify,
         )
         if problems:
             problems.append("repository finalizer had local errors; refusing to push")
         elif prepush_problems:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
+        elif publication_target is not None and publication_target.task_head_sha != test_item.get(
+            "executed_head_sha"
+        ):
+            # Rebase -> verify -> guarded_push: the commit pushed must be the
+            # commit verified, and guarded_push refuses any HEAD but this one.
+            problems.append(
+                "verified head %s is not the head being pushed %s; refusing to push"
+                % (
+                    str(test_item.get("executed_head_sha") or "")[:12],
+                    publication_target.task_head_sha[:12],
+                )
+            )
         elif _worker_verification_item_passed(test_item) is True:
             if publication_target is not None:
                 if not self._assignment_is_current(task_id, lease_id):
                     raise RuntimeError("assignment no longer current after repository verification")
-                publication = guarded_push(publication_target)
+                # A canonical tip that moved on while the gate ran is a stale
+                # base, not a reason to strand tested work: publish it marked
+                # stale_base and let landing send it back to rebase.
+                publication = guarded_push(publication_target, allow_stale_base=True)
                 display = (
                     publication.target.remote_display
                     if publication.target is not None
                     else repo["push_remote"]
                 )
                 repo["push_remote"] = display
-                if publication.canonical_tip_sha:
-                    repo["base_sha"] = publication.canonical_tip_sha
+                if publication.merge_base_sha or publication.canonical_tip_sha:
+                    repo["base_sha"] = publication.merge_base_sha or publication.canonical_tip_sha
+                if publication.ok and publication.files_changed:
+                    # The task's own change, measured from its merge-base.
+                    files_changed = list(publication.files_changed)
+                    repo["files_changed"] = files_changed
                 repo["freshness"] = publication.evidence()
                 push_item = _process_check_item(
                     "guarded git push",
@@ -4898,39 +4851,7 @@ class MacWorker(
                 )
                 pushed = publication.ok and publication.remote_verified
                 if not pushed:
-                    _push_fail_info = "repository publication blocked: %s" % publication.error
-                    if attempt_state is not None:
-                        _p_recovered, _p_choice, _p_msg = _hrr.try_recovery(
-                            attempt_state,
-                            _push_fail_info,
-                            None,  # no remediation dispatcher wired
-                            lambda _s, _c, _r: self._emit_recovery_observability(
-                                task_id, _s, _c, _r
-                            ),
-                        )
-                        self._append_harness_recovery_log(task_dir, "retry_push", _p_choice, _p_msg)
-                        if _p_recovered:
-                            publication = guarded_push(publication_target)
-                            display = (
-                                publication.target.remote_display
-                                if publication.target is not None
-                                else repo["push_remote"]
-                            )
-                            repo["push_remote"] = display
-                            if publication.canonical_tip_sha:
-                                repo["base_sha"] = publication.canonical_tip_sha
-                            repo["freshness"] = publication.evidence()
-                            push_item = _process_check_item(
-                                "guarded git push",
-                                0 if publication.ok and publication.remote_verified else 1,
-                                command="guarded git push %s HEAD:refs/heads/%s"
-                                % (display, branch),
-                                stdout=publication.push_stdout,
-                                stderr=publication.push_stderr or publication.error,
-                            )
-                            pushed = publication.ok and publication.remote_verified
-                    if not pushed:
-                        problems.append("repository publication blocked: %s" % publication.error)
+                    problems.append("repository publication blocked: %s" % publication.error)
             else:
                 problems.append("repository publication target invalid: %s" % target_error)
         else:
@@ -5113,8 +5034,8 @@ class MacWorker(
         command: str,
         *,
         task_dir: Optional[Path] = None,
-        hub_verify: bool = False,
         task: Optional[JsonDict] = None,
+        selection_base_sha: str = "",
     ) -> JsonDict:
         # A task-local sandbox receipt may describe the pre-rebase tree or be
         # written by the coding agent. Run the final committed source through
@@ -5129,7 +5050,7 @@ class MacWorker(
             worktree,
             command,
             str(bootstrap.get("command") or ""),
-            prepared_base_sha=_repository_prepared_base(task),
+            selection_base_sha=selection_base_sha or _repository_prepared_base(task),
         )
 
     def _execution_submission_problems(self, task_dir: Path, evidence: JsonDict) -> List[str]:
@@ -5187,10 +5108,9 @@ class MacWorker(
                         task_payload,
                         evidence_type,
                     ),
+                    require_verifier_tests=bool(_repository_contract_test_command(task_payload)),
                 )
             )
-            if evidence_type == "review_verdict":
-                problems.extend(_worker_review_verdict_executor_repo_problems(task_dir, manifest))
             problems.extend(_worker_required_changed_file_problems(task_payload, manifest))
             problems.extend(
                 reconcile_evidence_problems(
@@ -5203,10 +5123,6 @@ class MacWorker(
         serialized_context = _load_repository_context(task_dir)
         trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
         repository_context = trusted_read_only_context or serialized_context
-        is_review_task = isinstance(
-            ensure_json_object(task_payload.get("metadata")).get("review_context"),
-            dict,
-        )
         if repository_context:
             worktree_raw = str(repository_context.get("repository_worktree") or "").strip()
             worktree = Path(worktree_raw).expanduser() if worktree_raw else Path()
@@ -5218,19 +5134,12 @@ class MacWorker(
                         trusted_read_only_context, serialized_context
                     )
                 )
-                expected_evidence_type = "review_verdict" if is_review_task else "operator_result"
-                if evidence_type != expected_evidence_type:
+                if evidence_type != "operator_result":
                     problems.append(
-                        "read-only repository %s evidence_type must be %s"
-                        % (
-                            "review" if is_review_task else "report",
-                            expected_evidence_type,
-                        )
+                        "read-only repository report evidence_type must be operator_result"
                     )
                 problems.extend(_read_only_repository_problems(worktree, repository_context))
                 expected_access = _read_only_repository_access_evidence(trusted_read_only_context)
-                if is_review_task:
-                    expected_access["independent_review_verified"] = True
                 if manifest.get("repository_access") != expected_access:
                     problems.append(
                         "verification.repository_access does not match the prepared "
@@ -5324,105 +5233,11 @@ class MacWorker(
         except OSError:
             pass
 
-    def _record_review_execution(
-        self,
-        task_id: str,
-        task_dir: Path,
-        execution: WorkerExecution,
-        *,
-        review_id: str,
-        executor_evidence_id: str,
-        message_id: str,
-    ) -> JsonDict:
-        execution = _redact_worker_execution(execution)
-        self._redact_verification_manifest(task_dir)
-        _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
-        _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
-        result_path = task_dir / "review-result.json"
-        metadata = self._execution_metadata(task_dir, execution)
-        _write_host_control_text(
-            result_path,
-            json.dumps(
-                {
-                    "returncode": execution.returncode,
-                    "summary": execution.summary,
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "metadata": metadata,
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            task_dir,
-        )
-        artifacts = _durable_evidence_artifacts(task_dir, result_path)
-        evidence_result = self.client.post(
-            "/tasks/%s/evidence" % quote(task_id, safe=""),
-            {
-                "kind": "review",
-                "uri": result_path.resolve().as_uri(),
-                "summary": execution.summary,
-                "created_by": self.agent_id,
-                "artifacts": artifacts,
-                "metadata": {
-                    "returncode": execution.returncode,
-                    "stdout": (task_dir / "stdout.txt").resolve().as_uri(),
-                    "stderr": (task_dir / "stderr.txt").resolve().as_uri(),
-                    "review_id": review_id,
-                    "executor_evidence_id": executor_evidence_id,
-                    "nudge_message_id": message_id,
-                    **metadata,
-                },
-            },
-        )
-        # The reviewer's findings in its own words. The approved/rejected verdict
-        # line is recorded separately when the workflow finalizes (submit_review);
-        # this captures what the reviewer actually looked at / found. Best-effort.
-        self._post_task_activity(task_id, "review", self._review_activity_summary(execution))
-        return evidence_result
-
-    def _review_activity_summary(self, execution: WorkerExecution) -> str:
-        """The reviewer's recap: its delimited summary block, else a prose tail,
-        else a harness-failure note."""
-        recap = _extract_marked_summary(execution.stdout)
-        if recap:
-            return recap
-        body = "\n".join(_prose_tail(execution.stdout, 4)).strip()
-        if body:
-            return body
-        if not execution.succeeded:
-            return "review harness did not produce a verdict (rc %s)" % execution.returncode
-        return (execution.summary or "").strip()
-
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = redact_for_persistence(dict(execution.metadata))
-        # The external activation probe is optional diagnostic evidence only.
-        # It consumes activations supplied by an instrumented runtime; it cannot
-        # inspect hosted-model internals. Its adapter catches model/checkpoint/
-        # input failures, and this outer boundary guarantees a future adapter
-        # regression still cannot change task success, review, or publication.
-        try:
-            from mac.activation_probe.advisory import (
-                activation_probe_audit_from_environment,
-            )
-
-            activation_probe_audit = activation_probe_audit_from_environment(
-                task_dir, execution.metadata
-            )
-            if activation_probe_audit is not None:
-                metadata["activation_probe_audit"] = activation_probe_audit
-        except Exception as exc:  # noqa: BLE001 - advisory means non-authoritative.
-            logger.warning("external activation-probe evidence unavailable: %s", exc)
-        # Raw residual tensors can be very large and are an executor-to-auditor
-        # handoff, not durable task evidence.  Persist only the bounded result.
-        metadata.pop("activation_probe_activations", None)
         task_payload = _task_payload_from_workspace(task_dir)
         serialized_context = _load_repository_context(task_dir)
         trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
-        is_review_task = isinstance(
-            ensure_json_object(task_payload.get("metadata")).get("review_context"),
-            dict,
-        )
         persisted_manifest = self._load_verification_manifest(task_dir)
         manifest = metadata.get("verification") or persisted_manifest
         if persisted_manifest.get("status") == "invalid":
@@ -5434,17 +5249,10 @@ class MacWorker(
             # imposing pushed-commit semantics on operator_result evidence.
             manifest = dict(manifest)
             manifest.pop("repo", None)
-            manifest["evidence_type"] = "review_verdict" if is_review_task else "operator_result"
-            authoritative_access = _read_only_repository_access_evidence(trusted_read_only_context)
-            if (
-                is_review_task
-                and ensure_json_object(manifest.get("repository_access")).get(
-                    "independent_review_verified"
-                )
-                is True
-            ):
-                authoritative_access["independent_review_verified"] = True
-            manifest["repository_access"] = authoritative_access
+            manifest["evidence_type"] = "operator_result"
+            manifest["repository_access"] = _read_only_repository_access_evidence(
+                trusted_read_only_context
+            )
             manifest, trusted_test_problems = _attach_trusted_read_only_report_test(
                 manifest, task_dir, task_payload
             )
@@ -5464,6 +5272,15 @@ class MacWorker(
                 serialized_context,
                 task=task_payload,
             )
+        executor = getattr(self, "executor", None)
+        executor_argv = list(executor.argv) if isinstance(executor, SubprocessExecutor) else []
+        runtime_attestation = _read_only_report_executor_attestation(executor_argv)
+        if runtime_attestation is not None:
+            # Evidence and fleet inventory must describe the same process-local
+            # runtime.  This is recomputed rather than copied from hub resources,
+            # so a stale cached registration document cannot contaminate the
+            # task's signed result.
+            manifest["executor_runtime_attestation"] = runtime_attestation
         metadata = redact_for_persistence(metadata)
         metadata["verification"] = self._sign_verification_manifest(
             redact_for_persistence(manifest)
@@ -6278,7 +6095,6 @@ class MacWorker(
             resources,
             route_report,
             source_repo=self.self_update_repo,
-            agent_id=self.agent_id,
         )
 
     def _maybe_start_coding_route_probe(self) -> None:
@@ -6289,29 +6105,32 @@ class MacWorker(
                 and self._coding_route_probe_thread.is_alive()
             ):
                 return
-            verified = self._coding_route_report.get("verified") is True
-            # Successful executor-side proofs cache for five minutes. Probe on
-            # a ten-minute cadence so every scheduled success refresh is live,
-            # never a cached proof followed by another full sleep interval.
-            default_interval = 600.0 if verified else 60.0
-            interval = _env_float(
-                "MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS",
-                default_interval,
-            )
             now = time.monotonic()
-            if self._last_coding_route_probe_at and now - self._last_coding_route_probe_at < max(
-                1.0, interval
-            ):
+            if not self._coding_route_probe_initial_stagger_set:
+                self._coding_route_probe_initial_stagger_set = True
+                if not self._coding_route_report:
+                    self._next_coding_route_probe_at = now + (
+                        CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS
+                        * _coding_route_probe_phase(self.agent_id)
+                    )
+            if now < self._next_coding_route_probe_at:
                 return
             self._last_coding_route_probe_at = now
-            self._coding_route_report = {
-                "schema": "mac.coding_agent.verification.v1",
-                "agent": "",
-                "verified": False,
-                "checked_at": _utcnow(),
-                "failure_class": "pending",
-            }
-            self._coding_route_report_dirty = True
+            # A refresh is not a route failure.  Keep the last completed proof
+            # visible while its replacement runs; otherwise every scheduled
+            # refresh briefly publishes every configured CLI as ``unverified``
+            # and the hub rejects code tasks from a healthy worker.  Only a
+            # worker with no completed probe yet needs the explicit pending
+            # report.
+            if not self._coding_route_report:
+                self._coding_route_report = {
+                    "schema": "mac.coding_agent.verification.v1",
+                    "agent": "",
+                    "verified": False,
+                    "checked_at": _utcnow(),
+                    "failure_class": "pending",
+                }
+                self._coding_route_report_dirty = True
             thread = threading.Thread(
                 target=self._probe_coding_route,
                 name="mac-coding-route-probe-%s" % self.agent_id,
@@ -6320,20 +6139,68 @@ class MacWorker(
             self._coding_route_probe_thread = thread
             thread.start()
 
+    @staticmethod
+    def _host_route_probe(
+        choice: Any,
+        ca: Any,
+        host_opencode_router_env: Callable[..., Any],
+        revoke_inference_token: Callable[[str], None],
+        ttl_seconds: int,
+    ) -> JsonDict:
+        """Run the preflight prompt through opencode on this host (no sandbox)."""
+        argv = ca.coding_agent_argv(choice, ca.PREFLIGHT_PROMPT)
+        with tempfile.TemporaryDirectory(prefix="mac-route-probe-") as probe_dir:
+            # The same path a task takes: an inference-only token and the
+            # generated machub config.
+            overlay, token_id = host_opencode_router_env(
+                Path(probe_dir), task_id="", ttl_seconds=ttl_seconds
+            )
+            try:
+                completed = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
+                    check=False,
+                    env={**os.environ, **overlay},
+                )
+            finally:
+                if token_id:
+                    revoke_inference_token(token_id)
+        output = (completed.stdout or "") + (completed.stderr or "")
+        verified = completed.returncode == 0 and ca.PREFLIGHT_SENTINEL in output
+        return {
+            **choice.observable(),
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": choice.agent,
+            "binary": choice.binary,
+            "execution_binary": choice.binary,
+            "binary_status": "present",
+            "route_fingerprint": choice.route_fingerprint(),
+            "verified": verified,
+            "checked_at": _utcnow(),
+            "returncode": completed.returncode,
+            "failure_class": "" if verified else "host_probe_failed",
+        }
+
     def _probe_coding_route(self) -> None:
+        """Verify the opencode route the way tasks will actually run it."""
         reports: JsonDict = {}
         try:
             from mac import coding_agent as _ca
             from mac.task_executor import (
+                _PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
+                _revoke_inference_token,
                 coding_agent_sandbox_verification,
                 coding_agent_sandbox_which,
+                host_opencode_router_env,
             )
 
-            # Probe the route the way tasks will actually run on this node. An
-            # unset MAC_OPENSHELL_SANDBOX means off to every other reader, and a
-            # host-install platform has no managed sandbox to probe through at
-            # all (ADR 0015): its kernel cannot enforce Landlock, so a probe
-            # sandbox never starts and leaves a restarting container behind.
+            # An unset MAC_OPENSHELL_SANDBOX means off to every other reader,
+            # and a host-install platform has no managed sandbox to probe
+            # through at all (ADR 0015): its kernel cannot enforce Landlock, so
+            # a probe sandbox never starts and leaves a restarting container
+            # behind.
             host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
             sandboxed = not host_install and _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
 
@@ -6342,31 +6209,14 @@ class MacWorker(
                     if sandboxed:
                         checked = dict(coding_agent_sandbox_verification(choice))
                     else:
-                        argv = _ca.coding_agent_argv(choice, _ca.PREFLIGHT_PROMPT)
-                        completed = subprocess.run(
-                            argv,
-                            capture_output=True,
-                            text=True,
-                            timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
-                            check=False,
+                        checked = self._host_route_probe(
+                            choice,
+                            _ca,
+                            host_opencode_router_env,
+                            _revoke_inference_token,
+                            _PREFLIGHT_INFERENCE_TOKEN_TTL_SECONDS,
                         )
-                        output = (completed.stdout or "") + (completed.stderr or "")
-                        verified = completed.returncode == 0 and _ca.PREFLIGHT_SENTINEL in output
-                        checked = {
-                            **choice.observable(),
-                            "schema": "mac.coding_agent.verification.v1",
-                            "agent": choice.agent,
-                            "binary": choice.binary,
-                            "execution_binary": choice.binary,
-                            "binary_status": "present",
-                            "route_fingerprint": choice.route_fingerprint(),
-                            "verified": verified,
-                            "checked_at": _utcnow(),
-                            "returncode": completed.returncode,
-                            "failure_class": "" if verified else "host_probe_failed",
-                        }
-                except Exception as exc:  # noqa: BLE001
-                    # Continue to the next configured route after a probe crash.
+                except Exception as exc:  # noqa: BLE001 - a probe crash is "not verified"
                     checked = {
                         **choice.observable(),
                         "schema": "mac.coding_agent.verification.v1",
@@ -6384,13 +6234,15 @@ class MacWorker(
             choice = _ca.resolve_coding_agent(
                 which=coding_agent_sandbox_which if sandboxed else None,
                 accept=_verify,
-                verify_all=True,
             )
             verified = bool(choice.available)
             if verified:
                 failure_class = ""
             elif reports:
-                failure_class = "all_routes_failed"
+                failure_class = str(
+                    (reports.get(_ca.selected_agent()) or {}).get("failure_class")
+                    or "probe_failed"
+                )
             else:
                 failure_class = "not_configured"
             report = {
@@ -6414,6 +6266,16 @@ class MacWorker(
         with self._coding_route_probe_lock:
             self._coding_route_report = dict(report)
             self._coding_route_report_dirty = True
+            verified = report.get("verified") is True
+            if verified:
+                self._coding_route_probe_consecutive_failures = 0
+            else:
+                self._coding_route_probe_consecutive_failures += 1
+            self._next_coding_route_probe_at = time.monotonic() + _coding_route_probe_delay(
+                self.agent_id,
+                verified=verified,
+                consecutive_failures=self._coding_route_probe_consecutive_failures,
+            )
 
     def _observe_metric(
         self,
@@ -6592,60 +6454,6 @@ class MacWorker(
                     self._observation_post_failures,
                     type(exc).__name__,
                 )
-
-    def _emit_recovery_observability(
-        self,
-        task_id: str,
-        step: str,
-        choice: str,
-        result_detail: str,
-    ) -> None:
-        """Emit a structured observability event for a harness recovery action.
-
-        Called before dispatching each remediation so the hub and fleet
-        operators can observe recovery attempts in the task event log.
-        """
-        self._observe_log(
-            "worker.harness.recovery",
-            level="info",
-            subject_type="task",
-            subject_id=task_id,
-            detail={
-                "step": step,
-                "choice": choice,
-                "result": result_detail,
-            },
-        )
-
-    def _append_harness_recovery_log(
-        self,
-        task_dir: Path,
-        step: str,
-        choice: str,
-        result_detail: str,
-    ) -> None:
-        """Append one recovery entry to harness-recovery-log.json in task_dir.
-
-        The file is written/extended on each invocation so cross-process
-        evidence survives partial failures.
-        """
-        log_path = task_dir / "harness-recovery-log.json"
-        try:
-            existing: List[JsonDict] = []
-            if log_path.exists():
-                raw = log_path.read_text(encoding="utf-8")
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    existing = [e for e in parsed if isinstance(e, dict)]
-            existing.append(
-                {"step": step, "choice": choice, "result": result_detail, "ts": _utcnow()}
-            )
-            log_path.write_text(
-                json.dumps(existing, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except Exception:  # noqa: BLE001 - harness log is best-effort evidence
-            pass
 
 
 def _summary_from_output(returncode: int, stdout: str, stderr: str) -> str:
@@ -7141,19 +6949,6 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         ),
         (task_dir / "openshell-salvage.json", "openshell-salvage.json", "sandbox_salvage"),
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
-        (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
-        (task_dir / "executor-task.json", "executor-task.json", "review_context"),
-        (
-            task_dir / "review-independent-findings.json",
-            "review-independent-findings.json",
-            "review_experiment",
-        ),
-        (task_dir / "review-protocol.json", "review-protocol.json", "review_experiment"),
-        (
-            task_dir / "review-independent-draft-evidence.json",
-            "review-independent-draft-evidence.json",
-            "review_experiment",
-        ),
     ]
     try:
         wip_manifest = json.loads(
@@ -7252,9 +7047,9 @@ def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
         return None
     repository_path = str(origin.get("repository_path") or "").strip()
     repository_url = str(origin.get("repository_url") or "").strip()
-    # mac-k8s clone path: allow tasks that ship only a remote URL (the
-    # Job pod has no local source). Either a local path or a remote URL
-    # is now sufficient to identify a repository-mode task.
+    # Remote clone path: allow tasks that ship only a remote URL (the
+    # worker has no local source). Either a local path or a remote URL
+    # is sufficient to identify a repository-mode task.
     if not repository_path and not repository_url:
         return None
 
@@ -7417,144 +7212,38 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
     return loaded if isinstance(loaded, dict) else {}
 
 
-_BLIND_REVIEW_HIDDEN_METADATA_KEYS = frozenset(
-    {
-        "activity",
-        "latest_review_claim",
-        "model",
-        "model_strength",
-        "repository_ref_lifecycle",
-        "review_claims",
-        "review_context",
-        "review_model",
-        "review_model_strength",
-        "runtime",
-        "target_agent_id",
-    }
-)
-
-_REVIEW_CLAIM_IDENTITY_KEYS = frozenset(
-    {
-        "actor",
-        "claimed_at",
-        "executor_evidence_id",
-        "review_id",
-        "reviewer_agent_id",
-        "schema",
-        "task_id",
-    }
-)
-
-
-def _review_input_task(task: JsonDict) -> JsonDict:
-    """Return the pre-execution task contract visible to semantic reviewers.
-
-    Review claims, activity summaries, runtime publication anchors, and the
-    executor model are post-execution treatment data. They must not be copied
-    into ``executor-task.json`` or the review task metadata because the blind
-    discovery pass can read both files while ``executor-evidence.json`` is
-    withheld. Unknown task-authored metadata remains available so custom
-    acceptance criteria are not lost.
-    """
-    safe = copy.deepcopy(task) if isinstance(task, dict) else {}
-    metadata = safe.get("metadata")
-    if isinstance(metadata, dict):
-        for key in _BLIND_REVIEW_HIDDEN_METADATA_KEYS:
-            metadata.pop(key, None)
-        # Registered host paths are preparation inputs, not semantic-review
-        # inputs. A reviewer receives only its task-owned exact-base checkout;
-        # never reveal an alternate host/source path it could try to access.
-        for container_key in ("origin", "execution_contract"):
-            container = metadata.get(container_key)
-            if isinstance(container, dict):
-                container.pop("repository_path", None)
-                contract = container.get("repository_contract")
-                if isinstance(contract, dict):
-                    contract.pop("repository_path", None)
-    for key in (
-        "attempt_count",
-        "completed_at",
-        "last_updated_at",
-        "lease_id",
-        "leased_until",
-        "owner_agent_id",
-        "started_at",
-        "state",
-        "updated_at",
-    ):
-        safe.pop(key, None)
-    return safe
-
-
-def _review_claim_identity(claim: JsonDict) -> JsonDict:
-    """Keep claim identity needed by finalization without leaking evidence."""
-    return {
-        key: copy.deepcopy(value)
-        for key, value in claim.items()
-        if key in _REVIEW_CLAIM_IDENTITY_KEYS
-    }
-
-
-def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
+def _task_model_override(task: JsonDict) -> str:
     """Per-task LLM model override from task metadata.
 
     Executor tasks use ``metadata.model`` (flat, what ``mac task create
-    --model`` writes). Review payloads deliberately do not inherit that model:
-    they use ``metadata.review_model`` (or the corresponding runtime key) and
-    otherwise fall back to the reviewer's fleet default. This preserves model
-    independence instead of silently asking the reviewer to use the author's
-    pinned model.
-    ``metadata.model_strength`` (int 1..10) is the name-decoupled alternative:
-    1 = cheapest/weakest, 10 = strongest, resolved to a concrete available model
-    via the active strength ladder (so the task stays decoupled from model names
-    as they churn). ``metadata.runtime.model`` is honored last. Empty string when
-    the task pins nothing — the agent's fleet default applies.
+    --model`` writes); ``metadata.runtime.model`` is honored last. Empty string
+    when the task pins nothing — the agent's fleet default applies.
 
-    The ladder is resolved from the LOCAL selection store first (co-located hub
-    process), then, if that is empty, from the hub's ``/model-selection/status``
-    via ``hub_client`` — without that fallback a spoke worker (which has no local
-    selection file) would silently ignore ``--model-strength`` and always drop to
-    the fleet default."""
+    ``metadata.model_strength`` is advisory only:
+    the strength ladder that once resolved them was removed, so a task carrying
+    one runs on the fleet default model like any unpinned task."""
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return ""
-    is_review = isinstance(metadata.get("review_context"), dict)
-    model_key = "review_model" if is_review else "model"
-    strength_key = "review_model_strength" if is_review else "model_strength"
-    value = str(metadata.get(model_key) or "").strip()
+    value = str(metadata.get("model") or "").strip()
     if value:
         return value[:256]
-    strength = metadata.get(strength_key)
-    if strength is None and isinstance(metadata.get("runtime"), dict):
-        strength = metadata["runtime"].get(strength_key)
-    if strength is not None and str(strength).strip():
-        try:
-            scale = int(strength)
-        except (TypeError, ValueError):
-            scale = None
-        if scale is not None:
-            resolved = _resolve_strength_local_or_hub(scale, hub_client)
-            if resolved:
-                return resolved[:256]
     runtime = metadata.get("runtime")
     if isinstance(runtime, dict):
-        return str(runtime.get(model_key) or "").strip()[:256]
+        return str(runtime.get("model") or "").strip()[:256]
     return ""
 
 
 def _task_iteration_override(task: JsonDict) -> Optional[int]:
     """Resolve a bounded Hermes iteration budget from immutable task metadata.
 
-    Review payloads use ``review_max_iterations`` so an experiment can bound
-    each discovery/adjudication pass independently of the executor budget.
     Values outside 1..500 are ignored instead of producing an unsafe or
     effectively unbounded child process.
     """
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return None
-    is_review = isinstance(metadata.get("review_context"), dict)
-    key = "review_max_iterations" if is_review else "max_iterations"
+    key = "max_iterations"
     value = metadata.get(key)
     if value is None and isinstance(metadata.get("runtime"), dict):
         value = metadata["runtime"].get(key)
@@ -7563,30 +7252,6 @@ def _task_iteration_override(task: JsonDict) -> Optional[int]:
     except (TypeError, ValueError):
         return None
     return resolved if 1 <= resolved <= 500 else None
-
-
-def _resolve_strength_local_or_hub(scale: int, hub_client: Any = None) -> str:
-    """Resolve a 1..10 strength to a concrete model via the LOCAL active ladder,
-    falling back to the hub's ``/model-selection/status`` ladder for spoke
-    workers that have no local selection file. Best-effort — "" on any failure."""
-    try:
-        from mac.model_selection import resolve_strength, resolve_strength_from_selection
-    except Exception:  # noqa: BLE001
-        return ""
-    try:
-        resolved = resolve_strength_from_selection(scale)
-    except Exception:  # noqa: BLE001
-        resolved = ""
-    if resolved:
-        return resolved
-    if hub_client is not None:
-        try:
-            status = hub_client.get("/model-selection/status")
-            ladder = (((status or {}).get("active") or {}).get("ladder")) or []
-            return resolve_strength(scale, [str(m) for m in ladder if str(m).strip()])
-        except Exception:  # noqa: BLE001 - hub fallback is best-effort.
-            return ""
-    return ""
 
 
 def _task_payload_from_workspace(task_dir: Path) -> JsonDict:
@@ -7599,36 +7264,6 @@ def _task_payload_from_workspace(task_dir: Path) -> JsonDict:
         return {}
     task = loaded.get("task")
     return task if isinstance(task, dict) else loaded
-
-
-def _task_detail_evidence(task_detail: JsonDict, evidence_id: str) -> JsonDict:
-    evidence_items = task_detail.get("evidence")
-    if not isinstance(evidence_items, list):
-        return {}
-    for item in evidence_items:
-        if isinstance(item, dict) and str(item.get("id") or "") == evidence_id:
-            return item
-    return {}
-
-
-def _task_detail_canonical_remote_url(task_detail: JsonDict) -> str:
-    task = ensure_json_object(task_detail.get("task"))
-    metadata = ensure_json_object(task.get("metadata"))
-    candidates = (
-        ensure_json_object(
-            ensure_json_object(metadata.get("execution_contract")).get("repository_contract")
-        ),
-        ensure_json_object(ensure_json_object(metadata.get("origin")).get("repository_contract")),
-        ensure_json_object(metadata.get("repository_contract")),
-        ensure_json_object(metadata.get("origin")),
-    )
-    for candidate in candidates:
-        remote_url = str(
-            candidate.get("canonical_remote_url") or candidate.get("repository_url") or ""
-        ).strip()
-        if remote_url:
-            return remote_url
-    return ""
 
 
 def _repository_context_env(context: JsonDict) -> Dict[str, str]:
@@ -7930,8 +7565,6 @@ def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
     test_item: JsonDict,
-    *,
-    hub_verify: bool = False,
 ) -> List[str]:
     problems: List[str] = []
     head_sha = str(repo.get("head_sha") or "").strip()
@@ -7948,48 +7581,76 @@ def _repository_finalizer_prepush_problems(
         or _worker_verification_item_passed(test_item) is not True
     ):
         problems.append("repo code evidence requires at least one passing test/check")
-    if test_item.get("executed_head_sha") and test_item["executed_head_sha"] != head_sha:
-        problems.append("repository tests do not match the commit being pushed")
+    # Only the pre-push verifier's own record of running the gate on this exact
+    # commit authorizes a push. It used to be enough for executed_head_sha to
+    # match WHEN PRESENT, so an item without one -- a clean-tree sandbox receipt
+    # where nothing ran, a deferred placeholder -- passed this check.
+    from mac.evidence_validators import verifier_test_item_problems
+
+    verifier_problems = verifier_test_item_problems(test_item, head_sha)
+    if verifier_problems:
+        problems.append(
+            "repository tests are not a verifier result for the commit being pushed: %s"
+            % "; ".join(verifier_problems)
+        )
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
 
 
-def _hub_verify_deferred_test_item(command: str) -> JsonDict:
-    """Report pending independent review without claiming a test result.
+def _agent_manifest_lacks_verifier_tests(manifest_path: Path, task: JsonDict) -> bool:
+    """True when an agent-written repo_change manifest has no verifier pass.
 
-    This is valid for native read-only reports; it never authorizes a code push.
+    The agent's own ``tests`` list is not evidence that the contract gate ran
+    on the commit being published. Rather than submit it and have both gates
+    refuse it, re-finalize from the host worktree: the finalizer rebases,
+    runs the pre-push verifier on that exact commit, and publishes only on a
+    pass. Tasks whose contract defines no tests, and non-repository outcomes,
+    keep the agent's manifest.
     """
-    return {
-        "name": "repository contract test",
-        "command": command,
-        "returncode": None,
-        "status": "deferred",
-        "execution_environment": "hub_verify_pending",
-        "stdout": "",
-        "stderr": "",
-    }
+    from mac.evidence_validators import VERIFIER_EXECUTION_ENVIRONMENTS, verifier_tests_problems
 
-
-def _is_hub_verify_deferred_item(item: Any) -> bool:
-    """True iff *item* is the deferred sentinel produced by hub-verify mode."""
-    if not isinstance(item, dict):
+    if not _repository_contract_test_command(task):
         return False
-    return (
-        str(item.get("status") or "").strip().lower() == "deferred"
-        and str(item.get("execution_environment") or "").strip().lower() == "hub_verify_pending"
-    )
+    if declared_non_repository_outcome_evidence_type(ensure_json_object(task.get("metadata"))):
+        return False
+    try:
+        loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(loaded, dict):
+        return False
+    if str(loaded.get("evidence_type") or "").strip().lower() != "repo_change":
+        return False
+    repo = loaded.get("repo") if isinstance(loaded.get("repo"), dict) else {}
+    if _worker_allows_empty_repo_change_evidence(task, "repo_change") and not _manifest_list(
+        repo.get("files_changed")
+    ):
+        return False
+    if str(loaded.get("status") or "").strip().lower() != "complete":
+        # A failed or partial finalizer record states why it did not publish;
+        # re-running the finalizer over it would only repeat that failure.
+        return False
+    tests = loaded.get("tests")
+    tests = [tests] if isinstance(tests, dict) else tests if isinstance(tests, list) else []
+    if any(
+        isinstance(item, dict)
+        and str(item.get("execution_environment") or "") in VERIFIER_EXECUTION_ENVIRONMENTS
+        and item.get("executed_head_sha")
+        and str(item.get("status") or "").strip().lower() != "pass"
+        for item in tests
+    ):
+        # The verifier ran and did not pass: that verdict stands.
+        return False
+    return bool(verifier_tests_problems(loaded))
 
 
 def _sandbox_repository_verification_item(
     task_dir: Optional[Path],
     command: str,
     *,
-    hub_verify: bool = False,
     require_command_match: bool = False,
 ) -> Optional[JsonDict]:
     if task_dir is None:
-        if hub_verify:
-            return _hub_verify_deferred_test_item(command)
         return None
     path = task_dir / "mac-sandbox-verification.json"
     try:
@@ -7997,12 +7658,8 @@ def _sandbox_repository_verification_item(
             raise OSError("sandbox verification evidence is not a regular file")
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        if hub_verify:
-            return _hub_verify_deferred_test_item(command)
         return None
     if not isinstance(loaded, dict):
-        if hub_verify:
-            return _hub_verify_deferred_test_item(command)
         return None
     observed_command = str(loaded.get("command") or "").strip()
     record_problem = ""
@@ -8024,7 +7681,13 @@ def _sandbox_repository_verification_item(
         stderr="\n".join(
             part for part in (str(loaded.get("stderr") or "").strip(), record_problem) if part
         ),
+        # A skipped gate ran nothing. Dropping this flag is how a sandbox
+        # receipt for an untested tree used to arrive here as a plain pass.
+        skipped=bool(loaded.get("skipped"))
+        or str(loaded.get("status") or "").strip().lower() == "skipped",
     )
+    if item.get("skipped") and loaded.get("skipped_reason"):
+        item["skipped_reason"] = str(loaded.get("skipped_reason"))
     item["execution_environment"] = "openshell_sandbox"
     if isinstance(loaded.get("environment_delta"), dict):
         item["environment_delta"] = loaded["environment_delta"]
@@ -8048,11 +7711,8 @@ def _trusted_read_only_report_test_item(
         == REPORT_REPOSITORY_MACOS_HOST_POSTURE
     ):
         # A native agent can write files in its workspace. None of those files
-        # can attest to a Linux test run. The signed host projection requests
-        # independent hub verification, which gates report publication.
-        if not _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY")):
-            return None, ["native read-only repository reports require Linux hub verification"]
-        return _hub_verify_deferred_test_item(command), []
+        # can attest to a Linux test run, and nothing downstream runs one.
+        return None, ["native read-only repository reports require a Linux contract test run"]
     item = _sandbox_repository_verification_item(
         task_dir,
         command,
@@ -8085,7 +7745,19 @@ def _process_check_item(
     command: str,
     stdout: str,
     stderr: str,
+    skipped: bool = False,
 ) -> JsonDict:
+    if skipped:
+        # Not a result: no returncode, so nothing downstream can read it as 0.
+        return {
+            "name": name,
+            "command": command,
+            "returncode": None,
+            "status": "skipped",
+            "skipped": True,
+            "stdout": _truncate_process_text(stdout),
+            "stderr": _truncate_process_text(stderr),
+        }
     return {
         "name": name,
         "command": command,
@@ -8121,6 +7793,49 @@ def _repository_context_head_is_pushed(worktree: Path, repo: JsonDict) -> bool:
         if remote_head.returncode == 0 and remote_head.stdout.strip() == head_sha:
             return True
     return False
+
+
+#: Written by the executor (host side, never downloaded from the sandbox) when
+#: the agent's run ended on an unanswered blocking question.
+NEEDS_INPUT_MARKER = "needs-input.json"
+
+
+def _blocking_question_marker(task_dir: Path) -> Optional[JsonDict]:
+    try:
+        marker = json.loads((task_dir / NEEDS_INPUT_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(marker, dict) or not marker.get("questions"):
+        return None
+    return marker
+
+
+#: Submission problems that only restate what the host finalizer did or did
+#: not do. The agent cannot push or record the verifier's result: both are the
+#: harness's own steps (executor_finalizer), so their absence is not the work's.
+_HARNESS_FINALIZATION_PROBLEMS = (
+    "repo evidence requires pushed=true with remote_ref, or pr_url",
+    "repo_change evidence requires a repository verifier test result for repo.head_sha",
+    "repo code evidence requires at least one passing test/check",
+)
+
+
+def _is_harness_finalization_problem(problem: str) -> bool:
+    if not any(problem.startswith(prefix) for prefix in _HARNESS_FINALIZATION_PROBLEMS):
+        return False
+    if problem.startswith(_HARNESS_FINALIZATION_PROBLEMS[1]):
+        # Only a verifier result that is ABSENT (never recorded, or recorded
+        # without a status) is the harness's gap. A result for another commit
+        # is evidence about the wrong head and stays a contract failure.
+        if "verification.tests is empty" in problem:
+            return True
+        return "status is None" in problem and "is not repo.head_sha" not in problem
+    return True
+
+
+def _only_harness_finalization_problems(problems: Any) -> bool:
+    items = [str(problem or "") for problem in (problems or [])]
+    return bool(items) and all(_is_harness_finalization_problem(item) for item in items)
 
 
 def _repository_context_audit_metadata(context: JsonDict) -> JsonDict:
@@ -8257,13 +7972,25 @@ def _worker_verification_contract_problems(
     evidence_type: str,
     *,
     allow_empty_repo_change: bool = False,
+    require_verifier_tests: bool = False,
 ) -> List[str]:
     if evidence_type == "repo_change":
-        return _worker_repo_verification_problems(
+        problems = _worker_repo_verification_problems(
             manifest,
             require_tests=True,
             allow_empty_repo_change=allow_empty_repo_change,
         )
+        repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+        no_op = allow_empty_repo_change and not _manifest_list(repo.get("files_changed"))
+        if require_verifier_tests and not no_op:
+            # Same rule the hub applies (RepoChangeValidator): when the
+            # repository contract defines tests, only the pre-push verifier's
+            # record of running them on repo.head_sha counts as a pass. An
+            # allowed empty change (a no-op source refresh) has nothing to test.
+            from mac.evidence_validators import verifier_tests_problems
+
+            problems.extend(verifier_tests_problems(manifest))
+        return problems
     if evidence_type == "documentation":
         return _worker_repo_verification_problems(manifest, require_tests=False)
     if evidence_type == "deployment":
@@ -8340,41 +8067,6 @@ def _plan_decomposed_is_environment_fault(
     if str(manifest.get("rejected_evidence_type") or "") == "plan_decomposed":
         return True
     return False
-
-
-def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> JsonDict:
-    try:
-        loaded = json.loads((task_dir / "executor-evidence.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    if not isinstance(loaded, dict):
-        return {}
-    metadata = loaded.get("metadata") if isinstance(loaded.get("metadata"), dict) else {}
-    manifest = (
-        metadata.get("verification") if isinstance(metadata.get("verification"), dict) else None
-    )
-    if manifest is None and isinstance(loaded.get("verification"), dict):
-        manifest = loaded.get("verification")
-    return dict(manifest) if isinstance(manifest, dict) else {}
-
-
-def _worker_review_verdict_executor_repo_problems(task_dir: Path, manifest: JsonDict) -> List[str]:
-    executor_manifest = _executor_verification_manifest_from_review_workspace(task_dir)
-    executor_repo = (
-        executor_manifest.get("repo") if isinstance(executor_manifest.get("repo"), dict) else {}
-    )
-    if not executor_repo:
-        return []
-    review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
-    problems: List[str] = []
-    executor_changed = _metadata_path_list(executor_repo.get("files_changed"))
-    review_changed = _metadata_path_list(review_repo.get("files_changed"))
-    if executor_changed and set(review_changed) != set(executor_changed):
-        problems.append(
-            "review_verdict repo.files_changed must match executor evidence: %s != %s"
-            % (review_changed, executor_changed)
-        )
-    return problems
 
 
 def _worker_repo_verification_problems(
@@ -8465,6 +8157,12 @@ def _worker_verification_item_passed(item: Any) -> bool:
     if isinstance(item, list):
         return any(_worker_verification_item_passed(nested) for nested in item)
     if not isinstance(item, dict):
+        return False
+    if item.get("skipped") is True or str(item.get("status") or "").strip().lower() in {
+        "skipped",
+        "deferred",
+    }:
+        # Nothing ran: whatever else the item says, it is not a pass.
         return False
     if "returncode" in item:
         return _worker_int_value(item["returncode"]) == 0
@@ -8879,7 +8577,7 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
 
     Used for clone where the target directory does not yet exist (so
     ``git -C <target>`` is invalid). Mirrors ``_run_git`` for timeout
-    + capture behaviour so the K8s clone path is testable via the
+    + capture behaviour so the remote clone path is testable via the
     same monkeypatch surface."""
     try:
         timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))

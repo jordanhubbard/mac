@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
-import types
 
 import pytest
 
@@ -36,8 +35,7 @@ def _invoke(monkeypatch, *, output="passed", returncode=0):
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
     monkeypatch.delenv("MAC_OPENSHELL_GC", raising=False)
-    result = services.ControlPlane._hub_verify_run_contract_test(
-        types.SimpleNamespace(),
+    result = services.run_repository_contract_test_in_openshell(
         "https://example.invalid/repo.git",
         "branch",
         HEAD,
@@ -110,7 +108,7 @@ def test_unknown_profile_stops_before_cloning_or_creating(monkeypatch, profile):
     (rc, output), calls = _invoke(monkeypatch)
     assert rc != 0
     assert UNAVAILABLE in output
-    assert services.hub_verification_unavailable_reason(output) == UNAVAILABLE
+    assert UNAVAILABLE in output
     assert calls == []
 
 
@@ -122,7 +120,7 @@ def test_backend_without_profile_proof_cannot_produce_a_pass(monkeypatch, return
     )
     assert rc != 0
     assert "backend does not support requested mount" in output
-    assert services.hub_verification_unavailable_reason(output) == UNAVAILABLE
+    assert UNAVAILABLE in output
     assert calls[-1][1:3] == ["sandbox", "delete"]
 
 
@@ -199,7 +197,6 @@ def test_worker_create_applies_profile_before_toolchain(monkeypatch, tmp_path, p
     else:
         monkeypatch.setenv("MAC_HUB_VERIFY_PROFILE", profile)
     monkeypatch.setattr(sandbox, "_resolve_openshell_policy", lambda: "/policy.yaml")
-    monkeypatch.setattr(sandbox, "_sandbox_credential_upload_argv", lambda: [])
     argv = sandbox._build_sandbox_create_argv(
         "profile-test",
         tmp_path,
@@ -214,7 +211,9 @@ def test_worker_create_applies_profile_before_toolchain(monkeypatch, tmp_path, p
             json.loads(argv[argv.index("--driver-config-json") + 1])["docker"]["mounts"][0]["type"]
             == "tmpfs"
         )
-        command = argv[-1]
+        from tests.test_openshell_exec_single_line import decode_shell_argument
+
+        command = decode_shell_argument(argv[-1])
         assert command.index(". ./.mac-openshell-env.sh") < command.index(READY)
         assert command.index(READY) < command.index(". ./.mac-sandbox-toolchain.sh")
     else:
@@ -344,7 +343,6 @@ def test_coding_route_probe_does_not_require_repository_test_storage(monkeypatch
 
     monkeypatch.setenv("MAC_HUB_VERIFY_PROFILE", "bounded-tmpfs")
     monkeypatch.setattr(sandbox, "_resolve_openshell_policy", lambda: "/policy.yaml")
-    monkeypatch.setattr(sandbox, "_sandbox_credential_upload_argv", lambda: [])
     monkeypatch.setattr(
         sandbox, "_openshell_extra_create_argv", lambda: ["--from", "approved-image"]
     )

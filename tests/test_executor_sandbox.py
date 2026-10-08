@@ -277,28 +277,18 @@ def test_lease_reconcile_best_effort_swallows_errors(monkeypatch) -> None:
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
 
 
-def test_coding_agent_sandbox_which_declares_every_reviewed_cli() -> None:
-    """Regression for a stale allow-list that silently excluded two shipped CLIs.
+def test_coding_agent_sandbox_which_declares_the_two_coding_clis() -> None:
+    """coding_agent_sandbox_which is a DECLARED inventory of the task image.
 
-    coding_agent_sandbox_which is a DECLARED inventory, not a live probe (its
-    own docstring). ``deploy/openshell/mac-hermes.Containerfile`` installs
-    opencode and pi at the same standard PATH locations as claude/codex/cursor
-    and its build gates on ``command -v opencode`` / ``pi --version`` -- so a
-    working opencode/pi is a proven property of every published sandbox
-    image. Before this fix the frozenset omitted them, so routing rejected
-    opencode as "not on PATH" before any real in-sandbox preflight ran, even
-    though opencode is coding_agent.AGENT_PRIORITY's first choice (observed
-    live on the fleet 2026-09-03: bullwinkle and natasha both failed every
-    task -- including read-only ones -- because claude/codex/cursor all had
-    real credential problems and opencode was rejected outright rather than
-    tried).
+    It must name the coding CLIs the router can select (opencode, and Claude
+    Code with MAC_CODING_AGENT=claude), or routing rejects them as "not on
+    PATH" before any real in-sandbox preflight runs, and nothing else,
+    because the image installs nothing else.
     """
     sandbox = importlib.import_module("mac.executor_sandbox")
     coding_agent = importlib.import_module("mac.coding_agent")
 
-    for name in coding_agent.AGENT_PRIORITY:
-        assert sandbox.coding_agent_sandbox_which(name) == name, (
-            "%s is a reviewed coding agent but is missing from "
-            "_SANDBOX_CODING_AGENT_BINARIES" % name
-        )
-    assert sandbox.coding_agent_sandbox_which("not-a-real-cli") is None
+    assert sandbox.coding_agent_sandbox_which(coding_agent.CODING_AGENT) == "opencode"
+    assert sandbox.coding_agent_sandbox_which(coding_agent.CLAUDE_AGENT) == "claude"
+    for name in ("codex", "cursor-agent", "pi", "not-a-real-cli"):
+        assert sandbox.coding_agent_sandbox_which(name) is None

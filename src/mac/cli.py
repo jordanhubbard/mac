@@ -64,27 +64,6 @@ def _csv(value: Optional[str]) -> Iterable[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _review_arm_weights(value: Optional[str]) -> Optional[Dict[str, float]]:
-    """Parse ``arm=weight,arm=weight`` without hiding invalid input."""
-    if value is None:
-        return None
-    weights: Dict[str, float] = {}
-    for item in _csv(value):
-        if "=" not in item:
-            raise MACError("--arms entries must use arm=weight")
-        name, raw_weight = item.split("=", 1)
-        name = name.strip()
-        if not name:
-            raise MACError("--arms contains an empty arm name")
-        try:
-            weights[name] = float(raw_weight)
-        except ValueError as exc:
-            raise MACError("invalid weight for review arm %s" % name) from exc
-    if not weights:
-        raise MACError("--arms requires at least one arm=weight entry")
-    return weights
-
-
 def _read_text_arg(
     inline: Optional[str],
     file_path: Optional[str],
@@ -685,6 +664,10 @@ def _render_text(value: Any) -> str:
             for k in ("assignee", "attempt_count", "max_attempts"):
                 if t.get(k) not in (None, ""):
                     lines.append("  %s: %s" % (k, t.get(k)))
+            task_metadata = t.get("metadata") if isinstance(t.get("metadata"), dict) else {}
+            acceptance = task_metadata.get("acceptance_checks")
+            if isinstance(acceptance, list) and acceptance:
+                lines.append("  acceptance_checks: %s" % ", ".join(str(c) for c in acceptance))
             for k in ("dependencies", "evidence", "reviews", "publications", "history"):
                 v = value.get(k, t.get(k))
                 if isinstance(v, list) and v:
@@ -1284,6 +1267,37 @@ def cmd_client_renew(args: argparse.Namespace) -> None:
     _print(enrollment_manifest(issued))
 
 
+def cmd_client_renew_if_due(args: argparse.Namespace) -> None:
+    """Renew this host's client credentials before they lapse.
+
+    Idempotent and safe to run on a timer (launchd/systemd/cron): a profile
+    that has not reached its renewal point is a no-op. Renewal authenticates
+    over the SSH trust root that minted the credential, so a leaked bearer
+    token still cannot extend itself -- see mac.credential_renewal.
+    """
+    from mac.credential_renewal import CredentialRenewalError, renew_due_profiles
+
+    try:
+        report = renew_due_profiles(
+            profile_names=args.renew_profiles,
+            force=args.force,
+            dry_run=args.dry_run,
+            fleets_config=args.fleets_config,
+        )
+    except CredentialRenewalError as exc:
+        raise MACError(str(exc)) from exc
+    _print(report)
+    failed = int(report["counts"].get("error", 0))
+    if failed:
+        # Loud while the current credential still works: that is the whole
+        # reason renewal starts at half-life instead of at expiry.
+        print(
+            "mac: %d credential renewal(s) failed; the current credential still "
+            "authenticates but will lapse at its expiry" % failed,
+            file=sys.stderr,
+        )
+
+
 def cmd_client_revoke(args: argparse.Namespace) -> None:
     """Revoke a registered client principal."""
     from mac.client_principals import ClientPrincipalError, ClientPrincipalStore
@@ -1408,299 +1422,6 @@ def cmd_fleet_ssh_spec(args: argparse.Namespace) -> None:
     _print(spec.to_dict())
 
 
-def cmd_fleet_backlog_groom_status(args: argparse.Namespace) -> None:
-    """Show the backlog groomer's config + last run report (hub read)."""
-    cp = _plane(args)
-    status = cp.backlog_groom_status()
-    _print(status.to_dict() if hasattr(status, "to_dict") else status)
-
-
-def cmd_fleet_backlog_groom_run(args: argparse.Namespace) -> None:
-    """Trigger one immediate grooming pass across opted-in idle repos."""
-    cp = _plane(args)
-    report = cp.backlog_groom_run()
-    _print(report.to_dict() if hasattr(report, "to_dict") else report)
-
-
-def _backlog_project_metadata(cp: Any, project: str) -> Dict[str, Any]:
-    """Return a project record's mutable metadata dict, or error out.
-
-    Backlog grooming targets onboarded projects (those with a ProjectRecord and
-    a repository_url); a derived, record-less project cannot be opted in.
-    """
-    detail = cp.get_project(project)
-    data = detail.to_dict() if hasattr(detail, "to_dict") else detail
-    record = data.get("record") if isinstance(data, dict) else None
-    if not record:
-        raise SystemExit(
-            "mac: project %r has no project record (onboard it first: "
-            "`mac onboard <repo-url> --project %s`)" % (project, project)
-        )
-    metadata = record.get("metadata")
-    return dict(metadata) if isinstance(metadata, dict) else {}
-
-
-def cmd_fleet_backlog_groom_enable(args: argparse.Namespace) -> None:
-    """Opt a project into autonomous backlog grooming."""
-    cp = _plane(args)
-    metadata = _backlog_project_metadata(cp, args.project)
-    block = dict(metadata.get("backlog_grooming") or {})
-    block["enabled"] = True
-    if args.backlog_size is not None:
-        block["backlog_size"] = args.backlog_size
-    if args.min_ready is not None:
-        block["min_ready"] = args.min_ready
-    if args.capability:
-        block["default_capabilities"] = list(args.capability)
-    metadata["backlog_grooming"] = block
-    cp.update_project(args.project, metadata=metadata, actor="human")
-    _print({"project": args.project, "backlog_grooming": block})
-
-
-def cmd_fleet_backlog_groom_disable(args: argparse.Namespace) -> None:
-    """Opt a project out of autonomous backlog grooming."""
-    cp = _plane(args)
-    metadata = _backlog_project_metadata(cp, args.project)
-    block = dict(metadata.get("backlog_grooming") or {})
-    block["enabled"] = False
-    metadata["backlog_grooming"] = block
-    cp.update_project(args.project, metadata=metadata, actor="human")
-    _print({"project": args.project, "backlog_grooming": block})
-
-
-def cmd_judgement_status(args: argparse.Namespace) -> None:
-    """Show the hub judgement process config and last report."""
-    status = _plane(args).judgement_status()
-    _print(status.to_dict() if hasattr(status, "to_dict") else status)
-
-
-def cmd_judgement_run(args: argparse.Namespace) -> None:
-    """Trigger one immediate judgement cycle on the hub."""
-    report = _plane(args).judgement_run()
-    _print(report.to_dict() if hasattr(report, "to_dict") else report)
-
-
-def cmd_fleet_model_selection_status(args: argparse.Namespace) -> None:
-    """Show the active/pending powerhouse-model selection + last refresh."""
-    cp = _plane(args)
-    status = cp.model_selection_status()
-    _print(status.to_dict() if hasattr(status, "to_dict") else status)
-
-
-def cmd_fleet_model_selection_refresh(args: argparse.Namespace) -> None:
-    """Trigger an immediate refresh (discover → moderate → select). A swap is
-    recorded pending, not adopted, until promoted."""
-    cp = _plane(args)
-    out = cp.model_selection_refresh()
-    _print(out.to_dict() if hasattr(out, "to_dict") else out)
-
-
-def cmd_fleet_model_selection_promote(args: argparse.Namespace) -> None:
-    """Promote the pending model swap to active (operator gate). Routing changes
-    only here — never on an unvalidated swap."""
-    cp = _plane(args)
-    out = cp.model_selection_promote()
-    _print(out.to_dict() if hasattr(out, "to_dict") else out)
-
-
-def cmd_optimizer_status(args: argparse.Namespace) -> None:
-    """Print the optimizer status."""
-    _print(_plane(args).optimizer_status())
-
-
-def cmd_optimizer_tick(args: argparse.Namespace) -> None:
-    """Advance the optimizer by one processing tick."""
-    _print(_plane(args).optimizer_tick())
-
-
-def cmd_optimizer_policy_create(args: argparse.Namespace) -> None:
-    """Create a scientific optimizer policy."""
-    parameters = _read_json_arg(
-        args.parameters,
-        args.parameters_file,
-        label="scientific policy parameters",
-        default={},
-    )
-    if not isinstance(parameters, dict):
-        raise MACError("scientific policy parameters must be a JSON object")
-    description = _read_text_arg(
-        args.description,
-        args.description_file,
-        label="scientific policy description",
-    )
-    _print(
-        _plane(args).create_scientific_policy(
-            args.name,
-            args.project,
-            parameters,
-            description=description,
-            created_by=args.actor,
-        )
-    )
-
-
-def cmd_optimizer_policy_list(args: argparse.Namespace) -> None:
-    """List scientific optimizer policies."""
-    _print(
-        _plane(args).list_scientific_policies(
-            project=args.project,
-            status=args.status,
-        )
-    )
-
-
-def cmd_optimizer_policy_show(args: argparse.Namespace) -> None:
-    """Show a scientific optimizer policy."""
-    _print(_plane(args).get_scientific_policy(args.policy_id))
-
-
-def _optimizer_action_reason(args: argparse.Namespace) -> str:
-    return _read_text_arg(
-        args.reason,
-        args.reason_file,
-        label="scientific optimizer action reason",
-    ).strip()
-
-
-def cmd_optimizer_policy_promote(args: argparse.Namespace) -> None:
-    """Promote a scientific optimizer policy."""
-    _print(
-        _plane(args).promote_scientific_policy(
-            args.policy_id,
-            actor=args.actor,
-            reason=_optimizer_action_reason(args),
-        )
-    )
-
-
-def cmd_optimizer_policy_rollback(args: argparse.Namespace) -> None:
-    """Roll back a scientific optimizer policy."""
-    _print(
-        _plane(args).rollback_scientific_policy(
-            args.project,
-            args.policy_id,
-            actor=args.actor,
-            reason=_optimizer_action_reason(args),
-        )
-    )
-
-
-def cmd_optimizer_experiment_create(args: argparse.Namespace) -> None:
-    """Create a scientific optimizer experiment."""
-    hypothesis = _read_text_arg(
-        args.hypothesis,
-        args.hypothesis_file,
-        label="scientific experiment hypothesis",
-    ).strip()
-    guardrails = _read_json_arg(
-        args.guardrails,
-        args.guardrails_file,
-        label="scientific experiment guardrails",
-        default={},
-    )
-    metadata = _read_json_arg(
-        args.metadata,
-        args.metadata_file,
-        label="scientific experiment metadata",
-        default={},
-    )
-    if not isinstance(guardrails, dict) or not isinstance(metadata, dict):
-        raise MACError("scientific experiment guardrails and metadata must be JSON objects")
-    _print(
-        _plane(args).create_scientific_experiment(
-            name=args.name,
-            project=args.project,
-            hypothesis=hypothesis,
-            control_policy_id=args.control_policy_id,
-            treatment_policy_id=args.treatment_policy_id,
-            primary_metric=args.primary_metric,
-            direction=args.direction,
-            min_effect=args.min_effect,
-            quality_margin=args.quality_margin,
-            min_samples_per_arm=args.min_samples_per_arm,
-            max_samples_per_arm=args.max_samples_per_arm,
-            exploration_fraction=args.exploration_fraction,
-            outcome_horizon_seconds=args.outcome_horizon_seconds,
-            guardrails=guardrails,
-            auto_promote=args.auto_promote,
-            metadata=metadata,
-            created_by=args.actor,
-        )
-    )
-
-
-def cmd_optimizer_experiment_list(args: argparse.Namespace) -> None:
-    """List scientific optimizer experiments."""
-    _print(
-        _plane(args).list_scientific_experiments(
-            project=args.project,
-            state=args.state,
-        )
-    )
-
-
-def cmd_optimizer_experiment_show(args: argparse.Namespace) -> None:
-    """Show a scientific optimizer experiment."""
-    _print(_plane(args).get_scientific_experiment(args.experiment_id))
-
-
-def cmd_optimizer_experiment_evidence(args: argparse.Namespace) -> None:
-    """Show evidence recorded for a scientific experiment."""
-    _print(
-        _plane(args).scientific_experiment_evidence(
-            args.experiment_id,
-            limit=args.limit,
-        )
-    )
-
-
-def cmd_optimizer_experiment_start(args: argparse.Namespace) -> None:
-    """Start a scientific optimizer experiment."""
-    _print(
-        _plane(args).start_scientific_experiment(
-            args.experiment_id,
-            actor=args.actor,
-        )
-    )
-
-
-def cmd_optimizer_experiment_pause(args: argparse.Namespace) -> None:
-    """Pause a scientific optimizer experiment."""
-    _print(
-        _plane(args).pause_scientific_experiment(
-            args.experiment_id,
-            actor=args.actor,
-            reason=_optimizer_action_reason(args),
-        )
-    )
-
-
-def cmd_optimizer_experiment_promote(args: argparse.Namespace) -> None:
-    """Promote a scientific optimizer experiment."""
-    _print(
-        _plane(args).promote_scientific_experiment(
-            args.experiment_id,
-            actor=args.actor,
-            reason=_optimizer_action_reason(args),
-        )
-    )
-
-
-def cmd_optimizer_experiment_observe(args: argparse.Namespace) -> None:
-    """Record an observation for a scientific experiment."""
-    _print(
-        _plane(args).observe_scientific_task(
-            args.experiment_id,
-            args.task_id,
-        )
-    )
-
-
-def cmd_optimizer_experiment_analyze(args: argparse.Namespace) -> None:
-    """Analyze a scientific optimizer experiment."""
-    _print(_plane(args).analyze_scientific_experiment(args.experiment_id))
-
-
 def cmd_fleet_connect(args: argparse.Namespace) -> None:
     """Print a fleet's hub URL and bearer token together, ready to paste.
 
@@ -1714,27 +1435,19 @@ def cmd_fleet_connect(args: argparse.Namespace) -> None:
     terminals and CI logs. --show-token is the deliberate act.
     """
     from mac.fleet_env import resolve as resolve_fleet_env, scoped_var
-    from mac.fleet_move import fleet_hub_url, resolve_fleet_key
-    from mac.fleet_creds import load_fleets_config
+    from mac.fleet_ssh import FleetSshError, fleet_entries, load_fleet_config, resolve_fleet_key
     from mac import mac_paths
 
-    registry = load_fleets_config(getattr(args, "fleets_config", None))
-    fleets = registry.get("fleets") or {}
     requested = getattr(args, "fleet", None) or os.environ.get("MAC_FLEET")
-    fleet_key = resolve_fleet_key(registry, requested) if requested else None
-    if fleet_key is None:
-        # One fleet is the unambiguous case and by far the common one right
-        # after setup.sh; more than one must be named rather than guessed.
-        if not requested and len(fleets) == 1:
-            fleet_key = next(iter(fleets))
-        else:
-            known = ", ".join(sorted(fleets)) or "(none registered)"
-            raise SystemExit(
-                "no such fleet: %s\nknown fleets: %s"
-                % (requested or "(none given; pass --fleet)", known)
-            )
-    url = fleet_hub_url(registry, fleet_key)
-    # The environment first, then ~/.mac/.env. setup.sh WRITES the token to
+    try:
+        registry = load_fleet_config(getattr(args, "fleets_config", None))
+        # One fleet (or one marked default) is unambiguous; otherwise the
+        # error names the fleets that exist.
+        fleet_key = resolve_fleet_key(registry, requested)
+    except FleetSshError as exc:
+        raise SystemExit(str(exc)) from None
+    url = str(fleet_entries(registry)[fleet_key].get("hub_url") or "").strip()
+    # The environment first, then ~/.mac/.env. Fleet setup WRITES the token to
     # that file without exporting it, so a shell that has not sourced it -- the
     # shell you are in seconds after building a hub, which is exactly when you
     # want this -- would otherwise be told the token is unset while it sits on
@@ -1803,70 +1516,6 @@ def _mask_token(token: str) -> str:
     return "%s...%s" % (token[:6], token[-4:]) if len(token) > 14 else "*" * len(token)
 
 
-def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
-    """Per-agent coding-CLI auth status from the agents' heartbeat reports.
-
-    Each worker re-probes claude/codex/cursor on its command-inventory cycle
-    and embeds the secret-free result in resources["coding_clis"], so this is
-    a pure hub read: no SSH, no secrets. Agents whose CLIs are on PATH but
-    unauthenticated are flagged NEEDS SYNC — run `mac admin fleet creds-sync` from
-    the workstation that holds the freshest logins (usually the one you're
-    on: you can only be interactive in one place, and that place has the
-    newest tokens)."""
-    from mac.cli_credentials import KNOWN_CLIS, agent_cli_status, agents_needing_sync
-
-    cp = _plane(args)
-    agents = [a.to_dict() if hasattr(a, "to_dict") else dict(a) for a in cp.list_agents()]
-    needing = agents_needing_sync(agents)
-    rows = []
-    for agent in sorted(agents, key=lambda a: str(a.get("name") or "")):
-        name = str(agent.get("name") or "")
-        status = agent_cli_status(agent.get("resources") or {})
-        if not status:
-            rows.append(
-                {
-                    "agent": name,
-                    "status": "(no coding_clis report yet — worker predates this feature or has not refreshed)",
-                }
-            )
-            continue
-        summary = {}
-        report_schema = str(
-            ((agent.get("resources") or {}).get("coding_clis") or {}).get("schema") or ""
-        )
-        is_v2 = report_schema == "mac.coding_clis.v2"
-        for cli in KNOWN_CLIS:
-            info = status.get(cli) if isinstance(status.get(cli), dict) else {}
-            if is_v2 and info.get("verified"):
-                summary[cli] = "verified (%s/%s)" % (
-                    info.get("provider") or "provider",
-                    info.get("protocol") or "protocol",
-                )
-            elif is_v2 and info.get("configured"):
-                # On PATH + credentialed but no same-environment executable
-                # proof: the sandbox cannot (yet) launch it, so it is never "ok".
-                failure = (info.get("verification") or {}).get("failure_class") or "unverified"
-                summary[cli] = "ROUTE UNAVAILABLE (%s)" % failure
-            elif not is_v2 and info.get("available"):
-                # Legacy v1 report: "available" was inventory-only. v2 workers
-                # gate "available" on the executable probe, so this branch only
-                # covers pre-v2 heartbeats.
-                summary[cli] = "ok (%s)" % (info.get("auth_source") or "authed")
-            elif info.get("on_path"):
-                summary[cli] = "NEEDS SYNC"
-            else:
-                summary[cli] = "not installed"
-        rows.append({"agent": name, **summary})
-    _print({"agents": rows, "needs_sync": needing})
-    if needing:
-        print(
-            "\nmac: %d agent(s) need coding-CLI credentials. From the workstation "
-            "with your freshest logins run:\n  mac admin fleet creds-sync --fleet <fleet>"
-            % len(needing),
-            file=sys.stderr,
-        )
-
-
 def cmd_fleet_github_ingest_status(args: argparse.Namespace) -> None:
     """Show the GitHub-issue ingestor's config + last run report (hub read)."""
     cp = _plane(args)
@@ -1925,140 +1574,6 @@ def cmd_project_ingest_disable(args: argparse.Namespace) -> None:
     metadata["github_issue_ingest"] = block
     cp.update_project(args.project, metadata=metadata, actor="human")
     _print({"project": args.project, "github_issue_ingest": block})
-
-
-def cmd_fleet_creds_sync(args: argparse.Namespace) -> None:
-    """Push this workstation's coding-CLI credentials to workers, on demand.
-
-    Source of truth is the CURRENT environment: env keys, portable credential
-    files in $HOME, or the macOS Keychain. Secrets travel only over the fleet
-    SSH routes via stdin — never argv/env/stdout and never through the hub
-    ledger — and every push is verified by re-running the worker's own
-    detector and printing its secret-free verdict."""
-    from mac.cli_credentials import (
-        KNOWN_CLIS,
-        agents_needing_sync,
-        build_sync_manifest,
-        detect_local_credentials,
-        sync_agent,
-    )
-
-    clis = [c.strip() for c in str(args.cli or "").split(",") if c.strip()]
-    for cli in clis:
-        if cli not in KNOWN_CLIS:
-            raise MACError("unknown coding CLI %r (known: %s)" % (cli, ", ".join(KNOWN_CLIS)))
-    sources = detect_local_credentials(clis)
-    portable = {cli: s for cli, s in sources.items() if s.present}
-    for cli in clis:
-        source = sources.get(cli)
-        if source and source.present:
-            print("mac: %s credentials from %s" % (cli, source.origin), file=sys.stderr)
-        else:
-            print(
-                "mac: no portable %s credentials on this workstation (log in to the "
-                "CLI here first, or set its API-key env var)" % cli,
-                file=sys.stderr,
-            )
-    if not portable:
-        raise MACError("nothing to sync: this workstation holds no portable credentials")
-
-    targets = list(args.agent or [])
-    if not targets:
-        # Lazy by default: only agents whose own reports say a CLI is present
-        # but unauthenticated. Credentials are never pushed where not needed.
-        # Hub resolution: honor an explicit authority (--db/--hub-url/global
-        # --fleet); otherwise reach the hub of the fleet being synced.
-        if not (
-            getattr(args, "db", None)
-            or getattr(args, "hub_url", None)
-            or getattr(args, "fleet", None)
-        ):
-            args.fleet = args.creds_fleet
-        cp = _plane(args)
-        agents = [a.to_dict() if hasattr(a, "to_dict") else dict(a) for a in cp.list_agents()]
-        needing = agents_needing_sync(agents, clis=list(portable))
-        targets = sorted(needing)
-        if not targets:
-            print(
-                "mac: no agent reports a needed sync (pass --agent NAME to force one)",
-                file=sys.stderr,
-            )
-            return
-        print(
-            "mac: syncing agents that reported missing auth: %s" % ", ".join(targets),
-            file=sys.stderr,
-        )
-
-    manifest = build_sync_manifest(portable)
-    if args.dry_run:
-        _print(
-            {
-                "dry_run": True,
-                "agents": targets,
-                "clis": sorted(portable),
-                "files": sorted((manifest.get("files") or {}).keys()),
-                "env_keys": sorted((manifest.get("env") or {}).keys()),
-            }
-        )
-        return
-    results = {}
-    for agent in targets:
-        try:
-            verdict = sync_agent(
-                args.creds_fleet, agent, manifest, fleets_config=args.fleets_config
-            )
-            results[agent] = {
-                cli: (
-                    "ok"
-                    if (verdict.get(cli) or {}).get("available")
-                    else str((verdict.get(cli) or {}).get("detail") or "unverified")
-                )
-                for cli in sorted(portable)
-            }
-        except Exception as exc:  # noqa: BLE001 - report per-agent, keep going
-            results[agent] = {"error": str(exc)}
-    _print({"synced": results})
-
-
-def cmd_fleet_sync_token(args: argparse.Namespace) -> None:
-    """auth-token-sync-01: pull the hub's current bearer token into this client.
-
-    The hub accepts only the tokens in its own ~/.mac/mac.env; the client sends
-    MAC_API_TOKEN__<FLEET>. When they drift the hub returns 403 "unknown bearer
-    token". This re-syncs the client from the authoritative source (the hub host,
-    reached out-of-band over SSH).
-    """
-    from mac.fleet_creds import sync_token
-
-    _print(
-        sync_token(
-            args.fleet,
-            fleets_config_path=args.fleets_config,
-            env_path=args.env_file,
-        )
-    )
-
-
-def cmd_fleet_rotate_token(args: argparse.Namespace) -> None:
-    """auth-token-sync-01: graceful bearer-token rotation via MAC_API_TOKENS.
-
-    Default is a dry-run plan. --apply adds a new token alongside the old
-    (overlap window) and advertises it as the new primary; --prune --apply
-    drops the old tokens once every client has rolled over via sync-token.
-    """
-    from mac.fleet_creds import rotate_token
-
-    _print(
-        rotate_token(
-            args.fleet,
-            scopes=tuple(args.scope) if args.scope else ("admin",),
-            prune=args.prune,
-            do_apply=args.apply,
-            restart=args.restart,
-            fleets_config_path=args.fleets_config,
-            env_path=args.env_file,
-        )
-    )
 
 
 def cmd_tenant_register(args: argparse.Namespace) -> None:
@@ -2443,9 +1958,9 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         metadata["model"] = model
     strength = getattr(args, "model_strength", None)
     if strength is not None:
-        # Name-decoupled pin: 1 = cheapest/weakest .. 10 = strongest. Resolved
-        # to a concrete available model at run time via the strength ladder, so
-        # the task stays valid as model names churn. --model wins if both given.
+        # Advisory only: recorded on the task for compatibility with existing
+        # callers, but nothing routes on it any more (the strength ladder was
+        # removed). The task runs on the fleet default model unless --model pins one.
         if not 1 <= int(strength) <= 10:
             raise MACError("--model-strength must be an integer 1..10")
         metadata["model_strength"] = int(strength)
@@ -2909,6 +2424,52 @@ def cmd_task_ask(args: argparse.Namespace) -> None:
     questions = [{"question": q} for q in (args.question or []) if str(q or "").strip()]
     result = cp.request_task_input(args.task_id, questions, args.actor, why=args.why or "")
     _print(result)
+
+
+def cmd_task_say(args: argparse.Namespace) -> None:
+    """Post to a task's board as a person."""
+    cp = _plane(args)
+    kind = "directive" if args.directive else ("answer" if args.answer is not None else "message")
+    result = cp.post_task_message(
+        args.task_id,
+        author_kind="human",
+        author=args.author or os.environ.get("USER") or "operator",
+        kind=kind,
+        body=args.text,
+        reply_to=args.answer,
+    )
+    _print(result)
+
+
+def _format_task_message(message: Mapping[str, Any]) -> str:
+    stamp = str(message.get("created_at") or "")[11:19]
+    who = str(message.get("author") or "")
+    kind = str(message.get("kind") or "")
+    label = "" if kind == "message" else "[%s] " % kind
+    reply = " (re #%s)" % message["reply_to"] if message.get("reply_to") else ""
+    return "#%s %s %s: %s%s%s" % (message.get("id"), stamp, who, label, message.get("body"), reply)
+
+
+def cmd_task_messages(args: argparse.Namespace) -> None:
+    """Show (and optionally follow) a task's board."""
+    import time
+
+    cp = _plane(args)
+    after = int(args.after or 0)
+    while True:
+        page = cp.list_task_messages(args.task_id, after=after, limit=args.limit)
+        for message in page.get("messages") or []:
+            if args.no_activity and message.get("kind") == "activity":
+                continue
+            if args.as_jsonl:
+                print(json.dumps(message, sort_keys=True))
+            else:
+                print(_format_task_message(message))
+        sys.stdout.flush()
+        after = int(page.get("cursor") or after)
+        if not args.follow:
+            return
+        time.sleep(2.0)
 
 
 def cmd_task_needs_input(args: argparse.Namespace) -> None:
@@ -3510,11 +3071,6 @@ def cmd_task_stats(args: argparse.Namespace) -> None:
     _print(cp.task_stats(project=project))
 
 
-def cmd_task_generator_yield(args: argparse.Namespace) -> None:
-    """Print each task origin's filed/completed record and gate standing."""
-    _print(_plane(args).generator_yield_report())
-
-
 def cmd_task_outcome(args: argparse.Namespace) -> None:
     _print(_plane(args).task_outcome(args.task_id))
 
@@ -3902,15 +3458,6 @@ def cmd_sandbox_bom(args: argparse.Namespace) -> None:
         return
 
     _print(derived)
-
-
-def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
-    """File one drained-worker barrier task per agent for a reviewed image."""
-    cp = _plane(args)
-    bom = {}
-    if args.manifest:
-        bom = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    _print(cp.roll_out_sandbox_image(args.image, bom=bom, actor=args.actor, project=args.project))
 
 
 def cmd_task_stop(args: argparse.Namespace) -> None:
@@ -4579,40 +4126,6 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
     _print(_apply_selector(rows, args, "agent"))
 
 
-def cmd_agent_attestation_recover(args: argparse.Namespace) -> None:
-    """Conditionally recover a missing/stale key into an owner-only manifest.
-
-    The cleartext key is never rendered by the CLI. Fleet deploy relays the
-    manifest under its target-side deployment lock and consumes it only after a
-    second signed proof succeeds.
-    """
-
-    from mac.deployment_attestation import _atomic_private_json, recovery_manifest
-
-    probe_path = Path(args.probe_file).expanduser()
-    probe = json.loads(probe_path.read_text(encoding="utf-8"))
-    if not isinstance(probe, dict):
-        raise MACError("attestation recovery probe must be a JSON object")
-    result = _plane(args).recover_agent_attestation_key(args.agent_id, probe)
-    payload = result.to_dict() if hasattr(result, "to_dict") else result
-    key = payload if isinstance(payload, str) else payload.get("attestation_key")
-    manifest = recovery_manifest(
-        args.agent_id,
-        str(probe.get("deployment_id") or ""),
-        str(key or ""),
-    )
-    destination = Path(args.manifest_out).expanduser()
-    _atomic_private_json(destination, manifest)
-    _print(
-        {
-            "status": "rotation_manifest_written",
-            "agent_id": args.agent_id,
-            "deployment_id": manifest["deployment_id"],
-            "manifest": str(destination),
-        }
-    )
-
-
 def cmd_agent_report_executor_approve(args: argparse.Namespace) -> None:
     attestation = json.loads(Path(args.attestation_file).expanduser().read_text(encoding="utf-8"))
     if not isinstance(attestation, dict):
@@ -4667,119 +4180,6 @@ def cmd_agent_delete(args: argparse.Namespace) -> None:
     task-keyed and preserved. Refused while the agent holds an active lease."""
     _plane(args).delete_agent(args.agent_id, actor=args.actor or "human")
     _print({"deleted": args.agent_id})
-
-
-def cmd_agent_migrate(args: argparse.Namespace) -> None:
-    """Move an agent (soul + memory) to a new host. Dry-run by default; pass
-    --execute to run the backup -> retarget -> deploy -> restore -> verify
-    playbook. The agent NAME is preserved, so its hub-stored persona / memories
-    / mood follow ``agent_<name>`` automatically."""
-    import shutil
-    import time
-    from dataclasses import replace
-
-    import yaml
-
-    from mac import agent_migrate as am
-    from mac.fleet_deploy import canonicalize_mesh_ssh_target, parse_ssh_target
-    from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
-    from mac.hermes_config_surface import registry_path
-
-    reg_path = registry_path()
-    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
-    fleets = registry.get("fleets") or {}
-    fleet = args.fleet or next(
-        (
-            f
-            for f, d in fleets.items()
-            if any((a or {}).get("name") == args.name for a in (d.get("agents") or []))
-        ),
-        None,
-    )
-    if not fleet or fleet not in fleets:
-        raise SystemExit("agent %r not found in any fleet in %s" % (args.name, reg_path))
-    agents = fleets[fleet].get("agents") or []
-    cur = next((a for a in agents if (a or {}).get("name") == args.name), None)
-    if cur is None:
-        raise SystemExit("agent %r not in fleet %r" % (args.name, fleet))
-    src = args.from_target or cur.get("target")
-    if not src:
-        raise SystemExit("no source target for %r; pass --from" % args.name)
-
-    # Hub migration moves the durable hub state (DB + Qdrant + secret key), not
-    # just the soul. Auto-detect when the agent IS the fleet's hub/shared-service
-    # manager; --hub/--no-hub override.
-    fleet_cfg = fleets[fleet]
-    is_hub_agent = args.name in (
-        fleet_cfg.get("hub_agent"),
-        fleet_cfg.get("shared_services_manager_agent"),
-    )
-    hub = is_hub_agent if args.hub is None else args.hub
-    src_os = args.src_os or (cur.get("os") or "linux")
-    network = (fleet_cfg.get("defaults") or {}).get("network") or {}
-    network_provider = str(network.get("provider") or "none")
-
-    try:
-        src_route = resolve_fleet_ssh(registry, fleet, args.name)
-        parsed_src = parse_ssh_target(str(src), port=src_route.port)
-        src_route = replace(src_route, target=parsed_src.user_host, port=parsed_src.port)
-        dst_target = canonicalize_mesh_ssh_target(
-            args.to_target,
-            provider=network_provider,
-            port=args.to_ssh_port,
-        )
-        parsed_dst = parse_ssh_target(dst_target)
-        dst_route = replace(
-            src_route,
-            target=parsed_dst.user_host,
-            port=parsed_dst.port,
-            identity_file=(
-                str(Path(args.to_identity_file).expanduser())
-                if args.to_identity_file
-                else src_route.identity_file
-            ),
-            proxy_jump=(
-                args.to_proxy_jump if args.to_proxy_jump is not None else src_route.proxy_jump
-            ),
-            known_hosts_file=(
-                str(Path(args.to_known_hosts_file).expanduser())
-                if args.to_known_hosts_file
-                else src_route.known_hosts_file
-            ),
-            host_key_policy=args.to_host_key_policy or src_route.host_key_policy,
-            os_kind=args.to_os,
-        )
-        src_route.validate_portable()
-        dst_route.validate_portable()
-    except (FleetSshError, ValueError) as exc:
-        raise SystemExit("could not resolve migration SSH routes: %s" % exc) from exc
-
-    steps = am.migration_plan(
-        args.name,
-        src_target=src,
-        dst_target=dst_target,
-        fleet=fleet,
-        fleet_name=(fleet_cfg.get("fleet_name") or fleet),
-        to_os=args.to_os,
-        src_os=src_os,
-        keep_source=args.keep_source,
-        retire_source_agent=args.retire_source_agent,
-        hub=hub,
-        src_route=src_route,
-        dst_route=dst_route,
-    )
-    if hub:
-        print("# HUB migration: moving soul + mac.db + Qdrant + MAC_SECRET_KEY/MAC_API_TOKEN")
-    if not args.execute:
-        print(am.render_plan(args.name, steps))
-        return
-    # --execute: retarget fleets.yaml (backup first), then run the playbook.
-    backup = "%s.bak.%d" % (reg_path, int(time.time()))
-    shutil.copy2(reg_path, backup)
-    am.retarget_fleet_agent(registry, fleet, args.name, target=dst_target, os=args.to_os)
-    reg_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
-    print("retargeted %s -> %s in %s (backup: %s)" % (args.name, dst_target, reg_path, backup))
-    _print(am.execute_migration(args.name, steps))
 
 
 def cmd_agent_hardware(args: argparse.Namespace) -> None:
@@ -4910,200 +4310,6 @@ def cmd_agent_config_show(args: argparse.Namespace) -> None:
 
 def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
-
-
-def _fleet_target_path(args: argparse.Namespace) -> Optional[Path]:
-    manifest = getattr(args, "manifest", None)
-    return Path(manifest) if manifest else None
-
-
-def cmd_fleet_target_set(args: argparse.Namespace) -> None:
-    """Pin the target of record for a role, then print the stored role target."""
-    from mac import fleet_target as ft
-
-    path = _fleet_target_path(args)
-    try:
-        manifest = ft.load_manifest(path)
-    except ft.FleetTargetError:
-        # First write establishes the manifest.
-        manifest = ft.FleetTargetManifest()
-    openclaw = None
-    if args.openclaw_version or args.openclaw_revision:
-        if not (args.openclaw_version and args.openclaw_revision):
-            raise MACError("--openclaw-version and --openclaw-revision must be set together")
-        openclaw = ft.OpenClawTrack(version=args.openclaw_version, revision=args.openclaw_revision)
-    manifest.set_role(
-        args.role,
-        ft.RoleTarget(source=ft.normalize_commit(args.source), openclaw=openclaw),
-    )
-    ft.save_manifest(manifest, path)
-    _print({"role": args.role, "target": manifest.get_role(args.role).to_dict()})
-
-
-def cmd_fleet_target_get(args: argparse.Namespace) -> None:
-    """Print the pinned target for a single role."""
-    from mac import fleet_target as ft
-
-    manifest = ft.load_manifest(_fleet_target_path(args))
-    _print({"role": args.role, "target": manifest.get_role(args.role).to_dict()})
-
-
-def cmd_fleet_target_show(args: argparse.Namespace) -> None:
-    """Print the full fleet target-of-record manifest."""
-    from mac import fleet_target as ft
-
-    _print(ft.load_manifest(_fleet_target_path(args)).to_dict())
-
-
-def cmd_fleet_target_list(args: argparse.Namespace) -> None:
-    """List every pinned role target (never empty once the manifest is populated)."""
-    from mac import fleet_target as ft
-
-    manifest = ft.load_manifest(_fleet_target_path(args))
-    _print(
-        [
-            {"role": name, "target": manifest.roles[name].to_dict()}
-            for name in sorted(manifest.roles)
-        ]
-    )
-
-
-def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
-    """Move an agent between fleets: rewrite fleets.yaml + optionally redeploy.
-
-    Dry-run by default (prints the plan).  Pass --execute to actually mutate
-    fleets.yaml, create a backup, and print the redeploy + DB reconcile commands.
-    """
-    from mac.fleet_move import (
-        execute_fleet_move,
-        find_agent_fleet,
-        fleet_hub_url,
-        plan_fleet_move,
-        render_move_plan,
-        resolve_fleet_key,
-    )
-    from mac.hermes_config_surface import registry_path
-
-    reg_path = registry_path()
-
-    try:
-        import yaml  # type: ignore[import]
-    except ImportError as exc:
-        raise SystemExit("PyYAML is required for fleet move-agent") from exc
-
-    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
-
-    agent_name = args.agent
-
-    # Resolve --from: explicit (registry KEY or fleet_name), else auto-detect.
-    if args.from_fleet:
-        from_fleet = resolve_fleet_key(registry, args.from_fleet)
-        if not from_fleet:
-            raise SystemExit(
-                "source fleet %r not found in %s (by registry key or fleet_name)"
-                % (args.from_fleet, reg_path)
-            )
-    else:
-        from_fleet = find_agent_fleet(registry, agent_name)
-        if not from_fleet:
-            raise SystemExit(
-                "agent %r not found in any fleet in %s; "
-                "pass --from to specify the source fleet" % (agent_name, reg_path)
-            )
-        print("auto-detected source fleet: %s" % from_fleet)
-
-    # Resolve --to (registry KEY or fleet_name); fail loudly — never emit a
-    # "<target-hub-url>" placeholder plan for an unresolvable / hubless target.
-    to_fleet = resolve_fleet_key(registry, args.to_fleet)
-    if not to_fleet:
-        raise SystemExit(
-            "target fleet %r not found in %s (by registry key or fleet_name)"
-            % (args.to_fleet, reg_path)
-        )
-    if not ((args.hub_url or "").strip() or fleet_hub_url(registry, to_fleet)):
-        raise SystemExit("target fleet %r has no hub_url (pass --hub-url to override)" % to_fleet)
-    if args.from_fleet not in (None, from_fleet) or args.to_fleet != to_fleet:
-        print("resolved fleets: %s -> %s" % (from_fleet, to_fleet))
-
-    if not args.execute:
-        # Dry-run: print the plan and the proposed registry diff.
-        steps = plan_fleet_move(
-            agent_name, from_fleet, to_fleet, registry, reconcile_db=not args.no_db_reconcile
-        )
-        print(render_move_plan(agent_name, from_fleet, to_fleet, steps))
-        return
-
-    result = execute_fleet_move(
-        agent_name,
-        from_fleet,
-        to_fleet,
-        fleets_config=reg_path,
-        to_os=args.to_os,
-        dry_run=False,
-        reconcile_db=not args.no_db_reconcile,
-        hub_url=args.hub_url or None,
-        run_redeploy=not args.no_redeploy,
-    )
-
-    if not result.get("ok"):
-        if result.get("registry_written"):
-            # The move landed in fleets.yaml but the live redeploy failed —
-            # surface both so the operator can re-run or revert from the backup.
-            print(
-                "registry moved (%s -> %s); backup: %s"
-                % (from_fleet, to_fleet, result.get("backup"))
-            )
-            print(
-                "redeploy FAILED (rc=%s); re-run: %s"
-                % (result.get("redeploy_returncode"), result.get("redeploy_cmd"))
-            )
-        raise SystemExit("fleet move-agent failed: %s" % result.get("error"))
-
-    if result.get("idempotent"):
-        print(result["message"])
-        return
-
-    print("agent %r moved: %s -> %s" % (agent_name, from_fleet, to_fleet))
-    if result.get("backup"):
-        print("registry backed up to %s" % result["backup"])
-    if result.get("registry_written"):
-        print("registry written to %s" % result["registry_written"])
-    if result.get("redeployed"):
-        print("redeployed at hub %s (--hub %s)" % (result.get("target_hub_url"), to_fleet))
-    if result.get("db_reconcile"):
-        print("DB: %s" % result["db_reconcile"])
-    for step in result.get("next_steps") or []:
-        print("next: %s" % step)
-
-
-def _sender_agent_id(args: argparse.Namespace) -> str:
-    sender = (
-        getattr(args, "sender_agent_id", None)
-        or os.environ.get("MAC_AGENT_ID")
-        or os.environ.get("MAC_WORKER_AGENT_ID")
-    )
-    if not sender:
-        raise MACError(
-            "admin/control sender agent id is required; pass --sender-agent-id or set MAC_AGENT_ID"
-        )
-    return sender
-
-
-def cmd_fleet_refresh_source(args: argparse.Namespace) -> None:
-    recipients = list(args.agent_id or [])
-    _print(
-        _plane(args).publish_agentbus_repo_update(
-            sender_agent_id=_sender_agent_id(args),
-            recipient_agent_ids=recipients,
-            all_agents=not recipients,
-            repo_path=args.repo_path,
-            remote=args.remote,
-            branch=args.branch,
-            restart=not args.no_restart,
-            restart_services=list(args.restart_service or []),
-            request_id=args.request_id,
-        )
-    )
 
 
 def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
@@ -5622,55 +4828,6 @@ def cmd_fleet_soul_audit(args: argparse.Namespace) -> None:
     _print(manifest)
 
 
-def cmd_fleet_memory_export(args: argparse.Namespace) -> None:
-    """Phase 2b: export the fleet's Qdrant vector memory to greppable JSONL for
-    vetting (find stale facts that wouldn't surface from the soul text)."""
-    import json as _json
-    from mac import memory_vetting as _mv
-
-    client = _mv.QdrantClient(args.qdrant_url)
-    collections = _csv(args.collections) if args.collections else list(_mv.DEFAULT_COLLECTIONS)
-    records = _mv.export_memory_records(client.scroll, collections, agent_id=args.agent or None)
-    if args.search:
-        records = _mv.search_records(records, args.search)
-    if args.into:
-        dest = Path(args.into).expanduser()
-        dest.write_text(
-            "\n".join(_json.dumps(r, default=str) for r in records) + "\n", encoding="utf-8"
-        )
-        _print(
-            {
-                "qdrant": args.qdrant_url,
-                "collections": collections,
-                "records": len(records),
-                "into": str(dest),
-                "search": args.search,
-            }
-        )
-    else:
-        for r in records:
-            sys.stdout.write(_json.dumps(r, default=str) + "\n")
-
-
-def cmd_fleet_memory_prune(args: argparse.Namespace) -> None:
-    """Phase 2b: delete vetted Qdrant point ids from a collection (destructive;
-    operator-vetted). Ids come from --id (repeatable) or a JSONL export via
-    --from-jsonl (uses each record's id)."""
-    import json as _json
-    from mac import memory_vetting as _mv
-
-    ids: List[Any] = list(args.id or [])
-    if args.from_jsonl:
-        for line in Path(args.from_jsonl).expanduser().read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
-                rec = _json.loads(line)
-                if rec.get("id") is not None:
-                    ids.append(rec["id"])
-    client = _mv.QdrantClient(args.qdrant_url)
-    _print(_mv.prune_points(client.delete, args.collection, ids))
-
-
 def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """GET the agent's current mood overlay straight from the hub HTTP API.
 
@@ -5794,46 +4951,6 @@ def cmd_journal_restore(args: argparse.Namespace) -> None:
     )
 
 
-def _fleet_setup_plan_from_args(args: argparse.Namespace) -> Dict[str, Any]:
-    from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan
-
-    root = Path(__file__).resolve().parents[2]
-    fleets_config = Path(args.fleets_config).expanduser()
-    env_file = Path(args.env_file).expanduser()
-    spec = load_setup_spec(Path(args.spec).expanduser())
-    return public_plan(
-        build_setup_plan(
-            spec,
-            root=root,
-            fleets_config=fleets_config,
-            env_file=env_file,
-        )
-    )
-
-
-def cmd_fleet_validate_setup(args: argparse.Namespace) -> None:
-    """Validate a declarative mac.fleet_setup.v1 spec."""
-    _print(_fleet_setup_plan_from_args(args))
-
-
-def cmd_fleet_doctor_setup(args: argparse.Namespace) -> None:
-    """Run LLM-friendly setup doctor checks for a declarative fleet spec."""
-    plan = _fleet_setup_plan_from_args(args)
-    _print(
-        {
-            "schema": "mac.fleet_setup_doctor.v1",
-            "status": plan.get("status"),
-            "hub": plan.get("hub"),
-            "fleet_name": plan.get("fleet_name"),
-            "checks": plan.get("checks"),
-            "required_env": plan.get("required_env"),
-            "warnings": plan.get("warnings"),
-            "errors": plan.get("errors"),
-            "next_steps": plan.get("next_steps"),
-        }
-    )
-
-
 def cmd_mood_set(args: argparse.Namespace) -> None:
     _print(
         _plane(args).set_mood(
@@ -5864,56 +4981,6 @@ def cmd_mood_history(args: argparse.Namespace) -> None:
             for overlay in _plane(args).list_mood_history(args.agent_id, limit=args.limit)
         ]
     )
-
-
-def cmd_nap_configure(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).configure_nap(
-            args.agent_id,
-            offset_minutes=args.offset_minutes,
-            window_minutes=args.window_minutes,
-            enabled=not args.disabled,
-            actor=args.actor,
-        )
-    )
-
-
-def cmd_nap_show(args: argparse.Namespace) -> None:
-    schedule = _plane(args).get_nap_schedule(args.agent_id)
-    _print(schedule.to_dict() if schedule is not None else None)
-
-
-def cmd_nap_next(args: argparse.Namespace) -> None:
-    _print(_plane(args).next_nap_window(args.agent_id))
-
-
-def cmd_nap_begin(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).begin_nap(
-            args.agent_id,
-            actor=args.actor,
-            detail=_json_arg(args.detail, {}),
-        )
-    )
-
-
-def cmd_nap_complete(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).complete_nap(
-            args.run_id,
-            summary_evidence_id=args.evidence_id,
-            detail=_json_arg(args.detail, None),
-            actor=args.actor,
-        )
-    )
-
-
-def cmd_nap_fail(args: argparse.Namespace) -> None:
-    _print(_plane(args).fail_nap(args.run_id, args.reason, actor=args.actor))
-
-
-def cmd_nap_list(args: argparse.Namespace) -> None:
-    _print([run.to_dict() for run in _plane(args).list_nap_runs(args.agent_id)])
 
 
 def cmd_dispatch_once(args: argparse.Namespace) -> None:
@@ -6316,109 +5383,6 @@ def cmd_review_decision(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_review_experiment_assign(args: argparse.Namespace) -> None:
-    hypothesis = _read_text_arg(
-        args.hypothesis,
-        args.hypothesis_file,
-        label="review experiment hypothesis",
-    ).strip()
-    _print(
-        _plane(args).assign_review_experiment(
-            args.task_id,
-            experiment_id=args.experiment_id,
-            arm=args.arm,
-            arms=_review_arm_weights(args.arms),
-            assignment_probability=args.probability,
-            blind=args.blind,
-            blind_arms=args.blind_arm,
-            policy_version=args.policy_version,
-            hypothesis=hypothesis,
-            stratum=args.stratum,
-            actor=args.actor,
-        )
-    )
-
-
-def cmd_review_experiment_observe(args: argparse.Namespace) -> None:
-    _print(_plane(args).review_observation(args.task_id))
-
-
-def cmd_review_experiment_outcome(args: argparse.Namespace) -> None:
-    detail = _read_json_arg(
-        args.detail,
-        args.detail_file,
-        label="review outcome detail",
-        default={},
-    )
-    if not isinstance(detail, dict):
-        raise MACError("review outcome detail must be a JSON object")
-    _print(
-        _plane(args).record_review_outcome(
-            args.task_id,
-            kind=args.kind,
-            status=args.status,
-            finding_id=args.finding_id,
-            severity_weight=args.severity_weight,
-            source=args.source,
-            detail=detail,
-            actor=args.actor,
-        )
-    )
-
-
-def cmd_review_experiment_report(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).review_experiment_report(
-            args.experiment_id,
-            project=args.project,
-            min_tasks_per_arm=args.min_tasks_per_arm,
-            min_validated_outcomes_per_arm=args.min_validated_outcomes_per_arm,
-        )
-    )
-
-
-def cmd_review_auto_land(args: argparse.Namespace) -> None:
-    author = getattr(args, "author", "") or os.environ.get("MAC_AGENT_ID", "")
-    if getattr(args, "dry_run", False):
-        # Preview only: never runs the contract gate, spawns a reviewer, or lands.
-        # The literal script name below is a fixed label, not necessarily what
-        # will run -- the real gate resolves the target's own repository
-        # contract test command first (see auto_land.run_contract_gate).
-        _print(
-            {
-                "schema": "mac.auto_land.dry_run.v1",
-                "target": args.target,
-                "repo_dir": args.repo_dir,
-                "base_ref": args.base_ref,
-                "push": bool(args.push),
-                "author": author,
-                "would_run": ["contract-gate", "adversarial-review"],
-                "gates": [
-                    "contract (the target's own repository-contract test command,"
-                    " falling back to scripts/run-contract-tests.sh)",
-                    "adversarial-review (independent agent, default-to-reject)",
-                    "independence (reviewer != author)",
-                    "head_sha (land only the reviewed revision)",
-                ],
-                "note": "dry-run: no gate/review/land executed",
-            }
-        )
-        return
-
-    from mac.auto_land import build_real_dependencies, run_auto_land
-
-    deps = build_real_dependencies(
-        plane=_plane(args),
-        repo_dir=args.repo_dir,
-        base_ref=args.base_ref,
-        created_by=args.created_by,
-        allow_push=args.push,
-        author=author,
-    )
-    decision = run_auto_land(args.target, **deps)
-    _print(decision)
-
-
 def cmd_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_task(
@@ -6607,47 +5571,6 @@ def cmd_migrate_import(args: argparse.Namespace) -> None:
     _print(report.to_dict())
 
 
-def cmd_env_register(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).register_environment(
-            args.name,
-            tenant_id=args.tenant_id,
-            channel=args.channel,
-            promotes_from=args.promotes_from,
-            metadata=_json_arg(args.metadata, {}),
-            created_by=args.created_by,
-        )
-    )
-
-
-def cmd_env_list(args: argparse.Namespace) -> None:
-    _print([e.to_dict() for e in _plane(args).list_environments(args.tenant_id, args.channel)])
-
-
-def cmd_env_show(args: argparse.Namespace) -> None:
-    _print(_plane(args).get_environment(args.environment))
-
-
-def cmd_env_deploy(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).deploy_artifact(
-            args.environment,
-            args.artifact,
-            args.actor,
-            metadata=_json_arg(args.metadata, {}),
-        )
-    )
-
-
-def cmd_env_current(args: argparse.Namespace) -> None:
-    current = _plane(args).current_deployment(args.environment)
-    _print(current.to_dict() if current is not None else None)
-
-
-def cmd_env_deployments(args: argparse.Namespace) -> None:
-    _print([d.to_dict() for d in _plane(args).list_deployments(args.environment)])
-
-
 def cmd_bridge_import(args: argparse.Namespace) -> None:
     _print(
         _plane(args).import_project_item(
@@ -6770,258 +5693,6 @@ def cmd_memory_remember(args: argparse.Namespace) -> None:
     )
 
 
-def _build_vector_writer(args: argparse.Namespace):
-    """Construct a VectorWriterService for CLI commands. The Qdrant
-    endpoint defaults to the same Qdrant env cascade the hub uses, then
-    http://127.0.0.1:6333. Tests inject the writer directly; this
-    builder is for operator use.
-    """
-    import os
-
-    from mac.vector_writer_service import VectorWriterService
-
-    cp = _plane(args)
-    qdrant_url = (
-        getattr(args, "qdrant_url", None)
-        or os.environ.get("MAC_QDRANT_URL")
-        or os.environ.get("QDRANT_URL")
-        or os.environ.get("QDRANT_ADDRESS")
-        or os.environ.get("QDRANT_FLEET_URL")
-        or "http://127.0.0.1:6333"
-    )
-    return VectorWriterService(memory=cp.memory, qdrant_url=qdrant_url)
-
-
-def cmd_memory_embed(args: argparse.Namespace) -> None:
-    """mem-07: embed one memory_record into the medium tier."""
-    writer = _build_vector_writer(args)
-    ref = writer.embed_memory(args.memory_id, tier=args.tier)
-    _print(ref.to_dict())
-
-
-def cmd_memory_backfill(args: argparse.Namespace) -> None:
-    """mem-07: embed every memory_record that isn't already in the tier."""
-    writer = _build_vector_writer(args)
-    _print(writer.backfill(tier=args.tier, limit=args.limit))
-
-
-def cmd_memory_promote(args: argparse.Namespace) -> None:
-    """Promote settled medium-tier memories into the long tier.
-
-    Answers ``unwritten_memory_tier``: until this existed, nothing anywhere
-    wrote ``tier="long"``, so ``mac_memory_long`` sat at zero points.
-    """
-    cp = _plane(args)
-    kwargs: Dict[str, Any] = {
-        "min_age_days": args.min_age_days,
-        "limit": args.limit,
-        "drop_medium": args.drop_medium,
-        "dry_run": args.dry_run,
-        "created_by": "cli:memory-promote",
-    }
-    # Local dispatch has to be told where Qdrant is; a remote hub resolves it
-    # on its own side, the same split cmd_memory_recall makes.
-    qdrant_url = getattr(args, "qdrant_url", None)
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.promote_memory_tier(**kwargs))
-
-
-def cmd_memory_reconcile_embeddings(args: argparse.Namespace) -> None:
-    """Re-embed a tier's stragglers so one collection holds one space."""
-    cp = _plane(args)
-    kwargs: Dict[str, Any] = {
-        "tier": args.tier,
-        "limit": args.limit,
-        "scan_limit": args.scan_limit,
-        "dry_run": args.dry_run,
-        "report_only": args.report_only,
-        "created_by": "cli:memory-reconcile-embeddings",
-    }
-    qdrant_url = getattr(args, "qdrant_url", None)
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.reconcile_memory_embedding_spaces(**kwargs))
-
-
-def cmd_memory_health(args: argparse.Namespace) -> None:
-    """mem-10: memory-tier health snapshot."""
-    cp = _plane(args)
-    kwargs: Dict[str, Any] = {
-        "nap_interval_hours": args.nap_interval_hours,
-        "vector_ingestion_max_age_hours": args.vector_ingestion_max_age_hours,
-    }
-    qdrant_url = getattr(args, "qdrant_url", None)
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.memory_health(**kwargs))
-
-
-def cmd_memory_recall(args: argparse.Namespace) -> None:
-    """mem-09: vector-tier recall, hub-routable when MAC_API_URL is set."""
-    cp = _plane(args)
-    # If the dispatch is local (operator running `mac --db ...`), we
-    # need to provide a Qdrant URL; if it's remote, the HTTP route
-    # already resolves Qdrant on the hub side.
-    qdrant_url = getattr(args, "qdrant_url", None)
-    kwargs = {
-        "tier": args.tier,
-        "limit": args.limit,
-        "min_score": args.min_score,
-        "project": args.project,
-        "tenant_id": args.tenant_id,
-    }
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.recall_memory(args.query, **kwargs))
-
-
-def cmd_memory_recall_dreams(args: argparse.Namespace) -> None:
-    """Recall typed dream artifacts using scope/kind/confidence filters."""
-    cp = _plane(args)
-    qdrant_url = getattr(args, "qdrant_url", None)
-    kwargs = {
-        "tier": args.tier,
-        "limit": args.limit,
-        "min_score": args.min_score,
-        "project": args.project,
-        "agent_id": args.agent_id,
-        "scope": args.scope,
-        "kind": args.kind,
-        "min_confidence": args.min_confidence,
-        "tenant_id": args.tenant_id,
-    }
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.recall_dream_artifacts(args.query, **kwargs))
-
-
-def cmd_dream_run(args: argparse.Namespace) -> None:
-    """Curate memory into a reviewable candidate store.
-
-    Writes nothing to live memory: the run lands in dream_runs for review, and
-    ``mac admin dream promote`` adopts it. Use --promote to skip review when every
-    gate passes."""
-    from mac.dreaming import DreamPolicy
-
-    cp = _plane(args)
-    policy = DreamPolicy(
-        instructions=getattr(args, "instructions", "") or "",
-        max_output_ratio=float(getattr(args, "max_output_ratio", 0.75)),
-    )
-    _print(
-        cp.run_dream_cycle(
-            agent_id=getattr(args, "agent_id", None),
-            project=getattr(args, "project", None),
-            since=getattr(args, "since", "") or "",
-            limit=int(getattr(args, "limit", 2000)),
-            policy=policy,
-            auto_promote=bool(getattr(args, "promote", False)),
-        )
-    )
-
-
-def cmd_dream_list(args: argparse.Namespace) -> None:
-    """List dream runs, newest first."""
-    cp = _plane(args)
-    _print(cp.list_dream_runs(state=getattr(args, "state", None), limit=int(args.limit)))
-
-
-def cmd_dream_show(args: argparse.Namespace) -> None:
-    """Show one dream run: its gates, stats and candidate memories."""
-    cp = _plane(args)
-    _print(cp.get_dream_run(args.run_id))
-
-
-def cmd_dream_promote(args: argparse.Namespace) -> None:
-    """Adopt a reviewed run into live memory, retiring what it supersedes."""
-    cp = _plane(args)
-    _print(
-        cp.promote_dream_run(
-            args.run_id,
-            retire_superseded=not bool(getattr(args, "keep_superseded", False)),
-        )
-    )
-
-
-def cmd_dream_discard(args: argparse.Namespace) -> None:
-    """Discard a dream run. Its candidates stay readable for inspection."""
-    cp = _plane(args)
-    _print(cp.discard_dream_run(args.run_id, reason=getattr(args, "reason", "")))
-
-
-def cmd_dream_import_logs(args: argparse.Namespace) -> None:
-    """Merge the gateway's orphaned ~/.hermes/dream_logs reports into durable
-    memory (record_type dream:imported_report), embedding each so it is
-    retrievable via dream recall. Idempotent; dedups on findings."""
-    cp = _plane(args)
-    kwargs = {
-        "dream_logs_dir": getattr(args, "dream_logs_dir", None),
-        "agent_id": getattr(args, "agent_id", None),
-        "embed": not args.no_embed,
-        "dry_run": args.dry_run,
-    }
-    qdrant_url = getattr(args, "qdrant_url", None)
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.import_dream_logs(**kwargs))
-
-
-def cmd_nap_cycle(args: argparse.Namespace) -> None:
-    """mem-08 autonomy: begin + consolidate + complete in one shot."""
-    from mac.dispatch import RemoteDispatch
-
-    cp = _plane(args)
-    qdrant_url = getattr(args, "qdrant_url", None)
-    writer = None
-    if not args.no_embed and not isinstance(cp, RemoteDispatch):
-        writer = _build_vector_writer(args)
-    kwargs = {
-        "actor": args.actor,
-        "vector_writer": writer,
-        "embed_into_medium": not args.no_embed,
-        "emit_dream_artifacts": not args.no_dreams,
-    }
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.run_nap_cycle(args.agent_id, **kwargs))
-
-
-def cmd_nap_due(args: argparse.Namespace) -> None:
-    """List agents whose nap window has opened and hasn't been completed."""
-    due = _plane(args).list_due_nap_agents(as_of=args.as_of)
-    if getattr(args, "format", "json") == "agent-ids":
-        # Newline-delimited agent_ids for `xargs` in the nap-tick unit —
-        # avoids piping JSON through an embedded interpreter.
-        for item in due:
-            print(item["agent_id"])
-        return
-    _print(due)
-
-
-def cmd_nap_consolidate(args: argparse.Namespace) -> None:
-    """mem-08: walk the agent's recent memory_records, write per-group
-    summaries, and embed them into the medium tier."""
-    from mac.dispatch import RemoteDispatch
-
-    cp = _plane(args)
-    qdrant_url = getattr(args, "qdrant_url", None)
-    writer = None
-    if not args.no_embed and not isinstance(cp, RemoteDispatch):
-        writer = _build_vector_writer(args)
-    kwargs = {
-        "since": args.since,
-        "nap_run_id": args.nap_run_id,
-        "embed_into_medium": not args.no_embed,
-        "emit_dream_artifacts": not args.no_dreams,
-        "vector_writer": writer,
-        "created_by": args.created_by,
-    }
-    if qdrant_url:
-        kwargs["qdrant_url"] = qdrant_url
-    _print(cp.consolidate_nap(args.agent_id, **kwargs))
-
-
 def cmd_memory_list(args: argparse.Namespace) -> None:
     _print(
         [
@@ -7035,55 +5706,13 @@ def cmd_memory_forget(args: argparse.Namespace) -> None:
     _print(_plane(args).forget_memory(args.key, project=args.project))
 
 
-def cmd_curiosity_list(args: argparse.Namespace) -> None:
-    """List curiosity candidates through the hub.
-
-    The ledger lives inside the owning agent's OpenClaw sandbox, which a task
-    sandbox cannot reach, so reading it locally only works on the host. Going
-    through the hub works from anywhere, including a dispatched task
-    (task_3a4503f0).
-    """
-    _print(_plane(args).list_curiosity_candidates(args.status))
-
-
-def cmd_curiosity_decide(args: argparse.Namespace) -> None:
-    """Approve or reject one candidate, with the audit trail the ledger wants."""
-    _print(
-        _plane(args).decide_curiosity_candidate(
-            args.candidate_id,
-            args.decision,
-            actor=args.actor,
-            reason=args.reason,
-            approval_id=args.approval_id,
-        )
-    )
-
-
 def cmd_memory_decay(args: argparse.Namespace) -> None:
-    """dream-04: forget stale, low-salience memory (dry-run unless --apply)."""
+    """Forget stale, low-salience memory (dry-run unless --apply)."""
     _print(
         _plane(args).decay_memory(
             ttl_days=args.ttl_days,
             dry_run=not args.apply,
             limit=args.limit,
-        )
-    )
-
-
-def cmd_rollout_create(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).create_rollout(
-            args.version,
-            args.strategy,
-            args.target_percent,
-            args.created_by,
-            tenant_id=args.tenant_id,
-            channel=args.channel,
-            runtime_environment_id=args.runtime,
-            artifact_uri=args.artifact_uri,
-            artifact_hash=args.artifact_hash,
-            health_policy=_json_arg(args.health_policy, {}),
-            required_eval_set_id=args.required_eval_set_id,
         )
     )
 
@@ -7145,67 +5774,6 @@ def cmd_events_list(args: argparse.Namespace) -> None:
             limit=args.limit,
         )
     )
-
-
-def _news_item_dict(item: Any) -> Dict[str, Any]:
-    return item.to_dict() if hasattr(item, "to_dict") else dict(item)
-
-
-def _emit_news_item(item: Any) -> None:
-    row = _news_item_dict(item)
-    if _OUTPUT_JSON:
-        print(json.dumps(row, sort_keys=True))
-        return
-    stamp = str(row.get("created_at") or "").replace("T", " ")[:19]
-    print("%s  %-5s  %s" % (stamp or "?", row.get("kind") or "?", row.get("summary") or ""))
-
-
-def cmd_news(args: argparse.Namespace) -> None:
-    """Show recent significant activity and optionally follow it live."""
-    cp = _plane(args)
-    page = cp.list_news(project=args.project, limit=args.limit)
-    page_dict = page.to_dict() if hasattr(page, "to_dict") else dict(page)
-    items = list(page_dict.get("items") or [])
-    if not args.follow:
-        if _OUTPUT_JSON:
-            _print(page_dict)
-        elif not items:
-            print("(none)")
-        else:
-            for item in items:
-                _emit_news_item(item)
-        return
-
-    for item in reversed(items):
-        _emit_news_item(item)
-    cursor = int(page_dict.get("cursor") or 0)
-    streamer = getattr(cp, "stream_news", None)
-    try:
-        while True:
-            if streamer is not None:
-                for item in streamer(
-                    after_sequence=cursor,
-                    project=args.project,
-                    timeout_seconds=55,
-                    poll_interval_seconds=1,
-                ):
-                    row = _news_item_dict(item)
-                    cursor = max(cursor, int(row.get("sequence") or 0))
-                    _emit_news_item(row)
-                continue
-            time.sleep(args.poll_interval)
-            next_page = cp.list_news(
-                after_sequence=cursor,
-                project=args.project,
-                limit=500,
-            )
-            next_dict = next_page.to_dict() if hasattr(next_page, "to_dict") else dict(next_page)
-            for item in next_dict.get("items") or []:
-                row = _news_item_dict(item)
-                cursor = max(cursor, int(row.get("sequence") or 0))
-                _emit_news_item(row)
-    except KeyboardInterrupt:
-        return
 
 
 def cmd_action_events_list(args: argparse.Namespace) -> None:
@@ -7578,219 +6146,17 @@ def cmd_communication_deliveries(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_rollout_list(args: argparse.Namespace) -> None:
-    _print(
-        [rollout.to_dict() for rollout in _plane(args).list_rollouts(args.tenant_id, args.channel)]
-    )
+def _default_credential_ttl_seconds() -> int:
+    """Fleet-configured credential lifetime for the `--expires-in` defaults.
 
-
-def cmd_rollout_advance(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).advance_rollout(
-            args.rollout_id, args.action, args.actor, _json_arg(args.detail, {})
-        )
-    )
-
-
-def cmd_rollout_rescue(args: argparse.Namespace) -> None:
-    rollout, task = _plane(args).rescue_rollout(
-        args.rollout_id,
-        args.actor,
-        args.reason,
-        _json_arg(args.detail, {}),
-    )
-    _print({"rollout": rollout.to_dict(), "task": task.to_dict()})
-
-
-def cmd_rollout_verify_artifact(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).verify_rollout_artifact(
-            args.rollout_id,
-            args.artifact_uri,
-            args.artifact_hash,
-            args.actor,
-        )
-    )
-
-
-def cmd_rollout_health(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).evaluate_rollout_health(
-            args.rollout_id,
-            _json_arg(args.checks, {}),
-            args.actor,
-        )
-    )
-
-
-def _hgx_registered_agents(args: argparse.Namespace) -> Any:
-    """Load the immutable-session -> registered-agent map for reconciliation.
-
-    Accepts a JSON object (``{session_id: agent_id}``) or a JSON array of
-    ``{"session_id": ..., "agent_id": ...}`` records so live capacity planning
-    can count already-onboarded HGX sessions instead of treating them as spare
-    quota. Returns ``None`` when the operator supplies no registry snapshot.
+    Three issue paths (`login`, `client enroll`, `client renew`) each carried
+    their own `30 * 24 * 60 * 60` literal, so the fleet's effective credential
+    lifetime was whatever the operator remembered to type. They now share one
+    configured policy; `--expires-in` still overrides per invocation.
     """
+    from mac.client_principals import configured_credential_ttl_seconds
 
-    path = getattr(args, "registered_agents_file", None)
-    if not path:
-        return None
-    import json as _json
-    from pathlib import Path as _Path
-
-    try:
-        payload = _json.loads(_Path(path).expanduser().read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise SystemExit("unable to read registered-agents file: %s" % exc)
-    return payload
-
-
-def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
-    from mac.hgx_elastic_capacity import (
-        HgxCapacityPolicy,
-        HgxElasticCapacityController,
-    )
-    from mac.hgx_provider import HgxProvider
-
-    policy = HgxCapacityPolicy(
-        min_ready=args.min_ready,
-        max_sessions=args.max_sessions,
-        headroom=args.headroom,
-        cluster=args.cluster,
-        gpu_count=args.gpu,
-        memory_gib=args.memory_gib,
-        cpu_count=args.cpu,
-        max_create_per_run=args.max_create_per_run,
-        cooldown_seconds=args.cooldown_seconds,
-        wait_timeout_seconds=args.wait_timeout_seconds,
-        poll_interval_seconds=args.poll_interval_seconds,
-    )
-    provider = HgxProvider(
-        binary=args.hgx_binary,
-        timeout=args.hgx_command_timeout_seconds,
-    )
-    return HgxElasticCapacityController(
-        provider=provider,
-        policy=policy,
-        state_path=args.state_file,
-        name_prefix=args.name_prefix,
-    )
-
-
-def cmd_hgx_capacity_status(args: argparse.Namespace) -> None:
-    """Inspect HGX capacity without mutating provider or controller state."""
-
-    _print(
-        _hgx_capacity_controller(args).status(
-            pending_request_count=args.pending_requests,
-            registered_agents=_hgx_registered_agents(args),
-        )
-    )
-
-
-def cmd_hgx_capacity_plan(args: argparse.Namespace) -> None:
-    """Plan bounded HGX capacity changes without applying them."""
-
-    _print(
-        _hgx_capacity_controller(args).plan(
-            pending_request_count=args.pending_requests,
-            registered_agents=_hgx_registered_agents(args),
-        )
-    )
-
-
-def cmd_hgx_capacity_execute(args: argparse.Namespace) -> None:
-    """Explicitly create and nonce-attest bounded standard-dind capacity."""
-
-    _print(
-        _hgx_capacity_controller(args).execute(
-            pending_request_count=args.pending_requests,
-            registered_agents=_hgx_registered_agents(args),
-        )
-    )
-
-
-def cmd_hgx_capacity_mark_onboarded(args: argparse.Namespace) -> None:
-    """Consume an attested capacity receipt after real agent registration."""
-
-    from mac.hgx_elastic_capacity import HgxElasticCapacityController
-
-    _print(
-        HgxElasticCapacityController(state_path=args.state_file).mark_onboarded(
-            args.session_id,
-            agent_id=args.agent_id,
-        )
-    )
-
-
-def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
-    from mac.hgx_elastic_capacity import DEFAULT_STATE_PATH
-
-    parser.add_argument(
-        "--pending-requests",
-        type=int,
-        default=0,
-        help=(
-            "durable pending ProvisioningService request count; the controller "
-            "does not mark those requests fulfilled until a MAC agent exists"
-        ),
-    )
-    parser.add_argument("--min-ready", type=int, default=0)
-    parser.add_argument("--max-sessions", type=int, default=10)
-    parser.add_argument("--headroom", type=int, default=0)
-    parser.add_argument(
-        "--cluster",
-        default="gke-newhouse",
-        help="explicit HGX cluster (default: gke-newhouse)",
-    )
-    parser.add_argument(
-        "--gpu",
-        type=int,
-        default=1,
-        help="GPU count, bounded to 0..8 (default: 1)",
-    )
-    parser.add_argument(
-        "--memory-gib",
-        type=int,
-        default=64,
-        help="memory request in GiB, bounded to 8..256 (default: 64)",
-    )
-    parser.add_argument(
-        "--cpu",
-        type=int,
-        default=8,
-        help="CPU request, bounded to 1..64 (default: 8)",
-    )
-    parser.add_argument(
-        "--max-create-per-run",
-        type=int,
-        default=1,
-        help="maximum sessions created by one execute invocation (default: 1)",
-    )
-    parser.add_argument("--cooldown-seconds", type=float, default=300.0)
-    parser.add_argument("--wait-timeout-seconds", type=float, default=300.0)
-    parser.add_argument("--poll-interval-seconds", type=float, default=5.0)
-    parser.add_argument(
-        "--state-file",
-        default=DEFAULT_STATE_PATH,
-        help="durable controller receipt path (written only by execute)",
-    )
-    parser.add_argument(
-        "--registered-agents-file",
-        default=None,
-        help=(
-            "JSON map or record list binding immutable HGX session IDs to "
-            "registered fungible agents; already-onboarded healthy sessions are "
-            "counted as capacity instead of being treated as spare quota"
-        ),
-    )
-    parser.add_argument("--name-prefix", default="mac-fungible")
-    parser.add_argument("--hgx-binary", default="hgx")
-    parser.add_argument(
-        "--hgx-command-timeout-seconds",
-        type=float,
-        default=120.0,
-    )
+    return configured_credential_ttl_seconds()
 
 
 def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentParser) -> None:
@@ -8002,7 +6368,7 @@ def build_parser() -> argparse.ArgumentParser:
     login_parser.add_argument("--name")
     login_parser.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
     login_parser.add_argument("--capabilities")
-    login_parser.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    login_parser.add_argument("--expires-in", type=int, default=_default_credential_ttl_seconds())
     login_parser.add_argument("--local-port", type=int)
     login_parser.add_argument("--remote-host", default="127.0.0.1")
     login_parser.add_argument("--remote-port", type=int)
@@ -8033,6 +6399,10 @@ def build_parser() -> argparse.ArgumentParser:
     logout_parser.add_argument("--connect-timeout", type=int, default=10)
     _set(cmd_logout, logout_parser)
 
+    from mac.worker_token_cli import register as _register_worker_token
+
+    _register_worker_token(sub)
+
     client = sub.add_parser(
         "client", help="hub enrollment principals and secure local client profiles"
     ).add_subparsers(dest="client_command", required=True)
@@ -8053,7 +6423,7 @@ def build_parser() -> argparse.ArgumentParser:
     client_enroll.add_argument("--fleet", dest="fleet_name", default="")
     client_enroll.add_argument("--profile", dest="profile_name")
     client_enroll.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
-    client_enroll.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    client_enroll.add_argument("--expires-in", type=int, default=_default_credential_ttl_seconds())
     client_enroll.add_argument("--api-url", default="http://127.0.0.1:8789")
     client_enroll.add_argument("--host-key-fingerprint")
     client_enroll.add_argument("--host-ca")
@@ -8070,10 +6440,29 @@ def build_parser() -> argparse.ArgumentParser:
         "renew", help="hub-local: rotate one client's token and expiry"
     )
     client_renew.add_argument("client_id")
-    client_renew.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    client_renew.add_argument("--expires-in", type=int, default=_default_credential_ttl_seconds())
     client_renew.add_argument("--registry")
     client_renew.add_argument("--actor", default="ssh-operator")
     _set(cmd_client_renew, client_renew)
+
+    client_renew_due = client.add_parser(
+        "renew-if-due",
+        help="renew this host's client credential(s) before expiry, over SSH",
+    )
+    client_renew_due.add_argument(
+        "--profile",
+        dest="renew_profiles",
+        action="append",
+        help="profile name; repeatable. Default: every installed profile.",
+    )
+    client_renew_due.add_argument(
+        "--force", action="store_true", help="renew even if the renewal point has not passed"
+    )
+    client_renew_due.add_argument(
+        "--dry-run", action="store_true", help="report what would be renewed, moving no secret"
+    )
+    client_renew_due.add_argument("--fleets-config", help="path to fleets.yaml")
+    _set(cmd_client_renew_if_due, client_renew_due)
 
     client_revoke = client.add_parser(
         "revoke", help="hub-local: immediately revoke one client credential"
@@ -8321,9 +6710,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="1..10",
-        help="pin the model by STRENGTH instead of name: 1 = cheapest/weakest .. "
-        "10 = strongest/most expensive. Resolved to a concrete available model at "
-        "run time, so it stays valid as model names change. --model wins if both.",
+        help="advisory model strength (1 = cheapest/weakest .. 10 = strongest), "
+        "recorded in task metadata for compatibility. It no longer selects a "
+        "model: the task runs on the fleet default unless --model pins one.",
     )
     create.add_argument("--actor", default="human")
     create.add_argument(
@@ -8354,7 +6743,7 @@ def build_parser() -> argparse.ArgumentParser:
         "that worker drains, nothing else runs while it does, and the "
         "worker accepts no new async work from the moment it is queued. "
         "Requires --target-agent. For work that mutates the worker "
-        "itself, such as a sandbox image rollout.",
+        "itself, such as installing a new sandbox image.",
     )
     create.add_argument(
         "--target-agent",
@@ -8733,6 +7122,46 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--actor", default="human")
     _set(cmd_task_ask, ask)
 
+    say = task.add_parser(
+        "say",
+        help="post to a task's board; the agent running it sees it before its next step",
+    )
+    say.add_argument("task_id")
+    say.add_argument("text", help="the message")
+    say_kind = say.add_mutually_exclusive_group()
+    say_kind.add_argument(
+        "--directive",
+        action="store_true",
+        help="an instruction the agent must follow, not just information",
+    )
+    say_kind.add_argument(
+        "--answer",
+        type=int,
+        metavar="MESSAGE_ID",
+        default=None,
+        help="answer the agent's question with this message id",
+    )
+    say.add_argument("--as", dest="author", default=None, help="your name, if your token lacks one")
+    _set(cmd_task_say, say)
+
+    messages = task.add_parser(
+        "messages",
+        help="show a task's board: what the agent and people have said, oldest first",
+    )
+    messages.add_argument("task_id")
+    messages.add_argument("--after", type=int, default=0, help="only messages after this id")
+    messages.add_argument("--limit", type=int, default=200)
+    messages.add_argument(
+        "--follow", "-f", action="store_true", help="keep printing new messages as they arrive"
+    )
+    messages.add_argument(
+        "--no-activity", action="store_true", help="hide the agent's tool-by-tool activity lines"
+    )
+    messages.add_argument(
+        "--jsonl", dest="as_jsonl", action="store_true", help="print one JSON object per line"
+    )
+    _set(cmd_task_messages, messages)
+
     needs_input = task.add_parser(
         "needs-input",
         help="list tasks parked on an unanswered human question (the operator inbox)",
@@ -8854,7 +7283,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     force_complete = task.add_parser(
         "force-complete",
-        help="BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.",
+        help="BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial review and publication gates; audited). Not the normal path — adversarial review plus the contract gate is.",
     )
     force_complete.add_argument("task_id")
     force_complete.add_argument("--reason", default="")
@@ -8961,15 +7390,6 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--project", help="filter to this project (default: the cwd's project)")
     stats.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_stats, stats)
-
-    _set(
-        cmd_task_generator_yield,
-        task.add_parser(
-            "generator-yield",
-            help="show each task origin's completion yield and whether the "
-            "yield gate is letting it file",
-        ),
-    )
 
     outcome = task.add_parser(
         "outcome", help="inspect tests, acceptance, publication and deployment separately"
@@ -9096,7 +7516,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     evidence = task.add_parser(
         "evidence",
-        help="attach evidence to a task: the record a review and auto-land read",
+        help="attach evidence to a task: the record a review reads",
     )
     evidence.add_argument("task_id")
     evidence.add_argument(
@@ -9332,9 +7752,9 @@ def build_parser() -> argparse.ArgumentParser:
     # matched.
     sandbox = sub.add_parser(
         "sandbox-image",
-        help="derive and roll out the OpenShell sandbox IMAGE (not sandboxes)",
+        help="derive the OpenShell sandbox IMAGE bill of materials (not sandboxes)",
         description=(
-            "derive and roll out the OpenShell sandbox image. Individual "
+            "derive the OpenShell sandbox image bill of materials. Individual "
             "sandboxes are openshell's own `sandbox` verbs; policy delivery is "
             "`mac admin openshell`."
         ),
@@ -9359,22 +7779,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="also report what the derived BOM requires that this image never mentions",
     )
     _set(cmd_sandbox_bom, sandbox_bom_cmd)
-    sandbox_rollout_cmd = sandbox.add_parser(
-        "rollout",
-        help="roll a reviewed sandbox image onto each worker, after it drains",
-    )
-    sandbox_rollout_cmd.add_argument(
-        "--image",
-        required=True,
-        help="the immutable GHCR digest to install (not a tag)",
-    )
-    sandbox_rollout_cmd.add_argument(
-        "--manifest",
-        help="the reviewed BOM manifest to record on each rollout task",
-    )
-    sandbox_rollout_cmd.add_argument("--project", default=None)
-    sandbox_rollout_cmd.add_argument("--actor", default="human")
-    _set(cmd_sandbox_rollout, sandbox_rollout_cmd)
     project_list = project.add_parser("list", help="list projects with live work or a registration")
     project_list.add_argument(
         "--all",
@@ -9540,56 +7944,6 @@ def build_parser() -> argparse.ArgumentParser:
     directive_waiver_revoke.add_argument("--actor", default="human")
     _set(cmd_directive_waiver_revoke, directive_waiver_revoke)
 
-    hgx = sub.add_parser(
-        "hgx",
-        help=(
-            "operator controls for fungible HGX provider capacity; authenticate "
-            "once with interactive `hgx login` (no API token)"
-        ),
-    ).add_subparsers(dest="hgx_command", required=True)
-    hgx_capacity = hgx.add_parser(
-        "capacity",
-        help="plan, inspect, or explicitly create bounded standard-dind capacity",
-    ).add_subparsers(dest="hgx_capacity_command", required=True)
-    hgx_capacity_status = hgx_capacity.add_parser(
-        "status",
-        help="read provider inventory and durable attestation receipts",
-    )
-    _add_hgx_capacity_args(hgx_capacity_status)
-    _set(cmd_hgx_capacity_status, hgx_capacity_status)
-    hgx_capacity_plan = hgx_capacity.add_parser(
-        "plan",
-        help="show the bounded capacity action without applying it",
-    )
-    _add_hgx_capacity_args(hgx_capacity_plan)
-    _set(cmd_hgx_capacity_plan, hgx_capacity_plan)
-    hgx_capacity_execute = hgx_capacity.add_parser(
-        "execute",
-        help=(
-            "create standard-dind sessions within bounds and require nonce SSH "
-            "attestation; never deletes sessions"
-        ),
-    )
-    _add_hgx_capacity_args(hgx_capacity_execute)
-    _set(cmd_hgx_capacity_execute, hgx_capacity_execute)
-    hgx_capacity_mark_onboarded = hgx_capacity.add_parser(
-        "mark-onboarded",
-        help=(
-            "consume an attested capacity receipt after the session is "
-            "registered as a real MAC agent"
-        ),
-    )
-    hgx_capacity_mark_onboarded.add_argument("session_id")
-    hgx_capacity_mark_onboarded.add_argument("--agent-id", required=True)
-    from mac.hgx_elastic_capacity import DEFAULT_STATE_PATH
-
-    hgx_capacity_mark_onboarded.add_argument(
-        "--state-file",
-        default=DEFAULT_STATE_PATH,
-        help="durable controller receipt path",
-    )
-    _set(cmd_hgx_capacity_mark_onboarded, hgx_capacity_mark_onboarded)
-
     mcp = sub.add_parser(
         "mcp", help="Model Context Protocol server for coding agents"
     ).add_subparsers(dest="mcp_command", required=True)
@@ -9707,7 +8061,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     osh_reconcile.add_argument("--actor", default="human")
     osh_reconcile.add_argument("--runtime", default="docker-engine-moby")
-    osh_reconcile.add_argument("--openshell-version", default="0.0.72")
+    osh_reconcile.add_argument("--openshell-version", default="0.1.2")
     osh_reconcile.add_argument("--gateway-driver", default="docker")
     osh_reconcile.add_argument("--image", default="localhost/mac-hermes:net")
     osh_reconcile.add_argument("--sandbox-id")
@@ -10047,15 +8401,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_agent_list, agent_list)
 
-    agent_attestation_recover = agent.add_parser(
-        "attestation-recover",
-        help="admin-only conditional recovery for a missing/stale worker signing key",
-    )
-    agent_attestation_recover.add_argument("agent_id")
-    agent_attestation_recover.add_argument("--probe-file", required=True)
-    agent_attestation_recover.add_argument("--manifest-out", required=True)
-    _set(cmd_agent_attestation_recover, agent_attestation_recover)
-
     report_executor_approve = agent.add_parser(
         "report-executor-approve",
         help="approve the exact current startup-attested OpenShell report executor",
@@ -10184,55 +8529,6 @@ def build_parser() -> argparse.ArgumentParser:
     agent_config_show.add_argument("agent", help="agent id or name")
     _set(cmd_agent_config_show, agent_config_show)
 
-    agent_migrate = agent.add_parser(
-        "migrate",
-        help="move an agent (soul + memory) to a new host; dry-run unless --execute",
-    )
-    agent_migrate.add_argument("name")
-    agent_migrate.add_argument(
-        "--to", dest="to_target", required=True, help="destination user@host"
-    )
-    agent_migrate.add_argument(
-        "--from", dest="from_target", help="source user@host (default: current fleets.yaml target)"
-    )
-    agent_migrate.add_argument("--to-os", default="linux")
-    agent_migrate.add_argument(
-        "--fleet", help="fleet name (default: auto-resolve from fleets.yaml)"
-    )
-    agent_migrate.add_argument(
-        "--execute", action="store_true", help="run it (default: print the plan)"
-    )
-    agent_migrate.add_argument(
-        "--keep-source", action="store_true", help="don't decommission the source host"
-    )
-    agent_migrate.add_argument(
-        "--retire-source-agent", help="agent_id to `mac agent delete` after migration"
-    )
-    hub_grp = agent_migrate.add_mutually_exclusive_group()
-    hub_grp.add_argument(
-        "--hub",
-        dest="hub",
-        action="store_true",
-        default=None,
-        help="full-fidelity HUB migration: also move mac.db + Qdrant + MAC_SECRET_KEY "
-        "(auto-detected when the agent is the fleet's hub_agent/shared_services_manager)",
-    )
-    hub_grp.add_argument(
-        "--no-hub",
-        dest="hub",
-        action="store_false",
-        help="force soul-only (spoke) migration even if the agent looks like the hub",
-    )
-    agent_migrate.add_argument(
-        "--src-os", help="source service manager (default: from fleets.yaml, else linux)"
-    )
-    agent_migrate.add_argument("--to-ssh-port", type=int)
-    agent_migrate.add_argument("--to-identity-file")
-    agent_migrate.add_argument("--to-proxy-jump")
-    agent_migrate.add_argument("--to-known-hosts-file")
-    agent_migrate.add_argument("--to-host-key-policy", choices=("strict", "accept-new", "insecure"))
-    _set(cmd_agent_migrate, agent_migrate)
-
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
         dest="fleet_command", required=True
     )
@@ -10241,130 +8537,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
-
-    # mac-fleet-target: authoritative per-role version pin (target of record).
-    # Backed by the checked-in deploy/openclaw/fleet-target.json manifest
-    # (schema mac.fleet_target.v1), not the hub DB, so deploy hosts, canaries,
-    # and CI can read the pin without a populated control plane.
-    fleet_target = fleet.add_parser(
-        "target",
-        help="authoritative per-role fleet version pin (source rev + OpenClaw VERSION/REVISION)",
-    ).add_subparsers(dest="fleet_target_command")
-    fleet_target.required = True
-
-    ft_set = fleet_target.add_parser("set", help="pin the target of record for a role")
-    ft_set.add_argument("role", help="fleet role name (e.g. gateway, worker)")
-    ft_set.add_argument("source", help="MAC source revision (git commit) to pin")
-    ft_set.add_argument(
-        "--openclaw-version", help="OpenClaw gateway VERSION (roles that run the gateway)"
-    )
-    ft_set.add_argument(
-        "--openclaw-revision", help="OpenClaw image REVISION (numeric build id or commit hash)"
-    )
-    ft_set.add_argument(
-        "--manifest", help="override manifest path (defaults to the checked-in file)"
-    )
-    _set(cmd_fleet_target_set, ft_set)
-
-    ft_get = fleet_target.add_parser("get", help="show the pinned target for one role")
-    ft_get.add_argument("role", help="fleet role name")
-    ft_get.add_argument("--manifest", help="override manifest path")
-    _set(cmd_fleet_target_get, ft_get)
-
-    ft_show = fleet_target.add_parser("show", help="show the full target-of-record manifest")
-    ft_show.add_argument("--manifest", help="override manifest path")
-    _set(cmd_fleet_target_show, ft_show)
-
-    ft_list = fleet_target.add_parser("list", help="list every pinned role target")
-    ft_list.add_argument("--manifest", help="override manifest path")
-    _set(cmd_fleet_target_list, ft_list)
-
-    # mac-backlog-groom: autonomous per-repo backlog grooming — status, manual
-    # run, and per-project opt-in.
-    fleet_groom = fleet.add_parser(
-        "backlog-groom",
-        help="autonomous backlog grooming: status, manual run, per-project opt-in",
-    )
-    groom_sub = fleet_groom.add_subparsers(dest="backlog_groom_command")
-    groom_sub.required = True
-    _set(
-        cmd_fleet_backlog_groom_status,
-        groom_sub.add_parser("status", help="show groomer config + last run report (hub read)"),
-    )
-    _set(
-        cmd_fleet_backlog_groom_run,
-        groom_sub.add_parser(
-            "run", help="trigger one immediate grooming pass across opted-in idle repos"
-        ),
-    )
-    groom_enable = groom_sub.add_parser("enable", help="opt a project into backlog grooming")
-    groom_enable.add_argument("project", help="project name (must be onboarded)")
-    groom_enable.add_argument(
-        "--backlog-size",
-        type=int,
-        default=None,
-        help="number of backlog items to request per grooming pass",
-    )
-    groom_enable.add_argument(
-        "--min-ready",
-        type=int,
-        default=None,
-        help="only groom when the project has fewer than N pending tasks",
-    )
-    groom_enable.add_argument(
-        "--capability",
-        action="append",
-        default=None,
-        help="required capability to stamp on the grooming task; repeatable",
-    )
-    _set(cmd_fleet_backlog_groom_enable, groom_enable)
-    groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
-    groom_disable.add_argument("project", help="project name")
-    _set(cmd_fleet_backlog_groom_disable, groom_disable)
-
-    judgement = sub.add_parser(
-        "judgement",
-        help="hourly process-quality authority over task lifecycle gates",
-    ).add_subparsers(dest="judgement_command", required=True)
-    _set(
-        cmd_judgement_status,
-        judgement.add_parser(
-            "status",
-            help="show judgement config, skill binding, and last run report",
-        ),
-    )
-    _set(
-        cmd_judgement_run,
-        judgement.add_parser(
-            "run",
-            help="run one judgement cycle now (stop tasks, hold agents, or redeploy)",
-        ),
-    )
-
-    # mac-model-select: dynamic powerhouse-model selection. A swap is recorded
-    # pending and only changes routing when promoted (operator/eval gate).
-    fleet_msel = fleet.add_parser(
-        "model-selection",
-        help="dynamic powerhouse-model selection: status, refresh, promote a pending swap",
-    )
-    msel_sub = fleet_msel.add_subparsers(dest="model_selection_command")
-    msel_sub.required = True
-    _set(
-        cmd_fleet_model_selection_status,
-        msel_sub.add_parser("status", help="show active + pending selection and last refresh"),
-    )
-    _set(
-        cmd_fleet_model_selection_refresh,
-        msel_sub.add_parser(
-            "refresh", help="refresh now (a swap is recorded pending, not adopted)"
-        ),
-    )
-    _set(
-        cmd_fleet_model_selection_promote,
-        msel_sub.add_parser(
-            "promote", help="promote the pending swap to active (routing changes here)"
-        ),
-    )
 
     fleet_ssh_spec = fleet.add_parser(
         "ssh-spec",
@@ -10382,37 +8554,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="require explicit identity and host-key material suitable for a clean HOME",
     )
     _set(cmd_fleet_ssh_spec, fleet_ssh_spec)
-
-    fleet_refresh = fleet.add_parser(
-        "refresh-source",
-        aliases=["refresh"],
-        help=(
-            "ask fleet agents to pull their self-update repo and restart themselves if HEAD changes"
-        ),
-    )
-    fleet_refresh.add_argument(
-        "--sender-agent-id",
-        help="registered admin/control agent id to send the message as; defaults to MAC_AGENT_ID",
-    )
-    fleet_refresh.add_argument(
-        "--agent-id",
-        action="append",
-        help="target one agent id; repeatable. Default targets every agent.",
-    )
-    fleet_refresh.add_argument("--repo-path")
-    fleet_refresh.add_argument("--remote", default="origin")
-    fleet_refresh.add_argument("--branch", default="main")
-    fleet_refresh.add_argument("--request-id")
-    fleet_refresh.add_argument("--no-restart", action="store_true")
-    fleet_refresh.add_argument(
-        "--restart-service",
-        action="append",
-        help=(
-            "systemd service to restart on hosts where it is installed after a "
-            "successful source update; repeatable"
-        ),
-    )
-    _set(cmd_fleet_refresh_source, fleet_refresh)
 
     # fleet-02: live group awareness for the team.
     fleet_snap = fleet.add_parser(
@@ -10470,38 +8611,10 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_soul_audit.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
     _set(cmd_fleet_soul_audit, fleet_soul_audit)
 
-    # Phase 2b: export/vet the fleet's Qdrant vector memory.
-    fleet_mem_export = fleet.add_parser(
-        "memory-export",
-        help="export Qdrant vector memory to greppable JSONL for vetting",
-    )
-    fleet_mem_export.add_argument(
-        "--qdrant-url", required=True, help="e.g. http://100.125.137.89:6333"
-    )
-    fleet_mem_export.add_argument("--agent", help="filter to this agent_id")
-    fleet_mem_export.add_argument(
-        "--collections", help="CSV of collections (default: mac_memory_medium,mac_memory_long)"
-    )
-    fleet_mem_export.add_argument(
-        "--search", help="case-insensitive substring filter (e.g. a stale name)"
-    )
-    fleet_mem_export.add_argument("--into", help="write JSONL here (default: stdout)")
-    _set(cmd_fleet_memory_export, fleet_mem_export)
-
-    fleet_mem_prune = fleet.add_parser(
-        "memory-prune",
-        help="DELETE vetted Qdrant point ids from a collection (destructive)",
-    )
-    fleet_mem_prune.add_argument("--qdrant-url", required=True)
-    fleet_mem_prune.add_argument("--collection", required=True)
-    fleet_mem_prune.add_argument("--id", action="append", help="point id to delete (repeatable)")
-    fleet_mem_prune.add_argument("--from-jsonl", help="delete the ids in this memory-export JSONL")
-    _set(cmd_fleet_memory_prune, fleet_mem_prune)
-
     fleet_refresh = fleet.add_parser(
         "refresh-context",
         help="refresh the live Fleet section in this agent's runtime-context markdown "
-        "(what the nap-tick-style timer calls so each session knows its teammates)",
+        "(what a periodic timer calls so each session knows its teammates)",
     )
     fleet_refresh.add_argument("--agent", help="this agent's id (excluded from its own fleet view)")
     fleet_refresh.add_argument(
@@ -10510,21 +8623,6 @@ def build_parser() -> argparse.ArgumentParser:
         "or ~/.hermes/mac-runtime-context.md)",
     )
     _set(cmd_fleet_refresh_context, fleet_refresh)
-
-    fleet_validate = fleet.add_parser(
-        "validate",
-        help="validate a declarative mac.fleet_setup.v1 setup spec",
-    )
-    fleet_validate.add_argument("--spec", required=True)
-    fleet_validate.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-    )
-    fleet_validate.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-    )
-    _set(cmd_fleet_validate_setup, fleet_validate)
 
     # journal-01: daily snapshots of an agent's soul + memory state so an
     # evolved personality can be restored if its files are ever lost. Local
@@ -10566,47 +8664,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_journal_restore, journal_restore)
 
-    fleet_doctor = fleet.add_parser(
-        "doctor",
-        help="run setup doctor checks for a declarative fleet spec",
-    )
-    fleet_doctor.add_argument("--spec", required=True)
-    fleet_doctor.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-    )
-    fleet_doctor.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-    )
-    _set(cmd_fleet_doctor_setup, fleet_doctor)
-
-    # auth-token-sync-01: recover/re-sync a client's bearer token from the hub.
-    fleet_sync_token = fleet.add_parser(
-        "sync-token",
-        help="pull the hub's current MAC_API_TOKEN into ~/.mac/.env as "
-        "MAC_API_TOKEN__<FLEET> (fixes 403 'unknown bearer token' drift)",
-    )
-    fleet_sync_token.add_argument(
-        "--fleet",
-        required=True,
-        help="fleet name to sync (resolves the hub's ssh target from fleets.yaml)",
-    )
-    fleet_sync_token.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
-    )
-    fleet_sync_token.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-        help="client env file to update (default ~/.mac/.env)",
-    )
-    _set(cmd_fleet_sync_token, fleet_sync_token)
-
-    # Coding-CLI credential fabric: the operator's CURRENT workstation is the
-    # source of truth for claude/codex/cursor auth; workers get it over the
-    # fleet's SSH routes, on demand.
     fleet_connect = fleet.add_parser(
         "connect",
         help="print this fleet's hub URL and bearer token together, ready to "
@@ -10618,51 +8675,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the bearer token in full instead of masking it",
     )
     _set(cmd_fleet_connect, fleet_connect)
-
-    fleet_creds_status = fleet.add_parser(
-        "creds-status",
-        help="per-agent coding-CLI (claude/codex/cursor) auth status, from the "
-        "agents' own heartbeat reports; flags who needs a credential sync",
-    )
-    # Hub selection comes from the GLOBAL --fleet/--hub-url options (a
-    # subparser --fleet default would clobber the parsed global value).
-    _set(cmd_fleet_creds_status, fleet_creds_status)
-
-    fleet_creds_sync = fleet.add_parser(
-        "creds-sync",
-        help="push THIS workstation's coding-CLI credentials to fleet workers "
-        "over their SSH routes (stdin-only transfer; verified on arrival)",
-    )
-    fleet_creds_sync.add_argument(
-        "--fleet",
-        dest="creds_fleet",
-        required=True,
-        help="fleet name (resolves SSH routes from fleets.yaml); a distinct "
-        "dest so it cannot clobber the global --fleet authority selection",
-    )
-    fleet_creds_sync.add_argument(
-        "--agent",
-        action="append",
-        default=None,
-        help="target agent name; repeatable. Default: every agent that "
-        "reported a CLI on PATH without auth (same set --needed selects)",
-    )
-    fleet_creds_sync.add_argument(
-        "--cli",
-        default="claude,codex,cursor",
-        help="comma-separated CLIs to sync (default: claude,codex,cursor)",
-    )
-    fleet_creds_sync.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
-    )
-    fleet_creds_sync.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="show what would be synced where, without moving any secret",
-    )
-    _set(cmd_fleet_creds_sync, fleet_creds_sync)
 
     # mac-ghingest: GitHub issues as an asynchronous work generator. Poll
     # opted-in repos and file idempotent mac tasks; observe/trigger it and opt
@@ -10713,264 +8725,6 @@ def build_parser() -> argparse.ArgumentParser:
     ghingest_disable.add_argument("project", help="project name")
     _set(cmd_project_ingest_disable, ghingest_disable)
 
-    # auth-token-sync-01: graceful rotation via the overlapping MAC_API_TOKENS map.
-    fleet_rotate_token = fleet.add_parser(
-        "rotate-token",
-        help="rotate the hub bearer token with an overlap window (dry-run unless --apply)",
-    )
-    fleet_rotate_token.add_argument(
-        "--fleet",
-        required=True,
-        help="fleet name to rotate",
-    )
-    fleet_rotate_token.add_argument(
-        "--scope",
-        action="append",
-        help="scope for the new token (repeatable; default admin)",
-    )
-    fleet_rotate_token.add_argument(
-        "--prune",
-        action="store_true",
-        help="end the overlap: drop all but the current token (run after every "
-        "client has synced to the new token)",
-    )
-    fleet_rotate_token.add_argument(
-        "--apply",
-        action="store_true",
-        help="actually mutate the hub + this client (default: dry-run plan only)",
-    )
-    fleet_rotate_token.add_argument(
-        "--restart",
-        action="store_true",
-        help="with --apply, also run the hub restart command over SSH",
-    )
-    fleet_rotate_token.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
-    )
-    fleet_rotate_token.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-        help="client env file to update (default ~/.mac/.env)",
-    )
-    _set(cmd_fleet_rotate_token, fleet_rotate_token)
-
-    fleet_move = fleet.add_parser(
-        "move-agent",
-        help=(
-            "move an agent between fleets: rewrite fleets.yaml entry, "
-            "print redeploy command, and emit DB reconcile commands. "
-            "Dry-run by default; pass --execute to mutate fleets.yaml."
-        ),
-    )
-    fleet_move.add_argument(
-        "--agent",
-        required=True,
-        help="agent name to move (e.g. worker-1)",
-    )
-    fleet_move.add_argument(
-        "--from",
-        dest="from_fleet",
-        default=None,
-        help="source fleet hub-name (default: auto-detect from fleets.yaml)",
-    )
-    fleet_move.add_argument(
-        "--to",
-        dest="to_fleet",
-        required=True,
-        help="target fleet hub-name",
-    )
-    fleet_move.add_argument(
-        "--to-os",
-        default="linux",
-        choices=["linux", "darwin"],
-        help="OS of the agent on the destination (default: linux)",
-    )
-    fleet_move.add_argument(
-        "--hub-url",
-        default="",
-        help=(
-            "override the hub_url written into the agent entry (default: inherit from target fleet)"
-        ),
-    )
-    fleet_move.add_argument(
-        "--no-db-reconcile",
-        action="store_true",
-        help="skip the DB fleet-membership reconcile note",
-    )
-    fleet_move.add_argument(
-        "--no-redeploy",
-        action="store_true",
-        help=(
-            "with --execute, only rewrite fleets.yaml and EMIT the redeploy "
-            "command instead of running it (inspect-first; default is to run "
-            "the redeploy end-to-end)"
-        ),
-    )
-    fleet_move.add_argument(
-        "--execute",
-        action="store_true",
-        help="actually mutate fleets.yaml + run the redeploy (default: dry-run plan only)",
-    )
-    _set(cmd_fleet_move_agent, fleet_move)
-
-    optimizer = sub.add_parser(
-        "optimizer",
-        help="autonomous scientific policy optimization",
-        description=(
-            "Create allowlisted execution policies, run controlled task experiments, "
-            "and promote only statistically superior, quality-noninferior treatments."
-        ),
-    ).add_subparsers(dest="optimizer_command", required=True)
-    _set(
-        cmd_optimizer_status,
-        optimizer.add_parser("status", help="show scheduler and active experiments"),
-    )
-    _set(
-        cmd_optimizer_tick,
-        optimizer.add_parser("tick", help="run one observation, decision, and hypothesis pass now"),
-    )
-
-    optimizer_policy = optimizer.add_parser(
-        "policy", help="versioned execution-policy lifecycle"
-    ).add_subparsers(dest="optimizer_policy_command", required=True)
-    optimizer_policy_create = optimizer_policy.add_parser(
-        "create", help="create a candidate allowlisted policy"
-    )
-    optimizer_policy_create.add_argument("name")
-    optimizer_policy_create.add_argument("project")
-    optimizer_policy_create.add_argument("--parameters")
-    optimizer_policy_create.add_argument("--parameters-file")
-    optimizer_policy_create.add_argument("--description")
-    optimizer_policy_create.add_argument("--description-file")
-    optimizer_policy_create.add_argument("--actor", default="human")
-    _set(cmd_optimizer_policy_create, optimizer_policy_create)
-    optimizer_policy_list = optimizer_policy.add_parser("list", help="list policies")
-    optimizer_policy_list.add_argument("--project")
-    optimizer_policy_list.add_argument("--status", choices=("candidate", "active", "retired"))
-    _set(cmd_optimizer_policy_list, optimizer_policy_list)
-    optimizer_policy_show = optimizer_policy.add_parser("show", help="show one policy")
-    optimizer_policy_show.add_argument("policy_id")
-    _set(cmd_optimizer_policy_show, optimizer_policy_show)
-    optimizer_policy_promote = optimizer_policy.add_parser("promote", help="make a policy active")
-    optimizer_policy_promote.add_argument("policy_id")
-    optimizer_policy_promote.add_argument("--actor", default="operator")
-    optimizer_policy_promote.add_argument("--reason")
-    optimizer_policy_promote.add_argument("--reason-file")
-    _set(cmd_optimizer_policy_promote, optimizer_policy_promote)
-    optimizer_policy_rollback = optimizer_policy.add_parser(
-        "rollback", help="restore a prior policy as active"
-    )
-    optimizer_policy_rollback.add_argument("project")
-    optimizer_policy_rollback.add_argument("policy_id")
-    optimizer_policy_rollback.add_argument("--actor", default="operator")
-    optimizer_policy_rollback.add_argument("--reason")
-    optimizer_policy_rollback.add_argument("--reason-file")
-    _set(cmd_optimizer_policy_rollback, optimizer_policy_rollback)
-
-    optimizer_experiment = optimizer.add_parser(
-        "experiment", help="controlled experiment lifecycle"
-    ).add_subparsers(dest="optimizer_experiment_command", required=True)
-    optimizer_experiment_create = optimizer_experiment.add_parser(
-        "create", help="register a hypothesis and A/B protocol"
-    )
-    optimizer_experiment_create.add_argument("name")
-    optimizer_experiment_create.add_argument("project")
-    optimizer_experiment_create.add_argument("control_policy_id")
-    optimizer_experiment_create.add_argument("treatment_policy_id")
-    optimizer_experiment_create.add_argument("--hypothesis")
-    optimizer_experiment_create.add_argument("--hypothesis-file")
-    optimizer_experiment_create.add_argument(
-        "--primary-metric",
-        required=True,
-        choices=(
-            "accepted_success",
-            "delayed_quality_success",
-            "cycles_to_accept",
-            "executor_attempts",
-            "review_attempts",
-            "lead_time_ms",
-            "model_latency_ms",
-            "input_tokens",
-            "output_tokens",
-            "total_tokens",
-            "cost_usd",
-            "escaped_defect_severity",
-        ),
-    )
-    optimizer_experiment_create.add_argument("--direction", choices=("maximize", "minimize"))
-    optimizer_experiment_create.add_argument("--min-effect", type=float, default=0.0)
-    optimizer_experiment_create.add_argument("--quality-margin", type=float, default=0.05)
-    optimizer_experiment_create.add_argument("--min-samples-per-arm", type=int)
-    optimizer_experiment_create.add_argument("--max-samples-per-arm", type=int)
-    optimizer_experiment_create.add_argument("--exploration-fraction", type=float)
-    optimizer_experiment_create.add_argument("--outcome-horizon-seconds", type=float)
-    optimizer_experiment_create.add_argument("--guardrails")
-    optimizer_experiment_create.add_argument("--guardrails-file")
-    optimizer_experiment_create.add_argument("--metadata")
-    optimizer_experiment_create.add_argument("--metadata-file")
-    optimizer_experiment_create.add_argument(
-        "--auto-promote",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="automatically promote an evidence-backed winner (default: service config)",
-    )
-    optimizer_experiment_create.add_argument("--actor", default="human")
-    _set(cmd_optimizer_experiment_create, optimizer_experiment_create)
-    optimizer_experiment_list = optimizer_experiment.add_parser("list", help="list experiments")
-    optimizer_experiment_list.add_argument("--project")
-    optimizer_experiment_list.add_argument(
-        "--state",
-        choices=(
-            "draft",
-            "running",
-            "candidate",
-            "monitoring",
-            "paused",
-            "completed",
-            "rejected",
-            "rolled_back",
-        ),
-    )
-    _set(cmd_optimizer_experiment_list, optimizer_experiment_list)
-    optimizer_experiment_show = optimizer_experiment.add_parser("show", help="show one experiment")
-    optimizer_experiment_show.add_argument("experiment_id")
-    _set(cmd_optimizer_experiment_show, optimizer_experiment_show)
-    optimizer_experiment_evidence = optimizer_experiment.add_parser(
-        "evidence", help="show assignments, KPI observations, decisions, and events"
-    )
-    optimizer_experiment_evidence.add_argument("experiment_id")
-    optimizer_experiment_evidence.add_argument("--limit", type=int, default=500)
-    _set(cmd_optimizer_experiment_evidence, optimizer_experiment_evidence)
-    optimizer_experiment_start = optimizer_experiment.add_parser(
-        "start", help="start task assignment"
-    )
-    optimizer_experiment_start.add_argument("experiment_id")
-    optimizer_experiment_start.add_argument("--actor", default="operator")
-    _set(cmd_optimizer_experiment_start, optimizer_experiment_start)
-    for action, handler, help_text in (
-        ("pause", cmd_optimizer_experiment_pause, "pause assignment and release the project slot"),
-        ("promote", cmd_optimizer_experiment_promote, "promote an evidence-backed candidate"),
-    ):
-        action_parser = optimizer_experiment.add_parser(action, help=help_text)
-        action_parser.add_argument("experiment_id")
-        action_parser.add_argument("--actor", default="operator")
-        action_parser.add_argument("--reason")
-        action_parser.add_argument("--reason-file")
-        _set(handler, action_parser)
-    optimizer_experiment_observe = optimizer_experiment.add_parser(
-        "observe", help="refresh one assigned task's KPI projection"
-    )
-    optimizer_experiment_observe.add_argument("experiment_id")
-    optimizer_experiment_observe.add_argument("task_id")
-    _set(cmd_optimizer_experiment_observe, optimizer_experiment_observe)
-    optimizer_experiment_analyze = optimizer_experiment.add_parser(
-        "analyze", help="refresh all assigned tasks and evaluate the protocol"
-    )
-    optimizer_experiment_analyze.add_argument("experiment_id")
-    _set(cmd_optimizer_experiment_analyze, optimizer_experiment_analyze)
-
     mood = sub.add_parser(
         "mood",
         help="agent mood overlays (agents self-report; operators query)",
@@ -11007,195 +8761,6 @@ def build_parser() -> argparse.ArgumentParser:
     mood_history.add_argument("agent_id")
     mood_history.add_argument("--limit", type=int, default=50)
     _set(cmd_mood_history, mood_history)
-
-    dream = sub.add_parser(
-        "dream",
-        help="dream-cycle learning maintenance",
-    ).add_subparsers(dest="dream_command", required=True)
-
-    dream_run = dream.add_parser("run", help="curate memory into a reviewable candidate store")
-    dream_run.add_argument("--agent-id", default=None)
-    dream_run.add_argument("--project", default=None)
-    dream_run.add_argument(
-        "--since", default="", help="only read memory written after this timestamp"
-    )
-    dream_run.add_argument("--limit", type=int, default=2000)
-    dream_run.add_argument("--instructions", default="", help="steer what the dream synthesises")
-    dream_run.add_argument(
-        "--max-output-ratio",
-        type=float,
-        default=0.75,
-        help="quarantine the run if output/input exceeds this (default 0.75)",
-    )
-    dream_run.add_argument(
-        "--promote",
-        action="store_true",
-        help="adopt immediately if every gate passes (default: review first)",
-    )
-    _set(cmd_dream_run, dream_run)
-
-    dream_list = dream.add_parser("list", help="list dream runs, newest first")
-    dream_list.add_argument("--state", default=None)
-    dream_list.add_argument("--limit", type=int, default=20)
-    _set(cmd_dream_list, dream_list)
-
-    dream_show = dream.add_parser("show", help="show a run, its gates and candidates")
-    dream_show.add_argument("run_id")
-    _set(cmd_dream_show, dream_show)
-
-    dream_promote = dream.add_parser("promote", help="adopt a reviewed run into live memory")
-    dream_promote.add_argument("run_id")
-    dream_promote.add_argument(
-        "--keep-superseded",
-        action="store_true",
-        help="do not retire superseded rows (the store will not shrink)",
-    )
-    _set(cmd_dream_promote, dream_promote)
-
-    dream_discard = dream.add_parser("discard", help="discard a dream run")
-    dream_discard.add_argument("run_id")
-    dream_discard.add_argument("--reason", default="")
-    _set(cmd_dream_discard, dream_discard)
-
-    dream_import = dream.add_parser(
-        "import-logs",
-        help="merge orphaned ~/.hermes/dream_logs reports into durable memory",
-    )
-    dream_import.add_argument(
-        "--dream-logs-dir",
-        default=None,
-        help="source dir (default: $HERMES_HOME/dream_logs)",
-    )
-    dream_import.add_argument(
-        "--agent-id", default=None, help="attribute imported dreams to this agent"
-    )
-    dream_import.add_argument("--qdrant-url", default=None)
-    dream_import.add_argument(
-        "--no-embed",
-        action="store_true",
-        help="skip vector embedding (imported dreams won't be recall-eligible)",
-    )
-    dream_import.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="report what would be imported without writing",
-    )
-    _set(cmd_dream_import_logs, dream_import)
-
-    nap = sub.add_parser(
-        "nap",
-        help="agent nap schedule and lifecycle (daily memory consolidation)",
-    ).add_subparsers(dest="nap_command", required=True)
-    nap_configure = nap.add_parser(
-        "configure",
-        help="set or refresh an agent's nap schedule (offset defaults to a deterministic hash of agent.name)",
-    )
-    nap_configure.add_argument("agent_id")
-    nap_configure.add_argument(
-        "--offset-minutes",
-        type=int,
-        help="0-359; omit to derive deterministically from agent name",
-    )
-    nap_configure.add_argument("--window-minutes", type=int, default=15)
-    nap_configure.add_argument("--disabled", action="store_true")
-    nap_configure.add_argument("--actor")
-    _set(cmd_nap_configure, nap_configure)
-    nap_show = nap.add_parser("show")
-    nap_show.add_argument("agent_id")
-    _set(cmd_nap_show, nap_show)
-    nap_next = nap.add_parser("next", help="compute the next nap window")
-    nap_next.add_argument("agent_id")
-    _set(cmd_nap_next, nap_next)
-    nap_begin = nap.add_parser(
-        "begin",
-        help="start a nap; transitions the agent to DRAINING",
-    )
-    nap_begin.add_argument("agent_id")
-    nap_begin.add_argument("--actor")
-    nap_begin.add_argument("--detail")
-    _set(cmd_nap_begin, nap_begin)
-    nap_complete = nap.add_parser(
-        "complete",
-        help="mark a nap_run completed and restore the agent",
-    )
-    nap_complete.add_argument("run_id")
-    nap_complete.add_argument(
-        "--evidence-id",
-        help="evidence row (kind='log') with the summary artifact pointer",
-    )
-    nap_complete.add_argument("--detail")
-    nap_complete.add_argument("--actor")
-    _set(cmd_nap_complete, nap_complete)
-    nap_fail = nap.add_parser("fail", help="mark a nap_run failed and restore the agent")
-    nap_fail.add_argument("run_id")
-    nap_fail.add_argument("--reason", required=True)
-    nap_fail.add_argument("--actor")
-    _set(cmd_nap_fail, nap_fail)
-    nap_list = nap.add_parser("list", help="list nap_runs")
-    nap_list.add_argument("--agent-id")
-    _set(cmd_nap_list, nap_list)
-
-    # mem-08 autonomy: run the whole begin → consolidate → complete arc.
-    nap_cycle = nap.add_parser(
-        "cycle",
-        help="run a full nap cycle (begin + consolidate + complete) for "
-        "one agent — what the auto-trigger timer calls",
-    )
-    nap_cycle.add_argument("agent_id")
-    nap_cycle.add_argument("--actor")
-    nap_cycle.add_argument("--no-embed", action="store_true")
-    nap_cycle.add_argument("--no-dreams", action="store_true")
-    nap_cycle.add_argument("--qdrant-url")
-    _set(cmd_nap_cycle, nap_cycle)
-
-    nap_due = nap.add_parser(
-        "due",
-        help="list enabled nap_schedules whose current window has opened "
-        "and not yet been completed",
-    )
-    nap_due.add_argument(
-        "--as-of",
-        help="ISO timestamp to compute due-ness against (default: now)",
-    )
-    nap_due.add_argument(
-        "--format",
-        choices=("json", "agent-ids"),
-        default="json",
-        help="'json' (full due list) or 'agent-ids' (newline-delimited "
-        "agent_ids, for piping to `xargs mac admin nap cycle`)",
-    )
-    _set(cmd_nap_due, nap_due)
-
-    # mem-08: build per-(task/project) memory summaries for an agent.
-    nap_consolidate = nap.add_parser(
-        "consolidate",
-        help="walk the agent's recent memory_records, summarize by "
-        "task/project, write a nap_summary row per group, and embed "
-        "into the medium tier (mem-08)",
-    )
-    nap_consolidate.add_argument("agent_id")
-    nap_consolidate.add_argument(
-        "--since",
-        help="ISO timestamp lower bound; default = last successful nap's "
-        "completed_at, or '<beginning>' if there isn't one",
-    )
-    nap_consolidate.add_argument("--nap-run-id", help="link the summaries to this run")
-    nap_consolidate.add_argument("--created-by")
-    nap_consolidate.add_argument(
-        "--no-embed",
-        action="store_true",
-        help="skip the vector-writer handoff (summary-only mode; useful when Qdrant is offline)",
-    )
-    nap_consolidate.add_argument(
-        "--no-dreams",
-        action="store_true",
-        help="write nap_summary rows only; skip typed mac.dream.v1 artifacts",
-    )
-    nap_consolidate.add_argument(
-        "--qdrant-url",
-        help="override the default Qdrant URL passed to the vector writer",
-    )
-    _set(cmd_nap_consolidate, nap_consolidate)
 
     dispatch = sub.add_parser("dispatch", help="dispatcher commands").add_subparsers(
         dest="dispatch_command", required=True
@@ -11459,114 +9024,6 @@ def build_parser() -> argparse.ArgumentParser:
     decision.add_argument("--evidence-id")
     _set(cmd_review_decision, decision)
 
-    auto_land = review.add_parser(
-        "auto-land",
-        help=(
-            "land a task/branch iff the contract gate is GREEN and an "
-            "independent adversarial reviewer APPROVEs (default-to-reject)"
-        ),
-    )
-    auto_land.add_argument("target", help="task id or branch/ref to auto-land")
-    auto_land.add_argument("--repo-dir", default=".", help="repository directory (default: cwd)")
-    auto_land.add_argument(
-        "--base-ref",
-        default="main",
-        help="base ref for the land-time merge-gate check (default: main)",
-    )
-    auto_land.add_argument("--created-by", default="auto-land")
-    auto_land.add_argument(
-        "--author",
-        default="",
-        help=(
-            "the change author's fleet agent id; the adversarial reviewer must "
-            "be a DIFFERENT agent (independence). Defaults to $MAC_AGENT_ID."
-        ),
-    )
-    auto_land.add_argument(
-        "--push",
-        action="store_true",
-        help=(
-            "on a branch target, perform a plain (never --force) git push after "
-            "both gates pass; off by default (only marks ready-to-land)"
-        ),
-    )
-    auto_land.add_argument(
-        "--dry-run",
-        action="store_true",
-        help=(
-            "print the plan (target + config + which gates would run) without "
-            "running the contract gate, spawning a reviewer, or landing anything"
-        ),
-    )
-    _set(cmd_review_auto_land, auto_land)
-
-    experiment = review.add_parser(
-        "experiment",
-        help="assign and inspect replayable review-strategy experiments",
-    ).add_subparsers(dest="review_experiment_command", required=True)
-    experiment_assign = experiment.add_parser(
-        "assign",
-        help="persist an explicit or deterministic weighted arm assignment",
-    )
-    experiment_assign.add_argument("task_id")
-    experiment_assign.add_argument("experiment_id")
-    assignment = experiment_assign.add_mutually_exclusive_group(required=True)
-    assignment.add_argument("--arm", help="explicit arm name")
-    assignment.add_argument(
-        "--arms",
-        help="deterministic weighted assignment, e.g. blind=1,standard=1",
-    )
-    experiment_assign.add_argument(
-        "--probability",
-        type=float,
-        help="propensity for an explicit --arm (defaults to 1)",
-    )
-    experiment_assign.add_argument("--blind", action="store_true")
-    experiment_assign.add_argument(
-        "--blind-arm",
-        action="append",
-        default=[],
-        help="weighted arm that uses evidence-withheld discovery (repeatable)",
-    )
-    experiment_assign.add_argument("--policy-version", default="v1")
-    experiment_assign.add_argument("--hypothesis")
-    experiment_assign.add_argument("--hypothesis-file")
-    experiment_assign.add_argument("--stratum", default="")
-    experiment_assign.add_argument("--actor", default="human")
-    _set(cmd_review_experiment_assign, experiment_assign)
-
-    experiment_observe = experiment.add_parser(
-        "observe",
-        help="derive one task observation from ledger evidence",
-    )
-    experiment_observe.add_argument("task_id")
-    _set(cmd_review_experiment_observe, experiment_observe)
-
-    experiment_outcome = experiment.add_parser(
-        "outcome",
-        help="append an operator or delayed validation outcome",
-    )
-    experiment_outcome.add_argument("task_id")
-    experiment_outcome.add_argument("kind")
-    experiment_outcome.add_argument("status", choices=("confirmed", "refuted", "pending"))
-    experiment_outcome.add_argument("--finding-id", default="")
-    experiment_outcome.add_argument("--severity-weight", type=float, default=1.0)
-    experiment_outcome.add_argument("--source", default="operator")
-    experiment_outcome.add_argument("--detail")
-    experiment_outcome.add_argument("--detail-file")
-    experiment_outcome.add_argument("--actor", default="human")
-    _set(cmd_review_experiment_outcome, experiment_outcome)
-
-    experiment_report = experiment.add_parser(
-        "report",
-        help="derive arm metrics and a fail-closed policy candidate",
-    )
-    experiment_report.add_argument("experiment_id")
-    experiment_report.add_argument("--project")
-    experiment_report.add_argument("--min-tasks-per-arm", type=int, default=5)
-    experiment_report.add_argument("--min-validated-outcomes-per-arm", type=int, default=3)
-    _set(cmd_review_experiment_report, experiment_report)
-
     publish = sub.add_parser("publish")
     publish.add_argument("task_id")
     publish.add_argument("target")
@@ -11718,41 +9175,6 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_delete.add_argument("--actor", default="operator")
     _set(cmd_artifact_delete, artifact_delete)
 
-    env_root = sub.add_parser(
-        "env",
-        help="environments and deployments (artifact -> environment edges)",
-    ).add_subparsers(dest="env_command", required=True)
-    env_register = env_root.add_parser("register")
-    env_register.add_argument("name")
-    env_register.add_argument("--tenant-id")
-    env_register.add_argument("--channel", default="fleet")
-    env_register.add_argument("--promotes-from", help="upstream environment id")
-    env_register.add_argument("--metadata")
-    env_register.add_argument("--created-by", default="human")
-    _set(cmd_env_register, env_register)
-    env_list = env_root.add_parser("list")
-    env_list.add_argument("--tenant-id")
-    env_list.add_argument("--channel")
-    _set(cmd_env_list, env_list)
-    env_show = env_root.add_parser("show")
-    env_show.add_argument("environment", help="environment id or name")
-    _set(cmd_env_show, env_show)
-    env_deploy = env_root.add_parser(
-        "deploy",
-        help="record a new active deployment in an environment, retiring the prior one",
-    )
-    env_deploy.add_argument("environment", help="environment id or name")
-    env_deploy.add_argument("artifact", help="artifact id or digest")
-    env_deploy.add_argument("--actor", required=True)
-    env_deploy.add_argument("--metadata")
-    _set(cmd_env_deploy, env_deploy)
-    env_current = env_root.add_parser("current")
-    env_current.add_argument("environment")
-    _set(cmd_env_current, env_current)
-    env_deployments = env_root.add_parser("history")
-    env_deployments.add_argument("environment")
-    _set(cmd_env_deployments, env_deployments)
-
     bridge = sub.add_parser("bridge", help="external project bridge commands").add_subparsers(
         dest="bridge_command", required=True
     )
@@ -11807,36 +9229,12 @@ def build_parser() -> argparse.ArgumentParser:
     integrations_observations.add_argument("--limit", type=int, default=100)
     _set(cmd_integrations_observations, integrations_observations)
 
-    curiosity = sub.add_parser(
-        "curiosity",
-        help="read and adjudicate a host's curiosity quarantine THROUGH THE HUB "
-        "(the ledger lives in the agent's OpenClaw sandbox; a task sandbox "
-        "cannot reach it directly)",
-    ).add_subparsers(dest="curiosity_command", required=True)
-    curiosity_list = curiosity.add_parser("list", help="list candidates")
-    curiosity_list.add_argument(
-        "--status", choices=["quarantined", "approved", "rejected"], default=None
-    )
-    _set(cmd_curiosity_list, curiosity_list)
-    for _decision in ("approve", "reject"):
-        _parser = curiosity.add_parser(_decision, help="%s a quarantined candidate" % _decision)
-        _parser.add_argument("candidate_id")
-        _parser.add_argument("--actor", required=True)
-        _parser.add_argument("--reason", required=True)
-        _parser.add_argument(
-            "--approval-id",
-            required=True,
-            help="external approval id; use the adjudicating task id so the "
-            "promotion is traceable in both the curiosity ledger and task history",
-        )
-        _parser.set_defaults(decision=_decision)
-        _set(cmd_curiosity_decide, _parser)
     memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(
         dest="memory_command", required=True
     )
     memory_decay = memory.add_parser(
         "decay",
-        help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
+        help="forget stale, low-salience memory records (dry-run unless --apply); "
         "curated knowledge (user/project/feedback/deployment_learning/fleet_learning/dream/beads_memory) is preserved",
     )
     memory_decay.add_argument("--ttl-days", type=float, default=90.0)
@@ -11860,15 +9258,15 @@ def build_parser() -> argparse.ArgumentParser:
     memory_search.add_argument("--subject-id")
     memory_search.add_argument(
         "--record-type",
-        help="Exact match on record_type (e.g. nap_summary)",
+        help="Exact match on record_type (e.g. agent_learning)",
     )
     memory_search.add_argument(
         "--record-type-prefix",
-        help="Prefix match on record_type (e.g. 'dream:' matches dream:reflection, dream:lesson)",
+        help="Prefix match on record_type (e.g. 'deployment_learning:' matches deployment_learning:mac)",
     )
     memory_search.add_argument(
         "--created-by",
-        help="Filter by creator (e.g. nap-consolidator, agent_rocky)",
+        help="Filter by creator (e.g. agent_rocky)",
     )
     memory_search.add_argument(
         "--since",
@@ -11930,219 +9328,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_memory_summarize_actions, memory_summarize_actions)
 
-    # mem-07: embed a memory_record into Qdrant + record the vector_ref.
-    memory_embed = memory.add_parser(
-        "embed",
-        help="embed one memory_record into the vector tier (mem-07)",
-    )
-    memory_embed.add_argument("memory_id")
-    memory_embed.add_argument("--tier", choices=("medium", "long"), default="medium")
-    memory_embed.add_argument(
-        "--qdrant-url",
-        help="override the default Qdrant URL (MAC_QDRANT_URL/QDRANT_URL env cascade or 127.0.0.1:6333)",
-    )
-    _set(cmd_memory_embed, memory_embed)
-
-    memory_backfill = memory.add_parser(
-        "backfill",
-        help="embed every memory_record not yet in the target Qdrant collection (mem-07)",
-    )
-    memory_backfill.add_argument("--tier", choices=("medium", "long"), default="medium")
-    memory_backfill.add_argument("--limit", type=int, help="cap embeddings this pass (None = all)")
-    memory_backfill.add_argument("--qdrant-url")
-    _set(cmd_memory_backfill, memory_backfill)
-
-    memory_promote = memory.add_parser(
-        "promote",
-        help="promote settled medium-tier memories into mac_memory_long "
-        "(the writer the long tier never had)",
-    )
-    memory_promote.add_argument(
-        "--min-age-days",
-        type=float,
-        help="how long a medium-tier ref must have sat before it is "
-        "considered settled (default 30, or MAC_MEMORY_PROMOTION_MIN_AGE_DAYS)",
-    )
-    memory_promote.add_argument(
-        "--limit",
-        type=int,
-        help="cap promotions this pass (default MAC_MEMORY_PROMOTION_MAX_PER_PASS)",
-    )
-    memory_promote.add_argument(
-        "--drop-medium",
-        action="store_true",
-        help="retire the medium point once the long-tier write succeeded; "
-        "off by default so promotion is a copy until the tier is proven",
-    )
-    memory_promote.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="report what would be promoted without writing",
-    )
-    memory_promote.add_argument("--qdrant-url")
-    _set(cmd_memory_promote, memory_promote)
-
-    memory_reconcile = memory.add_parser(
-        "reconcile-embeddings",
-        help="re-embed points left behind by a model switch so one "
-        "collection holds one embedding space",
-    )
-    memory_reconcile.add_argument("--tier", choices=("medium", "long"), default="medium")
-    memory_reconcile.add_argument(
-        "--limit", type=int, help="cap re-embeddings this pass (None = all)"
-    )
-    memory_reconcile.add_argument(
-        "--scan-limit",
-        type=int,
-        help="cap the payload scan (None = the whole collection)",
-    )
-    memory_reconcile.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="list the mismatched memories without re-embedding them",
-    )
-    memory_reconcile.add_argument(
-        "--report-only",
-        action="store_true",
-        help="just count the models present; makes no writes at all",
-    )
-    memory_reconcile.add_argument("--qdrant-url")
-    _set(cmd_memory_reconcile_embeddings, memory_reconcile)
-
-    memory_health = memory.add_parser(
-        "health",
-        help="mem-10: memory-tier health snapshot (counts + alerts for "
-        "inert vector tier / stalled consolidator / stalled vector "
-        "ingestion / unwritten tier / mixed embedding spaces / disk bloat)",
-    )
-    memory_health.add_argument(
-        "--nap-interval-hours",
-        type=float,
-        default=1.0,
-        help="2× this value is the stalled-consolidator alert threshold",
-    )
-    memory_health.add_argument(
-        "--vector-ingestion-max-age-hours",
-        type=float,
-        default=24.0,
-        help="a Qdrant collection whose newest embedded_at is older than "
-        "this raises stalled_vector_ingestion",
-    )
-    memory_health.add_argument("--qdrant-url")
-    _set(cmd_memory_health, memory_health)
-
-    memory_recall = memory.add_parser(
-        "recall",
-        help="vector-tier recall (mem-09): embed query and return top "
-        "ranked memory hits with their summaries",
-    )
-    memory_recall.add_argument("query")
-    memory_recall.add_argument("--tier", choices=("medium", "long"), default="medium")
-    memory_recall.add_argument("--limit", type=int, default=5)
-    memory_recall.add_argument(
-        "--min-score",
-        type=float,
-        help="drop hits below this cosine score (0.0–1.0)",
-    )
-    memory_recall.add_argument(
-        "--project",
-        help="server-side filter: only return hits whose payload project matches",
-    )
-    memory_recall.add_argument(
-        "--tenant-id",
-        help="server-side filter: only return hits whose payload tenant matches",
-    )
-    memory_recall.add_argument(
-        "--qdrant-url",
-        help="override Qdrant URL when running in local mode (--db). "
-        "Hub mode reads the Qdrant env cascade on the hub.",
-    )
-    _set(cmd_memory_recall, memory_recall)
-
-    memory_recall_dreams = memory.add_parser(
-        "recall-dreams",
-        help="recall typed dream artifacts with scope/kind/confidence filters",
-    )
-    memory_recall_dreams.add_argument("query")
-    memory_recall_dreams.add_argument("--tier", choices=("medium", "long"), default="medium")
-    memory_recall_dreams.add_argument("--limit", type=int, default=5)
-    memory_recall_dreams.add_argument(
-        "--min-score",
-        type=float,
-        help="drop vector hits below this cosine score (0.0-1.0)",
-    )
-    memory_recall_dreams.add_argument("--project")
-    memory_recall_dreams.add_argument("--agent-id")
-    memory_recall_dreams.add_argument("--scope", choices=("agent", "project", "fleet"))
-    memory_recall_dreams.add_argument(
-        "--kind",
-        choices=(
-            "decision_rule",
-            "failure_pattern",
-            "knowledge_snippet",
-            "tool_pattern",
-            "routing_signal",
-        ),
-    )
-    memory_recall_dreams.add_argument("--min-confidence", choices=("low", "medium", "high"))
-    memory_recall_dreams.add_argument("--tenant-id")
-    memory_recall_dreams.add_argument(
-        "--qdrant-url",
-        help="override Qdrant URL when running in local mode (--db). "
-        "Hub mode reads the Qdrant env cascade on the hub.",
-    )
-    _set(cmd_memory_recall_dreams, memory_recall_dreams)
-
-    rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(
-        dest="rollout_command", required=True
-    )
-    rollout_create = rollout.add_parser("create")
-    rollout_create.add_argument("version")
-    rollout_create.add_argument("strategy")
-    rollout_create.add_argument("--target-percent", type=int, default=10)
-    rollout_create.add_argument("--created-by", required=True)
-    rollout_create.add_argument("--tenant-id")
-    rollout_create.add_argument("--channel", default="fleet")
-    rollout_create.add_argument("--runtime")
-    rollout_create.add_argument("--artifact-uri")
-    rollout_create.add_argument("--artifact-hash")
-    rollout_create.add_argument("--health-policy")
-    rollout_create.add_argument("--required-eval-set-id")
-    _set(cmd_rollout_create, rollout_create)
-    rollout_list = rollout.add_parser("list")
-    rollout_list.add_argument("--tenant-id")
-    rollout_list.add_argument("--channel")
-    _set(cmd_rollout_list, rollout_list)
-    rollout_advance = rollout.add_parser("advance")
-    rollout_advance.add_argument("rollout_id")
-    rollout_advance.add_argument("action")
-    rollout_advance.add_argument("--actor", required=True)
-    rollout_advance.add_argument("--detail")
-    _set(cmd_rollout_advance, rollout_advance)
-    rollout_artifact = rollout.add_parser("verify-artifact")
-    rollout_artifact.add_argument("rollout_id")
-    rollout_artifact.add_argument("--artifact-uri", required=True)
-    rollout_artifact.add_argument("--artifact-hash", required=True)
-    rollout_artifact.add_argument("--actor", required=True)
-    _set(cmd_rollout_verify_artifact, rollout_artifact)
-    rollout_health = rollout.add_parser("health")
-    rollout_health.add_argument("rollout_id")
-    rollout_health.add_argument("--checks", required=True)
-    rollout_health.add_argument("--actor", required=True)
-    _set(cmd_rollout_health, rollout_health)
-    rollout_rescue = rollout.add_parser("rescue")
-    rollout_rescue.add_argument("rollout_id")
-    rollout_rescue.add_argument("--actor", required=True)
-    rollout_rescue.add_argument("--reason", required=True)
-    rollout_rescue.add_argument("--detail")
-    _set(cmd_rollout_rescue, rollout_rescue)
-
     events = sub.add_parser("events", help="unified audit stream").add_subparsers(
         dest="events_command", required=True
     )
     events_list = events.add_parser(
         "list",
-        help="list events across task/rollout/eval_set/secret audit surfaces",
+        help="list events across task/eval_set/secret audit surfaces",
     )
     events_list.add_argument(
         "--subject-type",
@@ -12151,7 +9342,6 @@ def build_parser() -> argparse.ArgumentParser:
             "agent",
             "project",
             "fleet",
-            "rollout",
             "eval_set",
             "secret",
             "environment",
@@ -12164,26 +9354,12 @@ def build_parser() -> argparse.ArgumentParser:
     events_list.add_argument("--event-type", help="exact event_type match")
     events_list.add_argument(
         "--prefix",
-        help="event_type prefix (e.g. 'rollout.' for all rollout events)",
+        help="event_type prefix (e.g. 'task.' for all task events)",
     )
     events_list.add_argument("--since", help="ISO timestamp lower bound (inclusive)")
     events_list.add_argument("--until", help="ISO timestamp upper bound (inclusive)")
     events_list.add_argument("--limit", type=int, default=100)
     _set(cmd_events_list, events_list)
-    news = events.add_parser(
-        "news",
-        help="significant task and agent transitions as a human-readable feed",
-    )
-    news.add_argument("--project", help="show task activity for one project (omits agents)")
-    news.add_argument("--limit", type=int, default=50, help="recent items to show initially")
-    news.add_argument("--follow", action="store_true", help="stay subscribed for new activity")
-    news.add_argument(
-        "--poll-interval",
-        type=float,
-        default=2.0,
-        help="local-authority fallback interval in seconds",
-    )
-    _set(cmd_news, news)
 
     action_events = sub.add_parser(
         "action-events",

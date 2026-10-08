@@ -10,7 +10,6 @@ import pytest
 from mac.mesh_bind import (
     MeshBindError,
     bind_sockets,
-    deploy_mac_bind_host,
     is_allowed_mesh_bind_host,
     lookup_tailscale_ipv4,
     overlay_ipv4_from_ssh_target,
@@ -38,62 +37,6 @@ def test_cgnat_and_loopback_are_mesh_safe_unspecified_is_not() -> None:
     assert not is_allowed_mesh_bind_host("10.0.0.5")
     assert not is_allowed_mesh_bind_host("8.8.8.8")
     assert is_allowed_mesh_bind_host("10.0.0.5", mesh_ips=("10.0.0.5",))
-
-
-def test_deploy_rewrites_wildcard_when_tailscale_ip_known() -> None:
-    assert (
-        deploy_mac_bind_host(
-            "0.0.0.0",
-            network_provider="tailscale",
-            is_hub=True,
-            tailscale_ip="100.72.16.110",
-        )
-        == "127.0.0.1,100.72.16.110"
-    )
-
-
-def test_deploy_refuses_wildcard_without_tailscale_ip() -> None:
-    with pytest.raises(MeshBindError, match="will not bind 0.0.0.0"):
-        deploy_mac_bind_host(
-            "0.0.0.0",
-            network_provider="headscale",
-            is_hub=True,
-            tailscale_ip="",
-        )
-
-
-def test_deploy_refuses_lan_bind_on_mesh_hub() -> None:
-    with pytest.raises(MeshBindError, match="10.0.0.8"):
-        deploy_mac_bind_host(
-            "10.0.0.8",
-            network_provider="tailscale",
-            is_hub=True,
-            tailscale_ip="100.64.0.1",
-        )
-
-
-def test_deploy_leaves_non_mesh_wildcard_alone() -> None:
-    assert (
-        deploy_mac_bind_host(
-            "0.0.0.0",
-            network_provider="none",
-            is_hub=True,
-            tailscale_ip="",
-        )
-        == "0.0.0.0"
-    )
-
-
-def test_deploy_forces_spoke_loopback() -> None:
-    assert (
-        deploy_mac_bind_host(
-            "0.0.0.0",
-            network_provider="tailscale",
-            is_hub=False,
-            tailscale_ip="100.64.0.1",
-        )
-        == "127.0.0.1"
-    )
 
 
 def test_runtime_error_for_mesh_wildcard() -> None:
@@ -229,60 +172,3 @@ def test_create_app_allows_mesh_loopback(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("MAC_NETWORK_PROVIDER", "tailscale")
     monkeypatch.setenv("MAC_BIND_HOST", "127.0.0.1")
     create_app(control_plane=ControlPlane.in_memory())
-
-
-def test_build_mac_env_expands_mesh_hub_bind(tmp_path) -> None:
-    from mac import deploy_env
-
-    cfg = deploy_env.DeployEnvConfig(
-        paths=deploy_env.DeployPaths(tmp_path / "mac.env", tmp_path / ".mac", tmp_path),
-        control=deploy_env.ControlConfig(
-            port="8789",
-            hub_url="http://100.64.0.1:8789",
-            hub_token="hub-token",
-            bind_host="0.0.0.0",
-            supervisor_kind="systemd",
-            network_provider="tailscale",
-        ),
-        gateway=deploy_env.GatewayConfig("", "", "", ""),
-        worker=deploy_env.WorkerConfig("loop", "python", "", "", "0"),
-        services=deploy_env.SharedServicesConfig("", "6333", "", "3002"),
-        identity=deploy_env.DeployIdentity("hub", "hub", "fleet"),
-    )
-    values = deploy_env.build_mac_env(
-        {},
-        cfg,
-        environ={"MAC_TAILSCALE_IP": "100.64.0.1", "MAC_API_ALLOW_OPEN": "1"},
-        lookup=lambda environ=None: (environ or {}).get("MAC_TAILSCALE_IP") or "",
-    )
-    assert values["MAC_BIND_HOST"] == "127.0.0.1,100.64.0.1"
-    assert values["MAC_NETWORK_PROVIDER"] == "tailscale"
-    assert values["MAC_TAILSCALE_IP"] == "100.64.0.1"
-
-
-def test_build_mac_env_discovers_overlay_ip_from_hub_url(tmp_path) -> None:
-    from mac import deploy_env
-
-    cfg = deploy_env.DeployEnvConfig(
-        paths=deploy_env.DeployPaths(tmp_path / "mac.env", tmp_path / ".mac", tmp_path),
-        control=deploy_env.ControlConfig(
-            port="8789",
-            hub_url="http://100.64.0.9:8789",
-            hub_token="hub-token",
-            bind_host="0.0.0.0",
-            supervisor_kind="systemd",
-            network_provider="tailscale",
-        ),
-        gateway=deploy_env.GatewayConfig("", "", "", ""),
-        worker=deploy_env.WorkerConfig("loop", "python", "", "", "0"),
-        services=deploy_env.SharedServicesConfig("", "6333", "", "3002"),
-        identity=deploy_env.DeployIdentity("hub", "hub", "fleet"),
-    )
-    values = deploy_env.build_mac_env(
-        {},
-        cfg,
-        environ={"MAC_API_ALLOW_OPEN": "1"},
-        lookup=lambda environ=None: "",
-    )
-    assert values["MAC_BIND_HOST"] == "127.0.0.1,100.64.0.9"
-    assert values["MAC_TAILSCALE_IP"] == "100.64.0.9"

@@ -61,12 +61,8 @@ def test_prior_reto_bus_exchange_outranks_task_import_filler(monkeypatch):
     peer = cp.register_agent(machine.id, "reto-peer")
     _seed_reto_conversation(cp, agent.id, peer.id)
 
-    # Simulate a backend that ignores the score floor: fusion must still drop the
-    # 0.037-0.054 filler band so it never crowds out the real bus exchange.
-    def recall(query, **kwargs):
-        return list(FILLER_HITS)
-
-    monkeypatch.setattr(cp, "recall_memory", recall)
+    # The hub route no longer has a vector memory tier to recall from; the bus
+    # exchange must still come back through it.
     app = create_app(
         control_plane=cp,
         auth_tokens={"agent-token": {"scopes": ["agent"], "agent_id": agent.id}},
@@ -91,40 +87,50 @@ def test_prior_reto_bus_exchange_outranks_task_import_filler(monkeypatch):
     assert top["topic"] == PEER_TOPIC
     assert top["timestamp"]
     assert top["score"] > 0.0
-    # The 0.037-0.054 filler band must not have crowded it out.
     assert not any(m["source"] == "memory" for m in memories)
     metrics = resp.json()["recall_metrics"]
     assert metrics["source_bus"] == 1
-    assert metrics["threshold_drops"] >= 3
     assert cp.list_observability(name="agentbus.chunks.read", limit=10) == []
 
 
-def test_no_match_omits_low_scoring_filler(monkeypatch):
+def test_prior_reto_bus_exchange_outranks_task_import_filler_in_fusion():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("reto-fusion-host")
+    agent = cp.register_agent(machine.id, "reto-fusion-agent")
+    peer = cp.register_agent(machine.id, "reto-fusion-peer")
+    _seed_reto_conversation(cp, agent.id, peer.id)
+
+    # Simulate a backend that ignores the score floor: fusion must still drop the
+    # 0.037-0.054 filler band so it never crowds out the real bus exchange.
+    result, metrics = recall_continuity(
+        agent_id=agent.id,
+        query="token inefficiency findings",
+        limit=5,
+        recall=lambda *a, **k: list(FILLER_HITS),
+        agentbus=cp.agentbus,
+    )
+    assert result and result[0]["source"] == "bus"
+    assert not any(m["source"] == "memory" for m in result)
+    assert metrics.threshold_drops >= 3
+
+
+def test_no_match_omits_low_scoring_filler():
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("empty-host")
     agent = cp.register_agent(machine.id, "empty-agent")
 
-    def recall(query, **kwargs):
-        return list(FILLER_HITS)
-
-    monkeypatch.setattr(cp, "recall_memory", recall)
-    app = create_app(
-        control_plane=cp,
-        auth_tokens={"agent-token": {"scopes": ["agent"], "agent_id": agent.id}},
+    result, metrics = recall_continuity(
+        agent_id=agent.id,
+        query="something entirely unrelated",
+        limit=5,
+        recall=lambda *a, **k: list(FILLER_HITS),
+        agentbus=cp.agentbus,
     )
-    headers = {"Authorization": "Bearer agent-token"}
-    with TestClient(app) as client:
-        resp = client.get(
-            f"/v1/agents/{agent.id}/continuity?q=something+entirely+unrelated&limit=5",
-            headers=headers,
-        )
 
-    assert resp.status_code == 200
-    body = resp.json()
     # No genuine match: filler is dropped, not padded in to reach the limit.
-    assert body["memories"] == []
-    assert body["recall_metrics"]["selected"] == 0
-    assert body["recall_metrics"]["threshold_drops"] >= 3
+    assert result == []
+    assert metrics.selected == 0
+    assert metrics.threshold_drops >= 3
 
 
 def test_secret_and_mirror_bus_payloads_are_excluded(monkeypatch):
@@ -171,12 +177,11 @@ def test_secret_and_mirror_bus_payloads_are_excluded(monkeypatch):
         content_type="application/json",
     )
 
-    monkeypatch.setattr(cp, "recall_memory", lambda *a, **k: [])
     result, metrics = recall_continuity(
         agent_id=agent.id,
         query="findings",
         limit=5,
-        recall=cp.recall_memory,
+        recall=lambda *a, **k: [],
         agentbus=cp.agentbus,
         config=ContinuityConfig(min_score=0.0),
     )

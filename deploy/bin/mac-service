@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# macOS gives a LaunchDaemon 256 descriptors by default. The hub holds one per
+# polling agent, one per pooled Postgres connection, and one per sandbox
+# subprocess pipe, so it exhausts that and then cannot open anything at all.
+# Observed on the fleet hub: EMFILE in a crash loop ("[Errno 24] Too many open
+# files" out of the HGX autoscaler), /health degrading from 16ms to 1.8s, and
+# dispatch stopping entirely -- three idle agents unable to claim three ready
+# tasks. mac-agent-service has always raised this limit; the hub, which needs
+# it far more, never did.
+ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+runtime_source="$HOME/.mac/src/mac"
+runtime_venv="$HOME/.mac/venv"
+export PATH="$HOME/.mac/bin:$runtime_venv/bin:$PATH"
+# /startup-attestation reports this; fleet-update waits for it to equal the
+# commit it just checked out before it calls the hub updated.
+MAC_SOURCE_COMMIT="$(git -C "$runtime_source" rev-parse HEAD 2>/dev/null || true)"
+export MAC_SOURCE_COMMIT
+export HERMES_REDACT_SECRETS=true
+# --no-access-log is not cosmetic. uvicorn writes the access line from the
+# event loop thread, synchronously, once per request. Every agent polls the
+# hub continuously, so that log had reached 626MB / 5.4M lines on the fleet
+# hub, and a thread dump taken while the hub was unresponsive caught the loop
+# in logging flush() rather than serving. Turning it off measured 8x on a
+# simple read (3.46s -> 0.43s) and let the allocator path finish instead of
+# hitting the client deadline. The hub keeps its own structured observability;
+# this was a duplicate written on the worst possible thread.
+# mac.hub_serve binds loopback plus the Tailscale address (and refuses
+# 0.0.0.0 on a mesh hub). Uvicorn's CLI accepts only one --host.
+exec "$runtime_venv/bin/python" -m mac.hub_serve

@@ -137,25 +137,14 @@ was rewritten to fix.
 ## Deploying the hub
 
 The hub serves from `~/.mac/src/mac` on the hub host — **not** a developer
-checkout.
-
-```console
-git -C ~/.mac/src/mac fetch origin && git -C ~/.mac/src/mac merge --ff-only origin/main
-sudo launchctl kickstart -k system/com.mac.control-plane
-```
-
-Verify by **PID change**, not checkout SHA: `refresh-source` has reported
-`restart_requested: false` while the checkout advanced. `/health` returns empty
-for ~10s during startup; that is not a failure.
-
-After a manual pull on the hub host, also restart the co-located agent
-(`com.mac.agent`) — it shares that checkout and will otherwise keep running
-stale code through several refreshes.
+checkout. Move it (and the workers) to a new commit with `scripts/fleet-update`;
+see [Updating the fleet with fleet-update](../operations/fleet-update.md).
+`/health` returns empty for ~10s during startup; that is not a failure.
 
 ## Debugging the fleet
 
 ```console
-mac admin fleet doctor
+mac admin diagnostics
 mac task why-unclaimed <id>
 mac admin observability list --name executor.agent_completed
 mac agent list --json                     # hardware under resources.hardware

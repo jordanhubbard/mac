@@ -51,8 +51,8 @@ def test_deployment_image_uses_immutable_bases_and_frozen_lock() -> None:
     # the actual image build failed with "Extra `hermes-gateway` is not defined
     # in the project's optional-dependencies table". Two gates asserting
     # opposite things is why main stayed red.
-    for extra in ("postgres", "k8s"):
-        assert f"--extra {extra}" in dockerfile
+    assert "--extra postgres" in dockerfile
+    assert "--extra k8s" not in dockerfile
     assert "--extra hermes-gateway" not in dockerfile
     assert "pip install" not in dockerfile
     assert "COPY --from=builder /opt/mac-venv /opt/mac-venv" in dockerfile
@@ -129,11 +129,7 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
         "GH_VERSION=2.95.0",
         "NODE_VERSION=22.23.1",
         "PNPM_VERSION=11.13.1",
-        "CODEX_VERSION=0.140.0",
-        "CLAUDE_VERSION=2.1.220",
-        "CURSOR_VERSION=2026.07.23-e383d2b",
         "OPENCODE_VERSION=1.18.18",
-        "PI_VERSION=0.84.2",
     ):
         assert version in job
         # Substring-anywhere is too weak on its own: the reviewed build_args in
@@ -266,7 +262,7 @@ def test_main_deployment_publication_is_anonymously_executable_on_both_arches() 
     assert '"/bin/sh"' in verifier
     assert 'test "$(id -u)" = 10001' in verifier
     assert "test -x /opt/mac-venv/bin/mac-git-askpass" in verifier
-    assert "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml" in verifier
+    assert "import cryptography, fastapi, mac.api, psycopg, uvicorn, yaml" in verifier
 
 
 def test_deployed_hub_blackbox_explicitly_migrates_before_startup() -> None:
@@ -384,3 +380,91 @@ def test_all_publishers_pin_qemu_before_buildx() -> None:
             job = job.split(f"\n  {next_job}:\n", 1)[0]
         assert job.index(qemu) < job.index(buildx)
         assert "platforms: arm64" in job
+
+
+def test_runtime_smoke_checks_only_the_shipped_coding_cli() -> None:
+    """The runtime image ships opencode as its only coding CLI.
+
+    The image dropped codex, claude and cursor-agent, but this smoke command
+    still ran `codex --version`, so publication failed on main with
+    "codex: command not found" against an image that was otherwise correct.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    argv = module._smoke_argv("openshell-runtime", "docker", "ref@sha256:" + "0" * 64, "linux/amd64")
+    command = argv[-1]
+    assert "opencode --version | grep -F '%s'" % "1.18.18" in command
+    for retired in ("codex", "claude", "cursor-agent", "pi --version"):
+        assert retired not in command
+    version = module.IMAGE_SPECS["openshell-runtime"]["build_args"].get("OPENCODE_VERSION")
+    assert version == "1.18.18"
+
+
+def test_runtime_smoke_proves_nanolang_native_headers_are_present() -> None:
+    """nanolang's bootstrap failed in the sandbox on a missing <ffi.h>.
+
+    The smoke must compile against the header, not test a fixed path: Debian
+    installs ffi.h under the multiarch include directory, so
+    `test -f /usr/include/ffi.h` would fail on a correct image.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    command = module._smoke_argv(
+        "openshell-runtime", "docker", "ref@sha256:" + "0" * 64, "linux/amd64"
+    )[-1]
+    assert command.startswith("set -euo pipefail;")
+    assert "pkg-config --exists libffi;" in command
+    # OpenShell drops image ENV, so the smoke must prove the limits with env -i.
+    empty = "env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "
+    assert 'test "$(' + empty + 'pnpm config get network-concurrency)" = 2;' in command
+    assert 'test "$(' + empty + 'pnpm config get pm-on-fail)" = ignore;' in command
+    assert (
+        "echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c -;"
+        in command
+    )
+    assert "#include <openssl/evp.h>" in command
+
+
+def test_runtime_smoke_proves_nanolang_test_quick_dependencies_are_present() -> None:
+    """nanolang's gate runs `make test-quick`, not only `make build`.
+
+    test-quick requires SDL2_mixer (and SDL/GL/libuv/libevent), diffs against a
+    real gforth, and its schema step runs the login shell's `python3` with
+    `import yaml`. #921 judged these optional and the gate failed in the
+    sandbox on missing SDL2_mixer headers. The smoke runs under `/bin/bash -lc`
+    so `set -euo pipefail` is valid and `python3` resolves as the executor's
+    login shell resolves it, not to the venv's interpreter.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    argv = module._smoke_argv(
+        "openshell-runtime", "docker", "ref@sha256:" + "0" * 64, "linux/amd64"
+    )
+    assert argv[argv.index("--entrypoint") + 1] == "/bin/bash"
+    assert argv[-2] == "-lc"
+    command = argv[-1]
+    assert command.startswith("set -euo pipefail;")
+    assert (
+        "pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl;"
+        in command
+    )
+    assert "gforth --version;" in command
+    assert "python3 -c 'import yaml';" in command

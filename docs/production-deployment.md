@@ -1,6 +1,6 @@
 # Production Deployment
 
-Three supported topologies:
+Two supported topologies:
 
 1. **Single host, systemd** — one machine, one PostgreSQL database, one FastAPI
    process. Suitable for dev fleets, personal Hermes runtimes, and pilot
@@ -8,14 +8,6 @@ Three supported topologies:
 2. **Containerized, single-instance** — image at `Dockerfile`. Same PostgreSQL
    topology, but lifecycle is managed by Docker Engine/Moby or k8s as a
    single-replica deployment. See the container section below.
-3. **Kubernetes, multi-replica, Postgres-backed** — stateless `mac-api`
-   Deployment in front of an externally-managed Postgres 17 cluster.
-   Multiple `mac-api` replicas share the same durable state via
-   `MAC_DATABASE_URL`. The cluster itself (CloudNativePG, RDS, Cloud
-   SQL, vendor-managed, etc.) is provisioned outside this repo and its
-   DSN is supplied via the `mac-api-config` Secret. See
-   [`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md) and
-   [`docs/archive/field-notes/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md).
 
 PostgreSQL is the only supported control-plane authority in every topology.
 Set `MAC_DATABASE_URL` to an explicit PostgreSQL DSN. The legacy `MAC_DB`
@@ -40,7 +32,7 @@ database variable is reintroduced.
 | Variable | Required | Purpose |
 |---|---|---|
 | `MAC_SECRET_KEY` | yes | 32+ char secret; HKDF input for the Fernet key that encrypts secret values. Refuses to start without it. |
-| `MAC_CONTROL_PLANE_ROLE` | yes for fleet deploys | `hub` for the single database-owning authority; `client` for database-free spokes. |
+| `MAC_CONTROL_PLANE_ROLE` | yes for fleet hosts | `hub` for the single database-owning authority; `client` for database-free spokes. |
 | `MAC_DATABASE_URL` | conditional | PostgreSQL DSN (`postgresql://...` or `postgres://...`). Preferred authority setting; overrides `MAC_DB`. Startup verifies the migration ledger; deploy applies migrations explicitly. |
 | `MAC_PG_POOL_SIZE` | no | `psycopg_pool` max connections per `mac-api` replica. Default `10`. |
 | `MAC_DB` | conditional | Legacy name for an explicit PostgreSQL DSN. SQLite paths are rejected; no private client ledger is created. |
@@ -51,40 +43,39 @@ database variable is reintroduced.
 | `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM` | no | Set `0` to disable startup patching of an explicit `MAC_HERMES_AGENT_DIR`. Default enabled only when the checkout path is explicit. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | no | Set `0` to disable startup patching of Hermes gateway model/runtime overrides. Default enabled for explicit checkout paths. |
 | `MAC_HERMES_GATEWAY_MODEL` | no | Per-agent model used by Hermes gateway conversations and mirrored to `HERMES_INFERENCE_MODEL` for oneshot worker execution. |
-| `MAC_HERMES_GATEWAY_PROVIDER` | no | Runtime provider for the per-agent model. Fleet deploy normally uses `custom` so Hermes sends OpenAI-compatible requests through MAC's router. |
-| `MAC_HERMES_GATEWAY_BASE_URL` | no | OpenAI-compatible base URL for Hermes. Fleet deploy writes the hub's local in-mac `/v1` endpoint on the hub and the hub or wing-router `/v1` endpoint on spokes. |
+| `MAC_HERMES_GATEWAY_PROVIDER` | no | Runtime provider for the per-agent model. Fleet hosts normally use `custom` so Hermes sends OpenAI-compatible requests through MAC's router. |
+| `MAC_HERMES_GATEWAY_BASE_URL` | no | OpenAI-compatible base URL for Hermes. Fleet hosts use the hub's local in-mac `/v1` endpoint on the hub and the hub or wing-router `/v1` endpoint on spokes. |
 | `MAC_HERMES_STARTUP_CHECK` | no | Set `0` to disable Hermes state and Slack startup checks. Enabled by default. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | no | Set `1` to fail `mac` startup when Hermes soul/memory/state references or Slack activation are not ready. |
 | `MAC_HERMES_SLACK_HOME_CHANNEL_NAME` | no | Slack home-channel name, without `#`, used to write `~/.hermes/slack_home_channels.json` from `slack_accounts.json`. Empty skips discovery. |
 | `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS` | no | Set `0` to preserve existing Slack home-channel files without discovery. Default enabled. |
-| `MAC_URL` / `MAC_HUB_URL` | no | MAC API endpoint used by Hermes-side `mac-hermes` operations. Fleet deploy points this at the hub. |
-| `MAC_CLIENT_PRINCIPALS_FILE` | no | Hub-local hashed registry for scoped client enrollment. Fleet deploy sets `$MAC_HOME/client-principals.json`; permissions must be `0600`. The API hot-reloads issuance and revocation. |
-| `MAC_HERMES_INSTANCE_ID` | no | Hermes instance id for this runtime. Fleet deploy uses a deterministic `hermes_<agent>` id and registers it in MAC. |
+| `MAC_URL` / `MAC_HUB_URL` | no | MAC API endpoint used by Hermes-side `mac-hermes` operations. Fleet hosts point this at the hub. |
+| `MAC_CLIENT_PRINCIPALS_FILE` | no | Hub-local hashed registry for scoped client enrollment. Fleet hosts set `$MAC_HOME/client-principals.json`; permissions must be `0600`. The API hot-reloads issuance and revocation. |
+| `MAC_HERMES_INSTANCE_ID` | no | Hermes instance id for this runtime. Fleet hosts use a deterministic `hermes_<agent>` id and registers it in MAC. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | no | Worker agent binding to the Hermes instance id. This keeps MAC agent rows linked to their Hermes soul/runtime. |
-| `MAC_AGENT_ID` | no | Deterministic MAC agent id for this runtime. Fleet deploy uses `agent_<agent>`. |
+| `MAC_AGENT_ID` | no | Deterministic MAC agent id for this runtime. Fleet hosts use `agent_<agent>`. |
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | no | Hermes-visible task/project runtime contract JSON. Default `~/.hermes/mac-runtime-context.json`. |
 | `MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN` | no | Human/agent-readable runtime contract summary. Default `~/.hermes/mac-runtime-context.md`. |
-| `MAC_HERMES_RUNTIME_CONTEXT_REQUIRED` | no | Set `1` to make startup readiness fail if the MAC task/project runtime contract is missing, invalid, or not injected into the Hermes prompt builder. Fleet deploy enables this. |
-| `MAC_HERMES_WORKSPACE` | no | Source workspace Hermes should treat as equivalent to an operator/Codex shell in the MAC repo. Fleet deploy sets this to `$MAC_HOME/src/mac`. |
-| `MAC_PROJECT_CONTRACT_FILE` | no | Repository contract file for the Hermes direct-session capability bridge. Fleet deploy sets this to `$MAC_HERMES_WORKSPACE/.mac/project.yaml`. |
+| `MAC_HERMES_RUNTIME_CONTEXT_REQUIRED` | no | Set `1` to make startup readiness fail if the MAC task/project runtime contract is missing, invalid, or not injected into the Hermes prompt builder. Fleet hosts enable this. |
+| `MAC_HERMES_WORKSPACE` | no | Source workspace Hermes should treat as equivalent to an operator/Codex shell in the MAC repo. Fleet hosts set this to `$MAC_HOME/src/mac`. |
+| `MAC_PROJECT_CONTRACT_FILE` | no | Repository contract file for the Hermes direct-session capability bridge. Fleet hosts set this to `$MAC_HERMES_WORKSPACE/.mac/project.yaml`. |
 | `MAC_WORKER_EXECUTOR` | no | Executor command used by loop-mode workers. The default `~/.mac/bin/mac-hermes-task-executor` is part of the Hermes direct-session capability proof. |
 | `GH_TOKEN` / `GITHUB_TOKEN` | no | GitHub HTTPS credential used by task, review, publication, and pushed-ref verification commands. The credential may appear only in the individual Git command and must not persist in `origin`, evidence, logs, or memory. |
 | `GITEA_TOKEN` | no | Gitea HTTPS credential for the same Git operations. `MAC_TASK_GIT_TOKEN` is the host-mode fallback when no host-specific token is set. |
 | `MAC_DEPLOY_GH_TOKEN` | no | Fleet-deploy input copied into the managed runtime as `GH_TOKEN`. Keep it in the host-local `~/.mac/.env`, never in `fleets.yaml` or a committed spec. |
 | `MAC_DEPLOY_GATEWAY_PROBE_FATAL` | no | Set `1` to make a failed OpenClaw gateway/channel probe fail the node, and therefore the cohort. Default `0`: the failure is recorded, the failed successor is retained for diagnosis, and the deploy continues, because task execution is OpenShell plus the coding CLI plus `mac-agent` and none of them consult chat. Set it only for a deploy whose purpose is to prove the chat surface. |
-| `MAC_REPOSITORY_REF_RECONCILER_MODE` | no | Managed task-branch reconciler mode: `off`, `audit`, or `prune`. Runtime default `off`; fleet deployment defaults the hub to `prune` and spokes to `off`. |
+| `MAC_REPOSITORY_REF_RECONCILER_MODE` | no | Managed task-branch reconciler mode: `off`, `audit`, or `prune`. Runtime default `off`; fleet hubs normally use `prune` and spokes `off`. |
 | `MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | no | Delay between automatic passes, bounded from `60` through `604800`. Hub default `86400` (daily). |
 | `MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | no | Delay before the first automatic pass, bounded from `0` through `86400`. Hub default `300`. |
 | `MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | no | Fallback cleanup grace for legacy lifecycle records, bounded from `0` through `365`. Default `7`. |
 | `MAC_REPOSITORY_REF_RECONCILER_REMOTE` / `MAC_REPOSITORY_REF_RECONCILER_BASE_REF` | no | Git remote name (default `origin`) and optional explicit `<remote>/<branch>` ancestry target. Without a base override, the remote HEAD is auto-detected. |
 | `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` | no | How long a newest authentication/authorization failure excludes a reviewer for the matching project, repository host, and operation. Default `1800`. |
-| `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning receives reviewer-selection preference. Default `86400`. |
-| `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | no | Maximum durable delivered verdict nudges for one review before it is retracted. Default `10`. |
-| `MAC_SUPERVISOR_KIND` | no | Runtime supervisor selected by fleet deploy: `systemd`, `launchd`, or `supervisord`. |
+| `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning stays current and supersedes an older failure. Default `86400`. |
+| `MAC_SUPERVISOR_KIND` | no | Runtime supervisor on this host: `systemd`, `launchd`, or `supervisord`. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | no | Hermes-visible memory topology JSON. Default `~/.hermes/mac-memory-topology.json`. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | no | Agent that owns hub-managed shared services. Defaults to the configured fleet hub. |
 | `QDRANT_URL` / `QDRANT_ADDRESS` / `QDRANT_FLEET_URL` | no | Shared Qdrant level-2 memory endpoint. When set, Hermes startup readiness validates `/collections`. |
-| `MAC_REQUIRE_QDRANT_MEMORY` | no | Set `1` to require shared Qdrant memory readiness. Fleet deploy enables this by default. |
+| `MAC_REQUIRE_QDRANT_MEMORY` | no | Set `1` to require shared Qdrant memory readiness. Fleet hosts enable this. |
 | `MAC_QDRANT_MEMORY_ALLOW_DEGRADED` | no | Temporary operator override that allows startup when required Qdrant is missing or unreachable. |
 | `QDRANT_PIDS_LIMIT` | no | Container PID/thread cap for the hub-managed Qdrant (supervisord wrapper + systemd unit). Default `4096`. Raise on very-high-core nodes; see Troubleshooting. |
 
@@ -146,103 +137,17 @@ images with no mesh provider may still bind `0.0.0.0` inside the container
 network namespace. Put a TLS-terminating reverse proxy in front only when
 the hub must be reached off-mesh.
 
-## Fleet Setup Wizard
+## Provisioning and updating fleet hosts
 
-First-time deployments should use the setup wizard instead of hand-editing
-deployment YAML:
+Fleet hosts are provisioned by hand and updated with `scripts/fleet-update`.
+Both are described in [Updating the fleet with `fleet-update`](operations/fleet-update.md):
 
-```console
-make setup
-```
+- **New host:** follow its "Provision a new host" checklist.
+- **Update:** run `scripts/fleet-update <hub|HOST|all> <sha>` on the hub.
 
-The wizard asks for the hub, agents, SSH targets, OS families, supervisors,
-Slack home channel, per-agent Hermes model selectors, worker mode, canary
-policy, Qdrant shared-memory endpoint, fleet network provider, and optional
-hub token. It writes:
-
-- `~/.mac/fleets.yaml`: home-scoped multi-fleet topology, keyed by hub node.
-- `~/.mac/.env`: caller-machine deploy settings and local secrets, mode 0600.
-
-To deploy after the wizard:
-
-```console
-make deploy HUB=<hub-node>
-```
-
-## Declarative Setup For Agents
-
-LLM-driven setup should prefer a spec file over the interactive wizard. The
-setup spec is validated before files are written, and the doctor output lists
-missing env vars and next commands in machine-readable JSON.
-
-Rather than hand-writing a spec, start from a generic, per-CSP sample. The repo
-ships de-personalized samples under `deploy/fleet/samples/` (GKE is the worked
-example); a real, named fleet spec lives **outside git** in
-`~/.mac/specs/<fleet>.fleet.yaml`, created at install time by copying and
-customizing a sample. Never check a named fleet into the repo.
-
-```console
-scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
-scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
-$EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
-make setup ARGS="--spec ~/.mac/specs/my-gke.fleet.yaml --force"
-```
-
-See `deploy/fleet/samples/README.md` for the per-CSP convention and the knobs
-that differ per cloud (bastion/ProxyJump, network provider, in-cluster vs
-public DNS, supervisor).
-
-Example `fleet-setup.yaml`:
-
-```yaml
-schema: mac.fleet_setup.v1
-fleet:
-  name: horde
-  hub: horde-hub
-  hub_url: http://horde-hub:8789
-agents:
-  - name: horde-hub
-    target: ubuntu@10.0.0.10:2201
-    os: linux
-    model: nvidia/llama-3.3-nemotron-super-49b-v1
-    worker:
-      mode: loop
-  - name: horde-worker
-    target: ubuntu@10.0.0.11
-    os: linux
-router:
-  backend: inproc
-  providers:
-    - id: nvidia
-      key_env: NVIDIA_API_KEY
-network:
-  provider: tailscale
-```
-
-Recommended LLM flow:
-
-```console
-export NVIDIA_API_KEY=...
-
-mac admin fleet validate --spec fleet-setup.yaml
-mac admin fleet doctor --spec fleet-setup.yaml
-make setup ARGS="--spec fleet-setup.yaml --force"
-```
-
-`make setup ARGS="--spec ..."` writes `~/.mac/fleets.yaml` and `~/.mac/.env`,
-then deploys the generated plan. To configure only:
-
-```console
-make setup ARGS="--configure-only --spec fleet-setup.yaml --force"
-```
-
-If a provider key such as `NVIDIA_API_KEY` is absent from both the environment
-and the spec, validation fails before deployment so the fleet cannot silently
-come up without chat routing.
-
-The checked-in `deploy/fleet/config.yaml` is a generic sample only. It is
-marked `sample: true`, and `deploy/deploy-mac-fleet.sh` refuses to deploy from
-it unless `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1` is set explicitly for tests.
+The old setup wizard (`setup.sh` / `make setup`), the declarative
+`mac.fleet_setup.v1` specs and `make deploy` / `deploy/deploy-mac-fleet.sh`
+have been deleted.
 
 ## Reaching the Hub Node
 
@@ -276,9 +181,6 @@ Hub is directly routable — no tunnel needed:
 ```console
 # Confirm health
 curl http://<hub-host>:8789/health
-
-# Deploy
-make deploy HUB=<hub-node>
 ```
 
 ### SSH port forward and scoped enrollment
@@ -413,10 +315,10 @@ defaults:
 ```console
 # Hub is reachable at its Tailscale IP, e.g. 100.x.x.x:8789
 curl http://100.x.x.x:8789/health
-make deploy HUB=<hub-node>
 ```
 
-`MAC_DEPLOY_TAILSCALE_AUTH_KEY` must be set in `~/.mac/.env` before deploy.
+Join each host to the tailnet by hand (`deploy/install-tailscale.sh`) before
+provisioning it.
 
 ### Headscale (self-hosted control plane, `provider: headscale`)
 
@@ -441,90 +343,23 @@ defaults:
 ```console
 # Hub reachable at its headscale-assigned IP or MagicDNS name
 curl http://hub.headscale.example.com:8789/health
-make deploy HUB=<hub-node>
 ```
 
-`MAC_DEPLOY_HEADSCALE_PREAUTHKEY` must be set in `~/.mac/.env`. With
-`headscale.manage: true` the deploy script installs and configures the
-headscale server on the hub node itself.
+`deploy/install-headscale.sh` installs and configures a headscale server on the
+hub node when you manage it yourself.
 
-## One-Time ACC Replacement Deploy
+## Host layout and rollback
 
-For a configured fleet, use the Make deploy target:
+Every host runs the hub or worker from a git checkout at `~/.mac/src/mac` with
+a venv at `~/.mac/venv`; `scripts/fleet-update` moves that checkout to a new
+commit. Provisioning, the per-host update steps and rollback are in
+[Updating the fleet with `fleet-update`](operations/fleet-update.md).
 
-```console
-make deploy HUB=<hub-node>
-```
-
-Fleet deploy reads `~/.mac/fleets.yaml` by default. Override
-`MAC_DEPLOY_FLEETS_CONFIG` when a different registry path is required. The hub
-node name selects the fleet. Host-local secret env files still own tokens and
-provider credentials.
-
-Fleet mesh networking is configured under `defaults.network` or per-agent
-`network` overrides in `~/.mac/fleets.yaml`. `provider: tailscale` is the
-default and uses `MAC_DEPLOY_TAILSCALE_AUTH_KEY` from `~/.mac/.env` when
-automatic join is desired. `provider: headscale` is an explicit advanced mode:
-the fleet registry must declare `headscale.login_server`,
-`headscale.health_url`, `headscale.preauth_key_source`,
-`headscale.preauth_key_env`, and the DNS assumption. Managed-hub Headscale is
-available with `headscale.manage: true`, but it should be treated as a shared
-service with backup, monitoring, and recovery expectations rather than an
-implicit default.
-
-Fleet deploy is supervisor-driven, not Linux-systemd-only. Set
-`MAC_DEPLOY_SUPERVISOR=auto` unless a host needs an explicit override. Auto
-selects `launchd` on macOS, `systemd` on systemd Linux, and `supervisord` when
-that is the available process supervisor. The selected value is written to
-`MAC_SUPERVISOR_KIND` and recorded in deploy manifests.
-
-Fleet deploy mirrors each configured per-agent model into `ACC_HERMES_GATEWAY_MODEL`,
-`HERMES_INFERENCE_MODEL`, and `ACC_LLM_MODEL` so upstream Hermes gateway turns
-and `mac-hermes-task-executor` oneshot work use the same per-agent identity.
-Upstream provider credentials remain centralized on the hub, resolved by the
-in-mac router from MAC's encrypted vault or inherited host-local environment;
-spokes receive only their hub-facing MAC token.
-Git-host credentials are a separate execution concern. Fleet deploy resolves
-`MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then the operator's existing
-`gh` keychain login, and writes the result to each managed runtime as
-`GH_TOKEN`. Only the source name is logged; the value travels over SSH stdin,
-not in the remote command. Pure `gateway_impl: none` workers require successful
-GitHub validation by default before drain or source replacement. The variable
-is also included in OpenShell's private mode-`0600` environment bundle so
-confined tasks can clone and publish without copied host SSH keys. Do not put
-the value in `~/.mac/fleets.yaml`, a fleet spec, task metadata, or source
-control. A vault record by itself does not populate a worker environment;
-deploy or the Kubernetes runner Secret must inject the corresponding
-environment key.
-
-Deployment installs a reviewed MAC source bundle and locked service environment
-on each selected host. The configured gateway implementation determines the
-separate conversational runtime. Hermes retains its existing upstream service
-and active profile; MAC does not replace it with an assumed OpenClaw home.
-Systemd, launchd and supervisord adapters manage native services. Deprecated
-ACC and CCC databases are not part of the current deployment authority.
-
-When the local Git remote is available, fleet deploy installs `~/.mac/src/mac`
-as a branch-tracking Git worktree and sets `MAC_SELF_UPDATE_REPO` to that path.
-That lets the AgentBus repo-update control message pull future changes and
-restart the listening `mac-agent` process without another manual deploy pass.
-
-The fleet topology is hub-and-spoke, matching ACC. The configured hub exposes
-the shared control plane URL from `hub_url`; spokes keep a host-local control
-plane for local state and Hermes startup checks, but their `mac-agent` service
-registers and heartbeats against the configured hub. By default the hub binds
-`0.0.0.0` and spokes bind `127.0.0.1`.
-Runtime lazy dependency installs are disabled after the preinstall step, and
-`HERMES_REDACT_SECRETS=false` in inherited Hermes env files is corrected to
-`true` because disabled redaction is treated as state drift.
-
-The hub also owns the shared-services layer. Fleet deploy installs Qdrant on
-the shared-services manager agent by default and configures every agent with
-the same `QDRANT_URL` / `QDRANT_FLEET_URL`. Each agent receives a
-Hermes-visible `~/.hermes/mac-memory-topology.json` plus `.env` pointers that
-describe local Hermes soul/conversation state, mac operational provenance, and
-hub-managed shared level-2 memory. `/startup/hermes` reports
-`qdrant_level2` readiness using redacted endpoints only.
+Upstream provider credentials stay centralized on the hub, resolved by the
+in-mac router from MAC's encrypted vault or the host-local environment; workers
+receive only their hub-facing MAC token. Put `GH_TOKEN` in a worker's
+`~/.mac/mac.env` (mode `0600`) so confined tasks can clone and publish; never
+put it in `~/.mac/fleets.yaml`, task metadata, or source control.
 
 On a macOS hub, Docker containers for system services are expected. Qdrant,
 Firecrawl, test PostgreSQL, and telemetry collectors are long-lived network
@@ -535,48 +370,14 @@ LinuxKit kernel cannot enforce Landlock against the macOS host. Use `docker ps`
 to confirm that observed containers are known system services; no container
 may be treated as a sandbox or as evidence of execution confinement.
 
-Deployment logs and migration reports are written under `~/.mac/logs/` on each
-host:
-
-- `deploy-*.log`
-- `deploy-manifest-*-pre.json`, `deploy-manifest-*-post.json`, and
-  `deploy-manifest-latest.json`
-- `rollback-*.sh` and `rollback-latest.sh`
-- `acc-migration-dry-run.json`
-- `acc-migration-import.json`
-- `acc-migration-status.json`
-- `startup-hermes.json`
-- `hermes-messaging-deps.json`
-- `hermes-home-channel-sync.json`
-- `hermes-redaction-normalization.json`
-- `hermes-log-summary.json`
-- `mac-service-journal.txt` on Linux, or `mac-service.log` on macOS
-- `hermes-gateway-journal.txt` on Linux, or `hermes-gateway.log` on macOS
-- `mac-agent-journal.txt` on Linux, or `mac-agent.log` on macOS
-- `hub-agents.json`
-
-The activation shim for `slack_accounts.json` is intentionally applied by
-`mac` startup, not by the deploy script, so this path exercises the startup
-patch capability.
-
-To roll back the most recent deployment on a host:
-
-```console
-~/.mac/logs/rollback-latest.sh
-```
-
-The rollback script restores the prior mac source tree, mac venv, Hermes
-checkout, and service definitions or launchd plists that existed before the
-deploy pass, then restarts the mac-managed services.
-
 ## Worker Agents
 
 The control-plane service does not execute tasks by itself. Each execution host
 must run a worker process that registers or refreshes its machine/agent row,
-heartbeats, then claims eligible open work with a real executor. Fleet deploy
-installs that process as a service in `heartbeat` mode by default so hosts are
-visible in the configured hub registry without claiming imported ACC work
-prematurely:
+heartbeats, then claims eligible open work with a real executor. On fleet
+hosts it runs as the `mac-agent` service (`deploy/systemd/mac-agent.service.in`).
+In `heartbeat` mode a host is visible in the hub registry without claiming
+work:
 
 ```console
 mac-agent --url http://hub.example.internal:8789 --register \
@@ -594,25 +395,20 @@ Use `--heartbeat-only` during deploy validation when you want fleet visibility
 without claiming migrated ACC work. Start the `--loop` form only after the
 executor command is the intended production worker. Successful executions write
 log evidence, move tasks to `needs_review`, and ask the control plane to run
-the default review workflow. The default workflow prefers a healthy reviewer
-that has never owned the task. If no independent reviewer is currently
-eligible, it may assign the least-conflicted healthy review-capable agent and
-records `reviewer_independence=fallback` plus the reason in task history and
-observability. A newly available independent reviewer supersedes a pending
-fallback review. Set task metadata `review.require_independent_reviewer: true`
-(or `review.allow_independence_fallback: false`) for work that must wait instead.
-Every path still requires a separate signed `review_verdict`; agent-generated
-work still requires a reviewer LLM different from the executor LLM. The
-workflow publishes/completes the task only when executor evidence and reviewer
-verdict are verifiable.
+the default review workflow. The worker's pre-push verifier run, on a fresh
+clone of the exact pushed commit, is the review verdict: once the executor
+evidence validates (for repository changes that includes a real verifier pass),
+the virtual hub-reviewer signs a separate `review_verdict` over it and the
+workflow publishes/completes the task. No reviewer agent is selected and no
+tests are re-run on the hub. A reviewer assigned explicitly through the review
+API must be independent of the executor; its signed verdict is honoured.
 Failed executions fail the task with evidence attached.
 
 For high-risk work, set `metadata.review.risk_level` to `high` or `critical`.
 Approval then fails closed unless the signed executor and verdict manifests
 identify different model families and different upstream providers; merely
 using two versions of Claude, GPT, or another single lineage is insufficient.
-Unknown lineage/provider metadata also blocks approval, and reviewer
-independence fallback is disabled. The same constraints can be enabled
+Unknown lineage/provider metadata also blocks approval. The same constraints can be enabled
 individually with `review.require_different_model_family: true` and
 `review.require_different_model_provider: true`.
 
@@ -647,8 +443,8 @@ already asks of humans:
 4. The forge lands that pull request, pinned to the reviewed head SHA (the
    pull-request equivalent of `--force-with-lease`: if the branch moved
    underneath us, the merge is refused rather than landing something nobody
-   reviewed) — through the branch's **merge queue** when it has one, and
-   otherwise through a plain squash merge, see below.
+   reviewed) — through a squash merge, one landing at a time per repository,
+   see *The serial land loop* below.
 5. The hub verifies the resulting canonical tip and records it as the
    canonical-integration proof.
 
@@ -659,7 +455,7 @@ lands, and the hub's job is to record that it happened and to gate completion.
 **The agent's forge credential.** The agent uses the credential already in its
 own process environment (`GH_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN` — the same
 variable `guarded_push` authenticates with, written into `~/.mac/mac.env` at
-deploy time and mounted as an optional `secretKeyRef` on K8s workers). When it
+deploy time). When it
 has none, it resolves `github.token` from the **hub's secret store** by name,
 at the moment of use — audited, never cached, never written to evidence, never
 carried in a bus message or task metadata. A resolved secret that does not
@@ -685,136 +481,113 @@ list is a *different case* from a required list that is still pending, and the
 two are recorded separately in the publication evidence
 (`required_check_verification.case`: `none_configured`, `pending`, `failed`,
 `unverifiable`, or `verified`) — an unprotected repository is gated by the
-hub's own contract run instead, and a repository whose checks simply have not
-started is not mistaken for one.
+worker's own verifier run instead, and a repository whose checks simply have
+not started is not mistaken for one.
 
-**How the merge is serialized.** `merge_queue.py` validates against the
-*projected post-merge* state — the "Not Rocket Science Rule": test the tree
-that will actually land, serialize the merges, and post-merge testing is then
-redundant. A plain forge squash merge does **not** preserve that: if the
-canonical branch advances between the required checks completing and the merge
-executing, the tree that lands was never tested as such. Required status checks
-alone do not close this; a **merge queue** does, and unlike
-`strict_required_status_checks_policy` it serializes the *merges* without
-serializing the *test runs* (which here take ~2 hours, so strict rebasing never
-converges with several open pull requests).
+### The serial land loop
 
-| branch has | what mac does | the guarantee |
-| --- | --- | --- |
-| a forge merge queue (`merge_queue`) | enqueues the PR pinned to the reviewed head; the queue tests the projected merge and lands it in order | what was tested is what lands |
-| no forge merge queue (`mac_native_queue`) | orders the change in **mac's own merge queue**, tests it against the tree it will land on, and refuses the merge unless the canonical tip's tree is still that exact tree | what was tested is what lands |
+**One test gate per landing.** A repository with required status checks is
+gated by those checks; a repository without them is gated by the worker's own
+verifier run, which ran the contract on a fresh clone of the reviewed head
+after the finalizer synced it onto the canonical tip
+(`repo.canonical_sync.canonical_tip` in the evidence). The hub runs no tests.
 
-Both branches are recorded in the publication evidence as a
-`merge_serialization` entry naming the mode and its guarantee, and on the
-canonical-integration proof as `merge_serialization`.
+**One land step per publication attempt, serialized per repository.** Each
+publication attempt takes a PostgreSQL advisory lock keyed on (repository,
+canonical branch) for the whole land step. A second land step for the same
+repository does not queue behind it; it waits a tick
+(`publication_failure_kind=landing_serialized`, charged to the landing deadline
+only). A per-task advisory lock is taken first: when the sweep and the
+event-driven consumer both reach the land step for the same task, the second
+returns `landing_in_progress` and writes nothing to the task, because any task
+write would revoke the first land step's authority fence. That fence re-checks
+the task row immediately before the forge merge; if the row changed, the attempt
+raises `publication_authority_revoked`, which charges one landing attempt and
+backs off, and the next tick starts a fresh attempt. Inside the lock, `ControlPlane._publish_git_target_attempt`:
 
-### mac's own merge queue
+1. clones the current canonical tip and fetches the reviewed head;
+2. runs `git merge-tree` (`mac.merge_queue.validate_projected_merge`, no
+   tests) — a conflict sends the task back to its worker to rebase;
+3. **with required checks**: opens or reuses the pull request, reads
+   `required_check_verdicts` for the reviewed head, and requests the squash
+   merge once they pass. Pending checks wait under the landing deadline;
+   failed checks send the task back to its worker to fix them (below);
+4. **without required checks**: lands only if the canonical tip is still the
+   base the worker verified (it is an ancestor of the reviewed head) — through
+   the pull request, or by a fast-forward `--force-with-lease` push on the
+   direct-push path — re-validating the tip immediately before the merge. A
+   tip that has moved sends the task back to its worker to rebase and retest.
 
-**Why it exists.** GitHub merge queues are available only on
-**organization-owned** repositories, and GitHub has said it does not plan to
-open them to personal accounts. Adding a `merge_queue` rule to a User-owned
-repository's ruleset returns HTTP 422 `Invalid rule 'merge_queue'` even with no
-parameters. So on every personal repository mac manages there is no forge queue
-to borrow serialization from, and `mac_native_queue` is not a rare fallback —
-it is the only path. `src/mac/native_merge_queue.py` provides the queue itself.
+**Optimistic concurrency.** If the tip moves between the land step's read and
+its merge (someone pushed outside mac), the guarded push or the re-validation
+refuses, and the step retries once at once; the retry then sees a tip the
+worker never verified and sends the task back.
 
-**What it does.** Approved changes awaiting land are ordered per (repository,
-canonical branch) in the `merge_queue_entries` table. Entry *N* is projected on
-top of entries *1..N-1* (Zuul's speculative merge train) so several entries can
-be tested in parallel, and they land in order. If entry *K* fails it is
-**evicted**, and every speculative result behind it is **discarded** — those
-entries were green against a state that will never exist — and the survivors are
-re-planned in a new speculation epoch without *K*.
+**Rebase and retest.** A send-back moves the SAME task from review
+(`needs_review`, or a legacy `reviewing` row) to OPEN with a `rebase_onto_tip`
+directive in its metadata (the canonical tip, the verified base, the reviewed
+head and branch, any conflicted paths). The executor prompt renders it as a
+"Sent back to rebase" section: rebase onto the tip, resolve the named
+conflicts, keep the previous work. The next claim re-runs the worker, whose
+finalizer rebases onto the current tip before the verifier runs, so the new
+evidence is verified against the tip it will land on. The previous attempt's
+pull request (the agent's, or the one a land step was working on) is closed
+with a "Superseded" comment; a forge that refuses is logged
+(`workflow.default_review.superseded_pr_close_failed`) and never blocks the
+send-back. Send-backs are counted in `metadata.landing.rebases` and capped at two;
+the third blocks the task (`landing_rebase_cap_exhausted`). New evidence resets
+the rest of the landing budget but not this count.
 
-**The invariant.** *Never land an untested tree.* Each entry records the tree it
-was tested against; the land gate refuses the merge unless the canonical tip's
-tree is byte-identical to it. Comparing trees rather than commit SHAs is what
-makes speculation safe and what survives squash merges, which change the commit
-but not the tree. Every ambiguous state — an unreadable tip, a lost lease, a PR
-whose state the forge will not report — defers through the existing publication
-retry backoff. None of them can reach "merge anyway".
+**Fix failing checks.** When the pull request's required checks fail for the
+head that would land, the land step collects each failed check's name,
+conclusion, details URL and the tail of its GitHub Actions job log (up to its
+last `##[error]`, at most 150 lines, 8 KB across all checks, scrubbed of
+credentials). The SAME task goes back to OPEN with reason
+`required_checks_failed` and a `fix_failed_checks` directive in its metadata;
+the executor prompt renders it as a "Sent back to fix failing checks" section
+with the logs as an escaped, untrusted data block. The next attempt pushes from
+a fresh lease branch, so when it lands the land step moves the ORIGINAL pull
+request's head branch to the new reviewed head (`--force-with-lease`) and lands
+through that pull request: its checks re-run there, instead of the hub waiting
+on a pull request whose head never changed. A closed or merged pull request is
+not reused. Send-backs are counted in `metadata.landing.check_fixes` and capped
+at three; the fourth failure blocks the task (`landing_check_fix_cap_exhausted`)
+with the last failure summary. A failure that cannot be sent back (no pull
+request, no worker evidence) blocks at once as `landing_non_retryable`.
 
-**Never double-land.** Before merging, the queue reads the pull request's state.
-A PR already merged (by the forge, a human, or an attempt of ours that died
-after the merge) is *observed* and recorded as landed, not merged again. Landing
-is idempotent in the ledger, so a hub restart mid-flight cannot credit one land
-twice.
+**Never double-land.** Before merging, the land step reads the pull request's
+state. A PR already merged (by the forge, a human, or an attempt of ours that
+died after the merge) is *observed* and recorded as landed, not merged again.
 
-**Bounded.** An AIMD window — the same control law as TCP congestion control,
-which is where Zuul got it — caps how many entries may speculate at once. It
-starts at the floor (so a fresh queue is strictly serial), grows by
-`MAC_MERGE_QUEUE_WINDOW_INCREMENT` on each successful land up to
-`MAC_MERGE_QUEUE_WINDOW_CEILING`, and **halves** on any failure down to
-`MAC_MERGE_QUEUE_WINDOW_FLOOR`. Entries outside the window defer; they keep
-their place in line.
+The mode and its gate are recorded in the publication evidence as a
+`merge_serialization` command (`mode: serial_land_loop`, `test_gate:
+required_checks | worker_verifier`) and on the canonical-integration proof.
 
-| knob | default | what it bounds |
-| --- | --- | --- |
-| `MAC_MERGE_QUEUE_WINDOW_FLOOR` | `1` | the narrowest window; `1` is a strictly serial queue |
-| `MAC_MERGE_QUEUE_WINDOW_CEILING` | `4` | the most entries that may speculate at once, and therefore the most workers speculation can occupy. Set to `1` to disable speculation without disabling the queue |
-| `MAC_MERGE_QUEUE_WINDOW_INCREMENT` | `1` | how fast the window recovers after a failure |
-| `MAC_MERGE_QUEUE_LEASE_SECONDS` | `5400` | how long a slot may be held before a dead hub's slot is reclaimable. Deliberately longer than a full contract run (~45 min) |
-| `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | `86400` | how long a resolved forge capability is trusted before it is re-probed |
-
-**What is observable.** Every publication records a `merge_serialization`
-command carrying a queue snapshot: `queue_depth`, `window_size`,
-`window_floor`/`window_ceiling`, `entries_testing`/`entries_tested`,
-`landed_count`, `failure_count`, `speculation_discarded`, and the last ten
-evictions with their reasons. The same numbers are emitted as metrics under
-`merge_queue.*` (`GET /observability/metrics?name=merge_queue.evicted`), and the
-per-attempt commands name each decision: `merge_serialization_capability`,
-`merge_queue_slot`, `merge_queue_speculative_base`, `merge_queue_tested`,
-`merge_queue_observe_pull_request`, `merge_queue_land_gate`,
-`merge_queue_landed`, `merge_queue_eviction`.
-
-**Which mechanism applies is a stored project attribute, not a per-merge probe.**
-`mac.merge_capability` resolves the forge's capability once and stores it on the
-project's repository record in `project_repositories.metadata` under
-`merge_serialization_capability`. It records *supported* and *enabled*
-separately (they differ: an org repo can have a queue and may not have turned it
-on), the forge kind, whether a credential resolved, and when and by what it was
-determined — so an operator can see that an answer is six weeks old rather than
-trusting it silently. The existing GitHub ingest poller refreshes it on its
-normal pass, behind `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS`, and reports the
-outcome in its run report under `merge_queue_capability`. To force a refresh
-now, run the poller: `mac admin fleet github-ingest run` (`POST /github-ingest/run`).
-A missing or expired answer is re-resolved at publication time. **Unknown is
-never permission to do an unserialized squash** — it routes to mac's queue,
-which serializes correctly regardless of what the forge does.
-
-> **Live-hub note.** `schema.sql` is `CREATE TABLE IF NOT EXISTS` with no
-> migration framework, and `PostgresStore.initialize()` only creates missing
-> tables. `merge_queue_entries` and `merge_queue_windows` therefore appear on a
-> hub the next time the schema is applied; on an already-running hub, apply the
-> DDL from `src/mac/data/postgres/schema.sql` (the block headed *"mac's own
-> merge queue"*) once by hand. Until they exist, publication on a repository
-> without a forge queue will fail rather than fall back to an unserialized
-> squash — which is the correct direction to fail.
-
-**Queued, not merged yet.** A pull request accepted into the merge queue has
-not landed. Publication defers with
-`publication_failure_kind=pull_request_queued` through the same retry backoff
-pending checks use, and a later attempt observes the merge the queue performed
-(it asks the forge for the pull request's state before doing anything, so a PR
-the queue already landed is never merged twice).
-
-**Who gates the merge.** Both, at different moments. mac's own reviewer verdict
-plus the merge gate decide whether a pull request is opened and a merge is
-requested *at all*; the forge's required status checks decide whether that merge
-is *permitted*. When the forge reports required status checks for the canonical
-branch, the hub skips its own local re-projection of the contract suite —
-GitHub runs those checks against the merge result it will actually produce,
-which is a better question than the hub's approximation and does not cost the
-15–45 minutes that previously made approved tasks time out unpublished. When
-the forge reports **no** required checks, the hub keeps its own contract gate:
-an unprotected repository must not silently lose its gate.
+mac's native speculative merge queue was removed on 2026-10-01 (it landed 4.7%
+of its entries); migration `0005_drop_native_merge_queue_tables` drops its
+`merge_queue_entries` and `merge_queue_windows` tables. Approved tasks that were
+waiting on it are still `reviewing` and land through the loop on the next tick.
 
 **Checks still running.** A merge the forge refuses because its own gates have
 not finished is not a failure. Publication defers with
 `publication_failure_kind=pull_request_checks_pending` and the existing
 publication-retry backoff re-attempts later; the pull request is reused rather
-than reopened, so retries are cheap. The task stays in `reviewing` — approved
-but not completed — until the change is genuinely on the canonical branch.
+than reopened, so retries are cheap. The task stays in `needs_review` (or a
+legacy `reviewing`) — approved but not completed — until the change is
+genuinely on the canonical branch.
+
+**Branches that must be up to date.** A ruleset with "require branches to be up
+to date before merging" (`strict_required_status_checks_policy`, read by
+`gitops.required_status_check_policy`) will not merge a pull request that is
+behind the base, and nothing else updates it — it used to wait out the landing
+deadline. When the forge reports the PR `behind` (or the canonical tip is not in
+its head), the land step calls GitHub's update-branch
+(`gitops.update_pull_request_branch`, pinned to the observed head) and waits
+for the required checks on the updated head
+(`publication_failure_kind=pull_request_branch_updated`, charged to the
+deadline only). The updated head — the reviewed head plus merges of the
+canonical branch, nothing else — is what the checks verify and the merge is
+pinned to. If the forge reports a conflict, the task is sent back to rebase.
 
 **Squash and the integration proof.** A squash merge lands the reviewed
 *content* under a new SHA, so the reviewed commit is deliberately not an
@@ -828,7 +601,7 @@ squashing destroys, and task completion accepts that proof shape.
 | value | behaviour |
 | --- | --- |
 | `pull_request` (default) | push the branch, open a PR, let the forge squash-merge it |
-| `direct_push` | the legacy path: merge locally in a disposable clone and push the canonical branch under optimistic concurrency (`push_main_occ`) |
+| `direct_push` | the legacy path: fast-forward the canonical branch to the verified head in a disposable clone and push it under optimistic concurrency (`push_main_occ`) |
 
 **Repositories with no forge.** mac manages repositories that have no pull
 requests at all — a bare path, a `file://` remote, or an http(s) remote for
@@ -853,9 +626,9 @@ repository host, operation, agent, credential source name, outcome, failure
 class, bounded redacted error signature, recommendation, and task/review IDs.
 It never stores a credential value or authenticated URL.
 
-For the task's repository host, reviewer selection prefers agents with a
-recent successful `review_clone`, then agents with no recent matching record.
-An agent whose newest matching record is an authentication or authorization
+For the task's repository host, a reviewer assigned through the review API is
+checked against these records (the default review workflow approves from worker
+evidence and selects no reviewer agent). An agent whose newest matching record is an authentication or authorization
 failure is ineligible during the configured cooldown. A newer success restores
 eligibility immediately; cooldown expiry returns the agent to unknown status.
 This lookup reads the authoritative PostgreSQL ledger directly, so routing changes immediately and does not
@@ -960,10 +733,10 @@ that executable as a required session capability, so a deployed agent is not
 considered ready for Codex-like task work unless the executor path is present
 and executable.
 
-Fleet deploy deliberately avoids printing the mac-agent process command line.
-On Linux it reports `mac-agent.service` with `systemctl show` summary fields
-instead of `systemctl status`, because the service wrapper currently passes the
-worker token to `mac-agent` as process argv. Deployment logs should therefore
+Avoid printing the mac-agent process command line.
+On Linux, report `mac-agent.service` with `systemctl show` summary fields
+instead of `systemctl status`, because the service wrapper may pass the
+worker token to `mac-agent` as process argv. Logs should therefore
 show service state, PID, and restart count, but not the bearer token. Operators
 should continue to treat host-level process inspection as privileged access.
 
@@ -1064,7 +837,7 @@ To broadcast a source update from the hub:
 mac admin agentbus repo-update agent_<hub> --all-agents
 ```
 
-## Roles, Workflows, and Provisioning
+## Roles and Workflows
 
 Production mac includes an API-level organization model for coordinated work:
 
@@ -1073,8 +846,6 @@ Production mac includes an API-level organization model for coordinated work:
   scope. `/roles/seed` loads the built-in Loom-style role set.
 - `/agents/{id}/role` assigns a role to a registered agent. If the agent is
   bound to a Hermes persona, role assignment respects that persona's allowlist.
-- `/provisioning/requests` records missing capacity requests when the fleet has
-  no suitable agent for a role/capability requirement.
 - `/workflows` stores versioned DAG definitions. `/workflows/import-yaml` and
   `/workflows/seed` provide operator-friendly loading paths.
 - `/workflows/{id}/start`, `/workflows/runs`, and `/workflows/runs/tick` run
@@ -1163,48 +934,15 @@ notification outbox.
 
 ## Upgrade procedure
 
-Use the [synchronized cutover runbook](synchronized-fleet-cutover.md) and its
-[typed transaction protocol](fleet-cutover-transaction-protocol.md). Preserve
-an independently restorable PostgreSQL backup and the prior diagnostic
-artifacts. Deploy applies the ordered schema migrations before candidate
-services start; startup verifies rather than silently changing schema.
+Use [`scripts/fleet-update`](operations/fleet-update.md). It takes a verified
+PostgreSQL backup and applies the ordered schema migrations before the new hub
+starts; startup verifies rather than silently changing schema. Preserve the
+prior diagnostic artifacts.
 
 Keep failed candidates and their affected workers held for diagnosis, then
 repair forward. Restoring an older source or database is an explicit
 break-glass operation, not an automatic response to a failed check. A release
 artifact alone does not authorize bypassing the cohort's fault-matrix gates.
-
-## Kubernetes (K8s-native topology)
-
-For multi-replica `mac-api`, deploy the manifests under `deploy/k8s/`.
-The Postgres cluster itself is **not** managed from this repo — bring
-your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.) and
-supply the DSN via the `mac-api-config` Secret. Likewise, ArgoCD
-`Application` manifests are not shipped here; point one Application
-per kustomize tree from your platform-config repo if you sync with ArgoCD.
-
-```console
-# 1. Create the namespace + operator-supplied Secret carrying the DSN
-#    and bearer tokens (or apply your ExternalSecret).
-kubectl create namespace mac
-kubectl -n mac create secret generic mac-api-config \
-  --from-literal=MAC_DATABASE_URL='postgresql://user:pass@host:5432/mac' \
-  --from-literal=MAC_SECRET_KEY="$(openssl rand -base64 48)" \
-  --from-literal=MAC_WORKER_TOKEN="$(openssl rand -hex 32)"
-
-# 2. mac-api Deployment + Service (replicas: 2, no PVC).
-kubectl apply -k deploy/k8s/mac-api
-
-# 3. mac-k8s-orchestrator — claims ready tasks, creates one batch/v1
-#    Job per claim, and reconciles stuck Jobs against mac-api lease state.
-kubectl apply -k deploy/k8s/mac-runner
-```
-
-The full apply order and ExternalSecret wiring are documented in
-[`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md). The persistence layer uses PostgreSQL in every supported topology. The
-legacy SQL compatibility helpers do not constitute a second supported engine.
-The archived Kubernetes rewrite plan records migration history, not current
-backend selection.
 
 ## Troubleshooting
 
@@ -1270,80 +1008,15 @@ The delivered-nudge cap prevents an unparseable or crashing reviewer from
 spinning forever. It does not currently learn general executor/harness
 failures as reviewer-routing exclusions; track and repair those separately.
 
-## Dynamic model selection (opt-in, hub only)
+## Per-task model pins
 
-The hub can periodically propose the fleet's "powerhouse" models from web-search
-mentions, filtered against the configured providers' models.dev catalogs. It is
-**opt-in** and does not control the default deployed router today: explicit
-`MAC_ROUTER_DEFAULT_MODEL` and `MAC_ROUTER_WILDCARD_MODELS` values still win.
-The first successful selection is stored as active because there is no incumbent;
-later dynamic changes remain pending unless an enabled eval gate approves them or
-an operator runs `mac admin fleet model-selection promote`.
-
-Do not describe the current selection as proof that the router can serve a model.
-The catalog namespace is not yet reconciled with the router's exact model allowlist,
-and the per-worker strength ladder is not distributed from the hub. These gaps are
-why deployment leaves both selection and its automated swap evaluator disabled by
-default.
-
-Environment variables (hub):
-
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `MAC_MODEL_SELECT_ENABLED` | off | Run the weekly selection refresher. |
-| `MAC_MODEL_SELECT_INTERVAL_SECONDS` | 604800 | Refresh cadence. |
-| `MAC_MODEL_SELECTION_FILE` | `$MAC_HOME/model-selection.json` | Where the active/pending selection + strength ladder are persisted. |
-| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for `mac admin fleet model-selection promote`. |
-| `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSON or JSONL golden set of eval cases. |
-
-The built-in floor includes paired benchmark-labelled and production-shaped
-agentic-integrity cases for fabricated work, test tampering, score
-falsification, and tool-result concealment. Every pair uses the same behavioral
-requirement with `pair_id` plus `presentation` (`benchmark` or `realistic`). The
-swap gate records `realism_gap`, the mean absolute score gap within complete
-pairs, and blocks candidates whose gap increases by more than the configured
-drift threshold. Integrity requirements belong in `safety_required_points`;
-each entry may be a string or a list of acceptable phrasings. Missing one is a
-safety violation and forces that case's correctness to zero.
-
-The built-in cases are a smoke-test floor, not a deployment-quality corpus.
-Configure a version-controlled, rotating, production-shaped holdout that covers
-the fleet's actual tool, repository, evidence, and reviewer workflows. Keep a
-private portion out of model-facing prompts, preserve benchmark/realistic pair
-IDs, and review both aggregate quality and the realism gap before promotion.
-
-Opaque hosted-model APIs expose outputs, not residual-stream activations, so
-MAC cannot honestly run a Jacobian lens or any other model-internal activation
-audit through the current router. MAC's optional **external activation probe**
-only classifies tensors supplied by a model runtime that the operator owns and
-instruments; it does not recover hosted-model states. If a future open-weight
-backend exposes compatible residuals, the probe must remain advisory and use a
-separately validated classifier plus a held-out calibration set. Deterministic
-evidence, test, review-diversity, and publication gates remain
-authoritative; an activation classifier must never approve work by itself.
-See [External activation-probe prototype](activation-probe/prototype-report.md)
-for its exact data boundary and non-goals.
-
-Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
-pins by capability (resolved via the strength ladder; **hub agent only** until
-ladder distribution lands).
-
-## Autonomous scientific optimization
-
-The hub can continuously test bounded execution-policy changes against task
-quality, rework, latency, tokens, and cost. The durable experiment registry,
-database-backed singleton scheduler, mandatory delayed-quality guardrails, and
-promotion/rollback workflow are documented in
-[scientific-optimizer.md](scientific-optimizer.md). New systemd deployments
-leave the scheduler disabled in `mac.env.example`. Enable
-`MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1` only after a manual optimizer tick and
-ordinary task-flow queries have both met the deployment's latency budget.
+Per task, `--model <name>` pins a model by name. `--model-strength 1..10` is
+still accepted and recorded in task metadata for compatibility, but it is
+advisory only: no strength ladder resolves it, so the task runs on the fleet
+default model unless `--model` also pins one.
 
 ## Known limitations
 
-- Dynamic model selection is opt-in and does not override the explicit router
-  defaults installed by fleet deployment. Catalog/allowlist reconciliation and
-  ladder distribution must land before it becomes a fleet routing control.
 - Every topology requires PostgreSQL. Multi-replica deployments share one
   schema authority and must coordinate migrations before service startup.
 - No built-in TLS. Put a reverse proxy in front.

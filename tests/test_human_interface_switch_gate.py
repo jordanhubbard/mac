@@ -255,12 +255,3 @@ def test_the_cli_exposes_port_and_check():
     )
     names = {name for action in sub._actions for name in (getattr(action, "choices", None) or {})}
     assert {"port", "check"} <= names
-
-
-def test_the_installer_does_not_gate_hermes_on_a_retired_openclaw_port():
-    """A clean Hermes reset must not require a deprecated runtime profile."""
-    root = Path(__file__).resolve().parents[1]
-    installer = (root / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-
-    assert 'if ! gate_human_interface_switch "$MAC_CHAT_GATEWAY_IMPL"; then' not in installer
-    assert "refusing to switch the human interface without porting" not in installer

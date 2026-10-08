@@ -14,6 +14,16 @@ sweep moved off `ControlPlane.tick()` onto a dedicated publication worker), so
 the anchors in the task description no longer match; the mechanisms they
 describe still exist and are re-anchored here.
 
+> **Update (2026-10-01).** Hub-side review verification ("Option C", hub-verify)
+> has been deleted. The worker's verifier run, on a fresh clone of the exact
+> pushed commit after the final rebase, is now the review verdict: the default
+> review workflow approves from validated worker evidence through the virtual
+> hub-reviewer and proceeds to publication in the same call. The blocking /
+> non-blocking sweep distinction (`allow_blocking_hub_verify`) and the
+> `waiting_for_hub_verify` status no longer exist, so C2 below is resolved by
+> removal and C1 now affects only the event-driven nudge issued on
+> submission. The sections below are kept as the historical diagnosis.
+
 ## How advancement is wired now
 
 - `ControlPlane.tick()` (`src/mac/services.py:17992`) no longer runs the review
@@ -21,8 +31,8 @@ describe still exist and are re-anchored here.
   unless `MAC_TICK_RUNS_REVIEW_SWEEP=1` (`src/mac/services.py:18115`).
 - The sweep runs on a dedicated daemon,
   `api._start_publication_worker` (`src/mac/api.py:4087`), which calls
-  `_advance_default_review_sweep_page(..., allow_blocking_hub_verify=True)`
-  (`src/mac/api.py:4140`). It is gated by
+  `_advance_default_review_sweep_page(...)` (`src/mac/api.py:4140`; at the time
+  of this diagnosis it passed `allow_blocking_hub_verify=True`). It is gated by
   `MAC_PUBLICATION_WORKER_INTERVAL_SECONDS`, whose default is `"30"` **only when
   `MAC_HUB_TICK_INTERVAL_SECONDS > 0`**, else `"0"` = off (`src/mac/api.py:4114`).
 - Event-driven advancement (`enable_event_driven_review_advance`,
@@ -69,7 +79,6 @@ path that reaches the non-blocking branch with the consumer down (the tick's own
 nudge on the floor.
 
 *Pinned by:* `test_nudge_is_a_noop_without_the_event_consumer`,
-`test_nonblocking_sweep_branch_only_nudges`,
 `test_event_consumer_is_gated_by_the_tick_interval`.
 
 ### C2 — an uncapped `waiting_for_hub_verify` return traps a task whenever hub verify cannot produce a verdict
@@ -94,8 +103,13 @@ single failing verify path. This is distinct from the "no evidence to verify"
 case, which is deliberately *allowed* to fall through to the agent-nudge path
 (`src/mac/services.py:22070` comment).
 
-*Pinned by:* `test_waiting_for_hub_verify_has_no_iteration_ceiling`,
-`test_hub_verifiable_evidence_holds_the_merge_gate`.
+*Status:* first bounded by the landing budget (`metadata.landing`), then
+resolved by removal: hub-verify was deleted on 2026-10-01, so there is no
+`waiting_for_hub_verify` branch left to trap a task. A task that was waiting on
+a hub-verify review when that change deployed is decided from its worker
+evidence on the next tick, or moved to BLOCKED with
+`reason="review_evidence_not_verifiable"` when that evidence had deferred its
+tests to the hub.
 
 ## Ruled-out hypotheses
 
@@ -168,12 +182,8 @@ not the lease itself.) *Pinned by
    in-process queue that may be `None`. A dropped nudge must be observable — the
    no-op branch should record a diagnostic, not return silently
    (`src/mac/services.py:2378`).
-2. **Bound the `waiting_for_hub_verify` loop (C2).** Add a per-review attempt
-   ceiling / age cap so a verify that never converges retracts the review and
-   re-selects a reviewer (mirroring the existing
-   `reviewer_protocol_failure:hub_verdict_invalid` retraction at
-   `src/mac/services.py:26884`) instead of returning `waiting_for_hub_verify`
-   forever. Emit a warning once, not once per tick.
+2. **Bound the `waiting_for_hub_verify` loop (C2).** Superseded: hub-verify
+   and the loop were deleted.
 
 Both fixes are behavioral and belong to the parent's sibling fix tasks; this
 child only characterizes and pins the current behavior.

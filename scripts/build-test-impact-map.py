@@ -285,14 +285,23 @@ def prune_uncollectable(
     def remap_list(indices: list[Any]) -> list[int]:
         return sorted({remap[int(index)] for index in indices if int(index) in remap})
 
+    def source_exists(filename: str) -> bool:
+        # A deleted source file can never be in a diff again, so its entries
+        # only cost bytes. Without a repo root there is nothing to check.
+        return repo_root is None or (repo_root / filename).is_file()
+
     new_file_tests: dict[str, list[int]] = {}
     for filename, indices in (document.get("file_tests") or {}).items():
+        if not source_exists(str(filename)):
+            continue
         kept = remap_list(list(indices))
         if kept:
             new_file_tests[str(filename)] = kept
 
     new_line_tests: dict[str, dict[str, list[int]]] = {}
     for filename, lines in (document.get("file_line_tests") or {}).items():
+        if not source_exists(str(filename)):
+            continue
         kept_lines: dict[str, list[int]] = {}
         for line, indices in (lines or {}).items():
             kept = remap_list(list(indices))
@@ -303,6 +312,8 @@ def prune_uncollectable(
 
     new_scope_tests: dict[str, dict[str, list[int]]] = {}
     for filename, scopes in (document.get("file_scope_tests") or {}).items():
+        if not source_exists(str(filename)):
+            continue
         kept_scopes: dict[str, list[int]] = {}
         for name, indices in (scopes or {}).items():
             kept = remap_list(list(indices))
@@ -428,7 +439,15 @@ def _check_or_prune(
     always_run_drift = pruned["always_run"] != [
         str(path) for path in document.get("always_run") or []
     ]
-    stale_map = bool(stale) or stats_drift or always_run_drift
+    mapped_sources = {
+        str(filename)
+        for key in ("file_tests", "file_line_tests", "file_scope_tests", "file_hashes")
+        for filename in document.get(key) or {}
+    }
+    deleted_sources = sorted(
+        filename for filename in mapped_sources if not (repo_root / filename).is_file()
+    )
+    stale_map = bool(stale) or stats_drift or always_run_drift or bool(deleted_sources)
 
     if not write:
         if not stale_map:
@@ -438,6 +457,11 @@ def _check_or_prune(
             extra.append("stats.interned_nodeids does not match len(nodeids)")
         if always_run_drift:
             extra.append("always_run names test files that no longer exist")
+        if deleted_sources:
+            extra.append(
+                "%d mapped source files no longer exist (first: %s)"
+                % (len(deleted_sources), deleted_sources[0])
+            )
         suffix = ("; " + "; ".join(extra)) if extra else ""
         print(
             "build-test-impact-map: committed map is stale "

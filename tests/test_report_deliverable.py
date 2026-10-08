@@ -820,15 +820,12 @@ def test_executor_clean_read_only_report_skips_git_finalizer(tmp_path, monkeypat
     monkeypatch.setattr(te, "maybe_auto_decompose", lambda *_args: False)
     monkeypatch.setattr(te, "emit_telemetry", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
 
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
         task_workspace=tmp_path,
         task_id=task["id"],
-        review_context=None,
-        is_review=False,
     )
 
     assert rc == 0
@@ -875,15 +872,12 @@ def test_read_only_verification_failure_overwrites_complete_model_manifest(tmp_p
     )
     monkeypatch.setattr(te, "emit_telemetry", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
-    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
 
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
         task_workspace=tmp_path,
         task_id=task["id"],
-        review_context=None,
-        is_review=False,
     )
 
     manifest = json.loads((tmp_path / "mac-evidence.json").read_text())
@@ -1020,74 +1014,6 @@ def test_read_only_report_rejects_verification_for_different_contract_command(
     assert item["command"] == "make smoke"
     assert "does not match the repository contract" in item["stderr"]
     assert problems == ["read-only repository report contract test did not pass"]
-
-
-def test_reviewer_gets_second_exact_base_credential_free_clone(tmp_path):
-    source, remote = _registered_repository(tmp_path)
-    contract = {
-        "schema": "mac.repository_contract.v1",
-        "project": "inspection-target",
-        "canonical_remote_url": str(remote),
-        "default_branch": "main",
-        "test": {"command": "make smoke"},
-    }
-    task = {
-        "id": "task_reviewed_report",
-        "title": "inspect repository",
-        "project": "inspection-target",
-        "metadata": {
-            "deliverable": "report",
-            "report_repository_access": _read_only_access(),
-            "origin": {"repository_path": str(source)},
-            "execution_contract": {
-                "type": "repository",
-                "repository_contract": contract,
-            },
-        },
-    }
-    worker = _worker(tmp_path)
-    executor_dir = worker._prepare_task_workspace(task, {"id": "lease-executor-clone"})
-    executor_context = task["metadata"]["runtime"]
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "operator_result",
-        "summary": "analysis complete",
-        "result": "findings",
-        "repository_access": wk._read_only_repository_access_evidence(executor_context),
-    }
-    task_detail = {
-        "task": task,
-        "evidence": [
-            {
-                "id": "evidence_executor",
-                "metadata": {"verification": executor_manifest},
-            }
-        ],
-    }
-
-    review_dir = worker._prepare_review_workspace(
-        task["id"],
-        "review_exact_base",
-        "evidence_executor",
-        task_detail,
-        {"id": "message_review"},
-    )
-    review_task = json.loads((review_dir / "task.json").read_text())["task"]
-    review_context = review_task["metadata"]["runtime"]
-    review_repo = Path(review_context["repository_worktree"])
-
-    assert review_repo != Path(executor_context["repository_worktree"])
-    assert review_context["checkout_policy"] == "review_read_only_clone"
-    assert _git(review_repo, "rev-parse", "HEAD") == executor_context["repository_base_sha"]
-    assert _git(review_repo, "for-each-ref") == ""
-    assert _git(review_repo, "remote") == ""
-    assert (
-        read_only_repository_content_digest(review_repo)
-        == executor_context["repository_content_digest"]
-    )
-    assert review_task["metadata"]["origin"].get("repository_path") is None
-    assert str(executor_dir) not in json.dumps(review_task)
 
 
 def test_durable_evidence_harvest_rejects_symlinked_manifest(tmp_path):

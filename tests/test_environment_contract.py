@@ -512,3 +512,5 @@ def test_onboarding_description_still_includes_project_yaml():
     assert ".mac/project.yaml" in task.description
     assert "$MAC_TASK_REPO_WORKTREE" in task.description
     assert "do NOT push" in task.description
+    assert "operator_result.summary" in task.description
+    assert "Descriptive subkeys alone are not accepted" in task.description

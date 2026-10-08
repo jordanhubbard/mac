@@ -51,38 +51,3 @@ resolved package materials before making a stronger claim.
 Per-image workflow concurrency is serialized without cancellation. This keeps
 two protected-main runs from racing to establish the same content tag while
 retaining the exact immutable digest as the deployment identity.
-
-## Local read-only fleet qualification
-
-Before publishing a candidate source revision, an operator can run the fleet's
-existing read-only preflight through the local wrapper:
-
-```console
-install -d -m 0700 "$HOME/.mac/receipts"
-scripts/prepublish-fleet-qualification.py \
-  --hub hub \
-  --fleets-config "$HOME/.mac/fleets.yaml" \
-  --output "$HOME/.mac/receipts/prepublication-$(git rev-parse HEAD).json" \
-  worker-1 worker-2
-```
-
-The wrapper executes this deployment interface without a mutating phase:
-
-```text
-deploy/deploy-mac-fleet.sh --hub <hub> --preflight-only \
-  --qualification-receipt <private-temporary-path> \
-  --fleets-config <path> [agents...]
-```
-
-It requires a clean tracked worktree, exact `HEAD`, an owner-controlled deploy
-script and fleet registry, fresh passing node evidence, canonical payload
-digests, distinct endpoint identities, and an upstream receipt whose
-`authorizes_deployment` value is false. The final receipt and its directory are
-owner-private (`0600` and `0700`, respectively); command output is represented
-only by bounded SHA-256 digests, and the temporary upstream receipt is removed.
-
-This receipt is owner-private operator evidence produced immediately before a
-push or publication; CI does not consume it automatically. This operator
-evidence does not authorize deployment, open a hub epoch, quiesce workers, or replace
-protected-main certification. Any source revision, fleet registry, selection,
-endpoint identity, or freshness mismatch requires a new qualification.

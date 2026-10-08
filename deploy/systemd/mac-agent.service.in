@@ -1,0 +1,37 @@
+# mac-agent.service template for a Linux worker (system unit, runs as the
+# operator account). Rendered and installed by hand; see
+# docs/operations/fleet-update.md "Provision a new host":
+#
+#   sed -e "s|@USER@|$USER|g" -e "s|@HOME@|$HOME|g" \
+#       -e "s|@PYTHON3@|/usr/bin/python3|g" deploy/systemd/mac-agent.service.in \
+#     | sudo tee /etc/systemd/system/mac-agent.service >/dev/null
+#
+# @PYTHON3@ runs the crash observer and deliberately lives OUTSIDE the MAC
+# venv, so a broken MAC import graph cannot also take out the observer.
+[Unit]
+Description=mac worker agent registration loop
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@HOME@/.mac
+EnvironmentFile=@HOME@/.mac/mac.env
+ExecStart=@PYTHON3@ @HOME@/.mac/bin/mac-crash-observer --supervisor systemd -- @HOME@/.mac/bin/mac-agent-service
+Restart=always
+RestartSec=5
+SuccessExitStatus=143 SIGTERM
+KillMode=mixed
+KillSignal=SIGTERM
+# A worker may need to withdraw an OpenShell task sandbox and publish its
+# terminal evidence before the supervisor escalates to SIGKILL.
+TimeoutStopSec=600
+LimitNOFILE=65536
+LimitCORE=infinity
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
