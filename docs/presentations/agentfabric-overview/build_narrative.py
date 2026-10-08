@@ -296,15 +296,6 @@ def build() -> Path:  # noqa: PLR0915 - one linear document, written in order
         "this operator-driven path is a proposal, not a shipped capability. Authority: "
         "docs/hgx-elastic-capacity.md and ADR 0005 (Proposed).",
     )
-    heading(doc, 3, "NVIDIA NemoClaw - a reference, not a deployment")
-    body(
-        doc,
-        "NemoClaw is a compatibility and design reference for the conversational agent "
-        "boundary. It is named because the boundary AgentFabric draws around a "
-        "human-facing runtime was designed to remain compatible with it, and it is "
-        "explicitly not presented as the deployed gateway implementation. Authority: "
-        "README.md and docs/hermes-boundary.md.",
-    )
 
     heading(doc, 2, "Where AgentFabric leverages open source")
     body(
@@ -340,7 +331,7 @@ def build() -> Path:  # noqa: PLR0915 - one linear document, written in order
             "Docker Engine / Moby - the single container runtime under OpenShell (ADR 0008).",
             "Kubernetes - one of two dispatch targets; a single orchestrator folds claim, "
             "launch, and stuck-Job reconciliation (src/mac/k8s/runner.py).",
-            "OpenClaw - the conversational runtime under a control-plane-authored sandbox policy.",
+            "Hermes Agent - the conversational runtime and the only human interface.",
             "OpenAI Codex CLI and OpenCode - coding executors on the route ladder, "
             "selected per task rather than fixed.",
         ],
@@ -459,8 +450,8 @@ def build() -> Path:  # noqa: PLR0915 - one linear document, written in order
     heading(doc, 3, "Gateway agent")
     body(
         doc,
-        "A stock conversational runtime - OpenClaw in the deployed path - running under a "
-        "control-plane-authored sandbox policy. Owns personality, memory, and channels; "
+        "A stock conversational runtime - Hermes, the only human interface - running "
+        "beside the control plane. Owns personality, memory, and channels; "
         "owns no operational truth.",
     )
     heading(doc, 3, "Hub")

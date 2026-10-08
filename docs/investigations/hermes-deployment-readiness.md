@@ -3,7 +3,7 @@
 Tracked by `task_e49af13e0f4849f9962999eb59114503`.
 
 The September 2026 hub rollout exposed two independent failures. Deployment
-selected `~/.mac/openclaw`, which lacked the Slack credentials and model route
+selected a legacy gateway home under `~/.mac`, which lacked the Slack credentials and model route
 held in the original `~/.hermes` profile. Its readiness checks also disagreed:
 the node exempted Hermes from process verification, while the outer attestation
 looked for a MAC-owned service name instead of the upstream service.

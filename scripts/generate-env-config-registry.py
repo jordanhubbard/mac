@@ -53,7 +53,6 @@ FAMILIES = (
     ("MAC_TASK_", "task-execution"),
     ("MAC_ROUTER_", "router"),
     ("MAC_HERMES_", "hermes-runtime"),
-    ("MAC_OPENCLAW_", "openclaw-runtime"),
     ("MAC_FIRECRAWL_", "firecrawl-gateway"),
     ("MAC_QDRANT_", "qdrant-memory"),
     ("MAC_TOKENHUB_", "tokenhub-legacy"),

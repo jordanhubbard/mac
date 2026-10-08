@@ -1,10 +1,8 @@
 """The persona-instance commands are named for what they register.
 
-Every agent runs OpenClaw; a personality is a SOUL.md file
-(`human_interface_profile.IDENTITY_FILES`). The command group that binds a
-persona to an agent was still called `hermes`, after a runtime nothing uses, so
-staffing an OpenClaw fleet meant typing `mac admin hermes register` in front of
-an audience.
+A personality is a SOUL.md file in the agent's Hermes home. The command group
+that binds a persona to an agent is named `persona-instance` for what it
+registers.
 
 `hermes` stays as an alias: the deploy script, the adapter's emitted command
 strings and the integration docs all still spell it that way, and renaming

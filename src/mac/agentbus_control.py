@@ -448,9 +448,7 @@ def peer_reply_payload(
 ) -> JsonDict:
     """Build a peer.reply.v1 payload (mac.agent.peer_reply.v1).
 
-    Mirrors the shape produced by the OpenClaw mac-continuity plugin's
-    publishPeerReply so consumers see an identical wire contract regardless of
-    which side (gateway plugin or directable worker) produced the reply.
+    The one wire contract for a peer reply, whichever runtime produced it.
 
     ``turn_outcome`` (mac.agentbus_outcomes.TURN_*) names the structured
     turn-execution outcome so a consumer distinguishes turn-timeout, output

@@ -82,36 +82,34 @@ identity label, verified suffix) may not match the expected slack+telegram proje
 
 ### Reproduction / contract mapping
 
-Test: `ide/tests/workbench-project-tree.spec.ts:216` — "agent inspector exposes the
-verified OpenClaw service advertisement". It expects the exact visible string:
+Test: `ide/tests/workbench-project-tree.spec.ts:209` — "agent inspector exposes the
+verified chat-gateway service advertisement". It expects the exact visible string:
 
 ```
-openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified
+hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified
 ```
 
 Projection under test: `chatGatewayLabel` in `ide/src/components/agentFacts.ts:52`,
 rendered by `ide/src/components/AgentMesh.tsx:189`
-(`<Definition label="OpenClaw" value={chatGatewayLabel(item)} />`).
+(`<Definition label="Chat gateway" value={chatGatewayLabel(item)} />`).
 
-Fixture (`ide/tests/workbench-project-tree.spec.ts:66`): `openclaw_runtime`
-`{ implementation: "openclaw", mode: "gateway", confinement: { provider: "openshell" }, verified: true }`;
-`representation` `{ mode: "delegated", identity: "MAC Hive" }`;
-`chat_gateway` `{ implementation: "openclaw", public_identity: "MAC Hive",
+Fixture (`ide/tests/workbench-project-tree.spec.ts:66`): `representation` `{ mode: "delegated", identity: "MAC Hive" }`;
+`chat_gateway` `{ implementation: "hermes", public_identity: "MAC Hive",
 confinement: { provider: "openshell" }, channels: { slack: { enabled: true },
 telegram: { enabled: true } }, verified: true }`.
 
 ### Static trace of `chatGatewayLabel` against the fixture
 
-- `implementation` = `"openclaw"` (`agentFacts.ts:57`)
-- `mode` = `"gateway"` (`agentFacts.ts:59`)
-- `confinement` = `"openshell"` (`agentFacts.ts:60`)
+- `implementation` = `"hermes"` (`agentFacts.ts:56`)
+- `mode` = `"gateway"` (`agentFacts.ts:58`)
+- `confinement` = `"openshell"` (`agentFacts.ts:59`)
 - `activeChannels` = `["slack","telegram"]` (insertion order of enabled channels,
-  `agentFacts.ts:62`) → joined with `" + "` → `"slack + telegram"` (`agentFacts.ts:77`)
-- `runtimeVerified` = `"verified"` (`agentFacts.ts:65`)
+  `agentFacts.ts:61`) → joined with `" + "` → `"slack + telegram"` (`agentFacts.ts:76`)
+- `runtimeVerified` = `"verified"` (`agentFacts.ts:64`)
 - `identity` = `"MAC Hive"`, `representationMode` = `"delegated"` → `identityLabel` =
-  `"delegate for MAC Hive"` (`agentFacts.ts:70`–`agentFacts.ts:73`)
-- Final array joined with `" · "` (`agentFacts.ts:77`–`agentFacts.ts:79`):
-  `openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`
+  `"delegate for MAC Hive"` (`agentFacts.ts:69`–`agentFacts.ts:72`)
+- Final array joined with `" · "` (`agentFacts.ts:76`–`agentFacts.ts:78`):
+  `hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`
 
 ### Verdict
 
@@ -120,15 +118,15 @@ byte-for-byte identical to the contract expectation: channel ordering (`slack + 
 `" + "` channel join, `" · "` field join, `delegate for MAC Hive` identity label, and the
 trailing `verified` suffix all match.
 
-Composition lines responsible: `ide/src/components/agentFacts.ts:77` (array assembly +
-`activeChannels.join(" + ")`), `ide/src/components/agentFacts.ts:79` (`join(" · ")`),
-`ide/src/components/agentFacts.ts:70`–`ide/src/components/agentFacts.ts:73` (identity label).
+Composition lines responsible: `ide/src/components/agentFacts.ts:76` (array assembly +
+`activeChannels.join(" + ")`), `ide/src/components/agentFacts.ts:78` (`join(" · ")`),
+`ide/src/components/agentFacts.ts:69`–`ide/src/components/agentFacts.ts:72` (identity label).
 
 ### Remediation recommendation
 
 No code change required. If a regression is later introduced, preserve the ` · ` field
 join, the ` + ` channel join, the enabled-channel filtering/order at
-`ide/src/components/agentFacts.ts:62`, and the `mode === "gateway"` + non-`direct`
+`ide/src/components/agentFacts.ts:61`, and the `mode === "gateway"` + non-`direct`
 representation path that yields `delegate for <identity>`.
 
 ## Overall conclusion
@@ -156,9 +154,9 @@ directly:
 - Defect 2 (Slack advertisement projection): `chatGatewayLabel`
   (ide/src/components/agentFacts.ts:52) composes the enabled channels with `" + "` and the
   fields with `" · "`, yielding exactly
-  `openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`,
+  `hermes · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`,
   byte-for-byte matching the contract expectation in
-  ide/tests/workbench-project-tree.spec.ts:216.
+  ide/tests/workbench-project-tree.spec.ts:209.
 
 Verification performed by the remediation child:
 

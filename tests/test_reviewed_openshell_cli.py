@@ -39,7 +39,9 @@ def _host_values() -> tuple[str, str, str, str, str]:
     return os_kind, canonical_arch, asset, digest, cli_digest
 
 
-def _args(mac_home: Path, cli_digest: str | None = None) -> argparse.Namespace:
+def _args(
+    mac_home: Path, cli_digest: str | None = None, *, required: bool = True
+) -> argparse.Namespace:
     os_kind, arch, asset, digest, default_cli_digest = _host_values()
     return argparse.Namespace(
         action="preflight",
@@ -49,17 +51,13 @@ def _args(mac_home: Path, cli_digest: str | None = None) -> argparse.Namespace:
         base_url="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72",
         asset_spec=[f"{os_kind}:{arch}:{asset}:{digest}:{cli_digest or default_cli_digest}"],
         archive=None,
-        required=False,
+        required=required,
     )
 
 
-def _managed_legacy_home(tmp_path: Path) -> Path:
+def _mac_home(tmp_path: Path) -> Path:
     mac_home = tmp_path / ".mac"
-    managed = mac_home / "openclaw" / "managed"
-    managed.mkdir(parents=True, mode=0o700)
-    runtime = managed / "runtime.env"
-    runtime.write_text("MAC_OPENCLAW_SANDBOX=mac-openclaw-natasha\n", encoding="utf-8")
-    runtime.chmod(0o600)
+    mac_home.mkdir(parents=True, mode=0o700)
     return mac_home
 
 
@@ -79,20 +77,22 @@ def _reviewed_archive(tmp_path: Path) -> tuple[Path, str, str]:
     )
 
 
-def test_pre_july_legacy_layout_is_classified_before_migration(tmp_path: Path) -> None:
+def test_required_preflight_without_canonical_directory_needs_migration(
+    tmp_path: Path,
+) -> None:
     module = _module()
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
 
     result = module.preflight(_args(mac_home))
 
-    assert result["managed_openclaw"] is True
+    assert result["required"] is True
     assert result["status"] == "migration_required"
     assert result["reason"] == "canonical_directory_missing"
 
 
 def test_publish_is_idempotent_owner_private_and_receipt_bound(tmp_path: Path) -> None:
     module = _module()
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     source = tmp_path / "openshell"
     source.write_bytes(b"#!/bin/sh\nexit 0\n")
     source.chmod(0o700)
@@ -119,25 +119,21 @@ def test_publish_is_idempotent_owner_private_and_receipt_bound(tmp_path: Path) -
 def test_not_required_but_already_installed_cli_still_gets_full_identity(
     tmp_path: Path,
 ) -> None:
-    """OpenClaw need not be sandbox-managed for a node to have OpenShell
-    installed (e.g. mac-agent's own task-sandbox use, independent of
-    OpenClaw). Quiescence's stray-sandbox inventory check
-    (list_openshell_sandboxes) requires a full, trustworthy reviewed
-    identity whenever OpenShell is installed at all, regardless of whether
-    OpenClaw itself is managed -- so preflight must not take the
-    "openclaw_not_managed" short-circuit (which omits cli_sha256 and
-    receipt_sha256) once a canonical CLI is actually present on disk."""
+    """Quiescence's stray-sandbox inventory check (list_openshell_sandboxes)
+    requires a full, trustworthy reviewed identity whenever OpenShell is
+    installed at all -- so preflight must not take the "cli_not_installed"
+    short-circuit (which omits cli_sha256 and receipt_sha256) once a
+    canonical CLI is actually present on disk, even when not required."""
     module = _module()
     mac_home = tmp_path / ".mac"
     source = tmp_path / "openshell"
     source.write_bytes(b"#!/bin/sh\nexit 0\n")
     source.chmod(0o700)
-    args = _args(mac_home, hashlib.sha256(source.read_bytes()).hexdigest())
+    args = _args(mac_home, hashlib.sha256(source.read_bytes()).hexdigest(), required=False)
     module.atomic_publish(args, source)
 
     result = module.preflight(args)
 
-    assert result["managed_openclaw"] is False
     assert result["required"] is True
     assert result["status"] == "ready"
     assert result["reason"] == "reviewed_cli_ready"
@@ -146,26 +142,25 @@ def test_not_required_but_already_installed_cli_still_gets_full_identity(
 
 
 def test_not_required_and_never_installed_still_short_circuits(tmp_path: Path) -> None:
-    """When OpenClaw isn't managed AND no CLI was ever installed, there is
-    nothing to validate -- the short-circuit "ready"/"openclaw_not_managed"
-    result (no cli_sha256/receipt_sha256) is correct and expected."""
+    """When not required AND no CLI was ever installed, there is nothing to
+    validate -- the short-circuit "ready"/"cli_not_installed" result (no
+    cli_sha256/receipt_sha256) is correct and expected."""
     module = _module()
     mac_home = tmp_path / ".mac"
-    args = _args(mac_home)
+    args = _args(mac_home, required=False)
 
     result = module.preflight(args)
 
-    assert result["managed_openclaw"] is False
     assert result["required"] is False
     assert result["status"] == "ready"
-    assert result["reason"] == "openclaw_not_managed"
+    assert result["reason"] == "cli_not_installed"
     assert "cli_sha256" not in result
     assert "receipt_sha256" not in result
 
 
 def test_group_writable_canonical_directory_is_never_trusted(tmp_path: Path) -> None:
     module = _module()
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     source = tmp_path / "openshell"
     source.write_bytes(b"reviewed")
     source.chmod(0o700)
@@ -181,7 +176,7 @@ def test_group_writable_canonical_directory_is_never_trusted(tmp_path: Path) -> 
 
 def test_non_private_receipt_directory_is_never_trusted(tmp_path: Path) -> None:
     module = _module()
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     source = tmp_path / "openshell"
     source.write_bytes(b"reviewed")
     source.chmod(0o700)
@@ -197,7 +192,7 @@ def test_non_private_receipt_directory_is_never_trusted(tmp_path: Path) -> None:
 
 def test_preflight_classifies_non_reviewed_cli_bytes_for_migration(tmp_path: Path) -> None:
     module = _module()
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     source = tmp_path / "openshell"
     source.write_bytes(b"reviewed")
     source.chmod(0o700)
@@ -255,7 +250,7 @@ def test_linux_preflight_rejects_schema_incompatible_gateway_binary(
     module = _module()
     monkeypatch.setattr(module.platform, "system", lambda: "Linux")
     monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     cli = tmp_path / "openshell"
     cli.write_bytes(b"reviewed-cli")
     cli.chmod(0o700)
@@ -299,42 +294,8 @@ def test_linux_preflight_rejects_schema_incompatible_gateway_binary(
     assert ready["gateway_sha256"] == hashlib.sha256(gateway.read_bytes()).hexdigest()
 
 
-def test_linux_untrusted_managed_identity_retains_reviewed_gateway_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _module()
-    monkeypatch.setattr(module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
-    mac_home = tmp_path / ".mac"
-    managed = mac_home / "openclaw" / "managed"
-    managed.mkdir(parents=True, mode=0o700)
-    runtime = managed / "runtime.env"
-    runtime.write_text("MAC_OPENCLAW_SANDBOX=\n", encoding="utf-8")
-    runtime.chmod(0o600)
-    args = argparse.Namespace(
-        action="preflight",
-        mac_home=str(mac_home),
-        expected_os="linux",
-        version="0.0.72",
-        base_url="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72",
-        asset_spec=["linux:x86_64:openshell-x86_64-test.tar.gz:" + "a" * 64 + ":" + "b" * 64],
-        gateway_asset_spec=[
-            "linux:x86_64:openshell-gateway-x86_64-test.tar.gz:" + "c" * 64 + ":" + "d" * 64
-        ],
-        archive=None,
-        required=True,
-    )
-
-    result = module.preflight(args)
-
-    assert result["status"] == "migration_required"
-    assert result["reason"] == "managed_openclaw_identity_untrusted"
-    assert result["gateway_asset"] == "openshell-gateway-x86_64-test.tar.gz"
-    assert result["gateway_asset_sha256"] == "c" * 64
-
-
 def test_helper_installs_only_exact_reviewed_archive_and_rechecks(tmp_path: Path) -> None:
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     archive, digest, cli_digest = _reviewed_archive(tmp_path)
     os_kind, arch, asset, _, _ = _host_values()
     common = [
@@ -369,7 +330,7 @@ def test_helper_installs_only_exact_reviewed_archive_and_rechecks(tmp_path: Path
 
 def test_helper_rejects_archive_outside_reviewed_digest(tmp_path: Path) -> None:
     module = _module()
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     archive, _digest, _cli_digest = _reviewed_archive(tmp_path)
     args = _args(mac_home)
 
@@ -380,7 +341,7 @@ def test_helper_rejects_archive_outside_reviewed_digest(tmp_path: Path) -> None:
 
 
 def test_helper_rejects_arbitrary_source_publish_action(tmp_path: Path) -> None:
-    mac_home = _managed_legacy_home(tmp_path)
+    mac_home = _mac_home(tmp_path)
     source = tmp_path / "openshell"
     source.write_bytes(b"unreviewed-cli")
     source.chmod(0o700)

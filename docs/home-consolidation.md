@@ -13,8 +13,8 @@ Status: **plan** (approved target = single authoritative root under `$HOME`).
 Scope: first-party MAC only (`src/mac/`, `deploy/`, `scripts/`, `Makefile`).
 The former in-tree Hermes snapshot is gone (PR #377); do not exclude a path
 that is no longer in the tree. Every claim below is grounded in
-`file:line` evidence gathered by a three-way exploration of the `.mac`,
-`.hermes`, and `.openclaw`/`.nemoclaw` namespaces.
+`file:line` evidence gathered by exploring the `.mac` and `.hermes`
+namespaces.
 
 ## Motivation
 
@@ -24,24 +24,19 @@ the system open to **metadata duplication**, **abandoned metadata**, and a
 **POLA violation**: anyone inspecting an agent's data finds it scattered in a
 confusing way, with the same logical datum (secrets, identity/soul) living in
 several places. Example that surfaced this: an agent described its dream logs as
-living in `~/.hermes/dream_logs/` — a location MAC does not own — even though we
-have migrated the gateway off Hermes onto OpenClaw.
+living in `~/.hermes/dream_logs/` — a location MAC does not own.
 
-## 1. Actual topology — four homes, not three
+## 1. Actual topology — two homes
 
 | Home | Role | Location knob | Owns (authoritative) |
 |---|---|---|---|
 | `~/.mac` | Control plane / hub | `MAC_HOME` (**leaky**, §3) | `mac.db` ledger, `fleets.yaml`, `mac.env` (hub secrets), `client-principals.json`, `qdrant/` (L2 memory), installed `src`/`venv`/`hermes-agent`, `bin/`, OpenShell policies |
 | `~/.hermes` | Gateway / agent-personal | `HERMES_HOME` (default pinned by **one line**) | `SOUL.md`/`USER.md`/`MEMORY.md`/`memories/`, mood, `config.yaml`, `.env` (chat+Slack secrets), `auth.json`, `state.db`, `sessions/`, `skills/`, `plugins/`, `cron/`, logs, dream logs |
-| `~/.hermes-nemoclaw` | NemoClaw gateway | `NEMOCLAW_HERMES_HOME` | A *second full Hermes home* (a clone), used only by the nemoclaw pilot/compose deployment |
-| `~/.openclaw` | — | — | **Not a host home.** OpenClaw's real home is `~/.mac/openclaw/` (already under `.mac`). `~/.openclaw` exists only as a *container* symlink → `/sandbox/state`. `.nemoclaw` as a dotdir does not exist — it is only an env-var/label prefix. |
 
 **Key structural insight:** consolidation is already half-done. The newer
-components — OpenClaw home (`$MAC_HOME/openclaw`,
-`deploy/openclaw/install-openclaw-gateway.sh:16`), OpenShell policy
-(`src/mac/executor_sandbox.py:667`), installed source, venv — all live under
-`~/.mac`. The **only** real holdout is the legacy Hermes home at the `$HOME/.hermes`
-sibling (plus its `.hermes-nemoclaw` clone). This is not "merge three peers";
+components — OpenShell policy (`src/mac/executor_sandbox.py:667`), installed
+source, venv — all live under `~/.mac`. The **only** real holdout is the Hermes
+home at the `$HOME/.hermes` sibling. This is not "merge peers";
 it is "pull the last legacy home under the root everything else already uses."
 
 ## 2. Split-brain instances (the concrete duplication / POLA violation)
@@ -53,18 +48,14 @@ it is "pull the last legacy home under the root everything else already uses."
    `mac.env` → `.hermes/.env` (`deploy/fleet-node-install.sh:8623-8700`). A
    `scrub_spoke_provider_secrets` routine (`fleet-node-install.sh:10523-10560`)
    exists *only* to clean provider keys that leak into `.hermes/.env`.
-2. **Identity/soul is triplicated.** `SOUL.md`/`USER.md`/`MEMORY.md` are
+2. **Identity/soul is duplicated.** `SOUL.md`/`USER.md`/`MEMORY.md` are
    authoritative in `.hermes` (`src/mac/soul_snapshot.py:33-34`,
-   `journal.py:29`), byte-copied into `.mac/journal/<date>/` (backup,
-   `journal.py:88-98`), and migrated into `.mac/openclaw/workspace/`
-   (`deploy/openclaw/migrate-hermes-continuity.py:203-215`). NemoClaw adds a
-   fourth copy in `.hermes-nemoclaw`.
+   `journal.py:29`) and byte-copied into `.mac/journal/<date>/` (backup,
+   `journal.py:88-98`).
 3. **Reverse leakage:** MAC writes its *own* artifacts —
    `mac-runtime-context.json/.md`, `mac-memory-topology.json` — **into the
    gateway's `.hermes` home** (`src/mac/deploy_env.py:437-443`). Control-plane
    data misfiled in the agent-personal home.
-4. **`slack_home_channels.json`** lives in `.hermes` and is copied to
-   `.mac/openclaw` (`install-openclaw-gateway.sh:767-815`).
 
 None of these are *live two-writer conflicts* today (copies are one-way,
 source-authoritative). The risk is **drift, staleness, and "where does my data
@@ -100,13 +91,12 @@ $MAC_HOME                (default ~/.mac; XDG-aware)   ← the ONE authoritative
 ├── fleet/     fleets.yaml, specs
 ├── runtime/   mac-runtime-context.*, memory-topology, journal/
 ├── gateway/   (← today's ~/.hermes: SOUL, memory, sessions, skills, cron, dream logs)
-│   └── openclaw/     (already here as .mac/openclaw)
 └── toolchain/ src, venv, bin, hermes-agent
 ```
 
 The control-plane vs agent-personal **trust boundary is preserved by subdir +
-`0700` perms**, not by separate top-level directories. `~/.hermes` and
-`~/.hermes-nemoclaw` become compatibility **symlinks** into `$MAC_HOME/gateway*`
+`0700` perms**, not by separate top-level directories. `~/.hermes` becomes a
+compatibility **symlink** into `$MAC_HOME/gateway`
 so nothing external breaks during the transition.
 
 ## 5. Phased plan (each phase independently shippable and reversible)
@@ -133,12 +123,11 @@ Flip the one pin (`deploy_env.py:429`) and the three hard-wired literals
 (`soul_snapshot.py:81`, `agent_migrate.py`, `fleet-node-install.sh:10341`) to
 `gateway_home() = $MAC_HOME/gateway`. Migrate on-disk `~/.hermes` →
 `$MAC_HOME/gateway` with an **idempotent, checksum-verified,
-permission-preserving** move, leaving `~/.hermes` as a compat symlink. Fold
-`.hermes-nemoclaw` the same way.
+permission-preserving** move, leaving `~/.hermes` as a compat symlink.
 
-### Phase 3 — Retire `.hermes` (post-migration-off-Hermes)
-Once OpenClaw is the sole gateway (its live data already under `.mac/openclaw`),
-drop the legacy subtree entirely and remove the compat symlinks.
+### Phase 3 — Retire the compat symlink
+Once every reader resolves the gateway home through `mac_paths.gateway_home()`,
+remove the `~/.hermes` compat symlink.
 
 ### Cross-cutting — accuracy & safety
 - Build a `mac_home_audit` that asserts the canonical unified layout and flags
@@ -187,88 +176,11 @@ timestamp-noise copies. The source directory resolves only through
 `mac_paths.dream_logs_dir()`. Same tool consolidates any other
 single-use-but-wrong-path metadata: point it at the misplaced directory.
 
-## 5c. Host script jobs: one home per artefact class (executed 2026-08-21)
-
-The first *live* instance of the split-brain, and the only one where a single
-process straddled both homes. `~/.mac/bin/mac-cron-script-runner`
-(`deploy/openclaw/run-script-cron-job.py`) **read** its pre-run scripts from
-`~/.hermes/scripts` (`:390`) and **wrote** its output to
-`~/.mac/openclaw/script-jobs/output` (`:408`), so a job's code, its schedule and
-its output lived in different trees. Visible consequences: Hermes-named reports
-(`hermes-fleet-drift-check-*.md`) accumulating under the OpenClaw tree, and no
-single answer to "where does this job live?".
-
-**Decision — every artefact a MAC-owned runner touches lives under
-`script_jobs_dir()` = `$MAC_OPENCLAW_HOST_DIR/script-jobs`:**
-
-| Artefact class | Home | Resolver |
-|---|---|---|
-| Job scripts (the pre-run code) | `$MAC_OPENCLAW_HOST_DIR/script-jobs/scripts` | `mac_paths.script_jobs_scripts_dir()` |
-| Job definitions | `$MAC_OPENCLAW_HOST_DIR/host-script-jobs.json` | `mac_paths.openclaw_home()` (unchanged) |
-| Output | `$MAC_OPENCLAW_HOST_DIR/script-jobs/output` | `mac_paths.script_jobs_output_dir()` |
-| Schedule | launchd plist / systemd --user timer | host supervisor — no home |
-| Gateway session DB, credentials, `config.yaml` | `$HERMES_HOME` (Phase 2 moves them wholesale) | `mac_paths.gateway_home()` |
-
-The last row is deliberate: the session DB and credentials are the *gateway's*
-state, read by the job scripts themselves, not by MAC's runner. Splitting them
-out per-file would create a fifth home; they move as one tree in Phase 2. **The
-runner reads neither** — after this change its only gateway-home reference is the
-named read-only fallback below.
-
-**Rollout is read-old / write-new**, which is what makes flipping the default
-safe. `select_scripts_dir()` prefers the sanctioned home and consults
-`legacy_gateway_scripts_dir()` (`$HERMES_HOME/scripts`) only for a script the new
-home does not have, so the three enabled jobs on a host that has not been
-re-installed keep running instead of failing silently — the parent task's stated
-risk. Every fallback is reported in the runner's result as
-`legacy_scripts_home: true`, so the fleet can be swept for stragglers rather than
-depending on the old home indefinitely, and
-`MAC_OPENCLAW_LEGACY_SCRIPTS_DIR=none` turns it off once a host is clean.
-`MAC_HERMES_SCRIPTS_DIR` remains honored (plists written before this change set
-it) but is deprecated; the installer now exports
-`MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR` instead.
-
-**The on-disk move** is `deploy/openclaw/relocate-script-job-home.py`, installed
-as `$MAC_HOME/bin/mac-relocate-script-job-home` and invoked by
-`install-openclaw-gateway.sh` on every install. It is idempotent and
-digest-verified, never deletes, leaves `~/.hermes/scripts` as a compat symlink,
-and reports a conflict (two differing files claiming one name) rather than
-picking a winner. A conflict does not fail the install: the read-only fallback
-keeps the job running until an operator resolves it.
-
-**The `config.yaml` backup pile** (nine variants on the hub — `.bak`,
-`.bak-mac-home-sync`, `.bak-mac-shutdown-quench`, `.chatbak`, `.provbak.*`,
-`.mac-redaction-backup-*`) is resolved by the same tool's `config-backups`
-operation. `config.yaml` is kept because it is the only name the gateway reads —
-determined, not guessed. Every variant moves to
-`$MAC_HOME/backups/hermes-config-<UTC date>/` with a `WHICH-WAS-LIVE.md` note
-recording which file was live, its digest, and each variant's digest, size, mtime
-and whether it was byte-identical to the live file. If `config.yaml` is *missing*
-the tool **refuses** rather than promote a backup — at that point authority is
-genuinely undeterminable from the tree, which is the failure mode this whole
-exercise is about. This operation is not run automatically by the installer; it
-is an explicit operator step (`mac-relocate-script-job-home --apply
-config-backups`) because it touches the gateway's config directory.
-
-**Guard:** `tests/test_script_job_home.py` asserts that with a clean environment
-no live runner path (scripts, output, agent/message wrappers, job definitions)
-resolves into a Hermes home, that the two offending literals are gone from the
-source, that the installer no longer defaults to or exports the Hermes path, and
-that the stdlib-only mirrors of `mac_paths` in the two deploy scripts agree with
-the real resolver under both defaults and relocation. Note that the pre-existing
-ratchet (`tests/test_mac_paths_no_hardcode.py`) could not have caught this: it
-scans only `src/mac/*.py`, and both offenders lived in `deploy/`.
-
-**Not covered here:** removing the Hermes *code* (`task_2a7df680`) and moving the
-gateway tree itself (Phase 2). This change makes the first one safe by ending the
-runner's dependency on `~/.hermes/scripts`.
-
 ## 6. Risks
 
 - Fleet-wide blast radius: home resolution runs in every worker + the hub +
   deploy. Phase 0 must be backward-compatible and land as a coordinated epoch.
-- OpenClaw (and any remaining external Hermes home) expects its internal
-  home layout; we relocate the *root* via `HERMES_HOME` / the OpenClaw home
-  under `$MAC_HOME/openclaw`, never rename the gateway's internal structure.
+- The external Hermes runtime expects its internal home layout; we relocate the
+  *root* via `HERMES_HOME`, never rename the gateway's internal structure.
 - Secrets migration is the highest-care step — verify perms and that no secret
   is duplicated or dropped; do it with checksums and a reversible backup.

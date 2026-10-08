@@ -135,8 +135,8 @@ These are not "later". They are how this fails:
   background. Keep `wait` / `drain` as CLI verbs for operators and for
   harnesses that have a real background slot. Do not make them the
   delivery architecture.
-- **The human-facing runtime wrapping the coding CLI** (OpenClaw /
-  Hermes gateway, a Slack bot that shells out). ADR 0007's boundary:
+- **The human-facing runtime wrapping the coding CLI** (the Hermes
+  gateway, a Slack bot that shells out). ADR 0007's boundary:
   conversation is not the coding session. The coding CLI's own hooks
   are.
 - **An MCP tool the model must elect to call** in order to hear the

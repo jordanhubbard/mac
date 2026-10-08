@@ -341,13 +341,13 @@ def _post_with_fenced_write_retry(
 #: How long after the first SIGTERM/SIGINT the worker keeps letting the current
 #: task run before it actively abandons the assignment (releases the lease and
 #: goes offline). Tuned to the unit that runs it: ``mac-agent-service`` sets
-#: ``KillMode=mixed`` / ``TimeoutStopSec=600``, so at 600s systemd SIGKILLs the
+#: ``KillMode=mixed`` / ``TimeoutStopSec=3600``, so at 3600s systemd SIGKILLs the
 #: whole cgroup — the lease would then stay ACTIVE for the rest of
-#: ``lease_seconds`` (900s) with nobody left to release it. 540s preserves the
+#: ``lease_seconds`` (900s) with nobody left to release it. 3300s preserves the
 #: existing "let the task finish" drain for anything shorter while guaranteeing
-#: the release happens with a minute of headroom before the kill. A second
+#: the release happens with five minutes of headroom before the kill. A second
 #: signal abandons immediately; ``MAC_WORKER_SHUTDOWN_GRACE_SECONDS`` overrides.
-DEFAULT_SHUTDOWN_GRACE_SECONDS = 540.0
+DEFAULT_SHUTDOWN_GRACE_SECONDS = 3300.0
 
 
 #: Ceiling on how long this worker will hold itself out of dispatch waiting
@@ -1057,18 +1057,15 @@ def _active_worker_deployment_generation() -> Optional[str]:
 
 
 def _resources_without_retired_gateway(resources: JsonDict) -> JsonDict:
-    """Withdraw retired advertisements only for a configured current runtime."""
-    implementation = (os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "").strip().lower()
-    if implementation not in {"hermes", "none"}:
+    """Withdraw the chat-gateway advertisement from a node configured with none."""
+    from mac.deploy_env import chat_gateway_implementation
+
+    implementation = chat_gateway_implementation()
+    if implementation != "none":
         return resources
     refreshed = dict(resources)
-    refreshed.pop("openclaw_runtime", None)
-    for key, selector in (("chat_gateway", "implementation"), ("gateway_ownership", "owner")):
-        value = refreshed.get(key)
-        if implementation == "none" or (
-            isinstance(value, Mapping) and value.get(selector) == "openclaw"
-        ):
-            refreshed.pop(key, None)
+    for key in ("chat_gateway", "gateway_ownership"):
+        refreshed.pop(key, None)
     return refreshed
 
 
@@ -1291,15 +1288,11 @@ class MacWorker(
         self._workspace_gc_lock = threading.Lock()
         self._workspace_gc_thread: Optional[threading.Thread] = None
         self._last_workspace_gc_at = 0.0
-        self._last_gateway_lease_renew_at = 0.0
         self._last_dispatch_hold_reason: Optional[str] = None
         self._observation_post_failures = 0
         self._last_observation_failure_log_at = 0.0
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
-        self._delivery_drain_lock = threading.Lock()
-        self._delivery_drain_stop: Optional[threading.Event] = None
-        self._delivery_drain_thread: Optional[threading.Thread] = None
         # Shutdown abandonment (task: worker SIGTERM never releases its lease).
         # Executor children are spawned with ``start_new_session=True`` so they
         # deliberately do NOT see the unit's SIGTERM. That is correct for a
@@ -1331,12 +1324,6 @@ class MacWorker(
         # while its turn is still running (state is only marked on success).
         self._directable_state_lock = threading.Lock()
         self._directable_inflight: set[str] = set()
-        try:
-            self.delivery_drain_interval_seconds = float(
-                os.environ.get("MAC_WORKER_DELIVERY_DRAIN_SECONDS", "20") or 20
-            )
-        except (TypeError, ValueError):
-            self.delivery_drain_interval_seconds = 20.0
         # Bounded work on the co-located hub host (task_1bd5db4b): the hub runs
         # BOTH the control plane and this worker. A load-shed circuit-breaker
         # stops claiming and drains in-flight work when the control plane is
@@ -1379,9 +1366,6 @@ class MacWorker(
         # required versions on (re)start. Skipped for bounded test runs.
         if max_iterations is None:
             self._reconcile_runtime_deps_best_effort()
-            # Daemon mode only: bounded test runs stay single-threaded and
-            # deterministic; the loop-side drain still runs every iteration.
-            self._start_delivery_drain_thread()
         try:
             while not self._stop and (max_iterations is None or iterations < max_iterations):
                 iterations += 1
@@ -1423,7 +1407,6 @@ class MacWorker(
                         self._inner_loop_wake.clear()
         finally:
             self._restore_signal_handlers(prior_handlers)
-            self._stop_delivery_drain_thread()
             self._shutdown()
         return results
 
@@ -1747,8 +1730,6 @@ class MacWorker(
         policy_gate = self._openshell_policy_gate()
         if policy_gate is not None:
             return policy_gate
-        self._maintain_openclaw_gateway_leases()
-        self._process_human_delivery_outbox()
         self._process_control_messages()
         # A deferred repo update applies here — after the previous task
         # finished, before the next claim — so no task ever starts on a
@@ -2522,23 +2503,11 @@ class MacWorker(
             )
 
     def _send_status_update_to_home_channels(self, payload: JsonDict) -> JsonDict:
-        if os.environ.get("MAC_CHAT_GATEWAY_IMPL", "").strip().lower() == "openclaw":
-            # OpenClaw deployments use the fenced communication outbox.  Never
-            # fall back to a direct provider SDK: that would bypass the stable
-            # public identity, gateway lease, delivery receipt, and sandbox.
-            return {
-                "status": "skipped",
-                "sent": 0,
-                "skipped": 1,
-                "failed": 0,
-                "reason": "openclaw_outbox_required",
-            }
         channel_type = str(payload.get("channel_type") or "").strip().lower()
         target = ensure_json_object(payload.get("target"))
         target_type = str(target.get("channel_type") or "").strip().lower()
-        # OpenClaw is the only supported persona/Slack runtime; ``hermes`` is no
-        # longer an accepted persona runtime value, so only blank/``slack`` route
-        # here (OpenClaw itself returns above via the fenced outbox).
+        # Hermes is the only human interface; its home channels are Slack, so
+        # only blank/``slack`` targets route here.
         if channel_type not in {"", "slack"} and target_type != "slack":
             return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
 
@@ -2619,223 +2588,6 @@ class MacWorker(
                 )
         status = "sent" if sent else ("failed" if failed else "skipped")
         return {"status": status, "sent": sent, "skipped": skipped, "failed": failed}
-
-    def _maintain_openclaw_gateway_leases(self) -> None:
-        identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
-        message_bin = Path(
-            os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
-            or mac_paths.mac_home() / "bin" / "openclaw-message"
-        )
-        if not identity or not message_bin.is_file():
-            return
-        now = time.monotonic()
-        if now - self._last_gateway_lease_renew_at < 30.0:
-            return
-        self._last_gateway_lease_renew_at = now
-        try:
-            accounts = self.client.get(
-                "/communication/accounts?%s"
-                % urlencode({"identity_id": identity, "enabled": "true"})
-            )
-            if not isinstance(accounts, list):
-                return
-            for account in accounts:
-                if not isinstance(account, dict) or not account.get("id"):
-                    continue
-                try:
-                    self.client.post(
-                        "/communication/gateway-leases/acquire",
-                        {
-                            "account_id": account["id"],
-                            "agent_id": self.agent_id,
-                            "lease_seconds": 90,
-                            "metadata": {
-                                "runtime": "openclaw",
-                                "confinement": "openshell",
-                                "public_identity": identity,
-                            },
-                        },
-                    )
-                except Exception as exc:  # another healthy provider owns it
-                    self._observe_log(
-                        "worker.communication.gateway_lease_unavailable",
-                        level="debug",
-                        detail={"account_id": account["id"], "error": str(exc)},
-                    )
-        except Exception as exc:
-            self._observe_log(
-                "worker.communication.gateway_lease_failed",
-                level="warning",
-                detail={"identity": identity, "error": str(exc)},
-            )
-
-    def _process_human_delivery_outbox(self) -> None:
-        """Lock-guarded outbox drain, callable from the task loop AND the
-        background drain thread; a drain already in progress is skipped
-        rather than queued (claims are leased hub-side, so skipping is safe)."""
-        if not self._delivery_drain_lock.acquire(blocking=False):
-            return
-        try:
-            self._drain_human_delivery_outbox()
-        finally:
-            self._delivery_drain_lock.release()
-
-    def _start_delivery_drain_thread(self) -> None:
-        """Drain the human-message outbox on a timer independent of the task loop.
-
-        The loop-side drain in run_once only runs between task iterations, so a
-        worker busy on a long task starved its gateway's outbox for the whole
-        iteration even though the gateway itself was idle and connected
-        (task_c049302b). Ephemeral or represented agents' proxied messages land
-        on this gateway's account; they must not wait for its task cadence.
-        """
-        if self._delivery_drain_thread is not None or self.delivery_drain_interval_seconds <= 0:
-            return
-        stop = threading.Event()
-
-        def _loop() -> None:
-            while not stop.wait(self.delivery_drain_interval_seconds):
-                try:
-                    self._process_human_delivery_outbox()
-                except Exception as exc:  # noqa: BLE001 — drain must never kill the thread
-                    self._observe_log(
-                        "worker.communication.outbox_drain_thread_error",
-                        level="warning",
-                        detail={"error": str(exc)},
-                    )
-
-        thread = threading.Thread(target=_loop, name="delivery-outbox-drain", daemon=True)
-        self._delivery_drain_stop = stop
-        self._delivery_drain_thread = thread
-        thread.start()
-
-    def _stop_delivery_drain_thread(self, timeout: float = 10.0) -> None:
-        """Stop the drain thread and WAIT for it (bounded).
-
-        Dropping the reference without joining let a drain that was already
-        inside ``_process_human_delivery_outbox`` — an HTTP round trip plus a
-        local openclaw-message delivery — keep running while ``_shutdown()``
-        posted "offline" and the process exited. A message delivered locally
-        but never acked to the hub is redelivered on the next start, so the
-        human sees it twice. Bounded so a wedged HTTP call cannot hang exit.
-        """
-        stop = self._delivery_drain_stop
-        thread = self._delivery_drain_thread
-        if stop is not None:
-            stop.set()
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=max(0.0, float(timeout)))
-            if thread.is_alive():
-                self._observe_log(
-                    "worker.communication.outbox_drain_thread_join_timeout",
-                    level="warning",
-                    detail={"agent_id": self.agent_id, "timeout_seconds": timeout},
-                )
-        self._delivery_drain_thread = None
-        self._delivery_drain_stop = None
-
-    def _drain_human_delivery_outbox(self) -> None:
-        identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
-        message_bin = Path(
-            os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
-            or mac_paths.mac_home() / "bin" / "openclaw-message"
-        )
-        if not identity or not message_bin.is_file():
-            return
-        try:
-            deliveries = self.client.post(
-                "/communication/deliveries/claim",
-                {"agent_id": self.agent_id, "limit": 10, "lease_seconds": 90},
-            )
-        except Exception as exc:
-            self._observe_log(
-                "worker.communication.outbox_claim_failed",
-                level="warning",
-                detail={"error": str(exc)},
-            )
-            return
-        if not isinstance(deliveries, list):
-            return
-        account_cache: Dict[str, JsonDict] = {}
-        for delivery in deliveries:
-            if not isinstance(delivery, dict):
-                continue
-            delivery_id = str(delivery.get("id") or "")
-            account_record_id = str(delivery.get("account_id") or "")
-            try:
-                account = account_cache.get(account_record_id)
-                if account is None:
-                    loaded = self.client.get(
-                        "/communication/accounts/%s" % quote(account_record_id, safe="")
-                    )
-                    if not isinstance(loaded, dict):
-                        raise MacApiError("communication account response is not an object")
-                    account = loaded
-                    account_cache[account_record_id] = account
-                command = [
-                    str(message_bin),
-                    "send",
-                    "--channel",
-                    str(delivery.get("channel") or account.get("channel") or ""),
-                    "--account",
-                    str(account.get("account_id") or "default"),
-                    "--target",
-                    str(delivery.get("target") or ""),
-                    "--message",
-                    str(delivery.get("body") or ""),
-                    "--json",
-                ]
-                completed = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=90,
-                    check=False,
-                )
-                if completed.returncode != 0:
-                    raise RuntimeError(
-                        (completed.stderr or completed.stdout or "OpenClaw send failed").strip()[
-                            :1000
-                        ]
-                    )
-                receipt = _json_object_from_text(completed.stdout)
-                self.client.post(
-                    "/communication/deliveries/%s/ack" % quote(delivery_id, safe=""),
-                    {
-                        "agent_id": self.agent_id,
-                        "provider_message_id": _provider_message_id(receipt),
-                        "detail": {
-                            "channel": delivery.get("channel"),
-                            "account_id": account.get("account_id"),
-                            "openclaw": True,
-                        },
-                    },
-                )
-                self._observe_log(
-                    "worker.communication.delivery_sent",
-                    subject_type="human_message_delivery",
-                    subject_id=delivery_id,
-                    detail={"channel": delivery.get("channel"), "identity": identity},
-                )
-            except Exception as exc:
-                try:
-                    self.client.post(
-                        "/communication/deliveries/%s/fail" % quote(delivery_id, safe=""),
-                        {
-                            "agent_id": self.agent_id,
-                            "error": str(exc)[:1000],
-                            "retryable": True,
-                        },
-                    )
-                except Exception:
-                    pass
-                self._observe_log(
-                    "worker.communication.delivery_failed",
-                    level="warning",
-                    subject_type="human_message_delivery",
-                    subject_id=delivery_id,
-                    detail={"error": str(exc)},
-                )
 
     def _process_agentbus_control(
         self, *, repository_update_only: bool = False
@@ -2965,7 +2717,7 @@ class MacWorker(
 
         A turn may take up to MAC_DIRECTABLE_TIMEOUT (120s default); running it
         inline in the poll loop would starve heartbeats and task claiming
-        (mirrors the _start_delivery_drain_thread precedent). The handler both
+        The handler both
         runs the turn and publishes the reply; only after it returns do we mark
         the stream processed, so a crash before the reply re-tries. An in-flight
         guard prevents a second thread for the same stream while the first runs.
@@ -6034,7 +5786,7 @@ class MacWorker(
         # that raced hub availability after a restart), ``command_resources`` is
         # ``None`` and we MUST omit resources entirely -- otherwise the live
         # report-executor attestation refresh would synthesise a partial,
-        # attestation-only map and erase hardware, media_routes, openclaw_runtime,
+        # attestation-only map and erase hardware, media_routes,
         # chat_gateway, gateway_ownership, and representation.  Only refresh the
         # attestation when we have a real base to refresh.
         if command_resources is not None:
@@ -6483,46 +6235,6 @@ def _sha256_text(value: str) -> str:
 
 def ensure_json_object(value: Any) -> JsonDict:
     return dict(value) if isinstance(value, dict) else {}
-
-
-def _json_object_from_text(value: str) -> JsonDict:
-    """Parse an OpenClaw JSON receipt without retaining human message text."""
-
-    text = str(value or "").strip()
-    if not text:
-        return {}
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        # Some CLI builds prefix one informational line before the JSON body.
-        start = text.find("{")
-        if start < 0:
-            return {}
-        try:
-            parsed = json.loads(text[start:])
-        except json.JSONDecodeError:
-            return {}
-    return ensure_json_object(parsed)
-
-
-def _provider_message_id(receipt: Any) -> Optional[str]:
-    """Find a provider receipt id across OpenClaw channel result shapes."""
-
-    if isinstance(receipt, dict):
-        for key in ("messageId", "message_id", "ts", "id"):
-            value = receipt.get(key)
-            if value not in (None, "") and not isinstance(value, (dict, list)):
-                return str(value)
-        for key in ("result", "data", "message", "response"):
-            found = _provider_message_id(receipt.get(key))
-            if found:
-                return found
-    elif isinstance(receipt, list):
-        for item in receipt:
-            found = _provider_message_id(item)
-            if found:
-                return found
-    return None
 
 
 def _load_json_file(path: Path) -> Any:
@@ -8222,9 +7934,9 @@ def _repository_new_file_finalize_message(paths: List[str]) -> str:
 
 def _run_git(repo: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
     try:
-        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))
+        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "1800"))
     except ValueError:
-        timeout = 120.0
+        timeout = 1800.0
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
@@ -8580,9 +8292,9 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
     + capture behaviour so the remote clone path is testable via the
     same monkeypatch surface."""
     try:
-        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))
+        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "1800"))
     except ValueError:
-        timeout = 120.0
+        timeout = 1800.0
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
@@ -8996,12 +8708,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--workspace", default=".mac-agent-workspaces")
     parser.add_argument("--lease-seconds", type=int, default=900)
-    # mac-ehch: hard-cap executor runtime so a wedged subprocess can't
-    # keep renewing its lease forever. One hour is well above the median
-    # claim duration in production and below the point where a stuck
-    # task should be visible to operators. Override with --timeout if a
-    # longer-running task is genuinely needed.
-    parser.add_argument("--timeout", type=float, default=3600.0)
+    # Keep one enclosing anti-hang bound, but leave enough headroom for a large
+    # checkout/upload, a two-hour agent turn, repository bootstrap/tests, and
+    # the final harvest. Progress remains visible through lease renewal and
+    # telemetry; this is a last-resort kill switch, not a liveness detector.
+    try:
+        executor_timeout = float(os.environ.get("MAC_WORKER_EXECUTOR_TIMEOUT", "21600"))
+    except ValueError:
+        executor_timeout = 21600.0
+    parser.add_argument("--timeout", type=float, default=executor_timeout)
     parser.add_argument(
         "--allowed-projects",
         default=os.environ.get("MAC_WORKER_ALLOWED_PROJECTS", ""),

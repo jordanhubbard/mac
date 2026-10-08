@@ -52,17 +52,16 @@ export function availableCodingClis(item: DashboardAgent): string[] {
 export function chatGatewayLabel(item: DashboardAgent): string {
   const resources = record(item.agent.resources);
   const gateway = record(resources.chat_gateway);
-  const runtime = record(resources.openclaw_runtime);
   const representation = record(resources.representation);
-  const implementation = String(runtime.implementation || gateway.implementation || "").trim();
+  const implementation = String(gateway.implementation || "").trim();
   if (!implementation) return "not advertised";
-  const mode = String(runtime.mode || (Object.keys(gateway).length ? "gateway" : "internal")).trim();
-  const confinement = String(record(runtime.confinement || gateway.confinement).provider || "").trim();
+  const mode = String(gateway.mode || "gateway").trim();
+  const confinement = String(record(gateway.confinement).provider || "").trim();
   const channels = record(gateway.channels);
   const activeChannels = Object.entries(channels)
     .filter(([, value]) => record(value).enabled === true)
     .map(([name]) => name);
-  const runtimeVerified = runtime.verified === true || gateway.verified === true
+  const runtimeVerified = gateway.verified === true
     ? "verified"
     : "unverified";
   const identity = String(gateway.public_identity || representation.identity || "").trim();

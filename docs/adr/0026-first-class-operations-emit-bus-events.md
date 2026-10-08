@@ -63,7 +63,7 @@ closed-and-unread.
 
 The first-class objects are the ones `mac` models — `project`, `task`, `agent`
 — plus the fleet itself, the machines it runs on, and human user agents
-represented through OpenClaw. If an operation is worth a CRUD verb, its
+represented through Hermes. If an operation is worth a CRUD verb, its
 completion is worth an event.
 
 ### 1. The hub emits, not the caller

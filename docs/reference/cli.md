@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-48 administrative commands live under `mac admin` (`mac admin help` lists them).
+47 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -270,11 +270,10 @@ Getting work done:
   artifact      durable artifacts produced by task work
 
 What agents know:
-  memory           durable cross-session knowledge
-  journal          per-agent narrative history
-  mood             agent temperament and its effect on execution
-  human-interface  port an agent profile between Hermes and OpenClaw
-  persona          Hermes personas and their memory scopes
+  memory   durable cross-session knowledge
+  journal  per-agent narrative history
+  mood     agent temperament and its effect on execution
+  persona  Hermes personas and their memory scopes
 
 Talking to people and systems:
   message           messages between agents and humans

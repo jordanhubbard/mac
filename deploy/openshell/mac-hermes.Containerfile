@@ -112,9 +112,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # after which repository harvest failed and took the task with it. On the
 # isaacsim7-poc tree that single fault accounted for 14 of 23 failures -- each
 # one misclassified as a WORK failure and retired with retry budget remaining.
-# deploy/openclaw/OpenClaw.Containerfile already installs an empty, readable
-# .profile for exactly this reason; the image that task sandboxes actually run
-# in did not.
+# This image now installs an empty, readable .profile for exactly that reason.
 ARG GH_VERSION="2.95.0"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"

@@ -68,7 +68,7 @@ def _run_openshell_loop_worker_self_test(
 
     home = tmp_path / "home"
     mac_home = home / ".mac"
-    (mac_home / "openclaw" / "managed").mkdir(parents=True, exist_ok=True)
+    mac_home.mkdir(parents=True, exist_ok=True)
     (mac_home / "bin").mkdir(parents=True, exist_ok=True)
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
     report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
@@ -80,8 +80,7 @@ def _run_openshell_loop_worker_self_test(
     default_bin.chmod(0o755)
 
     # A fully-configured OpenShell loop worker whose only deficiency is the
-    # report-executor attestation gap: identity present, gateway impl is not
-    # openclaw (so OpenClaw checks pass and never interfere), both mandatory
+    # report-executor attestation gap: identity present, no chat gateway, both mandatory
     # shared services required with URLs, and a valid OpenShell executor config.
     env = {
         "MAC_CHAT_GATEWAY_IMPL": "none",
@@ -127,12 +126,12 @@ def _run_openshell_loop_worker_self_test(
     # Stub the mandatory shared-service probes and the hub heartbeat so they are
     # never the reason for any failure.
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
-    # A pure worker (impl != openclaw) never invokes openclaw-agent, but guard it.
+    # A pure worker never spawns a subprocess here; guard it.
     monkeypatch.setattr(
         subprocess,
         "run",
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("openclaw-agent must not run for a pure worker")
+            AssertionError("a pure worker must not spawn a subprocess")
         ),
     )
 

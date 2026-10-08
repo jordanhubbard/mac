@@ -9,6 +9,8 @@ fresh or stale node self-converges to the right versions on demand.
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from mac.worker_runtime_deps import REQUIRED_RUNTIME_PIP, RuntimeDepsMixin
@@ -46,6 +48,22 @@ def _worker() -> RuntimeDepsMixin:
 )
 def test_pip_spec_satisfied(spec, installed, expected):
     assert RuntimeDepsMixin._pip_spec_satisfied(spec, installed) is expected
+
+
+@pytest.mark.parametrize(
+    "spec,expected",
+    [
+        ("Foo_Bar>=1.0", "foo-bar"),
+        ("pkg[extra]==2", "pkg"),
+        ("  requests  ", "requests"),
+        ("nemo-relay~=0.3; python_version>'3.8'", "nemo-relay"),
+    ],
+)
+def test_pip_base_name_raises_no_deprecation_warning(spec, expected):
+    # Python 3.13 deprecated positional maxsplit/count/flags to re.split/sub/subn.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        assert RuntimeDepsMixin._pip_base_name(spec) == expected
 
 
 # -- ensure_pip installs only the deltas ------------------------------------

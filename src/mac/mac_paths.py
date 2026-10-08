@@ -35,11 +35,6 @@ __all__ = [
     "journal_dir",
     "backups_dir",
     "archive_dir",
-    "openclaw_home",
-    "script_jobs_dir",
-    "script_jobs_scripts_dir",
-    "script_jobs_output_dir",
-    "legacy_gateway_scripts_dir",
     "plugin_dir",
 ]
 
@@ -77,15 +72,21 @@ def plugin_dir() -> Path:
 
 
 def gateway_home() -> Path:
-    """The gateway / agent-personal home.
+    """The Hermes gateway / agent-personal home.
 
-    ``HERMES_HOME`` is authoritative. Fleet deployment resolves the installed
-    upstream Hermes service's profile and writes this variable to mac.env.
-    The legacy ``$MAC_HOME/openclaw`` fallback remains for compatibility with
-    callers outside that configured service environment. It is not a migration
-    instruction or evidence that an existing ``~/.hermes`` profile is absent.
+    Hermes is MAC's only human interface. ``HERMES_HOME`` is authoritative.
+    Without it the home is ``~/.hermes``, upstream Hermes' own default and the
+    one ``deploy/hermes/install-hermes-gateway.sh`` uses -- unless ``MAC_HOME``
+    relocates the MAC tree, in which case it moves with it to
+    ``$MAC_HOME/hermes`` so a relocated MAC never reads or writes the user's
+    real Hermes profile.
     """
-    return _env_path("HERMES_HOME") or (mac_home() / "openclaw")
+    explicit = _env_path("HERMES_HOME")
+    if explicit is not None:
+        return explicit
+    if _env_path("MAC_HOME") is not None:
+        return mac_home() / "hermes"
+    return Path.home() / ".hermes"
 
 
 def hermes_home() -> Path:
@@ -146,65 +147,7 @@ def archive_dir() -> Path:
     return mac_home() / "archive"
 
 
-def openclaw_home() -> Path:
-    """OpenClaw's runtime home. ``MAC_OPENCLAW_HOST_DIR`` overrides; default
-    ``$MAC_HOME/openclaw`` (already nested under the root today)."""
-    return _env_path("MAC_OPENCLAW_HOST_DIR") or (mac_home() / "openclaw")
-
-
-# --- Host script jobs (one home: input, definitions and output together) ----
-#
-# A host two-stage cron job ("script job") has four artefacts. Before the
-# 2026-08-21 untangle they were split across two homes: the runner READ its
-# pre-run scripts from ``~/.hermes/scripts`` while WRITING its output to
-# ``~/.mac/openclaw/script-jobs/output``, so Hermes-named reports accumulated in
-# the OpenClaw tree and no single directory answered "where does this job live?".
-# The decision recorded in docs/home-consolidation.md §5c is that every artefact
-# a MAC-owned runner touches lives under ``script_jobs_dir()``:
-#
-#   scripts      -> script_jobs_scripts_dir()   ($OPENCLAW_HOST_DIR/script-jobs/scripts)
-#   definitions  -> openclaw_home()/host-script-jobs.json  (already OpenClaw)
-#   output       -> script_jobs_output_dir()    ($OPENCLAW_HOST_DIR/script-jobs/output)
-#   schedule     -> launchd/systemd units       (host supervisor, no home)
-#
-# Session DB and gateway credentials stay in ``gateway_home()``: they are the
-# gateway's own state, not the runner's, and relocating them is Phase 2 of the
-# consolidation plan. The runner never reads either.
-
-
-def script_jobs_dir() -> Path:
-    """Single home for host two-stage cron-job artefacts:
-    ``$MAC_OPENCLAW_HOST_DIR/script-jobs``."""
-    return openclaw_home() / "script-jobs"
-
-
-def script_jobs_scripts_dir() -> Path:
-    """Pre-run scripts the host cron runner executes.
-    ``MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR`` overrides; default
-    ``$MAC_OPENCLAW_HOST_DIR/script-jobs/scripts``."""
-    return _env_path("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (script_jobs_dir() / "scripts")
-
-
-def script_jobs_output_dir() -> Path:
-    """Where non-deliverable script-job replies are written.
-    ``MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR`` overrides; default
-    ``$MAC_OPENCLAW_HOST_DIR/script-jobs/output``."""
-    return _env_path("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR") or (script_jobs_dir() / "output")
-
-
 # --- Gateway files (under gateway_home) ------------------------------------
-
-
-def legacy_gateway_scripts_dir() -> Path:
-    """Pre-untangle location of the script-job scripts: ``$HERMES_HOME/scripts``.
-
-    This is the ONLY sanctioned name for that path, and it exists solely so the
-    host runner can fall back READ-ONLY on a host that has not run the relocator
-    (``deploy/openclaw/relocate-script-job-home.py``) yet — enabling the new
-    default must never silently stop an enabled job. Nothing writes here, and
-    the fallback disappears with the legacy tree.
-    """
-    return gateway_home() / "scripts"
 
 
 def gateway_env_file() -> Path:

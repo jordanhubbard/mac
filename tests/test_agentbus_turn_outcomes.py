@@ -46,7 +46,7 @@ from mac.worker_directable import DirectableMixin
 # 1. classify_turn_result — the exact observed failure shapes.
 # --------------------------------------------------------------------------- #
 def test_embedded_300s_turn_timeout_is_not_ok() -> None:
-    # Rocky's incident: the embedded turn hit the OpenClaw turn limit and
+    # Rocky's incident: the embedded turn hit the runtime turn limit and
     # returned "LLM request failed / timed out" as ordinary reply text.
     text = "LLM request failed / timed out after 300 seconds."
     # Model-failure fingerprint wins the classification (the literal message).

@@ -26,10 +26,9 @@ modules use `mac`. The deck never claims the two are different systems.
 | NVIDIA OpenShell | execution security: Landlock filesystem policy, seccomp syscall filter, deny-by-default L7 egress, sandbox lifecycle, normalized action events. One guardrail authority, not two competing ones. | `src/mac/openshell_service.py`, `src/mac/executor_sandbox.py`, `src/mac/sandbox_egress.py`, `src/mac/openshell_collector.py`, `docs/openshell-sandbox.md`, ADR 0008 (Accepted) |
 | NVIDIA NeMo Relay | optional observability: request, task, tool, and model activity mapped into Relay scopes, enabled through the `relay` packaging extra (`nemo-relay==0.3.0`) | `src/mac/relay_observability.py`, `pyproject.toml` (`[project.optional-dependencies] relay`), `docs/openshell-nemo-relay-integration.md`, `docs/openshell-nemo-relay-e2e.md` |
 | NVIDIA HGX | bounded elastic provider-session capacity; onboarding is an explicit operator action with a durable receipt | `docs/hgx-elastic-capacity.md`, `AGENTS.md` (`hgx list` / `hgx ssh` transport), ADR 0005 (Proposed — the elastic tier beyond the operator-driven path is a proposal) |
-| NVIDIA NemoClaw | compatibility and design reference for the conversational agent boundary; **not** the deployed gateway implementation | `README.md`, `docs/hermes-boundary.md` |
 
-The deck must state the HGX and NemoClaw qualifications. Presenting NemoClaw as the
-deployed gateway, or unbounded elastic capacity as shipped, is a factual error.
+The deck must state the HGX qualification. Presenting unbounded elastic capacity
+as shipped is a factual error.
 
 ## Open-source re-use (slide 8)
 
@@ -37,7 +36,7 @@ deployed gateway, or unbounded elastic capacity as shipped, is a factual error.
 | --- | --- | --- |
 | State | PostgreSQL (fleet authority), SQLite (local development), versioned migrations | `CLAUDE.md` ("the test suite runs against PostgreSQL, not SQLite, because that is what the fleet runs"), `src/mac/schema_migrations.py`, ADR 0021 (Proposed — the migration *policy* is proposed; versioned migrations exist) |
 | Service | FastAPI, Uvicorn, Pydantic, httpx | `pyproject.toml`, `src/mac/api.py`, `src/mac/http_routes/` |
-| Execution | Docker Engine / Moby, Kubernetes, OpenClaw, OpenAI Codex CLI, OpenCode | ADR 0008 (Accepted), `src/mac/k8s/runner.py`, `src/mac/coding_agent.py`, `docs/openclaw-identities.md` |
+| Execution | Docker Engine / Moby, Kubernetes, Hermes Agent, OpenAI Codex CLI, OpenCode | ADR 0008 (Accepted), `src/mac/k8s/runner.py`, `src/mac/coding_agent.py`, `docs/hermes-boundary.md` |
 | Protocol | ACP, A2A agent cards, MCP, OCSF event streams | `src/mac/acp/protocol.py`, `src/mac/a2a/card.py`, `src/mac/mcp_server.py`, `src/mac/openshell_collector.py`, ADR 0006 (Proposed — ACP *support scope*) |
 
 Every entry is a dependency, not a fork. The MCP server and the Python client are clients

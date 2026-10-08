@@ -233,7 +233,6 @@ def _run(
         "PATH": os.pathsep.join((str(bin_dir), str(Path(sys.executable).parent), os.defpath)),
         "HOME": str(home),
         "HERMES_HOME": str(home / ".hermes"),
-        "MAC_HERMES_OPENCLAW_SOURCE": str(home / "no-openclaw-here"),
         "FAKE_HERMES_CALLS": str(calls_path),
         "FAKE_HERMES_SCENARIO": scenario,
         "FAKE_GATEWAY_PID": str(os.getpid()),
@@ -417,14 +416,9 @@ def test_prepare_does_not_duplicate_an_existing_allowlist_line(tmp_path):
 
 
 def test_verify_fails_closed_when_gateway_impl_env_is_missing_or_wrong(tmp_path):
-    # Regression: mac-agent's own startup self-test derives its
-    # OpenClaw-required branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env.
-    # A Hermes cutover run through this installer (rather than the full
-    # fleet-node-install.sh deploy path, since deleted) never touched that variable, so it
-    # kept claiming "openclaw" after the gateway was gone -- mac-agent then
-    # crash-loops forever demanding an OpenClaw advertisement that no longer
-    # exists, and the agent is offline/unhealthy for as long as it never
-    # starts. Confirmed live on all three fleet nodes.
+    # mac-agent reads its chat-gateway implementation from
+    # MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env, so verify refuses a node whose
+    # mac.env does not pin it to hermes.
     result, _calls = _run(
         tmp_path, "verify", scenario="healthy", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"}
     )
@@ -444,12 +438,12 @@ def test_prepare_writes_the_chat_gateway_impl_env_var(tmp_path):
     assert f"MAC_HERMES_AGENT_DIR={tmp_path / 'bin'}" in lines
 
 
-def test_prepare_corrects_a_stale_openclaw_gateway_impl_value(tmp_path):
+def test_prepare_corrects_a_stale_gateway_impl_value(tmp_path):
     home = tmp_path / "home"
     mac_home = home / ".mac"
     mac_home.mkdir(parents=True, exist_ok=True)
     env_file = mac_home / "mac.env"
-    env_file.write_text("MAC_CHAT_GATEWAY_IMPL=openclaw\n", encoding="utf-8")
+    env_file.write_text("MAC_CHAT_GATEWAY_IMPL=none\n", encoding="utf-8")
     result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
     assert result.returncode == 0, result.stderr
     from mac.deploy_env import read_env_file
@@ -676,7 +670,7 @@ def test_prepare_waits_for_actual_exit_even_when_stop_reports_success(tmp_path):
     assert not any(call[:2] == ["gateway", "install"] for call in calls)
 
 
-def test_prepare_does_not_port_a_retired_openclaw_profile(tmp_path):
+def test_prepare_makes_no_mac_cli_calls(tmp_path):
     result, calls = _run(tmp_path, "prepare")
     assert result.returncode == 0, result.stderr
     mac_calls_path = tmp_path / "mac-calls.jsonl"
@@ -684,26 +678,6 @@ def test_prepare_does_not_port_a_retired_openclaw_profile(tmp_path):
         json.loads(line) for line in mac_calls_path.read_text(encoding="utf-8").splitlines() if line
     ]
     assert mac_calls == []
-
-
-def test_prepare_ignores_retired_openclaw_state_when_present(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    openclaw_home = home / ".openclaw"
-    openclaw_home.mkdir(parents=True, exist_ok=True)
-    result, calls = _run(
-        tmp_path,
-        "prepare",
-        extra_env={"MAC_HERMES_OPENCLAW_SOURCE": str(openclaw_home)},
-    )
-    assert result.returncode == 0, result.stderr
-    assert not any(call[:2] == ["claw", "migrate"] for call in calls)
-
-
-def test_prepare_skips_claw_migrate_when_no_openclaw_home(tmp_path):
-    result, calls = _run(tmp_path, "prepare")
-    assert result.returncode == 0, result.stderr
-    assert not any(call[:2] == ["claw", "migrate"] for call in calls)
 
 
 def test_finalize_runs_verify(tmp_path):

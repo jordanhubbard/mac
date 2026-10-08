@@ -84,7 +84,7 @@ class RuntimeDepsMixin:
 
     @staticmethod
     def _pip_base_name(spec: str) -> str:
-        return re.split(r"[\[<>=!~;\s]", spec.strip(), 1)[0].strip().lower().replace("_", "-")
+        return re.split(r"[\[<>=!~;\s]", spec.strip(), maxsplit=1)[0].strip().lower().replace("_", "-")
 
     @staticmethod
     def _npm_base_name(spec: str) -> str:

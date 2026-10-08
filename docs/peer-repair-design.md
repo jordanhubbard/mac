@@ -426,7 +426,7 @@ shows the pattern is already widespread:
 | `client-ui` | 2026-08-26T20:56Z | **expired 28 days ago** |
 | `client-laptop` | 2026-09-17T03:23Z | **expired 6 days ago** |
 | `client-workstation` | 2026-09-18T22:48Z | **expired 5 days ago** |
-| `openclaw-fleet-upgrade` | 2026-09-24T22:30Z | **expires in ~26 hours** |
+| `fleet-upgrade` (legacy gateway credential) | 2026-09-24T22:30Z | **expires in ~26 hours** |
 | `hub-admin` | 2026-10-23T20:17Z | renewed during this investigation |
 
 Three credentials are already dead and one — belonging to a *fleet upgrade*

@@ -222,13 +222,13 @@ def test_abandonment_is_a_no_op_when_no_assignment_is_held(tmp_path: Path):
 
 def test_default_grace_fits_inside_the_units_stop_timeout(tmp_path: Path):
     # The whole point of the deadline is to release BEFORE systemd's SIGKILL.
-    # mac-agent-service ships TimeoutStopSec=600 with KillMode=mixed, so a
+    # mac-agent-service ships TimeoutStopSec=3600 with KillMode=mixed, so a
     # default at or above that would abandon nothing.
     unit = Path(__file__).resolve().parents[1] / "deploy" / "systemd" / "mac-agent.service.in"
     text = unit.read_text(encoding="utf-8")
-    assert "TimeoutStopSec=600" in text
+    assert "TimeoutStopSec=3600" in text
     assert "KillMode=mixed" in text
-    assert 0 < DEFAULT_SHUTDOWN_GRACE_SECONDS < 600
+    assert 0 < DEFAULT_SHUTDOWN_GRACE_SECONDS < 3600
 
     worker = MacWorker(
         object(),  # type: ignore[arg-type]
@@ -237,41 +237,6 @@ def test_default_grace_fits_inside_the_units_stop_timeout(tmp_path: Path):
         lambda _task, _dir: WorkerExecution(0, "unused"),
     )
     assert worker.shutdown_grace_seconds == DEFAULT_SHUTDOWN_GRACE_SECONDS
-
-
-def test_delivery_drain_thread_is_joined_before_shutdown_completes(tmp_path: Path):
-    # A drain already inside _process_human_delivery_outbox (an HTTP round trip
-    # plus a local openclaw-message delivery) must not still be running when
-    # _shutdown() posts offline and the process exits: a message delivered
-    # locally but never acked is redelivered on the next start.
-    worker = MacWorker(
-        object(),  # type: ignore[arg-type] - no HTTP in this test
-        "agent_drain",
-        tmp_path,
-        lambda _task, _dir: WorkerExecution(0, "unused"),
-    )
-    worker.delivery_drain_interval_seconds = 0.01
-
-    entered = threading.Event()
-    finished = threading.Event()
-
-    def slow_drain() -> None:
-        entered.set()
-        time.sleep(0.5)
-        finished.set()
-
-    worker._process_human_delivery_outbox = slow_drain  # type: ignore[assignment]
-    worker._start_delivery_drain_thread()
-    thread = worker._delivery_drain_thread
-    assert thread is not None
-    assert entered.wait(timeout=5), "drain never ran"
-
-    worker._stop_delivery_drain_thread()
-
-    assert finished.is_set(), (
-        "the drain was still in flight when shutdown returned; it was stopped without a join"
-    )
-    assert not thread.is_alive()
 
 
 # --------------------------------------------------------------------------

@@ -59,8 +59,7 @@ acceptance record — lands in the ignored `_build/agentfabric-overview/`.
    figures. Counted figures carry their command and their measurement date, and
    are re-measured on every regeneration rather than carried forward.
 6. **Re-use is stated as re-use.** A dependency is named as a dependency; a
-   design reference is named as a reference. NemoClaw is a reference, not the
-   deployed gateway.
+   design reference is named as a reference.
 7. **Publication requires explicit authorization.** `publish_google_workspace.py`
    has no default destination and requires `--slides-id` and `--authorized-by`.
    Do not publish, and do not record a published location in the manifest,

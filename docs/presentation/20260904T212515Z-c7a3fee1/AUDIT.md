@@ -33,9 +33,8 @@ range and none is presented as shipped in this deck.
 
 | Claim | Source |
 |---|---|
-| OpenShell reviewed-CLI preflight computes full identity whenever a canonical CLI binary already exists on disk, not only when OpenClaw itself is sandbox-managed | `deploy/openshell/reviewed-cli.py`; PR #737 |
-| Fleet-node install tolerates an absent `service-advertisement.json` under a degraded gateway instead of crashing the OpenClaw sandbox-conformance check | `deploy/fleet-node-install.sh`; PR #737 |
-| The OpenClaw gateway installer's "no such process" detection matches by message text, independent of `supervisorctl`'s exit code | `deploy/openclaw/install-openclaw-gateway.sh`; PR #737 |
+| OpenShell reviewed-CLI preflight computes full identity whenever a canonical CLI binary already exists on disk, not only when the chat gateway itself is sandbox-managed | `deploy/openshell/reviewed-cli.py`; PR #737 |
+| Fleet-node install tolerates an absent `service-advertisement.json` under a degraded gateway instead of crashing the gateway sandbox-conformance check | `deploy/fleet-node-install.sh`; PR #737 |
 | Sandboxed agents are no longer advertised a host-absolute alternative to `$MAC_TASK_REPO_WORKTREE` | `src/mac/executor_prompt.py`; PR #738 |
 | README no longer leaks fleet agent names via canary checkpoint comments | `README.md`; PR #739 |
 | OpenShell bootstrap polls for local gateway readiness (up to 120s) instead of a fixed 3-second sleep, fixing cold-image-pull races on brand-new nodes | `deploy/openshell/bootstrap-openshell.sh`; PR #740 |

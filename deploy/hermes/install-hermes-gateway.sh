@@ -6,11 +6,9 @@
 # install` -- its own setup.py refuses to build a wheel or sdist ("Hermes is
 # distributed via the shell installer, Docker image, or Nix"). This script
 # prepares a reviewed external checkout and drives its CLI (`hermes config set`,
-# `hermes gateway install`, `hermes claw migrate`) rather than reimplementing
-# any of that logic in-tree. It is the host-level sibling of
-# deploy/openclaw/install-openclaw-gateway.sh -- same prepare/verify/finalize/
-# withdraw shape, same MAC_HOME conventions -- but Hermes runs as a bare host
-# process (no OpenShell sandbox), so there is no container lifecycle here.
+# `hermes gateway install`) rather than reimplementing any of that logic
+# in-tree. Hermes is MAC's only human interface; it runs as a bare host process
+# (no OpenShell sandbox), so there is no container lifecycle here.
 set -euo pipefail
 
 FLEET_NAME="${MAC_HERMES_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
@@ -290,9 +288,9 @@ configure_terminal_cwd() {
   cwd="$("$hermes" config get terminal.cwd)" || die "cannot read terminal.cwd"
   case "$cwd" in
     ''|.|auto|cwd|/sandbox/workspace|/sandbox/workspace/)
-      # Hermes resolves placeholder cwd through legacy MESSAGING_CWD. Migrated
-      # profiles can still name OpenClaw's /sandbox/workspace in .env, even
-      # though MAC's native gateway no longer has that filesystem. Pin the
+      # Hermes resolves placeholder cwd through legacy MESSAGING_CWD. Old
+      # profiles can still name a sandbox /sandbox/workspace in .env, even
+      # though MAC's native gateway has no such filesystem. Pin the
       # canonical config so inherited legacy environment cannot win again.
       cwd="$HOME"
       ;;
@@ -386,9 +384,8 @@ verify_gateway() {
            "ensure_user_allowlist (prepare) first"
   grep -q '^MAC_CHAT_GATEWAY_IMPL=hermes$' "$MAC_HOME/mac.env" 2>/dev/null \
     || die "MAC_CHAT_GATEWAY_IMPL is not 'hermes' in $MAC_HOME/mac.env -- mac-agent's" \
-           "own startup self-test derives its OpenClaw-required branch from this" \
-           "variable and will crash-loop forever demanding an OpenClaw advertisement" \
-           "that no longer exists; run ensure_chat_gateway_impl_env (prepare) first"
+           "worker reads its chat-gateway implementation from this variable;" \
+           "run ensure_chat_gateway_impl_env (prepare) first"
   verify_runtime_context_bridge
   # --deep appends historical log lines, including normal shutdowns from
   # earlier processes. Only inspect the current service status here.
@@ -467,15 +464,9 @@ PY_VERIFY
 }
 
 ensure_chat_gateway_impl_env() {
-  # mac-agent's own startup self-test derives its OpenClaw-required-or-not
-  # branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env -- but only the
-  # old fleet installer's full deploy path ever wrote that variable.
-  # A cutover run through this standalone installer (as every node's Hermes
-  # cutover was, this session) never touched it, so mac.env kept claiming
-  # "openclaw" after the gateway was gone. Confirmed live: mac-agent then
-  # crash-loops forever at startup, since the self-test hard-requires an
-  # OpenClaw advertisement that no longer exists -- and the agent is
-  # `agent_offline`/`agent_unhealthy` for as long as it never starts.
+  # mac-agent reads its chat-gateway implementation from
+  # MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env and refuses a retired runtime
+  # value. Hermes is the only human interface, so prepare always pins it.
   local env_file="$MAC_HOME/mac.env"
   mkdir -p "$MAC_HOME"
   touch "$env_file"

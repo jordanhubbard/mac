@@ -61,14 +61,14 @@ The fleet is updated by a human with
 - [ ] Keystore operations are scope-aware and auditable so each service can read
   only the named credentials required for its finite role.
 - [ ] Critical hub recovery has a break-glass path that remains usable when the
-  current hub or OpenClaw generation is stale, while preserving authorization,
+  current hub or gateway generation is stale, while preserving authorization,
   audit, health proof, and rollback.
 - [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
   Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and
   gpu-worker after typed cohort `20260827T060057Z` (the since-deleted
   `make deploy HUB=<hub>` with hold-adoptions after a retained roll-forward). Hub `/health` ok;
-  workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
+  workers idle and unheld.
 - [x] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
   of generated authority files.
@@ -105,7 +105,7 @@ The fleet is updated by a human with
   channel broadcasts are limited to the configured destination.
 - [ ] The hub agent's proactive channel output is restricted to its configured
   home channel; direct messages to the fleet owner remain allowed.
-- [ ] OpenClaw gateway shutdown and deployment checkpoints handle WAL-backed
+- [ ] Chat-gateway shutdown and deployment checkpoints handle WAL-backed
   state, bounded subprocess shutdown, and the configured OpenShell endpoint
   without corrupting or abandoning a rollout.
 - [ ] Fleet configuration and credential environment files are written

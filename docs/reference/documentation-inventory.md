@@ -53,16 +53,13 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/assessment-task-83f38e.md`](../archive/field-notes/assessment-task-83f38e.md) | Assessment: task_83f38e9754f64908a316cccba0952329 |
 | historical archive | [`archive/field-notes/assessment-task-8bf378.md`](../archive/field-notes/assessment-task-8bf378.md) | Assessment: task_8bf37845abf445149d99fb4a1e3a41d5 |
 | historical archive | [`archive/field-notes/assessment-task-97627e.md`](../archive/field-notes/assessment-task-97627e.md) | Resolution: task_97627e43b1034100831e726f8981e5e2 |
-| historical archive | [`archive/field-notes/assessment-task-a33145.md`](../archive/field-notes/assessment-task-a33145.md) | Assessment: task_a33145a37db34ffeb55a0db61797df5c |
 | historical archive | [`archive/field-notes/assessment-task-a608f4.md`](../archive/field-notes/assessment-task-a608f4.md) | Assessment: task_a608f4405b0446a3b28ed7a8beb4fd65 |
 | historical archive | [`archive/field-notes/assessment-task-b07fbf.md`](../archive/field-notes/assessment-task-b07fbf.md) | Assessment: task_b07fbff6994e41a39ce24157f1832ad5 |
 | historical archive | [`archive/field-notes/assessment-task-de3502.md`](../archive/field-notes/assessment-task-de3502.md) | Assessment: task_de35029099d34c94be186c8992ee706a |
 | historical archive | [`archive/field-notes/assessment-task-f6a813.md`](../archive/field-notes/assessment-task-f6a813.md) | Assessment: task_f6a813fede7841d28b154af3a544864a |
 | historical archive | [`archive/field-notes/assessment-task-f9cd72.md`](../archive/field-notes/assessment-task-f9cd72.md) | Assessment: task_f9cd72342aef4e7b8701b131b12d29ff |
 | historical archive | [`archive/field-notes/canary-v1.3.1.md`](../archive/field-notes/canary-v1.3.1.md) | v1.3.1 fleet canary |
-| historical archive | [`archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md`](../archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md) | Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable) |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-5404b15-skill.md`](../archive/field-notes/closeout-dreamrepair-5404b15-skill.md) | Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
-| historical archive | [`archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md`](../archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md) | Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
 | historical archive | [`archive/field-notes/closeout-review-finalize-verify-prerequisite.md`](../archive/field-notes/closeout-review-finalize-verify-prerequisite.md) | Close-Out: dream-finding review finalize/verify prerequisite |
 | historical archive | [`archive/field-notes/closeout-task-9c83aa5b-skill.md`](../archive/field-notes/closeout-task-9c83aa5b-skill.md) | Close-Out: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — CLOSE, NOT ACTIONABLE |
 | historical archive | [`archive/field-notes/contract-verify-environment-failure-finding.md`](../archive/field-notes/contract-verify-environment-failure-finding.md) | Contract-verify environment failure investigation finding |
@@ -75,12 +72,7 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md`](../archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md) | Disposition: skill environment-prerequisite finding — smallest repair applied |
 | historical archive | [`archive/field-notes/disposition-task-9c83aa5b-skill.md`](../archive/field-notes/disposition-task-9c83aa5b-skill.md) | Disposition: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — not actionable |
 | historical archive | [`archive/field-notes/disposition-task-c3a30819-skill.md`](../archive/field-notes/disposition-task-c3a30819-skill.md) | Disposition: low-confidence dream finding `skill` (`dreamrepair:828e1ef4a530935a9a7db4b1807202e1`) — not actionable |
-| historical archive | [`archive/field-notes/disposition-task-cc1dedb0-slack.md`](../archive/field-notes/disposition-task-cc1dedb0-slack.md) | Disposition: low-confidence dream finding `slack` (`dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa`) — not actionable |
-| historical archive | [`archive/field-notes/dream-finding-3dc2cf.md`](../archive/field-notes/dream-finding-3dc2cf.md) | Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88 |
-| historical archive | [`archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md`](../archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md) | Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c |
 | historical archive | [`archive/field-notes/dream-finding-6d1b5b.md`](../archive/field-notes/dream-finding-6d1b5b.md) | Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119 |
-| historical archive | [`archive/field-notes/dream-finding-805aed7.md`](../archive/field-notes/dream-finding-805aed7.md) | Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce |
-| historical archive | [`archive/field-notes/dream-finding-965c6e89.md`](../archive/field-notes/dream-finding-965c6e89.md) | Ground Truth: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
 | historical archive | [`archive/field-notes/dream-stalled-finalizer-recovery-finding.md`](../archive/field-notes/dream-stalled-finalizer-recovery-finding.md) | Dream-repair review finding: stalled-finalizer recovery |
 | historical archive | [`archive/field-notes/dream-triage-828e1ef4.md`](../archive/field-notes/dream-triage-828e1ef4.md) | Triage: Dream Finding `dreamrepair:828e1ef4a530935a9a7db4b1807202e1` |
 | historical archive | [`archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md`](../archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md) | Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948) |
@@ -96,12 +88,9 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md`](../archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md) | Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal |
 | historical archive | [`archive/field-notes/investigation-dream-tests-generic-area-bucket.md`](../archive/field-notes/investigation-dream-tests-generic-area-bucket.md) | Investigation: dream finding `dreamrepair:173ce952` with a generic `tests` affected label — placeholder area bucket, not a defect location |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-394db89d-slack.md`](../archive/field-notes/investigation-dreamrepair-394db89d-slack.md) | Ground Truth: dream finding `dreamrepair:394db89d377ef58abf97ace7d54d728c` (slack failure_pattern) |
-| historical archive | [`archive/field-notes/investigation-dreamrepair-477446f5-slack.md`](../archive/field-notes/investigation-dreamrepair-477446f5-slack.md) | Ground Truth: dream finding `dreamrepair:477446f5c8b8bf1972f2ad31444c956b` (slack failure_pattern) |
-| historical archive | [`archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md`](../archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md) | Investigation: dream finding `dreamrepair:4c4429bc` (scripts / openclaw_fleet_rollout audit) |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-5404b15-skill.md`](../archive/field-notes/investigation-dreamrepair-5404b15-skill.md) | Investigation: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-71b00e8-slack.md`](../archive/field-notes/investigation-dreamrepair-71b00e8-slack.md) | Ground Truth: dream finding `dreamrepair:71b00e8122761c2caeacd04c7ed3f49c` (slack display-label trace) |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md`](../archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md) | Investigation: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
-| historical archive | [`archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md`](../archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md) | Ground Truth: dream finding `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa` (slack failure_pattern) |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-d94ad78-skill.md`](../archive/field-notes/investigation-dreamrepair-d94ad78-skill.md) | Investigation: dream finding `dreamrepair:d94ad78027c32d4825923f0ba91e9497` (skill) |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md`](../archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md) | Ground Truth: dream finding `dreamrepair:da0ac0f3cab187290c91e5b26a6c5b9f` (slack failure_pattern) |
 | historical archive | [`archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md`](../archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md) | Investigation: dream finding `dreamrepair:ffbc63f8695e9316b064bb1f6d3566cb` (skill) |
@@ -119,7 +108,6 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/mac-task-bd-parity-audit.md`](../archive/field-notes/mac-task-bd-parity-audit.md) | `mac task` ↔ `bd` (beads) functional-parity audit |
 | historical archive | [`archive/field-notes/metadata-sync-assessment.md`](../archive/field-notes/metadata-sync-assessment.md) | Metadata sync assessment (post-bd-bridge) |
 | historical archive | [`archive/field-notes/prereq-task-029665.md`](../archive/field-notes/prereq-task-029665.md) | Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference |
-| historical archive | [`archive/field-notes/prereq-task-403ed263.md`](../archive/field-notes/prereq-task-403ed263.md) | Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c |
 | historical archive | [`archive/field-notes/prereq-task-e94f546c.md`](../archive/field-notes/prereq-task-e94f546c.md) | Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd |
 | historical archive | [`archive/field-notes/prereq-task-fd2f34.md`](../archive/field-notes/prereq-task-fd2f34.md) | Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff |
 | historical archive | [`archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md`](../archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md) | Provenance: low-confidence dream finding `slack` (`dreamrepair:77fc3e59014ba0d7950d22387f0204a0`) — self-referential evidence chain, no concrete defect |
@@ -168,12 +156,10 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`guide/README.md`](../guide/README.md) | mac documentation |
 | supplemental reference | [`hermes-boundary.md`](../hermes-boundary.md) | Hermes Boundary |
 | supplemental reference | [`hermes-integration.md`](../hermes-integration.md) | Hermes Integration |
-| supplemental reference | [`hermes-retirement-premises.md`](../hermes-retirement-premises.md) | Testing the premises for retiring the vendored Hermes tree |
 | supplemental reference | [`hermes-vendor-fate.md`](../hermes-vendor-fate.md) | Fate of the vendored Hermes tree |
 | supplemental reference | [`home-consolidation.md`](../home-consolidation.md) | Home-Directory Consolidation: Analysis & Plan |
 | runbook | [`hub-availability.md`](../hub-availability.md) | Hub Availability |
 | supplemental reference | [`hub-host-saturation-remediation.md`](../hub-host-saturation-remediation.md) | Hub-Host Saturation Remediation |
-| supplemental reference | [`human-interface-selector.md`](../human-interface-selector.md) | The human interface: support both, activate one |
 | supplemental reference | [`image-publication-and-qualification.md`](../image-publication-and-qualification.md) | Image Publication and Pre-Publication Qualification |
 | supplemental reference | [`in-flight-agent-messages.md`](../in-flight-agent-messages.md) | Reaching an agent that is already working |
 | landing page | [`index.md`](../index.md) | MAC: trustworthy work across an agent fleet |
@@ -187,7 +173,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
 | supplemental reference | [`oneshot-isolation-gate-verification.md`](../oneshot-isolation-gate-verification.md) | Oneshot isolation — contract gate verification |
-| supplemental reference | [`openclaw-identities.md`](../openclaw-identities.md) | OpenClaw public identities and fleet representation |
 | supplemental reference | [`openshell-nemo-relay-e2e.md`](../openshell-nemo-relay-e2e.md) | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | [`openshell-nemo-relay-integration.md`](../openshell-nemo-relay-integration.md) | OpenShell + NeMo Relay integration |
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
@@ -215,13 +200,11 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`review-tick-stall-diagnosis.md`](../review-tick-stall-diagnosis.md) | Why the hub self-tick fails to drain the REVIEWING backlog |
 | supplemental reference | [`roadmap.md`](../roadmap.md) | MAC Roadmap |
 | supplemental reference | [`secrets-management-guide.md`](../secrets-management-guide.md) | Secrets Management Guide |
-| supplemental reference | [`security/openshell-0.0.72-compatibility-review.mdx`](../security/openshell-0.0.72-compatibility-review.mdx) | OpenShell 0.0.72 Compatibility Review |
 | supplemental reference | [`soul-graph.md`](../soul-graph.md) | Soul graph (experimental) |
 | runbook | [`soul-preservation-runbook.md`](../soul-preservation-runbook.md) | Soul Preservation Runbook |
 | supplemental reference | [`structured-task-bodies.md`](../structured-task-bodies.md) | Structured task bodies: actions on a Component |
 | historical archive | [`superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
 | historical archive | [`superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) | Autonomous Project Routing and Review/Fix Loop Design |
-| historical archive | [`superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md`](../superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md) | Native Darwin OpenClaw and Slack home-channel routing — design |
 | supplemental reference | [`task-dependency-semantics.md`](../task-dependency-semantics.md) | Task dependency failure semantics |
 | supplemental reference | [`task-throughput-observability.md`](../task-throughput-observability.md) | Task throughput observability |
 | supplemental reference | [`testing-strategy.md`](../testing-strategy.md) | Test portfolio strategy |

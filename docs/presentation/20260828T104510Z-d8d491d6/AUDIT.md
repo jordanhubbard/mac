@@ -235,7 +235,7 @@ newly *true of this tree*:
   (`#674`, `#675`, and related).
 - ADR 0023 shipped: Agent Plugins installer and hub-only stall nudge (`#662`).
 - ADR 0033 shipped: bounded local continuation under hub supervision (`#666`).
-- Hub-mediated fleet self-upgrades; OpenClaw home routing on Darwin; nightly
+- Hub-mediated fleet self-upgrades; gateway home routing on Darwin; nightly
   local-news limited to one real broadcast per day.
 - CodeGraph purged (`#664`); tests that do not protect public behaviour pruned.
 - Task throughput made responsive on a large live ledger (`#667` / related).
@@ -308,15 +308,12 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | historical archive | `archive/field-notes/assessment-task-83f38e.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-8bf378.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-97627e.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/assessment-task-a33145.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-a608f4.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-b07fbf.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-de3502.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-f6a813.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-f9cd72.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/closeout-dreamrepair-5404b15-skill.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/closeout-review-finalize-verify-prerequisite.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/closeout-task-9c83aa5b-skill.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/contract-verify-environment-failure-finding.md` | not current behaviour (archive index) |
@@ -329,12 +326,7 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | historical archive | `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/disposition-task-9c83aa5b-skill.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/disposition-task-c3a30819-skill.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/disposition-task-cc1dedb0-slack.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/dream-finding-3dc2cf.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/dream-finding-6d1b5b.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/dream-finding-805aed7.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/dream-finding-965c6e89.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/dream-stalled-finalizer-recovery-finding.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/dream-triage-828e1ef4.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md` | not current behaviour (archive index) |
@@ -349,12 +341,9 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | historical archive | `archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dream-tests-generic-area-bucket.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-394db89d-slack.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/investigation-dreamrepair-477446f5-slack.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-5404b15-skill.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-71b00e8-slack.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-d94ad78-skill.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md` | not current behaviour (archive index) |
@@ -372,7 +361,6 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | historical archive | `archive/field-notes/mac-task-bd-parity-audit.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/metadata-sync-assessment.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/prereq-task-029665.md` | not current behaviour (archive index) |
-| historical archive | `archive/field-notes/prereq-task-403ed263.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/prereq-task-e94f546c.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/prereq-task-fd2f34.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md` | not current behaviour (archive index) |
@@ -426,13 +414,11 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | supplemental reference | `guide/README.md` | not-changed against tree at this SHA |
 | supplemental reference | `hermes-boundary.md` | not-changed against tree at this SHA |
 | supplemental reference | `hermes-integration.md` | **changed** vs e8040fec — Make lint and lint-fix a diagnose/apply pair, including format (#663) |
-| supplemental reference | `hermes-retirement-premises.md` | not-changed against tree at this SHA |
 | supplemental reference | `hermes-vendor-fate.md` | not-changed against tree at this SHA |
 | supplemental reference | `hgx-elastic-capacity.md` | not-changed against tree at this SHA |
 | supplemental reference | `home-consolidation.md` | not-changed against tree at this SHA |
 | runbook | `hub-availability.md` | not-changed against tree at this SHA |
 | supplemental reference | `hub-host-saturation-remediation.md` | not-changed against tree at this SHA |
-| supplemental reference | `human-interface-selector.md` | not-changed against tree at this SHA |
 | supplemental reference | `image-publication-and-qualification.md` | not-changed against tree at this SHA |
 | supplemental reference | `in-flight-agent-messages.md` | not-changed against tree at this SHA |
 | landing page | `index.md` | not-changed against tree at this SHA |
@@ -441,13 +427,12 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | supplemental reference | `memory-tier-verification.md` | not-changed against tree at this SHA |
 | supplemental reference | `notifier-configuration-guide.md` | **changed** vs e8040fec — Make lint and lint-fix a diagnose/apply pair, including format (#663) |
 | supplemental reference | `oneshot-isolation-gate-verification.md` | not-changed against tree at this SHA |
-| supplemental reference | `openclaw-identities.md` | not-changed against tree at this SHA |
 | supplemental reference | `openshell-nemo-relay-e2e.md` | not-changed against tree at this SHA |
 | supplemental reference | `openshell-nemo-relay-integration.md` | **changed** vs e8040fec — Make lint and lint-fix a diagnose/apply pair, including format (#663) |
 | supplemental reference | `openshell-sandbox.md` | **changed** vs e8040fec — Purge CodeGraph from MAC (#664) |
 | runbook | `production-deployment.md` | **changed** vs e8040fec — Purge CodeGraph from MAC (#664) |
 | generated reference | `reference/cli.md` | **changed** vs e8040fec — Purge CodeGraph from MAC (#664) |
-| generated reference | `reference/documentation-inventory.md` | **changed** vs e8040fec — Index the Darwin OpenClaw routing spec in generated docs. |
+| generated reference | `reference/documentation-inventory.md` | **changed** vs e8040fec — Index the Darwin gateway routing spec in generated docs. |
 | generated reference | `reference/openapi.md` | **changed** vs e8040fec — Add hub-mediated fleet self-upgrades |
 | generated reference | `reference/staged-module-integration-audit.md` | not-changed against tree at this SHA |
 | supplemental reference | `repository-cicd-monitor.md` | not-changed against tree at this SHA |
@@ -458,13 +443,11 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | supplemental reference | `roadmap.md` | **changed** vs e8040fec — Add CLI plugin distribution milestones |
 | supplemental reference | `scientific-optimizer.md` | **changed** vs e8040fec — Purge CodeGraph from MAC (#664) |
 | supplemental reference | `secrets-management-guide.md` | **changed** vs e8040fec — Make lint and lint-fix a diagnose/apply pair, including format (#663) |
-| supplemental reference | `security/openshell-0.0.72-compatibility-review.mdx` | not-changed against tree at this SHA |
 | runbook | `soul-preservation-runbook.md` | not-changed against tree at this SHA |
 | supplemental reference | `structured-task-bodies.md` | not-changed against tree at this SHA |
 | historical archive | `superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md` | not current behaviour (archive index) |
 | historical archive | `superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md` | not current behaviour (archive index) |
 | historical archive | `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md` | not current behaviour (archive index) |
-| historical archive | `superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md` | not current behaviour (archive index) |
 | runbook | `synchronized-fleet-cutover.md` | not-changed against tree at this SHA |
 | supplemental reference | `task-dependency-semantics.md` | not-changed against tree at this SHA |
 | supplemental reference | `task-throughput-observability.md` | **changed** vs e8040fec — Purge CodeGraph from MAC (#664) |

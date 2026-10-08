@@ -7,7 +7,7 @@ still synthesised a partial, attestation-only resources map from ``None``.  The
 heartbeat therefore *supplied* ``resources``, and the hub -- correctly treating a
 supplied resources document as a full-document replacement so workers can
 deliberately withdraw stale advertisements -- swapped the stored map for that
-partial one.  That erased hardware, media_routes, openclaw_runtime,
+partial one.  That erased hardware, media_routes, coding_clis,
 chat_gateway, gateway_ownership, and representation together.
 
 The fix keeps hub replacement semantics unchanged and instead makes the worker
@@ -38,7 +38,7 @@ def _complete_resource_snapshot() -> Dict[str, Any]:
     return {
         "hardware": {"cpu": "test-cpu", "memory_gb": 16},
         "media_routes": {"/v1/media": "http://worker.test/media"},
-        "openclaw_runtime": {"schema": "mac.openclaw_runtime.v1", "ready": True},
+        "coding_clis": {"schema": "mac.coding_clis.v2", "clis": {}},
         "chat_gateway": {"endpoint": "http://worker.test/chat"},
         "gateway_ownership": {"owner": "worker"},
         "representation": {"display_name": "Rocky"},
@@ -119,7 +119,7 @@ def test_heartbeat_after_get_failure_cannot_erase_last_complete_snapshot(tmp_pat
     for key in (
         "hardware",
         "media_routes",
-        "openclaw_runtime",
+        "coding_clis",
         "chat_gateway",
         "gateway_ownership",
         "representation",
@@ -165,9 +165,31 @@ def test_heartbeat_with_successful_get_still_refreshes_resources(tmp_path: Path)
     for key in (
         "hardware",
         "media_routes",
-        "openclaw_runtime",
+        "coding_clis",
         "chat_gateway",
         "gateway_ownership",
         "representation",
     ):
         assert key in after, key
+
+
+def test_retired_chat_gateway_implementation_is_rejected_at_registration(monkeypatch) -> None:
+    """The removed runtime is refused with a clear error, never treated as Hermes."""
+    import pytest
+
+    from mac.deploy_env import RETIRED_HUMAN_INTERFACE
+    from mac.worker import _resources_without_retired_gateway
+
+    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", RETIRED_HUMAN_INTERFACE)
+    with pytest.raises(ValueError, match="Hermes is the only human interface"):
+        _resources_without_retired_gateway({"chat_gateway": {"implementation": "hermes"}})
+
+
+def test_gateway_impl_none_withdraws_the_chat_gateway_advertisement(monkeypatch) -> None:
+    from mac.worker import _resources_without_retired_gateway
+
+    resources = {"chat_gateway": {}, "gateway_ownership": {}, "hardware": {}}
+    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "none")
+    assert _resources_without_retired_gateway(resources) == {"hardware": {}}
+    monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "hermes")
+    assert _resources_without_retired_gateway(resources) == resources

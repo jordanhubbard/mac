@@ -51,15 +51,11 @@ plugins:
         crash-incident-finding.md: archive/field-notes/crash-incident-finding.md
         disposition-task-394db89d-slack.md: archive/field-notes/disposition-task-394db89d-slack.md
         disposition-task-c3a30819-skill.md: archive/field-notes/disposition-task-c3a30819-skill.md
-        disposition-task-cc1dedb0-slack.md: archive/field-notes/disposition-task-cc1dedb0-slack.md
-        dream-finding-965c6e89.md: archive/field-notes/dream-finding-965c6e89.md
         dream-stalled-finalizer-recovery-finding.md: archive/field-notes/dream-stalled-finalizer-recovery-finding.md
         dream-triage-828e1ef4.md: archive/field-notes/dream-triage-828e1ef4.md
         haskell_migration.md: archive/field-notes/haskell_migration.md
         investigation-dreamrepair-394db89d-slack.md: archive/field-notes/investigation-dreamrepair-394db89d-slack.md
-        investigation-dreamrepair-477446f5-slack.md: archive/field-notes/investigation-dreamrepair-477446f5-slack.md
         investigation-dreamrepair-71b00e8-slack.md: archive/field-notes/investigation-dreamrepair-71b00e8-slack.md
-        investigation-dreamrepair-cc1dedb0-slack.md: archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md
         investigation-dreamrepair-da0ac0f3-slack.md: archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md
         job-per-task-roles-spec-review.md: archive/field-notes/job-per-task-roles-spec-review.md
         job-per-task-roles-spec.md: archive/field-notes/job-per-task-roles-spec.md
@@ -71,19 +67,14 @@ plugins:
         assessment-task-83f38e.md: archive/field-notes/assessment-task-83f38e.md
         assessment-task-8bf378.md: archive/field-notes/assessment-task-8bf378.md
         assessment-task-97627e.md: archive/field-notes/assessment-task-97627e.md
-        assessment-task-a33145.md: archive/field-notes/assessment-task-a33145.md
         assessment-task-a608f4.md: archive/field-notes/assessment-task-a608f4.md
         assessment-task-de3502.md: archive/field-notes/assessment-task-de3502.md
         assessment-task-f6a813.md: archive/field-notes/assessment-task-f6a813.md
         assessment-task-f9cd72.md: archive/field-notes/assessment-task-f9cd72.md
-        closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md: archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md
-        closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md: archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md
         closeout-dreamrepair-5404b15-skill.md: archive/field-notes/closeout-dreamrepair-5404b15-skill.md
         disposition-task-46eb6c-skill-env-prereqs.md: archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md
         disposition-task-9c83aa5b-skill.md: archive/field-notes/disposition-task-9c83aa5b-skill.md
-        dream-finding-3dc2cf.md: archive/field-notes/dream-finding-3dc2cf.md
         dream-finding-6d1b5b.md: archive/field-notes/dream-finding-6d1b5b.md
-        dream-finding-805aed7.md: archive/field-notes/dream-finding-805aed7.md
         findings-crash-591645a3-startup-selftest-timeout.md: archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md
         findings-crash-service-unknown-crash-path.md: archive/field-notes/findings-crash-service-unknown-crash-path.md
         fleet-ide-workbench-plan.md: archive/field-notes/fleet-ide-workbench-plan.md
@@ -91,7 +82,6 @@ plugins:
         forensics-task-a32a35e90ab0434e8c7766057b268bc6.md: archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md
         investigation-dream-skill-tool_or_skill_name-actionability.md: archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md
         investigation-dream-tests-generic-area-bucket.md: archive/field-notes/investigation-dream-tests-generic-area-bucket.md
-        investigation-dreamrepair-4c4429b-scripts-openclaw.md: archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md
         investigation-dreamrepair-5404b15-skill.md: archive/field-notes/investigation-dreamrepair-5404b15-skill.md
         investigation-dreamrepair-c8dd8037-skill.md: archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md
         investigation-dreamrepair-d94ad78-skill.md: archive/field-notes/investigation-dreamrepair-d94ad78-skill.md
@@ -102,7 +92,6 @@ plugins:
         k8s-native-rewrite-plan.md: archive/field-notes/k8s-native-rewrite-plan.md
         mac-task-bd-parity-audit.md: archive/field-notes/mac-task-bd-parity-audit.md
         metadata-sync-assessment.md: archive/field-notes/metadata-sync-assessment.md
-        prereq-task-403ed263.md: archive/field-notes/prereq-task-403ed263.md
         prereq-task-e94f546c.md: archive/field-notes/prereq-task-e94f546c.md
         prereq-task-fd2f34.md: archive/field-notes/prereq-task-fd2f34.md
         quickstart-gap-analysis.md: archive/field-notes/quickstart-gap-analysis.md

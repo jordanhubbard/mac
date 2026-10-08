@@ -417,7 +417,7 @@ def _advisory_startup(agent_id="worker", blocking=()):
         "agent_id": agent_id,
         "status": "degraded",
         "blocking_problems": list(blocking),
-        "non_blocking_problems": ["OpenClaw agent self-test exited 1"],
+        "non_blocking_problems": ["chat gateway self-test exited 1"],
     }
 
 
@@ -425,7 +425,7 @@ def test_advisory_startup_degradation_is_dispatch_ready():
     """A degraded self-test with no blocking problems must still dispatch.
 
     The deploy script (since deleted) released this agent (release_health_ready);
-    when the allocator disagreed, one failed OpenClaw probe benched the whole
+    when the allocator disagreed, one failed gateway probe benched the whole
     fleet while the ledger still reported free capacity.
     """
 
