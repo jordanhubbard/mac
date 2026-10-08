@@ -1903,7 +1903,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
