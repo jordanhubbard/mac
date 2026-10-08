@@ -1287,6 +1287,9 @@ class MacWorker(
         self._stop = False
         self._declared_digest = False
         self._declared_policy = False
+        # Why the last heartbeat could not refresh resources, or None when it
+        # could. Logged only on change, so a persistent failure is one line.
+        self._heartbeat_resource_skip: Optional[str] = None
         self._last_command_inventory_at = 0.0
         self._coding_route_probe_thread: Optional[threading.Thread] = None
         self._coding_route_probe_lock = threading.Lock()
@@ -5750,6 +5753,35 @@ class MacWorker(
         except Exception:  # noqa: BLE001
             pass
 
+    def _note_heartbeat_resource_skip(self, reason: Optional[str]) -> None:
+        """Say when heartbeats stop (or resume) carrying refreshed resources.
+
+        A heartbeat without resources leaves the hub's stored copy in place, so
+        the executor attestation it holds (runtime image, process generation)
+        goes stale until the next command-inventory refresh. That window was
+        invisible; this makes it one warning when it opens and one when it
+        closes.
+        """
+
+        if reason == self._heartbeat_resource_skip:
+            return
+        previous = self._heartbeat_resource_skip
+        self._heartbeat_resource_skip = reason
+        if reason is None:
+            message = "heartbeat resources refreshed again (was: %s)" % previous
+            level = "info"
+        else:
+            message = "heartbeat sent without resources; hub keeps stale attestation: %s" % reason
+            level = "warning"
+        print("mac-agent: %s" % message, file=sys.stderr, flush=True)
+        self._observe_log(
+            "worker.heartbeat.resources_skipped" if reason else "worker.heartbeat.resources_restored",
+            level=level,
+            subject_type="agent",
+            subject_id=self.agent_id,
+            detail={"reason": reason or "", "previous_reason": previous or ""},
+        )
+
     def _resources_with_live_report_executor_attestation(
         self, resources: Optional[Mapping[str, Any]]
     ) -> JsonDict:
@@ -5774,12 +5806,13 @@ class MacWorker(
         # transiently unavailable; the heartbeat will surface any real conflict.
         heartbeat_status = status_override or "idle"
         current_agent: Optional[JsonDict] = None
+        agent_read_error = ""
         try:
             current_agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
             if status_override is None and (current_agent or {}).get("current_task_id"):
                 heartbeat_status = "busy"
-        except MacApiError:
-            pass
+        except MacApiError as exc:
+            agent_read_error = "%s: %s" % (type(exc).__name__, str(exc)[:200])
         self._maybe_start_coding_route_probe()
         command_resources = self._maybe_command_inventory_resources()
         deployment_generation, _ = _deployment_barrier_state()
@@ -5803,6 +5836,15 @@ class MacWorker(
         # attestation-only map and erase hardware, media_routes,
         # chat_gateway, gateway_ownership, and representation.  Only refresh the
         # attestation when we have a real base to refresh.
+        self._note_heartbeat_resource_skip(
+            None
+            if command_resources is not None
+            else (
+                "agent read failed (%s)" % agent_read_error
+                if agent_read_error
+                else "hub returned no resources for this agent"
+            )
+        )
         if command_resources is not None:
             command_resources = _resources_without_retired_gateway(command_resources)
             command_resources["dispatch_policy"] = self._dispatch_policy_resource()
