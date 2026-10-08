@@ -133,6 +133,20 @@ soul_install() {
   log "hub: soul graph: $("$VENV/bin/python" -m mac.soul_install --hermes-home "${hh:-$HOME/.hermes}" 2>&1 | tail -1)" || true
 }
 
+# The hub runs a MAC agent too (com.mac.agent), under the same wrappers and
+# crash observer as a worker, so it gets the same files the worker step installs.
+# Never fails the update: the hub is already serving the new sha by then.
+hub_put() { install -m "$1" "$SRC/$2" "$3.fleet-update.$$" && mv -f "$3.fleet-update.$$" "$3"; }
+hub_install_bin() {
+  local bin="$MAC_HOME/bin" f ok=1
+  [ -d "$SRC/deploy/bin" ] || return 0
+  mkdir -p "$bin" || ok=0
+  for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; do hub_put 0700 "deploy/bin/$f" "$bin/$f" || ok=0; done
+  hub_put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py" || ok=0
+  hub_put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer" || ok=0
+  if [ "$ok" = 1 ]; then log "hub: installed deploy/bin and the crash observer into $bin"; else log "hub: WARNING installing deploy/bin into $bin failed"; fi
+}
+
 update_hub() {
   local old pending receipt bdir="$MAC_HOME/backups/fleet-update-$TS"
   old=$(git -C "$SRC" rev-parse HEAD)
@@ -143,7 +157,7 @@ update_hub() {
   if [ "$DRY" = 1 ]; then
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; write current/source-commit; bootstrap; poll /health"
-    plan "hub: mac.soul_install (Hermes soul graph); kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
+    plan "hub: deploy/bin -> ~/.mac/bin; mac.soul_install (Hermes soul graph); kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
@@ -176,6 +190,7 @@ update_hub() {
     hub_stuck "NOT HEALTHY on $SHA12 after migrating" "$bdir" "$old"
   fi
   log "hub: healthy on $SHA12"
+  hub_install_bin
   soul_install
   launchctl kickstart -k "gui/$(id -u)/com.mac.agent" || log "hub: WARNING kickstart com.mac.agent failed"
   if [ "$HERMES" = 1 ]; then launchctl kickstart -k "gui/$(id -u)/ai.hermes.gateway" || log "hub: WARNING kickstart hermes failed"; fi
