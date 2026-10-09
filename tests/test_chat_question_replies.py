@@ -298,6 +298,33 @@ def test_the_worker_relays_a_slack_thread_reply_and_stops_watching(tmp_path: Pat
     assert len(_board(cp, task.id, "answer", "message")) == 1
 
 
+def test_a_thread_reply_drops_its_own_code_but_keeps_another(tmp_path: Path, monkeypatch):
+    cp = _plane()
+    cp.configure_notifier_channel(
+        "questions", "slack", event_types=["task.question"], target={"agent_id": "agent_relay"}
+    )
+    task, question = _parked_on_board_question(cp)
+    cp.deliver_pending_notifications()
+    worker, slack = _relay_worker(tmp_path, monkeypatch, cp)
+    worker._process_control_messages()
+    parent = slack.posted[0]
+
+    slack.threads[parent["ts"]] = [{"ts": "200.1", "user": "U1", "text": "*q1*: eu"}]
+    worker._relay_chat_question_replies()
+    assert [m["body"] for m in _board(cp, task.id, "answer")] == ["eu"]
+
+    # Another question's code is not this one's to strip.
+    other_task = cp.create_task("Pick a size")
+    cp.request_task_input(other_task.id, [{"question": "Which size?"}], "operator")
+    cp.deliver_pending_notifications()
+    worker._process_control_messages()
+    other = slack.posted[-1]
+    assert other["text"].startswith("*Q2* ")
+    slack.threads[other["ts"]] = [{"ts": "200.2", "user": "U1", "text": "Q1 us"}]
+    worker._relay_chat_question_replies()
+    assert [m["body"] for m in _board(cp, other_task.id, "answer")] == ["Q1 us"]
+
+
 def test_the_worker_drops_a_question_answered_on_the_board(tmp_path: Path, monkeypatch):
     cp = _plane()
     cp.configure_notifier_channel(

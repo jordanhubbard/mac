@@ -219,7 +219,7 @@ The worker behind that agent posts each question to its Slack home channels
 with a short code, for example `*Q7* Answer needed: ...`. A person answers in
 either of two ways:
 
-- reply in the question's thread, or
+- reply in the question's thread (a leading `Q7` is dropped there too), or
 - post a channel message that starts with the code: `Q7 blue` or `q7: blue`.
 
 The first answer is recorded on the task board as the answer, authored by the

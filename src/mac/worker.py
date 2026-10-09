@@ -2790,7 +2790,12 @@ class MacWorker(
             response = slack.conversations_replies(channel=channel_id, ts=parent_ts, limit=100)
             for reply in response.get("messages") or []:
                 if str(reply.get("ts") or "") != parent_ts and _human_slack_message(reply):
-                    answers.append((str(reply["ts"]), entry, reply, str(reply.get("text") or "").strip(), parent_ts))
+                    body = str(reply.get("text") or "").strip()
+                    # "Q7 blue" in Q7's own thread answers "blue".
+                    match = _QUESTION_CODE_ANSWER.match(body)
+                    if match and "Q%s" % match.group(1) == str(entry.get("code") or "").upper():
+                        body = match.group(2).strip()
+                    answers.append((str(reply["ts"]), entry, reply, body, parent_ts))
         by_code = {str(e.get("code") or "").upper(): e for e in group if e.get("code")}
         if by_code:
             oldest = min(str(e.get("ts") or "0") for e in group)
