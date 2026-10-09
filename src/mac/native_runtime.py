@@ -301,12 +301,44 @@ print(json.dumps(names))
         }
 
 
-def main() -> int:
+def check(venv: Path) -> str:
+    """Why ``venv`` fails its locked baseline, or "" when it passes.
+
+    The same test worker self-installs apply (``pip_constraints``), so
+    ``scripts/fleet-update`` can repair a host before its workers trip on it.
+    """
+    python = venv / "bin" / "python"
+    try:
+        pip_constraints(str(python), venv.parent, inventory(python))
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
+        return str(exc) or type(exc).__name__
+    return ""
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="only test --venv against its locked baseline (exit 1 when it fails)",
+    )
     for name in ("source", "venv", "snapshot", "footprint", "record"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--uv", required=True)
-    args = parser.parse_args()
+        parser.add_argument("--" + name, type=Path)
+    parser.add_argument("--uv")
+    args = parser.parse_args(argv)
+    if args.check:
+        if args.venv is None:
+            parser.error("--check needs --venv")
+        problem = check(args.venv)
+        print("native runtime: " + (problem or "locked baseline holds"))
+        return 1 if problem else 0
+    missing = [
+        "--" + name
+        for name in ("source", "venv", "snapshot", "footprint", "record", "uv")
+        if getattr(args, name) is None
+    ]
+    if missing:
+        parser.error("missing " + ", ".join(missing))
     result = install(args.source, args.venv, args.snapshot, args.footprint, args.uv)
     write_private(args.record, json.dumps(result, indent=2))
     print(

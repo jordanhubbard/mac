@@ -70,8 +70,12 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
    and require `restore_verified == true`. `MAC_DATABASE_URL` is read from
    `~/.mac/mac.env` and passed through the environment, never on a command line.
 3. Run `git checkout --detach <sha>`.
-4. Run `uv pip install -e` (or the venv's `pip`), but only if `pyproject.toml`
-   or `uv.lock` changed.
+4. Do the locked install in place (`python -m mac.native_runtime`, the same
+   command as step 4 of "Provision a new host") if `pyproject.toml` or
+   `uv.lock` changed. Also do it if `python -m mac.native_runtime --check`
+   reports that the venv's locked baseline no longer holds. Worker pip installs
+   check that baseline and fail closed without it, and a plain `uv pip install
+   -e` leaves it stale. A failed repair of a stale baseline is only a warning.
 5. Run `~/.mac/venv/bin/python -c 'import mac.services'`.
 6. Run `mac-schema-migrate --status`, then
    `mac-schema-migrate --applied-by fleet-update:<user>@<host>:<sha12>`.
@@ -128,7 +132,8 @@ the `launchctl bootstrap` command.
    changed on the host at that point.
 3. **Update over ssh.** A single `ssh <target> bash -s` runs these steps:
    - `git fetch` and `git checkout --detach <sha>` in `~/.mac/src/mac`;
-   - a conditional `uv pip install -e`;
+   - the locked install when the dependency files changed or the baseline
+     check fails, as on the hub;
    - `python -c 'import mac'`. If the import fails, the old checkout and its
      dependencies are restored before anything is restarted.
    - install `deploy/bin/{mac-agent-service, mac-agent-startup-self-test,
