@@ -144,7 +144,10 @@ services:
   # server that logs received spans.
   # -----------------------------------------------------------------------
   relay-collector:
-    image: otel/opentelemetry-collector-contrib:0.100.0
+    # Served from GHCR instead of anonymous Docker Hub, which rate-limits
+    # GitHub-hosted runner IPs. Same digest as
+    # otel/opentelemetry-collector-contrib:0.100.0.
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib@sha256:cea61bd39d318b3ec7664794f6be9ed0cce9321059a08b4ec5d3b8d310a4b609
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otelcol-config.yaml:/etc/otelcol/config.yaml:ro
