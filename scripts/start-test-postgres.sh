@@ -17,7 +17,9 @@ PORT="${MAC_TEST_PG_PORT:-5432}"
 if [ -z "${MAC_TEST_PG_IMAGE:-}" ] && command -v pg_dump >/dev/null 2>&1; then
   _client_major=$(pg_dump --version | grep -oE '[0-9]+' | head -1)
 fi
-IMAGE="${MAC_TEST_PG_IMAGE:-docker.io/library/postgres:${_client_major:-17}}"
+# ECR Public mirrors Docker's official images byte for byte (same digests).
+# Anonymous Docker Hub pulls hit its rate limit from shared CI runner IPs.
+IMAGE="${MAC_TEST_PG_IMAGE:-public.ecr.aws/docker/library/postgres:${_client_major:-17}}"
 # Each test gets its own schema, and applying the full DDL takes one lock per
 # object in a single transaction. At the 64 default, parallel workers exhaust
 # the lock table and the suite fails with "out of shared memory" rather than

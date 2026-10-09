@@ -238,3 +238,18 @@ def test_broken_native_venv_does_not_redirect_install_to_callers_python(native_w
     assert worker._agent_venv_python() == str(home / "venv/bin/python")
     with pytest.raises(RuntimeError, match="native runtime"):
         worker.ensure_pip(["mac-test-core==2.0"])
+
+
+def test_check_reports_a_stale_baseline_the_way_worker_installs_see_it(native_worker, capsys):
+    from mac.native_runtime import check, main
+
+    _, home, _ = native_worker
+    venv = home / "venv"
+    assert check(venv) == ""
+    assert main(["--check", "--venv", str(venv)]) == 0
+    # A dependency file moved on without a locked install: the editable
+    # reinstall fleet-update used to do left exactly this behind.
+    (home / "src" / "mac" / "uv.lock").write_text("a newer lock\n")
+    assert "baseline is missing or changed" in check(venv)
+    assert main(["--check", "--venv", str(venv)]) == 1
+    assert "redeploy the locked runtime" in capsys.readouterr().out

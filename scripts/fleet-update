@@ -88,8 +88,21 @@ check_migrations() {  # $1 = commit currently deployed on the host being updated
 # ---- hub (rocky, macOS) -------------------------------------------------------
 # shellcheck disable=SC1091
 hub_dsn() { ( set +u -a; . "$MAC_HOME/mac.env"; printf '%s' "${MAC_DATABASE_URL:-}" ) }
+# The venv is a locked runtime (mac.native_runtime): uv.lock's versions plus a
+# manifest that worker self-installs check before every pip install. A plain
+# editable reinstall leaves that manifest stale, and every worker pip install
+# then fails closed, so a dependency change, or a host whose baseline no longer
+# holds, gets the locked install in place. It keeps the agent's recorded tools.
+hub_locked() { "$VENV/bin/python" -m mac.native_runtime --check --venv "$VENV" > /dev/null 2>&1; }
 pip_install() {
-  if command -v uv > /dev/null; then uv pip install -q --python "$VENV/bin/python" -e "$SRC"; else "$VENV/bin/pip" install -q -e "$SRC"; fi
+  local uvb snap rc
+  uvb=$(command -v uv || true); [ -n "$uvb" ] || uvb="$HOME/.local/bin/uv"
+  [ -x "$uvb" ] || { log "hub: uv not found; cannot do the locked install"; return 1; }
+  mkdir -p "$MAC_HOME/logs"; snap=$(mktemp); printf '{"packages": []}\n' > "$snap"
+  "$VENV/bin/python" -m mac.native_runtime --source "$SRC" --venv "$VENV" --snapshot "$snap" \
+    --footprint "$MAC_HOME/agent-footprint.json" --uv "$uvb" \
+    --record "$MAC_HOME/logs/native-runtime-locked-$(date -u +%Y%m%dT%H%M%SZ).json"; rc=$?
+  rm -f "$snap"; return "$rc"
 }
 # deploy/bin/mac-service ignores ~/.mac/current. A hub still running the
 # mac-service that deploy/fleet-node-install.sh generated reads it: that wrapper
@@ -154,7 +167,7 @@ update_hub() {
   log "hub: deployed ${old:0:12}, target $SHA12"
   check_migrations "$old"
   [ -z "$(git -C "$SRC" status --porcelain)" ] || die "hub checkout $SRC has local changes"
-  deps_changed "$old" && log "hub: dependency files changed; will reinstall the editable package"
+  deps_changed "$old" && log "hub: dependency files changed; will do the locked install"
   if [ "$DRY" = 1 ]; then
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; write current/source-commit; bootstrap; poll /health"
@@ -173,7 +186,11 @@ update_hub() {
   [ "$(jget restore_verified <<< "$receipt")" = true ] || hub_rollback "$old" "backup restore_verified is not true"
   log "hub: backup verified: $(jget path <<< "$receipt")"
   git -C "$SRC" checkout -q --detach "$SHA" || hub_rollback "$old" "checkout failed"
-  if deps_changed "$old"; then pip_install || hub_rollback "$old" "editable install failed"; fi
+  if deps_changed "$old"; then pip_install || hub_rollback "$old" "locked install failed"
+  elif ! hub_locked; then
+    log "hub: locked runtime baseline does not hold; reinstalling it"
+    pip_install || log "hub: WARNING locked install failed; worker pip installs stay blocked"
+  fi
   "$VENV/bin/python" -c 'import mac.services' || hub_rollback "$old" "import mac.services failed"
   receipt=$("$VENV/bin/mac-schema-migrate" --status) || hub_rollback "$old" "mac-schema-migrate --status failed"
   pending=$(jget pending <<< "$receipt")
@@ -205,12 +222,27 @@ cd "$src"
 [ -z "$(git status --porcelain)" ] || { echo "remote: $src has local changes" >&2; exit 3; }
 old=$(git rev-parse HEAD)
 deps() { ! git diff --quiet "$old" "$sha" -- pyproject.toml uv.lock; }
-reinstall() { if command -v uv > /dev/null; then uv pip install -q --python "$venv/bin/python" -e "$src"; else "$venv/bin/pip" install -q -e "$src"; fi; }
+# Locked install in place (mac.native_runtime; see pip_install on the hub side).
+locked() { "$venv/bin/python" -m mac.native_runtime --check --venv "$venv" > /dev/null 2>&1; }
+reinstall() {
+  local uvb snap rc
+  uvb=$(command -v uv || true); [ -n "$uvb" ] || uvb="$HOME/.local/bin/uv"
+  [ -x "$uvb" ] || { echo "remote: uv not found; cannot do the locked install" >&2; return 1; }
+  mkdir -p "$HOME/.mac/logs"; snap=$(mktemp); printf '{"packages": []}\n' > "$snap"
+  "$venv/bin/python" -m mac.native_runtime --source "$src" --venv "$venv" --snapshot "$snap" \
+    --footprint "$HOME/.mac/agent-footprint.json" --uv "$uvb" \
+    --record "$HOME/.mac/logs/native-runtime-locked-$(date -u +%Y%m%dT%H%M%SZ).json"; rc=$?
+  rm -f "$snap"; return "$rc"
+}
 undo() { echo "remote: $1; restoring $old" >&2; git checkout -q --detach "$old"; if deps; then reinstall || true; fi; exit 4; }
 put() { install -m "$1" "$2" "$3.fleet-update.$$" && mv -f "$3.fleet-update.$$" "$3"; }
 git fetch -q origin
 git checkout -q --detach "$sha"
-if deps; then echo "remote: dependency files changed; reinstalling"; reinstall || undo "editable install failed"; fi
+if deps; then echo "remote: dependency files changed; locked install"; reinstall || undo "locked install failed"
+elif ! locked; then
+  echo "remote: locked runtime baseline does not hold; reinstalling it"
+  reinstall || echo "remote: WARNING locked install failed; worker pip installs stay blocked" >&2
+fi
 "$venv/bin/python" -c 'import mac' || undo "import mac failed"
 if [ -d deploy/bin ]; then
   for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; do put 0700 "deploy/bin/$f" "$bin/$f"; done

@@ -314,6 +314,8 @@ def worker_home(fleet):
     (venv_bin / "python").write_text(
         '#!/bin/sh\necho "python $*" >> "$FAKE_CALLS"\n'
         'case "$*" in *soul_install*) [ -z "$FAKE_SOUL_FAILS" ] && echo \'{"status": "ok"}\' ;;\n'
+        '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
+        '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
         '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
     )
     bindir = fleet.tmp / "bin"
@@ -394,8 +396,46 @@ def test_remote_update_restores_the_old_checkout_when_import_fails(fleet, worker
     assert "import mac failed" in result.stderr
     assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["a"]
     calls = _calls(fleet)
-    assert sum(c.startswith("uv pip install -q --python") for c in calls) == 2  # forward + back
+    assert sum(c.startswith("python -m mac.native_runtime --source") for c in calls) == 2  # forward + back
     assert not any("restart" in c for c in calls)
+
+
+def _locked_installs(calls):
+    return [c for c in calls if c.startswith("python -m mac.native_runtime --source")]
+
+
+def test_a_dependency_change_gets_the_locked_install(fleet, worker_home) -> None:
+    home, target = worker_home
+    _git(fleet.src, "checkout", "-q", "--detach", target)
+    _commit(fleet.src, "deps", {"uv.lock": "new\n"})
+    _git(fleet.src, "push", "-q", "origin", "HEAD:main")
+    new = _git(fleet.src, "rev-parse", "HEAD")
+    _git(fleet.src, "checkout", "-q", "--detach", fleet.shas["a"])
+    result = _run_remote(fleet, home, new)
+    assert result.returncode == 0, result.stdout + result.stderr
+    [install] = _locked_installs(_calls(fleet))
+    mac = home / ".mac"
+    assert "--source %s/src/mac --venv %s/venv " % (mac, mac) in install
+    assert "--footprint %s/agent-footprint.json --uv " % mac in install
+    assert "--record %s/logs/native-runtime-locked-" % mac in install
+    assert not any(c.startswith("uv pip") for c in _calls(fleet))
+
+
+def test_a_stale_baseline_is_repaired_without_a_dependency_change(fleet, worker_home) -> None:
+    home, target = worker_home
+    result = _run_remote(fleet, home, target, FAKE_UNLOCKED="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "locked runtime baseline does not hold; reinstalling it" in result.stdout
+    assert len(_locked_installs(_calls(fleet))) == 1
+    assert "sudo -n systemctl restart mac-agent" in _calls(fleet)
+
+
+def test_a_failed_repair_warns_but_does_not_fail_the_update(fleet, worker_home) -> None:
+    home, target = worker_home
+    result = _run_remote(fleet, home, target, FAKE_UNLOCKED="1", FAKE_LOCK_FAILS="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARNING locked install failed" in result.stderr
+    assert _git(fleet.src, "rev-parse", "HEAD") == target
 
 
 @pytest.fixture
@@ -408,7 +448,12 @@ def hub(fleet):
     venv_bin.mkdir(parents=True)
     stubs = {
         venv_bin
-        / "python": '#!/bin/sh\necho "import $*" >> "$FAKE_CALLS"\n[ -z "$FAKE_IMPORT_FAILS" ]\n',
+        / "python": (
+            '#!/bin/sh\necho "import $*" >> "$FAKE_CALLS"\n'
+            'case "$*" in *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
+            '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
+            '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
+        ),
         venv_bin / "mac-pg-backup": (
             '#!/bin/sh\necho "mac-pg-backup $* dsn=$MAC_DATABASE_URL" >> "$FAKE_CALLS"\n'
             'echo \'{"path": "/b/dump", "restore_verified": true}\'\n'
@@ -468,6 +513,17 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
     hermes = next(c for c in calls if c.endswith("/ai.hermes.gateway"))
     assert calls.index(soul) < calls.index(hermes)
     assert not any(c.startswith("uv ") for c in calls)  # dependency files unchanged a..b
+
+
+def test_hub_repairs_a_stale_locked_runtime_while_it_is_stopped(fleet, hub) -> None:
+    result = fleet.run("--yes", "hub", fleet.shas["b"], FAKE_UNLOCKED="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "hub: locked runtime baseline does not hold; reinstalling it" in result.stdout
+    calls = _calls(fleet)
+    install = next(c for c in calls if c.startswith("import -m mac.native_runtime --source"))
+    assert "--venv %s/venv " % hub in install and "--footprint %s/agent-footprint.json" % hub in install
+    stop = calls.index("sudo -n launchctl bootout system/com.mac.control-plane")
+    assert stop < calls.index(install) < calls.index("import -c import mac.services")
 
 
 def test_hub_failure_before_migrate_restores_the_old_checkout(fleet, hub) -> None:
