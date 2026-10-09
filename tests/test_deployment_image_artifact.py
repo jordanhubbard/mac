@@ -206,7 +206,7 @@ def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None
         "\n  upfront-validation:\n", 1
     )[0]
     assert (
-        "docker.io/library/postgres@sha256:"
+        "public.ecr.aws/docker/library/postgres@sha256:"
         "33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20"
     ) in postgres
     assert "MAC_TEST_PG_URL: postgresql://" in postgres
