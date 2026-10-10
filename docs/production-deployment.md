@@ -554,6 +554,17 @@ at three; the fourth failure blocks the task (`landing_check_fix_cap_exhausted`)
 with the last failure summary. A failure that cannot be sent back (no pull
 request, no worker evidence) blocks at once as `landing_non_retryable`.
 
+**Reopened attempts land through the same pull request.** The agent's
+pull-request lookup reuses the task's open pull request by task id, so any
+later attempt (after `mac task reopen` or a review send-back) names a pull
+request whose head branch is still an earlier attempt's. The land step moves
+that head branch to the new reviewed head (`--force-with-lease`) and lands
+through it, exactly as for a check-fix attempt, and records a
+`reopened_task_pull_request` command. It moves only a pull request that is
+open, unmerged, on the canonical branch, and whose body carries this task's own
+`- task:` marker; any other reference keeps the hub's fallback of opening a pull
+request for the attempt's own branch.
+
 **Never double-land.** Before merging, the land step reads the pull request's
 state. A PR already merged (by the forge, a human, or an attempt of ours that
 died after the merge) is *observed* and recorded as landed, not merged again.
