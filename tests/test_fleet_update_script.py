@@ -314,6 +314,7 @@ def worker_home(fleet):
     (venv_bin / "python").write_text(
         '#!/bin/sh\necho "python $*" >> "$FAKE_CALLS"\n'
         'case "$*" in *soul_install*) [ -z "$FAKE_SOUL_FAILS" ] && echo \'{"status": "ok"}\' ;;\n'
+        '  *"openshell_image_pin --image"*) [ -z "$FAKE_PIN_FAILS" ] ;;\n'
         '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
         '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
         '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
@@ -331,9 +332,9 @@ def worker_home(fleet):
     return home, target
 
 
-def _run_remote(fleet, home: Path, sha: str, **extra: str):
+def _run_remote(fleet, home: Path, sha: str, *pin: str, **extra: str):
     return subprocess.run(
-        ["bash", "-s", "--", sha, "1"],
+        ["bash", "-s", "--", sha, "1", *pin],
         input=_remote_script(),
         env={**fleet.env, "HOME": str(home), **extra},
         capture_output=True,
@@ -376,6 +377,49 @@ def test_remote_update_installs_the_soul_graph_before_restarting(fleet, worker_h
     fleet_context = "python -m mac.fleet_context_service --source %s/.mac/src/mac" % home
     assert fleet_context in calls
     assert calls.index(fleet_context) < calls.index("sudo -n systemctl restart mac-agent")
+
+
+def test_remote_update_syncs_the_single_image_pin_before_restarting(fleet, worker_home) -> None:
+    home, target = worker_home
+    result = _run_remote(fleet, home, target)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet)
+    assert "python -m mac.openshell_image_pin" in calls
+    assert calls.index("python -m mac.openshell_image_pin") < calls.index(
+        "sudo -n systemctl restart mac-agent"
+    )
+
+
+def test_remote_update_repins_the_image_when_asked(fleet, worker_home) -> None:
+    home, target = worker_home
+    image = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "b" * 64
+    result = _run_remote(fleet, home, target, image, "sha256:" + "c" * 64)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet)
+    repin = "python -m mac.openshell_image_pin --image %s --input-sha256 sha256:%s" % (
+        image,
+        "c" * 64,
+    )
+    assert repin in calls
+    assert calls.index(repin) < calls.index("sudo -n systemctl restart mac-agent")
+
+
+def test_a_failed_repin_restores_the_checkout_and_never_restarts(fleet, worker_home) -> None:
+    home, target = worker_home
+    image = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "b" * 64
+    result = _run_remote(
+        fleet, home, target, image, "sha256:" + "c" * 64, FAKE_PIN_FAILS="1"
+    )
+    assert result.returncode == 4
+    assert "runtime image repin failed" in result.stderr
+    assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["a"]
+    assert not any("restart" in c for c in _calls(fleet))
+
+
+def test_a_repin_needs_both_the_image_and_its_identity(fleet) -> None:
+    result = fleet.run("--dry-run", "--runtime-image", "x", "hub", fleet.shas["c"])
+    assert result.returncode == 2
+    assert "usage:" in result.stderr
 
 
 def test_a_failed_soul_install_does_not_fail_the_update(fleet, worker_home) -> None:

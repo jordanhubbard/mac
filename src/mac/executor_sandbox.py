@@ -2443,6 +2443,39 @@ def _runtime_executor_config_sha256(
     )
 
 
+class RuntimeImagePinConflict(RuntimeError):
+    """``MAC_OPENSHELL_CREATE_ARGS --from`` and the runtime-image-ref disagree."""
+
+
+def managed_runtime_image_ref_path() -> Path:
+    """The worker's single OpenShell runtime image pin."""
+
+    return Path(
+        env_str("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
+        or mac_paths.mac_home() / "openshell" / "runtime-image-ref"
+    ).expanduser()
+
+
+def verifier_runtime_image() -> Tuple[str, str]:
+    """The image the repository test gate runs in, and where it came from.
+
+    A worker's gate runs in the same image as its coding sandboxes: the
+    managed runtime pin (``_managed_openshell_runtime_image_ref``). On
+    2026-10-02 the gate had its own pin, ``MAC_HUB_VERIFY_IMAGE``, which was
+    missed in a repin, so for a day every gate ran an older image than the
+    coding agent (task_b1828d67). ``MAC_HUB_VERIFY_IMAGE`` is now only the
+    fallback for a host with no managed pin, such as a hub.
+    """
+
+    try:
+        return _managed_openshell_runtime_image_ref(), "managed_runtime_pin"
+    except RuntimeImagePinConflict:
+        raise
+    except (RuntimeError, ValueError):
+        pass
+    return (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip(), "MAC_HUB_VERIFY_IMAGE"
+
+
 def _managed_openshell_runtime_image_ref() -> str:
     """Return the immutable image the worker will actually pass to OpenShell.
 
@@ -2470,6 +2503,7 @@ def _managed_openshell_runtime_image_ref() -> str:
         index += 1
     if len(configured_refs) > 1:
         raise ValueError("MAC_OPENSHELL_CREATE_ARGS contains duplicate --from arguments")
+    path = managed_runtime_image_ref_path()
     if configured_refs:
         image_ref = configured_refs[0]
         if not _MANAGED_OPENSHELL_RUNTIME_REF_RE.fullmatch(image_ref):
@@ -2477,13 +2511,22 @@ def _managed_openshell_runtime_image_ref() -> str:
                 "read-only repository reports require MAC_OPENSHELL_CREATE_ARGS "
                 "to select the immutable mac-openshell-runtime@sha256 image"
             )
+        # One pin, not two: the runtime-image-ref file is what the bootstrap
+        # and `python -m mac.openshell_image_pin` write. A --from that names
+        # a different image means one of them was repinned without the other
+        # (task_b1828d67), so refuse rather than pick one.
+        try:
+            pinned = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            pinned = ""
+        if pinned and pinned != image_ref:
+            raise RuntimeImagePinConflict(
+                "OpenShell runtime image pins disagree: MAC_OPENSHELL_CREATE_ARGS "
+                "--from %s but %s names %s; run `python -m mac.openshell_image_pin`"
+                % (image_ref, path, pinned)
+            )
         return image_ref
 
-    mac_home = mac_paths.mac_home()
-    path = Path(
-        env_str("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
-        or mac_home / "openshell" / "runtime-image-ref"
-    ).expanduser()
     try:
         image_ref = path.read_text(encoding="utf-8").strip()
     except OSError as exc:

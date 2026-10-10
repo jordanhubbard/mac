@@ -534,8 +534,55 @@ def test_sandbox_list_retries_without_limit_when_the_flag_was_removed():
 
     assert listed.returncode == 0
     assert calls[0][3:5] == ["--limit", "1000"]
-    assert "--limit" not in calls[-1]
+    # 0.1.x bounds the page with --page-size instead.
+    assert calls[-1][3:5] == ["--page-size", "1000"]
     assert len(calls) == 2
+
+
+def test_sandbox_list_falls_back_to_the_default_page_when_page_size_is_refused():
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        if "--limit" in argv:
+            return SimpleNamespace(
+                returncode=2, stdout="", stderr="error: unexpected argument '--limit' found"
+            )
+        if "--page-size" in argv:
+            return SimpleNamespace(returncode=1, stdout="", stderr="page size too large")
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    listed = run_sandbox_list("openshell", run=fake_run)
+
+    assert listed.returncode == 0
+    assert calls[-1] == ["openshell", "sandbox", "list", "--output", "json"]
+    assert len(calls) == 3
+
+
+def test_sandbox_list_keeps_list_args_on_every_attempt():
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    run_sandbox_list(
+        "openshell", limit=1, run=fake_run, list_args=("--gateway-endpoint", "http://gw")
+    )
+
+    assert calls == [
+        [
+            "openshell",
+            "sandbox",
+            "list",
+            "--gateway-endpoint",
+            "http://gw",
+            "--limit",
+            "1",
+            "--output",
+            "json",
+        ]
+    ]
 
 
 def test_sandbox_list_does_not_retry_unrelated_listing_failures():
