@@ -13,6 +13,8 @@ from collections.abc import Iterable, Mapping
 from enum import Enum
 from typing import Any, Dict, List, NamedTuple
 
+from mac.infrastructure_failure import BLOCK_REASON as INFRASTRUCTURE_BLOCK_REASON
+
 
 JsonDict = Dict[str, Any]
 
@@ -230,6 +232,12 @@ def _class_from_history(events: Iterable[Any]) -> str:
     for event in events:
         detail = _event_detail(event)
         event_type = _event_type(event).lower()
+        if str(detail.get("reason") or "") == INFRASTRUCTURE_BLOCK_REASON:
+            # A typed host record (mac.infrastructure_failure). Its preflight
+            # class may say "timeout", which is the probe's, not the task's
+            # scope, so it is classified before the markers below.
+            saw_environment = True
+            continue
         blob = " ".join(
             [
                 event_type,

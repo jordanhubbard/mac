@@ -56,6 +56,29 @@ If a task's attempt still fails while the router logged
 usual retry backoff without charging the attempt, up to
 `MAC_ROUTER_OUTAGE_REQUEUES` times per task (default 3).
 
+**Infrastructure failures on the worker.** Two failures belong to the host, not
+the task:
+
+- The finalizer's fetch or push could not reach the git remote: DNS,
+  connection refused or timed out, TLS or RPC transport errors.
+- No coding agent passed its in-sandbox preflight, and every preflight failed
+  in a way a later run can clear: timeout, rate limit, provider 5xx, or no
+  inference token.
+
+The executor records the cause from its own git stderr and preflight classes,
+never from the agent's output, as `infrastructure_failure` in the evidence. The
+worker then blocks the attempt as `executor_infrastructure_failure` with the
+cause in its diagnosis, and it names the unpushed head when there is one.
+
+The dispatcher reopens the task without charging the attempt, up to
+`MAC_INFRASTRUCTURE_REQUEUES` times per task (default 3). After that, the
+failure consumes attempts like any transient one, and an identical repeat
+stops the task. Some failures still go through their normal gates:
+
+- evidence that claims publication is never covered by this
+- a failed repository test gate
+- missing binaries, refused credentials and policy denials
+
 ## 2. Ledger bytes are bounded: evidence blobs live outside the DB
 
 With `MAC_EVIDENCE_BLOB_DIR` set (the deploy defaults it to

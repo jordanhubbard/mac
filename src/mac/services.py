@@ -66,6 +66,8 @@ if TYPE_CHECKING:
 from mac.attempt_failure_classifier import classify_attempt_failure
 from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
 from mac.gitops import validate_git_ref
+from mac.infrastructure_failure import BLOCK_REASON as INFRASTRUCTURE_BLOCK_REASON
+from mac.infrastructure_failure import describe as describe_infrastructure_failure
 from mac.repository_contract import (
     canonical_git_remote_identity,
     normalize_repo_relative_path as _normalize_repo_relative_path,
@@ -586,6 +588,11 @@ NODE_FAULT_QUARANTINE_PREFIX = "auto_quarantine:node_fault:"
 #: ControlPlane._attempt_hit_router_outage); a router that stays down then
 #: fails the task normally instead of requeueing it forever.
 DEFAULT_ROUTER_OUTAGE_REQUEUES = 3
+#: Attempts a task may get back for typed executor infrastructure failures
+#: (mac.infrastructure_failure: the forge unreachable from the finalizer, a
+#: coding-agent preflight that timed out). Past it the failure consumes
+#: attempts like any other transient one.
+DEFAULT_INFRASTRUCTURE_REQUEUES = 3
 _FAILURE_ID_RE = re.compile(
     r"\b(?:task|agent|lease|ev|review|pub|obs)_[A-Za-z0-9_-]{8,}\b",
     re.IGNORECASE,
@@ -813,6 +820,15 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
         # It consumes an attempt and retries with the gate output, like a
         # failing executor run, until max_attempts.
         return "work"
+    if (
+        str(detail.get("reason") or "").strip().lower() == INFRASTRUCTURE_BLOCK_REASON
+        and detail.get("manual_repair_required") is not True
+    ):
+        # The worker's typed record (mac.infrastructure_failure): the network
+        # or the coding agent's preflight stopped the attempt, not the work.
+        # Checked before the deterministic markers, whose "repo evidence
+        # requires" text the consequential problems repeat.
+        return "infrastructure_transient"
     if str(detail.get("reason") or "").strip().lower() == "harness_finalization_incomplete":
         # The harness did not push or did not record its verifier result; the
         # agent's work is not at fault (worker._only_harness_finalization_problems).
@@ -944,6 +960,16 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
     def note(problem: str, remediation: str) -> str:
         return "Problem: %s\nRemediation: %s" % (problem.strip(), remediation.strip())
 
+    infrastructure = detail.get("infrastructure_failure")
+    if reason == INFRASTRUCTURE_BLOCK_REASON and isinstance(infrastructure, Mapping):
+        return note(
+            "Executor infrastructure failure, not the task's work: %s."
+            % describe_infrastructure_failure(infrastructure),
+            "The hub requeues the task without charging an attempt (at most "
+            "MAC_INFRASTRUCTURE_REQUEUES times). If it recurs, check the worker "
+            "host's network path to the forge and model router and its OpenShell "
+            "gateway; the attempt's unpushed head, if any, is named in this block.",
+        )
     if (
         "could not clone" in blob
         or "authentication failed" in blob
@@ -23447,6 +23473,61 @@ class ControlPlane:
         )
         return reopened
 
+    def _attempt_hit_infrastructure_failure(self, task: Task, latest_detail: JsonDict) -> bool:
+        """Whether the latest block is a typed infrastructure failure with
+        requeues left (see :mod:`mac.infrastructure_failure`)."""
+        if str(latest_detail.get("reason") or "") != INFRASTRUCTURE_BLOCK_REASON:
+            return False
+        if latest_detail.get("manual_repair_required") is True:
+            return False
+        if not isinstance(latest_detail.get("infrastructure_failure"), Mapping):
+            return False
+        limit = _int_env(
+            "MAC_INFRASTRUCTURE_REQUEUES", DEFAULT_INFRASTRUCTURE_REQUEUES, minimum=0
+        )
+        metadata = ensure_json_object(task.metadata)
+        return _nonnegative_int(metadata.get("infrastructure_requeues")) < limit
+
+    def _requeue_after_infrastructure_failure(
+        self, task: Task, *, cause: JsonDict, detail: JsonDict
+    ) -> Task:
+        """Reopen a task whose attempt infrastructure cost, without charging it."""
+        metadata = ensure_json_object(task.metadata)
+        count = _nonnegative_int(metadata.get("infrastructure_requeues")) + 1
+        metadata["infrastructure_requeues"] = count
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, attempt_count = CASE WHEN attempt_count > 0 "
+            "THEN attempt_count - 1 ELSE 0 END WHERE id = ?",
+            (json_dumps(metadata), task.id),
+        )
+        failure = ensure_json_object(cause.get("infrastructure_failure"))
+        reopen_detail = {
+            **detail,
+            "reason": "executor infrastructure failure during the attempt: requeued "
+            "without charging an attempt (%s)" % describe_infrastructure_failure(failure),
+            "infrastructure_failure": failure,
+            "infrastructure_requeues": count,
+            "attempt_refunded": True,
+        }
+        for key in ("unpushed_head_sha", "unpushed_ref"):
+            if cause.get(key):
+                reopen_detail[key] = cause[key]
+        reopened = self._transition_task_internal(
+            task.id,
+            TaskState.OPEN.value,
+            "dispatcher.tick",
+            reopen_detail,
+        )
+        self._record_history(
+            task.id,
+            "task.auto_reopened",
+            "dispatcher.tick",
+            TaskState.BLOCKED.value,
+            TaskState.OPEN.value,
+            reopen_detail,
+        )
+        return reopened
+
     def _record_retry_worker_exclusion(
         self,
         task: Task,
@@ -23604,6 +23685,17 @@ class ControlPlane:
             if parse_time(now) < parse_time(ready_at):
                 return None, None
             return self._requeue_after_router_outage(task, detail=base_detail), None
+        if not non_retryable and self._attempt_hit_infrastructure_failure(task, latest_detail):
+            # Same bargain for the worker's typed infrastructure causes: the
+            # attempt never got to do (or publish) the work.
+            if parse_time(now) < parse_time(ready_at):
+                return None, None
+            return (
+                self._requeue_after_infrastructure_failure(
+                    task, cause=latest_detail, detail=base_detail
+                ),
+                None,
+            )
         # A failed repository gate carries the same problem text every time
         # the gate is red, whatever the agent changed; each attempt is new work
         # against the gate output, so only max_attempts bounds it.
