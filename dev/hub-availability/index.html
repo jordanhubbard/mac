@@ -2003,6 +2003,20 @@ Only inference moves — task claims, evidence, and messaging still go to the
 hub. The replica authenticates callers with the same hub-facing bearer tokens
 (<code>MAC_ROUTER_TOKENS</code>); its upstream providers use env keys or <code>key=none</code>
 private endpoints — hub vault material is never shipped to it.</p>
+<p><strong>Riding out provider outages.</strong> When no upstream provider answers (all
+unreachable, overloaded or rate-limited, or all breakers open), the router
+holds the request and routes it again with backoff (2, 4, 8, then every 15
+seconds) for up to <code>MAC_ROUTER_OUTAGE_WAIT_SECONDS</code> (default 120) before it
+returns 503 <code>all_providers_unavailable</code> with <code>Retry-After: 30</code>. At most
+<code>MAC_ROUTER_OUTAGE_WAITERS</code> requests (default 8) wait at once, because the
+in-process router holds a hub request thread while it waits; the rest get the
+503 straight away. An upstream 401 or 403 means the provider refused the hub's
+own key, so the router fails over to the next provider. When every provider
+refuses, it returns that refusal and does not wait.</p>
+<p>If a task's attempt still fails while the router logged
+<code>all_providers_unavailable</code> for it, the dispatcher reopens the task after the
+usual retry backoff without charging the attempt, up to
+<code>MAC_ROUTER_OUTAGE_REQUEUES</code> times per task (default 3).</p>
 <h2 id="2-ledger-bytes-are-bounded-evidence-blobs-live-outside-the-db">2. Ledger bytes are bounded: evidence blobs live outside the DB<a class="headerlink" href="#2-ledger-bytes-are-bounded-evidence-blobs-live-outside-the-db" title="Permanent link">&para;</a></h2>
 <p>With <code>MAC_EVIDENCE_BLOB_DIR</code> set (the deploy defaults it to
 <code>~/.mac/evidence-blobs</code> on the hub), evidence artifact bytes above
