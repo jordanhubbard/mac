@@ -396,7 +396,7 @@ and each worker by hand with the "Provision a new host" checklist in
 need SSH key access from the hub to every worker and at least one upstream LLM
 provider API key (nvidia / openai / anthropic / perplexity).
 
-`~/.mac/fleets.yaml`, `~/.mac/fleet-hosts` and the env files are not in this
+`~/.mac/fleets.yaml` and the env files are not in this
 repository, and should never be committed: fleet topology and provider keys
 are yours, not the product's.
 

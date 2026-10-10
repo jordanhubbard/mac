@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] <hub|natasha|bullwinkle|HOST|all> <sha>" >&2
+  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] <hub|HOST|all>  (HOST: a managed host in ~/.mac/fleets.yaml) <sha>" >&2
   exit 2
 }
 DRY=0 HERMES=0 YES=0
@@ -20,7 +20,12 @@ TARGET=$1 REQ=$2
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 SRC="${FLEET_UPDATE_SRC:-$MAC_HOME/src/mac}"
 VENV="$MAC_HOME/venv"
-HOSTS_FILE="${FLEET_UPDATE_HOSTS:-$MAC_HOME/fleet-hosts}"
+# The fleet inventory (mac.fleet_inventory, ~/.mac/fleets.yaml) is the only host
+# list. It is read with this script's own source tree, so the rules that pick
+# hosts are the ones being run, not whatever the venv last installed.
+INVENTORY="${FLEET_UPDATE_INVENTORY:-$MAC_HOME/fleets.yaml}"
+INVENTORY_PY="${FLEET_UPDATE_PYTHON:-$VENV/bin/python}"
+SCRIPT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src"
 HUB_URL="${FLEET_UPDATE_HUB_URL:-http://127.0.0.1:8789}"
 MAC_CLI="${FLEET_UPDATE_MAC_CLI:-mac}"
 POLL="${FLEET_UPDATE_POLL_SECONDS:-5}"
@@ -59,22 +64,13 @@ rssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"; }
 migs() { git -C "$SRC" ls-tree --name-only "$1" "$MIG_DIR/" | sed 's#.*/##' | grep '\.sql$' | sort || true; }
 deps_changed() { ! git -C "$SRC" diff --quiet "$1" "$SHA" -- pyproject.toml uv.lock; }
 
-host_entry() {  # name -> sets H_TARGET (ssh target) and H_AGENT (hub agent id)
-  local line=""
-  if [ -r "$HOSTS_FILE" ]; then
-    line=$(awk -v n="$1" '$1 == n && NF >= 3 { print $2, $3; exit }' "$HOSTS_FILE")
-  else
-    case "$1" in
-      natasha) line="100.87.229.125 agent_natasha" ;;
-      bullwinkle) line="100.121.27.109 agent_bullwinkle" ;;
-    esac
-  fi
-  [ -n "$line" ] || die "unknown host '$1'; add a line '<name> <ssh_target> <agent_id>' to $HOSTS_FILE"
-  read -r H_TARGET H_AGENT <<< "$line"
+inventory() { PYTHONPATH="$SCRIPT_SRC" "$INVENTORY_PY" -m mac.fleet_inventory --file "$INVENTORY" "$@"; }
+host_entry() {  # name -> sets H_TARGET (ssh target), H_AGENT (hub agent id), H_ROLE
+  local line
+  line=$(inventory resolve "$1" 2>&1) || die "$line"
+  read -r _ H_TARGET H_AGENT H_ROLE <<< "$line"
 }
-worker_names() {
-  if [ -r "$HOSTS_FILE" ]; then awk '!/^#/ && NF >= 3 { print $1 }' "$HOSTS_FILE"; else echo natasha bullwinkle; fi
-}
+worker_names() { inventory workers | awk '{ print $1 }'; }
 
 check_migrations() {  # $1 = commit currently deployed on the host being updated
   local gone new
@@ -85,7 +81,7 @@ check_migrations() {  # $1 = commit currently deployed on the host being updated
   if [ -n "$new" ]; then log "migrations between ${1:0:12} and $SHA12: $new"; else log "migrations between ${1:0:12} and $SHA12: none"; fi
 }
 
-# ---- hub (rocky, macOS) -------------------------------------------------------
+# ---- hub (macOS) -------------------------------------------------------------
 # shellcheck disable=SC1091
 hub_dsn() { ( set +u -a; . "$MAC_HOME/mac.env"; printf '%s' "${MAC_DATABASE_URL:-}" ) }
 # The venv is a locked runtime (mac.native_runtime): uv.lock's versions plus a
@@ -280,10 +276,16 @@ release_own_hold() {  # resume only a hold this run placed, and only if it is st
   fi
 }
 update_worker() {
-  local name=$1 target agent cur j reason="fleet-update $SHA12" ours=0 rc=0
+  local name=$1 target agent cur ident j reason="fleet-update $SHA12" ours=0 rc=0
   host_entry "$name"; target=$H_TARGET agent=$H_AGENT
+  [ "$H_ROLE" = worker ] || die "$name is the $H_ROLE in the inventory; update it with 'fleet-update hub'"
   # shellcheck disable=SC2016  # $HOME must expand on the remote host
   cur=$(rssh "$target" 'git -C "$HOME/.mac/src/mac" rev-parse HEAD') || die "$name: cannot read deployed commit over ssh ($target)"
+  # A replaced host must be re-enrolled explicitly: refuse before touching it
+  # when the machine answering at this target is not the inventory's agent.
+  # shellcheck disable=SC2016
+  ident=$(rssh "$target" 'sed -n "s/^MAC_AGENT_ID=//p" "$HOME/.mac/mac.env" | tail -1') || die "$name: cannot read its agent identity over ssh ($target)"
+  [ "$ident" = "$agent" ] || die "$name: $target identifies as '${ident:-nothing}', the inventory says '$agent'; fix the host or update its agent_id in $INVENTORY"
   log "$name ($target, $agent): deployed ${cur:0:12}, target $SHA12"
   check_migrations "$cur"
   j=$(agent_json "$agent") || die "$name: 'mac agent show $agent' failed"
@@ -324,14 +326,16 @@ update_worker() {
 
 # ---- main ---------------------------------------------------------------------
 log "log: $LOG$([ "$DRY" = 1 ] && echo ' (dry run: nothing will be changed)')"
+INV_CHECK=$(inventory workers 2>&1) || die "$INV_CHECK"
+case "$TARGET" in hub | all) ;; *) host_entry "$TARGET" ;; esac
 git -C "$SRC" fetch -q origin || die "git fetch origin failed in $SRC"
 SHA=$(git -C "$SRC" rev-parse --verify -q "$REQ^{commit}") || die "'$REQ' is not a known commit after fetching origin"
 [ -n "$(git -C "$SRC" branch -r --contains "$SHA" 2> /dev/null)" ] || die "$SHA is not on any origin branch"
 SHA12=${SHA:0:12}
 log "target: $SHA ($(git -C "$SRC" log -1 --format=%s "$SHA"))"
 case "$TARGET" in
-  hub | rocky) update_hub ;;
+  hub) update_hub ;;
   all) update_hub; for w in $(worker_names); do update_worker "$w"; done ;;
-  *) update_worker "$TARGET" ;;
+  *) if [ "$H_ROLE" = hub ]; then update_hub; else update_worker "$TARGET"; fi ;;
 esac
 log "done"

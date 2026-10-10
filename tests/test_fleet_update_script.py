@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "fleet-update"
@@ -45,6 +46,11 @@ SSH_STUB = r"""#!/usr/bin/env bash
 echo "ssh $*" >> "$FAKE_CALLS"
 case "$*" in
   *"rev-parse HEAD"*) echo "$FAKE_REMOTE_HEAD"; exit 0 ;;
+  *"MAC_AGENT_ID"*)
+    if [ -n "${FAKE_REMOTE_AGENT:-}" ]; then echo "$FAKE_REMOTE_AGENT"
+    else case "$*" in *100.121.27.109*) echo agent_bullwinkle ;; *10.0.0.9*) echo agent_boris ;; *) echo agent_natasha ;; esac
+    fi
+    exit 0 ;;
   *"bash -s --"*)
     cat > /dev/null
     sha=$(printf '%s\n' "$@" | grep -E '^[0-9a-f]{40}$' | head -1)
@@ -60,6 +66,21 @@ PY
     exit "${FAKE_SSH_RC:-0}" ;;
 esac
 exit 99
+"""
+
+INVENTORY = """\
+version: 1
+fleets:
+  rocky:
+    default: true
+    hub_agent: rocky
+    hub_url: http://127.0.0.1:8789
+    agents:
+    - {name: natasha, target: 100.87.229.125, os: linux}
+    - {name: bullwinkle, target: 100.121.27.109, os: linux}
+    - {name: rocky, target: jkh@127.0.0.1, os: darwin}
+    - {name: old-pod, enabled: false, target: horde@old, os: linux, notes: pod is gone}
+    - {name: hgx-1, instance_kind: fungible, target: horde@hgx-1, os: linux}
 """
 
 FORBIDDEN_STUB = """#!/usr/bin/env bash
@@ -112,6 +133,8 @@ def fleet(tmp_path: Path):
     for stub in bindir.iterdir():
         stub.chmod(0o755)
 
+    inventory = tmp_path / "home" / ".mac" / "fleets.yaml"
+    inventory.write_text(INVENTORY)
     state = tmp_path / "agent.json"
     calls = tmp_path / "calls.log"
     calls.write_text("")
@@ -126,6 +149,9 @@ def fleet(tmp_path: Path):
         "FAKE_AGENT_STATE": str(state),
         "FAKE_CALLS": str(calls),
         "FAKE_REMOTE_HEAD": shas["a"],
+        # The inventory is read with this checkout's src and a Python that
+        # has pyyaml; the hub tests stub the venv's python.
+        "FLEET_UPDATE_PYTHON": sys.executable,
     }
 
     class Fleet:
@@ -216,16 +242,50 @@ def test_unknown_host_is_refused(fleet) -> None:
     assert result.returncode != 0 and "unknown host 'boris'" in result.stdout
 
 
-def test_hosts_file_maps_names_to_ssh_targets_and_agents(fleet) -> None:
-    hosts = fleet.tmp / "hosts"
-    hosts.write_text("# name ssh agent\nboris jkh@10.0.0.9 agent_boris\n")
-    result = fleet.run("--dry-run", "boris", fleet.shas["b"], FLEET_UPDATE_HOSTS=str(hosts))
+def test_the_inventory_maps_names_to_ssh_targets_and_agents(fleet) -> None:
+    inventory = fleet.tmp / "inventory.yaml"
+    inventory.write_text(
+        INVENTORY + "    - {name: boris, target: jkh@10.0.0.9, agent_id: agent_boris, os: linux}\n"
+    )
+    result = fleet.run("--dry-run", "boris", fleet.shas["b"], FLEET_UPDATE_INVENTORY=str(inventory))
     assert result.returncode == 0, result.stdout + result.stderr
     assert "boris (jkh@10.0.0.9, agent_boris)" in result.stdout
     assert any(
         call.startswith("ssh -o BatchMode=yes -o ConnectTimeout=10 jkh@10.0.0.9")
         for call in _calls(fleet)
     )
+
+
+def test_a_replaced_host_is_refused_before_anything_changes(fleet) -> None:
+    result = fleet.run("--yes", "natasha", fleet.shas["b"], FAKE_REMOTE_AGENT="agent_imposter")
+    assert result.returncode != 0
+    assert "identifies as 'agent_imposter', the inventory says 'agent_natasha'" in result.stdout
+    assert not any(call.startswith("mac ") for call in _calls(fleet))
+
+
+@pytest.mark.parametrize(
+    ("host", "why"),
+    [("old-pod", "is retired (pod is gone)"), ("hgx-1", "is external (instance_kind: fungible)")],
+)
+def test_retired_and_external_hosts_are_never_updated(fleet, host, why) -> None:
+    result = fleet.run("--yes", host, fleet.shas["b"])
+    assert result.returncode != 0 and why in result.stdout
+    assert _calls(fleet) == []
+
+
+def test_a_conflicting_inventory_stops_before_any_host_is_touched(fleet) -> None:
+    inventory = fleet.tmp / "inventory.yaml"
+    inventory.write_text(INVENTORY + "    - {name: natasha2, target: jkh@100.87.229.125, os: linux}\n")
+    result = fleet.run("--yes", "all", fleet.shas["b"], FLEET_UPDATE_INVENTORY=str(inventory))
+    assert result.returncode != 0
+    assert "ssh host 100.87.229.125 is claimed by rocky/natasha and rocky/natasha2" in result.stdout
+    assert _calls(fleet) == []
+
+
+def test_the_inventory_hub_name_updates_the_hub(fleet) -> None:
+    result = fleet.run("--dry-run", "rocky", fleet.shas["b"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PLAN: hub:" in result.stdout
 
 
 def test_worker_dry_run_neither_holds_nor_updates(fleet) -> None:
@@ -236,6 +296,8 @@ def test_worker_dry_run_neither_holds_nor_updates(fleet) -> None:
     assert calls == [
         "ssh -o BatchMode=yes -o ConnectTimeout=10 100.87.229.125 "
         'git -C "$HOME/.mac/src/mac" rev-parse HEAD',
+        "ssh -o BatchMode=yes -o ConnectTimeout=10 100.87.229.125 "
+        'sed -n "s/^MAC_AGENT_ID=//p" "$HOME/.mac/mac.env" | tail -1',
         "mac agent show agent_natasha",
     ]
 

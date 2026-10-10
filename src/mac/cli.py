@@ -4801,6 +4801,18 @@ def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
+def cmd_fleet_inventory(args: argparse.Namespace) -> None:
+    """Print the fleet inventory plan; exit 2 when it is inconsistent."""
+    from mac import fleet_inventory
+
+    argv = ["--file", str(args.fleets_config)]
+    if getattr(args, "fleet", None):
+        argv += ["--fleet", args.fleet]
+    code = fleet_inventory.main(argv + ["json" if getattr(args, "json", False) else "plan"])
+    if code:
+        raise SystemExit(code)
+
+
 def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     """fleet-02 + mood-01: refresh the live Fleet section AND this agent's mood
     overlay in its runtime-context markdown, so its next session knows what
@@ -8508,6 +8520,16 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_soul_audit.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
     fleet_soul_audit.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
     _set(cmd_fleet_soul_audit, fleet_soul_audit)
+
+    fleet_inventory_cmd = fleet.add_parser(
+        "inventory",
+        help="every enrolled host with its role, identity and disposition "
+        "(the same list fleet-update and the hub use)",
+    )
+    fleet_inventory_cmd.add_argument("--fleet", help="fleet name (default: the one marked default)")
+    fleet_inventory_cmd.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
+    fleet_inventory_cmd.add_argument("--json", action="store_true", help="print JSON")
+    _set(cmd_fleet_inventory, fleet_inventory_cmd)
 
     fleet_refresh = fleet.add_parser(
         "refresh-context",

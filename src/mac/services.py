@@ -16672,7 +16672,18 @@ class ControlPlane:
             seconds=self.EPHEMERAL_DEPARTED_GRACE_SECONDS
         )
         from mac.hardware import summarize as summarize_hardware
+        from mac import fleet_inventory
 
+        # The inventory decides which rows are workers, so interactive operator
+        # sessions and the hub's virtual services never inflate worker counts.
+        inventory_error = ""
+        try:
+            agent_classes = fleet_inventory.load().agent_classes()
+        except fleet_inventory.InventoryError as exc:
+            agent_classes, inventory_error = {}, str(exc)
+        counts: Dict[str, Dict[str, int]] = {
+            name: {"total": 0, "online": 0} for name in fleet_inventory.AGENT_CLASSES
+        }
         wanted_capability = (capability or "").strip().lower()
         for agent in self.list_agents(include_deleted=True):
             if exclude_agent_id and agent.id == exclude_agent_id:
@@ -16688,10 +16699,16 @@ class ControlPlane:
                 resources.get("hardware") if isinstance(resources.get("hardware"), dict) else None
             )
             cur = by_owner.get(agent.id)
+            agent_class = fleet_inventory.classify_agent(agent.id, agent.machine_id, agent_classes)
+            if not agent.deleted_at:
+                counts[agent_class]["total"] += 1
+                if agent.status != AgentStatus.OFFLINE.value:
+                    counts[agent_class]["online"] += 1
             members.append(
                 {
                     "name": agent.name,
                     "agent_id": agent.id,
+                    "agent_class": agent_class,
                     "instance_kind": agent.instance_kind,
                     "status": agent.status,
                     "health": agent.health_status,
@@ -16716,6 +16733,8 @@ class ControlPlane:
             "schema": "mac.fleet_snapshot.v1",
             "generated_at": utcnow(),
             "members": members[:limit],
+            "counts": counts,
+            **({"inventory_error": inventory_error} if inventory_error else {}),
         }
 
     def mark_stale_agents_offline(self, stale_after_seconds: int) -> List[Agent]:

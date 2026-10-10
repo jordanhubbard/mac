@@ -920,6 +920,14 @@ def render_fleet_section(snapshot: Dict[str, Any]) -> str:
         )
     if offline:
         lines.append("- _%d more offline; the `fleet` tool lists them._" % len(offline))
+    workers = (snapshot.get("counts") or {}).get("worker")
+    if isinstance(workers, dict):
+        # Execution capacity is the enrolled workers only, never the
+        # interactive sessions listed above.
+        lines.append(
+            "- _Workers: %d of %d enrolled online._"
+            % (int(workers.get("online") or 0), int(workers.get("total") or 0))
+        )
     lines.append(FLEET_SECTION_END)
     return "\n".join(lines)
 

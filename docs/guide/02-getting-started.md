@@ -39,7 +39,7 @@ checklist in [Updating the fleet with fleet-update](../operations/fleet-update.m
 Every host runs MAC from a git checkout at `~/.mac/src/mac`. Move hosts to a new
 commit with `scripts/fleet-update`, run on the hub.
 
-`~/.mac/fleets.yaml`, `~/.mac/fleet-hosts` and the env files don't belong in
+`~/.mac/fleets.yaml` and the env files don't belong in
 version control. Fleet topology and provider keys are yours, not the product's.
 
 ## Check it came up
