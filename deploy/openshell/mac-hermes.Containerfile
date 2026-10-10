@@ -230,8 +230,10 @@ RUN printf '%s\n' \
     && chmod 0644 /etc/npmrc \
     && install -d -m0755 /usr/local/etc \
     && ln -sfn /etc/npmrc /usr/local/etc/npmrc \
-    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp npm config get fetch-retries)" = 6 \
-    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp npm config get network-concurrency)" = 2
+    && smoke_home=$(mktemp -d -p /root) \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" npm config get fetch-retries)" = 6 \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" npm config get network-concurrency)" = 2 \
+    && rm -rf "$smoke_home"
 # npm's builtin global config is $PREFIX/etc/npmrc (/usr/local/etc/npmrc for
 # this Node), not /etc/npmrc, so the link above is what makes the limits reach
 # npm without NPM_CONFIG_GLOBALCONFIG. uv's system config file does the same
@@ -240,9 +242,11 @@ RUN printf '%s\n' \
 RUN install -d -m0755 /etc/uv \
     && printf '%s\n' 'link-mode = "copy"' 'python-downloads = "never"' > /etc/uv/uv.toml \
     && chmod 0644 /etc/uv/uv.toml \
-    && cd /tmp \
-    && env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp uv python install 3.12 2>&1 \
-      | grep -F 'python-downloads = "never"'
+    && smoke_home=$(mktemp -d -p /root) \
+    && cd "$smoke_home" \
+    && env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" uv python install 3.12 2>&1 \
+      | grep -F 'python-downloads = "never"' \
+    && cd / && rm -rf "$smoke_home"
 # OpenShell 0.0.x does NOT pass image ENV to sandbox processes (verified
 # 2026-10-03: zero pnpm_config_*/npm_config_* inside a sandbox, login shell or
 # not, and the sandbox HOME is not writable for a per-user pnpm config.yaml).
@@ -266,8 +270,10 @@ RUN for tool in pnpm pnpx; do \
         > "/usr/local/bin/$tool" \
       && chmod 0755 "/usr/local/bin/$tool" || exit 1; \
     done \
-    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get network-concurrency)" = 2 \
-    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get minimum-release-age)" = 0
+    && smoke_home=$(mktemp -d -p /root) \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get network-concurrency)" = 2 \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get minimum-release-age)" = 0 \
+    && rm -rf "$smoke_home"
 
 # Install the mac runtime into the in-image venv. The vendored Hermes lives at
 # mac/_hermes/hermes_cli, which `import hermes_cli` only finds if mac/_hermes is
@@ -297,6 +303,19 @@ RUN test "$(python3 --version)" = "Python $(cat /tmp/mac-src/.python-version)" \
 # make it sandbox-writable or the upload fails ("tar: Cannot mkdir: Permission
 # denied").
 RUN mkdir -p /sandbox && chown sandbox:sandbox /sandbox
+
+# The sandbox user's HOME is /tmp (executor_sandbox._SANDBOX_HOME), so a
+# root-owned ~/.local, ~/.cache, ~/.config or ~/.npm left by any build step
+# makes every coding CLI fail its first mkdir (opencode: "EACCES: permission
+# denied, mkdir '/tmp/.local/share/opencode'"). Image ad19dfa4 shipped exactly
+# that from the smokes above when they used HOME=/tmp; they now use a scratch
+# HOME under /root. Refuse any root-owned dot entry in /tmp, then prove the
+# sandbox user can create the data directories the CLIs use.
+RUN stray="$(find /tmp -mindepth 1 -maxdepth 1 -name '.*' ! -user sandbox)" \
+    && { [ -z "$stray" ] || { echo "sandbox HOME /tmp has entries it cannot write: $stray" >&2; exit 1; }; } \
+    && runuser -u sandbox -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp \
+      sh -euc 'for d in .local/share .local/state .cache .config .npm; do mkdir -p "$HOME/$d/mac-smoke"; done' \
+    && rm -rf /tmp/.local /tmp/.cache /tmp/.config /tmp/.npm
 
 # PATH matches what MAC sets for every sandbox process (openshell_runtime
 # SANDBOX_BASE_PATH), so `docker run` and 0.1.x sandboxes agree with 0.0.x.

@@ -121,3 +121,18 @@ def test_apply_then_local_agent_round_trips():
     env: dict[str, str] = {}
     apply_openshell_requirement({"openshell_required": True}, env)
     assert openshell_required_for_local_agent(env) is True
+
+
+def test_image_build_smokes_never_leave_root_owned_files_in_the_sandbox_home():
+    """The sandbox user's HOME is /tmp; a build smoke run as root with HOME=/tmp
+    left root-owned ~/.local, ~/.cache and ~/.npm there, and every coding CLI
+    then failed its first mkdir (image ad19dfa4, 2026-10-10)."""
+    text = CONTAINERFILE.read_text(encoding="utf-8")
+    run_lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+    smokes_with_tmp_home = [
+        line for line in run_lines if "HOME=/tmp" in line and "runuser -u sandbox" not in line
+    ]
+    assert smokes_with_tmp_home == []
+    assert "find /tmp -mindepth 1 -maxdepth 1 -name '.*' ! -user sandbox" in text
+    assert "runuser -u sandbox -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp" in text
