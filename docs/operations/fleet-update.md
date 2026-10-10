@@ -10,6 +10,9 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 62% of the time and hub self-upgrade never succeeded. The older deploy script
 (`deploy/deploy-mac-fleet.sh`) and its node installer have been deleted too.
 
+The [release manifest](release-manifest.md) names every component of one
+exact release, so a host's state can be compared with more than its Git HEAD.
+
 ## Usage
 
 ```console
