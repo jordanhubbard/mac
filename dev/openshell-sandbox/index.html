@@ -1764,6 +1764,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-sandbox-image-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One sandbox-image pin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#policy-delivery-the-hub-assignment-reaches-the-worker" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2141,6 +2152,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-sandbox-image-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One sandbox-image pin
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2637,7 +2659,17 @@ truthful.</p>
 <tr>
 <td><code>MAC_OPENSHELL_CREATE_ARGS</code></td>
 <td><em>(none)</em></td>
-<td>extra <code>sandbox create</code> args (shell-split), e.g. <code>--from img</code>, <code>--upload /src:/src</code></td>
+<td>extra <code>sandbox create</code> args (shell-split), e.g. <code>--from img</code>, <code>--upload /src:/src</code>. On a worker with a managed image, <code>--from</code> must match <code>runtime-image-ref</code> (below)</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE</code></td>
+<td><code>~/.mac/openshell/runtime-image-ref</code></td>
+<td>the worker's one sandbox-image pin; coding sandboxes and the repository test gate both run this image</td>
+</tr>
+<tr>
+<td><code>MAC_HUB_VERIFY_IMAGE</code></td>
+<td><em>(none)</em></td>
+<td>test-gate image for a host with no managed pin, such as the hub; ignored where <code>runtime-image-ref</code> exists</td>
 </tr>
 <tr>
 <td><code>MAC_OPENSHELL_ENV_PASSTHROUGH</code></td>
@@ -2656,6 +2688,27 @@ truthful.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="one-sandbox-image-pin">One sandbox-image pin<a class="headerlink" href="#one-sandbox-image-pin" title="Permanent link">&para;</a></h2>
+<p>A worker pins its sandbox image once, in <code>~/.mac/openshell/runtime-image-ref</code>.
+<code>bootstrap-openshell.sh</code> and <code>python -m mac.openshell_image_pin</code> write it.
+Coding sandboxes use <code>MAC_OPENSHELL_CREATE_ARGS --from</code>, which is derived from
+the pin. The repository test gate reads the pin directly. If <code>--from</code> and the
+pin disagree, the worker refuses to pick one: the gate reports
+<code>OpenShell runtime image pins disagree</code>, and the fix is
+<code>python -m mac.openshell_image_pin</code>.</p>
+<p>Before this, the gate had its own pin, <code>MAC_HUB_VERIFY_IMAGE</code>. A repin on
+2026-10-02 missed it, so for a day every gate ran an older image than the coding
+agent (task_b1828d67). <code>scripts/fleet-update</code> re-derives <code>mac.env</code> from the pin
+on every worker update, and <code>--runtime-image REF --runtime-input-sha256 SHA</code>
+repins the whole fleet to one published image.</p>
+<p>The image keeps no runtime <code>ENV</code> for tool settings. OpenShell 0.0.x does not
+pass image <code>ENV</code> to sandbox processes, while 0.1.x does. So npm's limits live
+in <code>/usr/local/etc/npmrc</code> (a link to <code>/etc/npmrc</code>), uv's in <code>/etc/uv/uv.toml</code>,
+and pnpm's in its <code>/usr/local/bin</code> wrappers. Each is smoke-tested under <code>env -i</code>
+at build time, so both OpenShell releases see the same settings.
+<code>UV_PROJECT_ENVIRONMENT</code> and <code>VIRTUAL_ENV</code> are build-only. Under 0.1.x they
+would point a repository's own <code>uv sync</code> or <code>uv pip</code> at the root-owned
+<code>/opt/mac-venv</code>.</p>
 <h2 id="policy-delivery-the-hub-assignment-reaches-the-worker">Policy delivery: the hub assignment reaches the worker<a class="headerlink" href="#policy-delivery-the-hub-assignment-reaches-the-worker" title="Permanent link">&para;</a></h2>
 <p><code>mac admin openshell policy assign &lt;policy&gt; &lt;agent&gt;</code> used to record intent only. The
 executor resolved its policy from <code>MAC_OPENSHELL_POLICY</code>,

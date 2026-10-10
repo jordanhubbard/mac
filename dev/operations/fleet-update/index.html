@@ -1599,6 +1599,23 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release identity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Release identity">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#worker-rollback" class="md-nav__link">
     <span class="md-ellipsis">
@@ -1996,6 +2013,23 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release identity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Release identity">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#worker-rollback" class="md-nav__link">
     <span class="md-ellipsis">
@@ -2071,7 +2105,8 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 <p>The <a href="../release-manifest/">release manifest</a> names every component of one
 exact release, so a host's state can be compared with more than its Git HEAD.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] \</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">    [--runtime-image REF --runtime-input-sha256 SHA] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
 </code></pre></div>
 <table>
 <thead>
@@ -2108,6 +2143,10 @@ exact release, so a host's state can be compared with more than its Git HEAD.</p
 <tr>
 <td><code>--yes</code></td>
 <td>Don't ask for confirmation before each host.</td>
+</tr>
+<tr>
+<td><code>--runtime-image REF --runtime-input-sha256 SHA</code></td>
+<td>Repin each worker's sandbox image to a published <code>ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:...</code> digest and its CI frozen-input identity, both from the image's CI publication. Give both or neither. This changes only the image, never the OpenShell version.</td>
 </tr>
 </tbody>
 </table>
@@ -2201,7 +2240,7 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
    <code>mac-schema-migrate --applied-by fleet-update:&lt;user&gt;@&lt;host&gt;:&lt;sha12&gt;</code>.</li>
 <li>Run <code>sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist</code>.</li>
 <li>Poll <code>/health</code>, then require <code>/startup-attestation</code>'s <code>source_commit</code> to equal
-   the target. <code>mac-service</code> sets it from the <code>HEAD</code> of <code>~/.mac/src/mac</code>.</li>
+   the target. An empty <code>source_commit</code> is a failure, not a pass. <code>mac-service</code> sets it from the <code>HEAD</code> of <code>~/.mac/src/mac</code>.</li>
 <li>Run <code>python -m mac.node_files --source ~/.mac/src/mac --role hub</code> (see
    <a href="#managed-files">Managed files</a>). A failure is logged, never fatal.</li>
 <li>Run <code>python -m mac.fleet_context_service --source ~/.mac/src/mac</code>. It
@@ -2262,11 +2301,23 @@ the <code>launchctl bootstrap</code> command.</p>
      hub but with the <code>mac-fleet-context</code> systemd timer: the units are rendered
      from <code>deploy/systemd</code> into <code>/etc/systemd/system</code>, a failed timer is reset,
      and one refresh runs. A failure is logged, never fatal.</li>
+<li><code>python -m mac.openshell_image_pin</code>. A worker pins its sandbox image in
+     one place, <code>~/.mac/openshell/runtime-image-ref</code>. This step rewrites
+     <code>MAC_OPENSHELL_CREATE_ARGS --from</code> in <code>~/.mac/mac.env</code> to match that pin
+     and removes <code>MAC_HUB_VERIFY_IMAGE</code>, because the test gate now reads the
+     pin too. <code>mac.env</code> is backed up before it changes. A host with no managed
+     pin is left alone. With <code>--runtime-image</code>, the step first pulls the
+     image, checks its build-revision and frozen-input labels, and writes the
+     pin files. If that fails, the old checkout is restored and nothing is
+     restarted. A plain sync failure is logged, never fatal.</li>
 <li><code>sudo -n systemctl restart mac-agent</code>. With <code>--hermes</code>, also
      <code>systemctl --user restart hermes-gateway</code>.</li>
 <li>after 10 seconds, <code>systemctl is-active mac-agent</code>.</li>
-<li><strong>Health.</strong> Within 3 minutes, the hub must report the new commit for this
-   agent: <code>resources.source_state.commit_sha == &lt;sha&gt;</code> with <code>dirty == false</code>.</li>
+<li><strong>Health.</strong> Within 3 minutes, the hub must report that the restarted
+   <em>process</em> runs the new commit: <code>resources.source_state.loaded_commit</code> and
+   <code>commit_sha</code> both equal <code>&lt;sha&gt;</code>, <code>restart_pending == false</code> and
+   <code>dirty == false</code>. A checkout that moved without the process restarting
+   fails here.</li>
 <li><strong>Resume.</strong> The script resumes dispatch only if it placed the hold itself,
    and only if the hold reason is still <code>fleet-update &lt;sha12&gt;</code>. If someone
    replaced the hold meanwhile, the script leaves it alone.</li>
@@ -2290,18 +2341,45 @@ mac-agent-startup-self-test, mac-task-executor}</code> (0700),
 <li>One installer per host (<code>~/.mac/.node-files.lock</code>). A second run is a no-op.</li>
 <li><code>--plan</code> reports what would change without changing anything.</li>
 </ul>
+<h2 id="release-identity">Release identity<a class="headerlink" href="#release-identity" title="Permanent link">&para;</a></h2>
+<p>A worker reports, in <code>resources.source_state</code>, the commit its process loaded at
+boot (<code>loaded_commit</code>, <code>loaded_tree</code>, <code>boot_id</code>, <code>booted_at</code>) as well as the
+checkout on disk (<code>commit_sha</code>, <code>dirty</code>), and <code>restart_pending</code> when the two
+differ. It also reports when its runtime-context Fleet block was last refreshed
+(<code>resources.fleet_context.refreshed_at</code>).</p>
+<p>The operator selects the release the fleet must run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin fleet select-release &lt;40-hex sha&gt; --reason &quot;...&quot; [--converge-minutes 60]</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac admin fleet release          # the selection and each worker&#39;s drift</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac admin fleet clear-release</span>
+</code></pre></div>
+<p>While a release is selected, every agent that reports a MAC source state must be
+running exactly that commit, from a clean checkout, with no restart pending.
+Otherwise it is excluded from dispatch with <code>release_mismatch</code>,
+<code>release_restart_pending</code>, <code>release_dirty</code> or <code>release_unknown</code> (missing
+evidence is never a match). Interactive sessions and the hub's in-process
+reviewer and operator report no source state and aren't gated. An offline
+worker stays excluded until it comes back on the selected commit.</p>
+<p><code>mac admin fleet release</code> (<code>GET /fleet/release</code>) lists, per worker, liveness,
+the loaded and on-disk commits, the verdict, the dispatch hold and the
+fleet-context age as separate fields, with a repair command for each drifted
+worker. The dispatcher tick records a <code>fleet.release.drift</code> event whenever the
+drifted set or the deadline state changes, <code>OVERDUE</code> once <code>--converge-minutes</code>
+has passed. It only observes: updates still go through <code>fleet-update</code>.</p>
+<p>Nothing is selected by default, and then there is no release gate. Select the
+release after rolling it out, or before to hold back work from hosts that
+haven't converged.</p>
 <h3 id="worker-rollback">Worker rollback<a class="headerlink" href="#worker-rollback" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">ssh &lt;target&gt; &#39;git -C ~/.mac/src/mac checkout --detach &lt;old-sha&gt; &amp;&amp; sudo -n systemctl restart mac-agent&#39;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac agent resume &lt;agent_id&gt;      # only if fleet-update placed the hold</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">ssh &lt;target&gt; &#39;git -C ~/.mac/src/mac checkout --detach &lt;old-sha&gt; &amp;&amp; sudo -n systemctl restart mac-agent&#39;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac agent resume &lt;agent_id&gt;      # only if fleet-update placed the hold</span>
 </code></pre></div>
 <p>GKE pods (supervisord <code>mac-agent</code>) are not handled by this script.</p>
 <h2 id="worker-tokens">Worker tokens<a class="headerlink" href="#worker-tokens" title="Permanent link">&para;</a></h2>
 <p><code>mac admin worker-token</code> issues long-lived worker bearer tokens using the
 existing <code>worker_credentials</code> table. It runs on the hub, against
 <code>MAC_DATABASE_URL</code> (or <code>mac --db &lt;dsn&gt;</code>).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin worker-token issue  &lt;agent_id&gt; [--days 365] [--out FILE] [--install HOST]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac admin worker-token rotate &lt;agent_id&gt; [--days 365] [--out FILE] [--install HOST]</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac admin worker-token list   [&lt;agent_id&gt;]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac admin worker-token issue  &lt;agent_id&gt; [--days 365] [--out FILE] [--install HOST]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac admin worker-token rotate &lt;agent_id&gt; [--days 365] [--out FILE] [--install HOST]</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac admin worker-token list   [&lt;agent_id&gt;]</span>
 </code></pre></div>
 <ul>
 <li><code>issue</code> and <code>rotate</code> are the same operation. Each mints a new credential that
@@ -2351,12 +2429,12 @@ the host's Hermes home (default <code>~/.hermes</code>).</p>
 <li><code>git clone &lt;origin&gt; ~/.mac/src/mac</code>, then do the locked install and put
    <code>mac</code> on <code>PATH</code>:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">PYTHONPATH=~/.mac/src/mac/src python3 -m mac.native_runtime \</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --source ~/.mac/src/mac --venv ~/.mac/venv \</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  --snapshot ~/.mac/logs/native-runtime-packages.json \</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">  --footprint ~/.mac/agent-footprint.json --uv &quot;$(command -v uv)&quot; \</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="go">  --record ~/.mac/logs/native-runtime-locked.json</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="go">ln -sf ~/.mac/venv/bin/mac ~/.local/bin/mac</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">PYTHONPATH=~/.mac/src/mac/src python3 -m mac.native_runtime \</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  --source ~/.mac/src/mac --venv ~/.mac/venv \</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  --snapshot ~/.mac/logs/native-runtime-packages.json \</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">  --footprint ~/.mac/agent-footprint.json --uv &quot;$(command -v uv)&quot; \</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="go">  --record ~/.mac/logs/native-runtime-locked.json</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">ln -sf ~/.mac/venv/bin/mac ~/.local/bin/mac</span>
 </code></pre></div>
 <p>The operator side of <code>fleet-update</code> calls plain <code>mac</code> (<code>FLEET_UPDATE_MAC_CLI</code>).
 5. Create <code>~/.mac/mac.env</code> (mode 0600). <code>deploy/systemd/mac.env.example</code> is

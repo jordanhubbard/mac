@@ -1869,10 +1869,25 @@
 
 <h1 id="adr-0035-the-all-fleet-deployment-transaction-is-replaced-not-extended">ADR 0035: The all-fleet deployment transaction is replaced, not extended<a class="headerlink" href="#adr-0035-the-all-fleet-deployment-transaction-is-replaced-not-extended" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Proposed</li>
+<li>Status: Accepted, then superseded in implementation (2026-10-10)</li>
 <li>Date: 2026-09-23</li>
 <li>Context: <code>docs/investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md</code></li>
 </ul>
+<blockquote>
+<p><strong>Outcome.</strong> The decision held: the all-fleet transaction, release epochs,
+hub self-upgrade and the node installer were deleted, not extended. What
+replaced them is simpler than the design below. <code>scripts/fleet-update</code>
+(<a href="../../operations/fleet-update/">Updating the fleet</a>) updates one host at a
+time from the single fleet inventory, prestages before it drains, installs a
+declared managed-file set per role (<code>mac.node_files</code>), and verifies the
+restarted process's loaded commit. An operator-selected release gates
+dispatch and reports drift (<code>mac admin fleet release</code>). The
+<a href="../../operations/release-manifest/">release manifest</a> names every component
+of a release. The worker-side deploy barrier (<code>MAC_WORKER_DEPLOY_GENERATION</code>,
+<code>MAC_WORKER_DEPLOY_BARRIER_FILE</code>) is deleted; a worker that still has them set
+reports them as ignored. The rest of this record describes the proposal as
+written.</p>
+</blockquote>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>A 50-worker rollout did not converge. The controller stopped at one node's
 phase-1 quiescence, entered retain-forward recovery, and a single SSH connection
