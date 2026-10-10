@@ -20,7 +20,12 @@ FROM ghcr.io/astral-sh/uv:0.12.12@sha256:73d2665b478d8fa2de1cf105c6841f8e9cb6b09
 
 FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f
 
-ENV DEBIAN_FRONTEND=noninteractive \
+# Build-time only. ARG values reach every RUN below but never the image's
+# runtime ENV: OpenShell 0.0.x does not pass image ENV to sandbox processes and
+# 0.1.x does, so anything a sandbox must see lives in a file instead (see the
+# `env -i` smokes below). UV_PROJECT_ENVIRONMENT in particular must not reach a
+# task: under 0.1.x a repository's own `uv sync` would target /opt/mac-venv.
+ARG DEBIAN_FRONTEND=noninteractive \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/mac-venv \
     UV_PYTHON_DOWNLOADS=never
@@ -205,7 +210,7 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
 # ERR_PNPM_META_FETCH_FAIL), and pnpm's release-age supply-chain pass amplifies it
 # by fetching metadata for every entry. Cap network concurrency, raise
 # retries/timeouts, and disable the release-age check. A world-readable global
-# config + env vars so the non-root `sandbox` user (HOME=/tmp) honors it too.
+# config file so the non-root `sandbox` user (HOME=/tmp) honors it too.
 #
 # pnpm 11 reads NEITHER /etc/npmrc nor npm_config_* for its own settings -- only
 # pnpm_config_* (or its YAML config) -- so every limit below was silently off
@@ -222,11 +227,27 @@ RUN printf '%s\n' \
       'fetch-timeout=300000' \
       'minimum-release-age=0' \
       > /etc/npmrc \
-    && chmod 0644 /etc/npmrc
-# OpenShell does NOT pass image ENV to sandbox processes (verified 2026-10-03:
-# zero pnpm_config_*/npm_config_* inside a sandbox, login shell or not, and the
-# sandbox HOME is not writable for a per-user pnpm config.yaml). The ENV below
-# therefore only reaches `docker run`. What reaches the sandbox is a file on
+    && chmod 0644 /etc/npmrc \
+    && install -d -m0755 /usr/local/etc \
+    && ln -sfn /etc/npmrc /usr/local/etc/npmrc \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp npm config get fetch-retries)" = 6 \
+    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp npm config get network-concurrency)" = 2
+# npm's builtin global config is $PREFIX/etc/npmrc (/usr/local/etc/npmrc for
+# this Node), not /etc/npmrc, so the link above is what makes the limits reach
+# npm without NPM_CONFIG_GLOBALCONFIG. uv's system config file does the same
+# for uv: copy links (the task workspace and cache are on different mounts)
+# and no interpreter downloads (the sandbox has no route to them).
+RUN install -d -m0755 /etc/uv \
+    && printf '%s\n' 'link-mode = "copy"' 'python-downloads = "never"' > /etc/uv/uv.toml \
+    && chmod 0644 /etc/uv/uv.toml \
+    && cd /tmp \
+    && env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp uv python install 3.12 2>&1 \
+      | grep -F 'python-downloads = "never"'
+# OpenShell 0.0.x does NOT pass image ENV to sandbox processes (verified
+# 2026-10-03: zero pnpm_config_*/npm_config_* inside a sandbox, login shell or
+# not, and the sandbox HOME is not writable for a per-user pnpm config.yaml).
+# 0.1.x does, but the image keeps no runtime ENV for these so both releases
+# behave the same. What reaches the sandbox is a file on
 # PATH: replace the pnpm/pnpx symlinks with wrappers that default the same
 # pnpm_config_* values (a caller's own value still wins) and exec the real
 # entry point. The runtime smoke proves this under `env -i`.
@@ -247,21 +268,6 @@ RUN for tool in pnpm pnpx; do \
     done \
     && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get network-concurrency)" = 2 \
     && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get minimum-release-age)" = 0
-ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
-    npm_config_network_concurrency=2 \
-    npm_config_fetch_retries=6 \
-    npm_config_fetch_retry_mintimeout=20000 \
-    npm_config_fetch_retry_maxtimeout=120000 \
-    npm_config_fetch_timeout=300000 \
-    npm_config_minimum_release_age=0 \
-    pnpm_config_network_concurrency=2 \
-    pnpm_config_child_concurrency=2 \
-    pnpm_config_fetch_retries=6 \
-    pnpm_config_fetch_retry_mintimeout=20000 \
-    pnpm_config_fetch_retry_maxtimeout=120000 \
-    pnpm_config_fetch_timeout=300000 \
-    pnpm_config_minimum_release_age=0 \
-    pnpm_config_pm_on_fail=ignore
 
 # Install the mac runtime into the in-image venv. The vendored Hermes lives at
 # mac/_hermes/hermes_cli, which `import hermes_cli` only finds if mac/_hermes is
@@ -292,6 +298,10 @@ RUN test "$(python3 --version)" = "Python $(cat /tmp/mac-src/.python-version)" \
 # denied").
 RUN mkdir -p /sandbox && chown sandbox:sandbox /sandbox
 
-ENV VIRTUAL_ENV=/opt/mac-venv PATH="/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
+# PATH matches what MAC sets for every sandbox process (openshell_runtime
+# SANDBOX_BASE_PATH), so `docker run` and 0.1.x sandboxes agree with 0.0.x.
+# No VIRTUAL_ENV: under 0.1.x it would point a task's `uv pip` at the
+# root-owned /opt/mac-venv instead of the repository's own .venv.
+ENV PATH="/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
 WORKDIR /sandbox
 CMD ["python3"]

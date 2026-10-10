@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
@@ -49,42 +49,41 @@ def run_sandbox_list(
     limit: int = 1000,
     run: Optional[Callable[..., Any]] = None,
     timeout: float = 60.0,
+    list_args: Sequence[str] = (),
 ) -> Any:
     """Run ``openshell sandbox list --output json`` across CLI generations.
 
     Tries the bounded listing first so a chatty gateway cannot return an
-    unbounded page on releases that support ``--limit``. When the CLI rejects
-    that now-removed flag, retry once without it. Any other nonzero result is
+    unbounded page on releases that support ``--limit``. 0.1.x replaced that
+    flag with ``--page-size`` (default 100), so when the CLI rejects
+    ``--limit``, retry with ``--page-size`` and, if a gateway refuses that
+    size, once more with the default page. Any other nonzero result is
     returned unchanged so callers surface the real gateway failure.
+    ``list_args`` follow ``sandbox list`` on every attempt (e.g.
+    ``--gateway-endpoint URL``).
     """
     runner = run or subprocess.run
-    listed = runner(
-        [
-            openshell_bin,
-            "sandbox",
-            "list",
-            "--limit",
-            str(limit),
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    prefix = [openshell_bin, "sandbox", "list", *list_args]
+
+    def attempt(*flags: str) -> Any:
+        return runner(
+            [*prefix, *flags, "--output", "json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    listed = attempt("--limit", str(limit))
     if listed.returncode == 0:
         return listed
     detail = (listed.stderr or listed.stdout or "").strip()
     if not _sandbox_list_rejects_limit(detail):
         return listed
-    return runner(
-        [openshell_bin, "sandbox", "list", "--output", "json"],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    paged = attempt("--page-size", str(limit))
+    if paged.returncode == 0:
+        return paged
+    return attempt()
 
 
 def _created_at(value: Any) -> Optional[datetime]:

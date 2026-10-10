@@ -236,3 +236,25 @@ def test_the_check_matches_the_executors_own_refusal(tmp_path, monkeypatch):
                 f"MAC_OPENSHELL_REQUIRED={required} MAC_ALLOW_UNSANDBOXED_YOLO={yolo}: "
                 f"self-test says {self_test_allows}, executor says {executor_allows}"
             )
+
+
+def test_disagreeing_sandbox_image_pins_fail_the_self_test(tmp_path, monkeypatch):
+    """A repin that reached --from but not runtime-image-ref (task_b1828d67)."""
+    ref = tmp_path / "runtime-image-ref"
+    ref.write_text("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:%s\n" % ("b" * 64))
+    exit_code, report = _run_self_test(
+        tmp_path,
+        monkeypatch,
+        {
+            "MAC_OPENSHELL_SANDBOX": "1",
+            "MAC_OPENSHELL_REQUIRED": "1",
+            "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE": str(ref),
+            "MAC_OPENSHELL_CREATE_ARGS": "--from ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:"
+            + "a" * 64,
+        },
+        openshell_on_path=True,
+    )
+
+    assert report["checks"]["openshell_executor_config"] is False
+    assert any("pins disagree" in problem for problem in report["blocking_problems"])
+    assert exit_code == 1

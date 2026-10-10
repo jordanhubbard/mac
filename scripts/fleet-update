@@ -4,17 +4,23 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] <hub|natasha|bullwinkle|HOST|all> <sha>" >&2
+  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] [--runtime-image REF --runtime-input-sha256 SHA] <hub|natasha|bullwinkle|HOST|all> <sha>" >&2
   exit 2
 }
-DRY=0 HERMES=0 YES=0
+DRY=0 HERMES=0 YES=0 RIMG="" RINPUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dry-run) DRY=1 ;; --hermes) HERMES=1 ;; --yes) YES=1 ;; -*) usage ;; *) break ;;
+    --dry-run) DRY=1 ;; --hermes) HERMES=1 ;; --yes) YES=1 ;;
+    --runtime-image) [ $# -ge 2 ] || usage; RIMG=$2; shift ;;
+    --runtime-input-sha256) [ $# -ge 2 ] || usage; RINPUT=$2; shift ;;
+    -*) usage ;; *) break ;;
   esac
   shift
 done
 [ $# -eq 2 ] || usage
+# The worker sandbox image is pinned once, in ~/.mac/openshell/runtime-image-ref
+# (see mac.openshell_image_pin); repinning needs the image and its CI identity.
+{ [ -n "$RIMG" ] && [ -n "$RINPUT" ]; } || { [ -z "$RIMG" ] && [ -z "$RINPUT" ]; } || usage
 TARGET=$1 REQ=$2
 
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
@@ -218,7 +224,7 @@ update_hub() {
 # ---- Linux worker -------------------------------------------------------------
 REMOTE_UPDATE=$(cat << 'REMOTE'
 set -euo pipefail
-sha=$1 hermes=$2 src="$HOME/.mac/src/mac" venv="$HOME/.mac/venv" bin="$HOME/.mac/bin"
+sha=$1 hermes=$2 rimg=${3:-} rinput=${4:-} src="$HOME/.mac/src/mac" venv="$HOME/.mac/venv" bin="$HOME/.mac/bin"
 cd "$src"
 [ -z "$(git status --porcelain)" ] || { echo "remote: $src has local changes" >&2; exit 3; }
 old=$(git rev-parse HEAD)
@@ -258,6 +264,15 @@ echo "remote: soul graph: $("$venv/bin/python" -m mac.soul_install --hermes-home
 echo "remote: question gate: $("$venv/bin/python" -m mac.hermes_question_gate --hermes-home "$hh" 2>&1 | tail -1)" || true
 # Periodic fleet-context refresh (see mac.fleet_context_service); same rules.
 echo "remote: fleet context: $("$venv/bin/python" -m mac.fleet_context_service --source "$src" 2>&1 | tail -1)" || true
+# One sandbox-image pin (see mac.openshell_image_pin): repin when asked, else
+# re-derive mac.env's --from and drop MAC_HUB_VERIFY_IMAGE from the pin. A
+# requested repin that fails restores the checkout; a sync failure is reported.
+if [ -n "$rimg" ]; then
+  out=$("$venv/bin/python" -m mac.openshell_image_pin --image "$rimg" --input-sha256 "$rinput" 2>&1) || { echo "remote: image pin: $out" >&2; undo "runtime image repin failed"; }
+  echo "remote: image pin: $(tail -1 <<< "$out")"
+else
+  echo "remote: image pin: $("$venv/bin/python" -m mac.openshell_image_pin 2>&1 | tail -1)" || true
+fi
 sudo -n systemctl restart mac-agent
 [ "$hermes" = 1 ] && systemctl --user restart hermes-gateway
 sleep 10
@@ -292,7 +307,7 @@ update_worker() {
   fi
   if [ "$DRY" = 1 ]; then
     [ "$(jget dispatch_hold <<< "$j")" = true ] || plan "$name: mac agent hold $agent --reason '$reason'"
-    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, mac.soul_install, mac.hermes_question_gate, mac.fleet_context_service, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
+    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, mac.soul_install, mac.hermes_question_gate, mac.fleet_context_service, mac.openshell_image_pin$([ -n "$RIMG" ] && echo " --image $RIMG"), restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
     plan "$name: verify import, is-active, hub source_state == $SHA12 (clean)$([ "$(jget dispatch_hold <<< "$j")" = true ] || echo '; mac agent resume')"
     return 0
   fi
@@ -306,7 +321,7 @@ update_worker() {
     die "$name: still running $(agent_json "$agent" | jget current_task_id); nothing changed on the host"
   fi
   log "$name: updating over ssh"
-  rssh "$target" bash -s -- "$SHA" "$HERMES" <<< "$REMOTE_UPDATE" || rc=$?
+  rssh "$target" bash -s -- "$SHA" "$HERMES" "$RIMG" "$RINPUT" <<< "$REMOTE_UPDATE" || rc=$?
   if [ "$rc" = 0 ]; then
     log "$name: waiting up to ${HEALTH_TIMEOUT}s for the hub to see $SHA12 (clean)"
     wait_for "$HEALTH_TIMEOUT" agent_reports_sha "$agent" || rc=6

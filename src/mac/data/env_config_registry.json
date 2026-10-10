@@ -2188,7 +2188,9 @@
     "name": "MAC_HUB_VERIFY_IMAGE",
     "retired": false,
     "sources": [
-      "src/mac/hermes_startup.py",
+      "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/executor_sandbox.py",
+      "src/mac/openshell_image_pin.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -3183,6 +3185,7 @@
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/executor_sandbox.py",
+      "src/mac/openshell_image_pin.py",
       "src/mac/openshell_runtime.py"
     ],
     "type": "str"

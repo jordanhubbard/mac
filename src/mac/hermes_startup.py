@@ -517,24 +517,24 @@ def _session_capability_availability(
             )
             policy_text = os.environ.get("MAC_OPENSHELL_POLICY") or ""
             policy = Path(policy_text).expanduser() if policy_text else None
-            image = os.environ.get("MAC_HUB_VERIFY_IMAGE") or ""
+            from mac.executor_sandbox import verifier_runtime_image
+            from mac.openshell_sandbox_gc import run_sandbox_list
+
+            try:
+                image, _image_source = verifier_runtime_image()
+            except RuntimeError:
+                image = ""  # pins disagree: not configured until repinned
             gateway_endpoint = str(os.environ.get("MAC_OPENSHELL_GATEWAY_ENDPOINT") or "").strip()
-            route_command = (
-                [str(openshell), "sandbox", "list", "--limit", "1", "--output", "json"]
-                if openshell
-                else []
-            )
-            if gateway_endpoint:
-                route_command[3:3] = ["--gateway-endpoint", gateway_endpoint]
             route_reachable = False
-            if route_command:
+            if openshell:
                 try:
-                    route_probe = subprocess.run(
-                        route_command,
-                        capture_output=True,
-                        text=True,
+                    route_probe = run_sandbox_list(
+                        str(openshell),
+                        limit=1,
                         timeout=10,
-                        check=False,
+                        list_args=("--gateway-endpoint", gateway_endpoint)
+                        if gateway_endpoint
+                        else (),
                     )
                     inventory = (
                         json.loads(route_probe.stdout) if route_probe.returncode == 0 else None

@@ -13,7 +13,8 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 ## Usage
 
 ```console
-scripts/fleet-update [--dry-run] [--hermes] [--yes] <hub|HOST|all> <sha>
+scripts/fleet-update [--dry-run] [--hermes] [--yes] \
+    [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all> <sha>
 ```
 
 | Argument | Meaning |
@@ -25,6 +26,7 @@ scripts/fleet-update [--dry-run] [--hermes] [--yes] <hub|HOST|all> <sha>
 | `--dry-run` | Print the plan, including any migrations, and change nothing. The only write is `git fetch`, which updates remote-tracking refs. |
 | `--hermes` | Also restart the Hermes gateway (`ai.hermes.gateway` on the hub, `hermes-gateway` user unit on Linux). |
 | `--yes` | Don't ask for confirmation before each host. |
+| `--runtime-image REF --runtime-input-sha256 SHA` | Repin each worker's sandbox image to a published `ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:...` digest and its CI frozen-input identity, both from the image's CI publication. Give both or neither. This changes only the image, never the OpenShell version. |
 
 Every line of output also goes to `~/.mac/logs/fleet-update-<timestamp>.log`.
 
@@ -148,6 +150,15 @@ the `launchctl bootstrap` command.
      hub but with the `mac-fleet-context` systemd timer: the units are rendered
      from `deploy/systemd` into `/etc/systemd/system`, a failed timer is reset,
      and one refresh runs. A failure is logged, never fatal.
+   - `python -m mac.openshell_image_pin`. A worker pins its sandbox image in
+     one place, `~/.mac/openshell/runtime-image-ref`. This step rewrites
+     `MAC_OPENSHELL_CREATE_ARGS --from` in `~/.mac/mac.env` to match that pin
+     and removes `MAC_HUB_VERIFY_IMAGE`, because the test gate now reads the
+     pin too. `mac.env` is backed up before it changes. A host with no managed
+     pin is left alone. With `--runtime-image`, the step first pulls the
+     image, checks its build-revision and frozen-input labels, and writes the
+     pin files. If that fails, the old checkout is restored and nothing is
+     restarted. A plain sync failure is logged, never fatal.
    - `sudo -n systemctl restart mac-agent`. With `--hermes`, also
      `systemctl --user restart hermes-gateway`.
    - after 10 seconds, `systemctl is-active mac-agent`.

@@ -1997,19 +1997,28 @@ def run_repository_contract_test_in_openshell(
     except (OSError, ValueError) as exc:
         return 1, f"hub verification is unavailable: dedicated VM configuration: {exc}"
     openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
-    image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
+    from .executor_sandbox import verifier_runtime_image
+
+    try:
+        image, image_source = verifier_runtime_image()
+    except RuntimeError as exc:
+        return 1, "hub verification is unavailable: %s" % exc
     if vm_config is None and not image:
         return 1, (
-            "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
-            "the deployment-approved immutable OpenShell runtime image"
+            "hub verification is unavailable: no OpenShell runtime image is pinned "
+            "(~/.mac/openshell/runtime-image-ref, or MAC_HUB_VERIFY_IMAGE on a host "
+            "without one)"
         )
     if vm_config is None and not re.fullmatch(
         r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image
     ):
         return 1, (
-            "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
-            "the immutable repository-owned OpenShell runtime image"
+            "hub verification is unavailable: %s is not "
+            "the immutable repository-owned OpenShell runtime image" % image_source
         )
+    if verifier_identity is not None and vm_config is None:
+        verifier_identity["runtime_image"] = image
+        verifier_identity["runtime_image_source"] = image_source
     try:
         profile_args, profile_env, profile_preflight = (
             verifier_resource_profile() if vm_config is None else ([], [], "")

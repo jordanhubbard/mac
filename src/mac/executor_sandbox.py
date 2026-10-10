@@ -2443,6 +2443,53 @@ def _runtime_executor_config_sha256(
     )
 
 
+class RuntimeImagePinConflict(RuntimeError):
+    """``MAC_OPENSHELL_CREATE_ARGS --from`` and the runtime-image-ref disagree."""
+
+
+def managed_runtime_image_ref_path() -> Path:
+    """The worker's single OpenShell runtime image pin."""
+
+    return Path(
+        env_str("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
+        or mac_paths.mac_home() / "openshell" / "runtime-image-ref"
+    ).expanduser()
+
+
+def verifier_runtime_image() -> Tuple[str, str]:
+    """The image the repository test gate runs in, and where it came from.
+
+    A worker's gate runs in the same image as its coding sandboxes: the
+    managed runtime pin (``_managed_openshell_runtime_image_ref``). On
+    2026-10-02 the gate had its own pin, ``MAC_HUB_VERIFY_IMAGE``, which was
+    missed in a repin, so for a day every gate ran an older image than the
+    coding agent (task_b1828d67). ``MAC_HUB_VERIFY_IMAGE`` is now only the
+    fallback for a host with no managed pin, such as a hub.
+    """
+
+    try:
+        image_ref = _managed_openshell_runtime_image_ref()
+    except (RuntimeError, ValueError):
+        return (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip(), "MAC_HUB_VERIFY_IMAGE"
+    # One pin, not two: runtime-image-ref is what the bootstrap and
+    # `python -m mac.openshell_image_pin` write. A --from naming a different
+    # image means one was repinned without the other, so refuse rather than
+    # pick one. (The read-only report attestation keeps preferring --from:
+    # it attests what the sandbox will actually run.)
+    path = managed_runtime_image_ref_path()
+    try:
+        pinned = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        pinned = ""
+    if pinned and pinned != image_ref:
+        raise RuntimeImagePinConflict(
+            "OpenShell runtime image pins disagree: MAC_OPENSHELL_CREATE_ARGS "
+            "--from %s but %s names %s; run `python -m mac.openshell_image_pin`"
+            % (image_ref, path, pinned)
+        )
+    return image_ref, "managed_runtime_pin"
+
+
 def _managed_openshell_runtime_image_ref() -> str:
     """Return the immutable image the worker will actually pass to OpenShell.
 
@@ -2479,11 +2526,7 @@ def _managed_openshell_runtime_image_ref() -> str:
             )
         return image_ref
 
-    mac_home = mac_paths.mac_home()
-    path = Path(
-        env_str("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
-        or mac_home / "openshell" / "runtime-image-ref"
-    ).expanduser()
+    path = managed_runtime_image_ref_path()
     try:
         image_ref = path.read_text(encoding="utf-8").strip()
     except OSError as exc:

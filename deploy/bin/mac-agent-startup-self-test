@@ -150,6 +150,17 @@ if openshell_enabled and openshell_create_args:
                 "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments: "
                 + ", ".join(forbidden)
             )
+# One sandbox-image pin (task_b1828d67): a --from that disagrees with
+# runtime-image-ref means a repin reached one and not the other.
+if openshell_enabled:
+    try:
+        from mac.executor_sandbox import RuntimeImagePinConflict, verifier_runtime_image
+
+        verifier_runtime_image()
+    except RuntimeImagePinConflict as exc:
+        problems.append(f"MAC_OPENSHELL_CREATE_ARGS {safe_error(exc)}")
+    except Exception:  # noqa: BLE001 - an unmanaged image is not a pin conflict
+        pass
 openshell_bin = str(os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
 if openshell_enabled and shutil.which(openshell_bin) is None:
     problems.append(

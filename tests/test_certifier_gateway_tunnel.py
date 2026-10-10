@@ -122,7 +122,10 @@ def test_certifier_gateway_tunnel_is_loopback_only_and_fail_closed() -> None:
     assert '"KeepAlive": True' in script
     assert 'OPENSHELL_GATEWAY_ENDPOINT="$endpoint"' in script
     assert "mac_retry_bounded" in script
-    assert '"$OPENSH_BIN" sandbox list --limit 1 --names' in script
+    # 0.0.x bounds the probe with --limit; 0.1.x with --page-size.
+    assert 'out=$("$1" sandbox list --limit 1 --names 2>&1) && exit 0' in script
+    assert '*--limit*) exec "$1" sandbox list --page-size 1 --names' in script
+    assert 'certifier-probe "$OPENSH_BIN"' in script
     assert "certifier OpenShell tunnel did not become healthy" in script
     assert "openshell gateway select" not in script
     assert '. "$SCRIPT_DIR/../lib/launchd-lifecycle.sh"' in script
@@ -200,7 +203,7 @@ def test_install_and_remove_share_proved_launchd_retirement() -> None:
     bootstrap = install.index(
         'mac_launchd_bootstrap_job "$domain" "$plist" "$domain/$LABEL" "$LABEL"'
     )
-    health = install.index('"$OPENSH_BIN" sandbox list --limit 1 --names')
+    health = install.index('certifier-probe "$OPENSH_BIN"')
     commit = install.index("mac_launchd_transaction_commit", health)
     assert stop < replace < bootstrap < health < commit
 
@@ -280,7 +283,9 @@ def test_linux_gateway_firewall_allows_only_exact_openshell_bridge() -> None:
     assert '-C INPUT -p tcp --dport 17670 -j "$chain"' in bootstrap
 
 
-@pytest.mark.parametrize("mode", ["empty", "populated", "rpc-error", "hang", "job-vanished"])
+@pytest.mark.parametrize(
+    "mode", ["empty", "populated", "openshell-0.1", "rpc-error", "hang", "job-vanished"]
+)
 def test_install_requires_bounded_gateway_rpc_and_restores_previous_generation(tmp_path, mode):
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
@@ -324,9 +329,14 @@ if args == ['status']:
     # OpenShell 0.0.72 can report this without failing its process.
     print('Status: Disconnected\\nHTTP: 404 Not Found')
     raise SystemExit(0)
+mode = os.environ['FAKE_RPC_MODE']
+if mode == 'openshell-0.1' and args == ['sandbox', 'list', '--limit', '1', '--names']:
+    print("error: unexpected argument '--limit' found", file=sys.stderr)
+    raise SystemExit(2)
+if mode == 'openshell-0.1' and args == ['sandbox', 'list', '--page-size', '1', '--names']:
+    raise SystemExit(0)
 if args != ['sandbox', 'list', '--limit', '1', '--names']:
     raise SystemExit(64)
-mode = os.environ['FAKE_RPC_MODE']
 if mode == 'rpc-error':
     print('synthetic RPC failure', file=sys.stderr)
     raise SystemExit(70)
@@ -370,17 +380,26 @@ if mode == 'job-vanished':
         text=True,
         timeout=30,
     )
-    succeeds = mode in {"empty", "populated"}
+    succeeds = mode in {"empty", "populated", "openshell-0.1"}
     assert (result.returncode == 0) is succeeds, result.stderr
     probes = [json.loads(line) for line in calls.read_text().splitlines()]
-    assert probes and all(
-        probe
-        == {
+    expected = [
+        {
             "args": ["sandbox", "list", "--limit", "1", "--names"],
             "endpoint": "http://127.0.0.1:18771",
         }
-        for probe in probes
-    )
+    ]
+    if mode == "openshell-0.1":
+        # 0.1.x rejects --limit; only that rejection retries with --page-size.
+        expected.append(
+            {
+                "args": ["sandbox", "list", "--page-size", "1", "--names"],
+                "endpoint": "http://127.0.0.1:18771",
+            }
+        )
+        assert probes == expected
+    else:
+        assert probes and all(probe == expected[0] for probe in probes)
     assert state.exists()
     assert installed.read_bytes() == plist.read_bytes()
     if succeeds:
