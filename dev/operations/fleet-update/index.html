@@ -2046,6 +2046,8 @@ the first failure.</p>
 have been deleted: in the 90 days before it was written, release epochs aborted
 62% of the time and hub self-upgrade never succeeded. The older deploy script
 (<code>deploy/deploy-mac-fleet.sh</code>) and its node installer have been deleted too.</p>
+<p>The <a href="../release-manifest/">release manifest</a> names every component of one
+exact release, so a host's state can be compared with more than its Git HEAD.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
 </code></pre></div>

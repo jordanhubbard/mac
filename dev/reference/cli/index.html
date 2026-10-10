@@ -2138,13 +2138,14 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="go">  reflect   publish an agent&#39;s runtime self-description over AgentBus</span>
 <a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>
 <a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="go">Communication:</span>
-<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="go">  tell  send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction</span>
-<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>
-<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="go">Administration:</span>
-<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="go">  report-executor-approve  approve the exact current startup-attested OpenShell report executor</span>
-<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="go">  report-executor-revoke   revoke report-repository dispatch eligibility for an agent</span>
-<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>
-<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a><span class="go">Run `mac agent help &lt;subcommand&gt;` for the arguments one takes.</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="go">  tell    send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="go">  report  act, then tell: report to the humans on Slack something you did that a person might want to know, or (with --about-agent/--about-task) something you saw another agent do; filed once, even if repeated</span>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="go">Administration:</span>
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="go">  report-executor-approve  approve the exact current startup-attested OpenShell report executor</span>
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a><span class="go">  report-executor-revoke   revoke report-repository dispatch eligibility for an agent</span>
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>
+<a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a><span class="go">Run `mac agent help &lt;subcommand&gt;` for the arguments one takes.</span>
 </code></pre></div>
 <h2 id="mac-admin">mac admin<a class="headerlink" href="#mac-admin" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gp">$ </span>mac<span class="w"> </span>admin<span class="w"> </span>--help

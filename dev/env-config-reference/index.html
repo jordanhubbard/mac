@@ -3355,6 +3355,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Set by the executor inside the task sandbox, never by an operator: a per-task token bound to the worker's agent that may call only POST /v1/chat/completions and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. The worker token never enters the sandbox.</td>
 </tr>
 <tr>
+<td><code>MAC_INFRASTRUCTURE_REQUEUES</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: infrastructure requeues.</td>
+</tr>
+<tr>
 <td><code>MAC_JOURNAL_AGENT</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -4522,6 +4529,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>repository-lifecycle</td>
 <td>Repository Lifecycle setting: repository ref reconciler remote.</td>
+</tr>
+<tr>
+<td><code>MAC_REPO_ADMIN_WATCH</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: repo admin watch.</td>
 </tr>
 <tr>
 <td><code>MAC_REPO_BOOTSTRAP_COMMAND</code></td>
