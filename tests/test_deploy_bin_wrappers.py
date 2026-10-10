@@ -1,9 +1,11 @@
 """deploy/bin is the source of truth for the host wrappers.
 
-scripts/fleet-update installs mac-agent-service, mac-agent-startup-self-test,
-mac-task-executor and mac-task-executor.py from here into ~/.mac/bin on each
-worker and on the hub, whose own agent runs under them; mac-service is the hub's control-plane wrapper. Nothing generates them
-any more, so these checks only prove the files are present and parse.
+mac.node_files (run by scripts/fleet-update) installs mac-agent-service,
+mac-agent-startup-self-test, mac-task-executor and mac-task-executor.py from here
+into ~/.mac/bin on each worker and on the hub, whose own agent runs under them;
+mac-service is the hub's control-plane wrapper, a managed file of the hub role.
+Nothing generates them any more, so these checks prove the files are present,
+parse, and are what the node installer declares.
 """
 
 from __future__ import annotations
@@ -17,6 +19,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import sys
+
+from mac import node_files
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "deploy" / "bin"
@@ -33,13 +38,17 @@ def test_deploy_bin_holds_exactly_the_known_wrappers() -> None:
     assert sorted(p.name for p in BIN.iterdir()) == sorted(SHELL_WRAPPERS + PYTHON_WRAPPERS)
 
 
-def test_fleet_update_installs_every_worker_wrapper_from_deploy_bin() -> None:
+def test_the_node_installer_declares_every_wrapper_from_deploy_bin() -> None:
+    worker = {src: (dest, mode) for src, dest, mode in node_files.MANAGED["worker"]}
+    for name in ("mac-agent-service", "mac-agent-startup-self-test", "mac-task-executor"):
+        assert worker["deploy/bin/" + name] == ("bin/" + name, 0o700)
+    assert worker["deploy/bin/mac-task-executor.py"] == ("bin/mac-task-executor.py", 0o600)
+    hub = {src: (dest, mode) for src, dest, mode in node_files.MANAGED["hub"]}
+    assert hub["deploy/bin/mac-service"] == ("bin/mac-service", 0o755)
+    assert set(worker) < set(hub)
     script = (ROOT / "scripts" / "fleet-update").read_text(encoding="utf-8")
-    assert (
-        "for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; "
-        'do put 0700 "deploy/bin/$f" "$bin/$f"; done'
-    ) in script
-    assert 'put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py"' in script
+    assert '-m mac.node_files --source "$src" --role worker' in script
+    assert '-m mac.node_files --source "$SRC" --role hub' in script
 
 
 @pytest.mark.parametrize("name", SHELL_WRAPPERS)
@@ -74,9 +83,21 @@ def test_python_wrapper_compiles(name: str, tmp_path: Path) -> None:
 def _hub_install_bin_functions() -> str:
     script = (ROOT / "scripts" / "fleet-update").read_text(encoding="utf-8")
     log = re.search(r"^log\(\) \{.*\}$", script, re.M)
-    body = re.search(r"^hub_put\(\) .*?^hub_install_bin\(\) \{.*?^\}$", script, re.M | re.S)
-    assert log and body, "fleet-update must define log, hub_put and hub_install_bin"
+    body = re.search(r"^hub_install_bin\(\) \{.*?^\}$", script, re.M | re.S)
+    assert log and body, "fleet-update must define log and hub_install_bin"
     return log.group(0) + "\n" + body.group(0) + "\n"
+
+
+def _venv(tmp_path: Path) -> Path:
+    """A venv whose python is this interpreter running this checkout's mac."""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin" / "python"
+    python.write_text(
+        '#!/bin/sh\nPYTHONPATH="%s" exec "%s" "$@"\n' % (ROOT / "src", sys.executable)
+    )
+    python.chmod(0o755)
+    return venv
 
 
 def test_fleet_update_installs_the_worker_wrappers_on_the_hub_too(tmp_path: Path) -> None:
@@ -93,22 +114,19 @@ def test_fleet_update_installs_the_worker_wrappers_on_the_hub_too(tmp_path: Path
         ["bash", "-c", _hub_install_bin_functions() + "hub_install_bin"],
         capture_output=True,
         text=True,
-        env={**os.environ, "SRC": str(ROOT), "MAC_HOME": str(home)},
+        env={**os.environ, "SRC": str(ROOT), "MAC_HOME": str(home), "VENV": str(_venv(tmp_path))},
     )
     assert result.returncode == 0, result.stderr
-    assert "hub: installed deploy/bin and the crash observer" in result.stdout
+    assert "hub: managed files:" in result.stdout
     for name in SHELL_WRAPPERS:
-        if name == "mac-service":
-            continue
         installed = home / "bin" / name
         assert installed.read_bytes() == (BIN / name).read_bytes()
-        assert stat.S_IMODE(installed.stat().st_mode) == 0o700
+        assert stat.S_IMODE(installed.stat().st_mode) == (0o755 if name == "mac-service" else 0o700)
     executor = home / "bin" / "mac-task-executor.py"
     assert stat.S_IMODE(executor.stat().st_mode) == 0o600
     observer = home / "bin" / "mac-crash-observer"
     assert observer.read_bytes() == (ROOT / "deploy" / "mac-crash-observer.py").read_bytes()
     assert stat.S_IMODE(observer.stat().st_mode) == 0o755
-    assert not list((home / "bin").glob("*.fleet-update.*"))
 
 
 def test_a_failed_hub_wrapper_install_warns_without_failing_the_update(tmp_path: Path) -> None:
@@ -119,7 +137,7 @@ def test_a_failed_hub_wrapper_install_warns_without_failing_the_update(tmp_path:
         ["bash", "-c", _hub_install_bin_functions() + "hub_install_bin; echo after=$?"],
         capture_output=True,
         text=True,
-        env={**os.environ, "SRC": str(ROOT), "MAC_HOME": str(home)},
+        env={**os.environ, "SRC": str(ROOT), "MAC_HOME": str(home), "VENV": str(_venv(tmp_path))},
     )
-    assert "hub: WARNING installing deploy/bin" in result.stdout
+    assert "hub: WARNING managed file install failed" in result.stdout
     assert "after=0" in result.stdout

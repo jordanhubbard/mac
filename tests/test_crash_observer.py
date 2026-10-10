@@ -105,7 +105,12 @@ def test_worker_supervision_uses_external_crash_observer():
     assert "LimitCORE=infinity" in unit
     assert "ulimit -c unlimited" in wrapper
     assert "export PYTHONFAULTHANDLER=1" in wrapper
-    assert 'put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer"' in fleet_update
+    from mac import node_files
+
+    assert ("deploy/mac-crash-observer.py", "bin/mac-crash-observer", 0o755) in (
+        node_files.MANAGED["worker"]
+    )
+    assert "-m mac.node_files" in fleet_update
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "PYTHONFAULTHANDLER=1" in dockerfile
