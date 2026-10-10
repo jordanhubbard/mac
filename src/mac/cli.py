@@ -4202,6 +4202,27 @@ def cmd_agent_tell(args: argparse.Namespace) -> None:
     _print(result.to_dict() if hasattr(result, "to_dict") else result)
 
 
+def cmd_agent_report(args: argparse.Namespace) -> None:
+    """Act, then tell: report to people what you did or saw another agent do."""
+    cp = _plane(args)
+    reporter = args.reporter or os.environ.get("MAC_AGENT_ID") or os.environ.get("USER") or ""
+    result = cp.file_human_report(
+        args.text,
+        reporter=reporter,
+        reporter_kind="agent" if os.environ.get("MAC_AGENT_ID") else "operator",
+        task_id=args.task,
+        report="peer" if (args.about_agent or args.about_task) else "self",
+        why=args.why,
+        undo=args.undo,
+        about_agent=args.about_agent,
+        about_task=args.about_task,
+        evidence=args.evidence,
+        key=args.key,
+        source="cli",
+    )
+    _print(result)
+
+
 def cmd_agent_deregister(args: argparse.Namespace) -> None:
     """Graceful exit for a session/ephemeral agent: optional final message,
     then tombstone with history preserved."""
@@ -8385,6 +8406,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_tell.add_argument("--wait", type=float, help="wait up to N seconds for the agent's reply")
     _set(cmd_agent_tell, agent_tell)
+
+    agent_report = agent.add_parser(
+        "report",
+        help="act, then tell: report to the humans on Slack something you did "
+        "that a person might want to know, or (with --about-agent/--about-task) "
+        "something you saw another agent do; filed once, even if repeated",
+    )
+    agent_report.add_argument("text", help="what happened")
+    agent_report.add_argument("--why", help="why it was done")
+    agent_report.add_argument("--undo", help="how a person can undo it")
+    agent_report.add_argument("--task", help="the task you were working on")
+    agent_report.add_argument(
+        "--about-agent", help="a peer report: the agent whose action you are reporting"
+    )
+    agent_report.add_argument(
+        "--about-task", help="a peer report: the task whose action you are reporting"
+    )
+    agent_report.add_argument("--evidence", help="what you saw: a link, sha, log line")
+    agent_report.add_argument(
+        "--key", help="dedupe key; filings that share it notify people once"
+    )
+    agent_report.add_argument(
+        "--reporter", help="who is reporting (default: $MAC_AGENT_ID, else $USER)"
+    )
+    _set(cmd_agent_report, agent_report)
 
     agent_deregister = agent.add_parser(
         "deregister",

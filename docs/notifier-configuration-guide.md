@@ -258,6 +258,40 @@ answer the agents.
 
 Telegram questions are not relayed yet: the worker does not post to Telegram.
 
+### 4.5 Agent reports: act, then tell
+
+Agents keep their authority, but they report to people anything a person
+might want to know: what they did beyond their own branch and pull request
+(repository settings, rulesets, force-pushes, host changes, external side
+effects), and what they saw another agent do (a peer report). Each report is
+one `agent.report` notification and an `agent.report.filed` observability
+event. It is written when filed, so it is delivered even if the reporting task
+fails later. A repeated report (same dedupe key) notifies nobody twice.
+
+Reports arrive from four places:
+
+- the hub API, `POST /reports`, and `mac agent report "..." --why --undo
+  [--about-agent A --about-task T] [--task T]`;
+- the MCP tool `mac_report`;
+- a Claude Code task agent's `.mac-agent/board report "..."` (a board message
+  of kind `report`);
+- any coding agent's `human-reports.jsonl` in its task workspace, which the
+  worker files when the attempt ends, whatever its outcome.
+
+The worker also files one itself when a GitHub repository's settings,
+rulesets, default-branch protection or webhooks changed during a task attempt.
+It snapshots them before and after the attempt; `MAC_REPO_ADMIN_WATCH=0`
+turns this off.
+
+To reach Slack, a channel must subscribe to `agent.report`. The simplest
+setup adds it to the channel that already receives questions:
+
+```console
+mac admin notifier configure questions-slack slack \
+  --event-types "task.question,agent.report" \
+  --target '{"agent_id": "<hub agent with the Slack home channel>"}'
+```
+
 ---
 
 ## 5. Auto-Hermes Fallback

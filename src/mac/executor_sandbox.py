@@ -3245,6 +3245,9 @@ _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES = {
     _SANDBOX_VERIFICATION_FILE,
     "review-independent-findings.json",
     "review-protocol.json",
+    # The agent's "act, then tell" reports (mac.human_reports), filed by the
+    # worker after the run.
+    "human-reports.jsonl",
 }
 
 

@@ -220,6 +220,18 @@ assume" --expires MINUTES] [--options "a,b"] [--blocking]
   .mac-agent/board done "what you changed, and how you checked it"
   .mac-agent/board no-change "why nothing needed to change, and how you checked"
   .mac-agent/board say "anything else"
+  .mac-agent/board report "what you did" --why "..." --undo "how to reverse it"
+  .mac-agent/board report "what you saw" --about-agent AGENT --about-task TASK --evidence "..."
+
+Act, then tell. You keep your authority: do what the work needs. But whenever you \
+do something a person might want to know about -- anything beyond your own task \
+branch and pull request, such as changing repository settings, rulesets, branch \
+protection, webhooks, secrets or collaborators; force-pushing or deleting a shared \
+branch; closing someone else's PR or issue; changing a host or service; or causing \
+an external side effect -- `report` it right afterwards: what, why, how to undo. \
+It reaches the humans on Slack. If you notice ANOTHER agent doing something a \
+person should know about, report that too, naming the agent or task and the \
+evidence. Routine task work needs no report.
 
 Work without stopping. Do not stop to ask a question you can answer from the task, \
 the repository or your own judgement: decide, note the assumption in your status, \
@@ -231,7 +243,9 @@ work is finished, post `done` (or `no-change`) and then stop."""
 #: What a new session is told about earlier work on the task. Old nudges and
 #: activity lines are noise; direction, answers, verdicts and what earlier
 #: attempts reported are not.
-HISTORY_KINDS = ("message", "answer", "directive", "verdict", "status", "done", "question")
+HISTORY_KINDS = (
+    "message", "answer", "directive", "verdict", "status", "done", "question", "report"
+)
 MAX_HISTORY_MESSAGES = 40
 
 
@@ -375,6 +389,14 @@ def board_main(argv: List[str], hub: Optional[Hub]) -> int:
         action="store_true",
         help="nothing else can proceed until this is answered (you will stop after asking)",
     )
+    report = sub.add_parser("report", help="tell the humans what you did, or saw another agent do")
+    report.add_argument("text")
+    report.add_argument("--why", default=None)
+    report.add_argument("--undo", default=None)
+    report.add_argument("--about-agent", default=None)
+    report.add_argument("--about-task", default=None)
+    report.add_argument("--evidence", default=None)
+    report.add_argument("--key", default=None)
     sub.add_parser("read")
     args = parser.parse_args(argv)
     if hub is None:
@@ -405,6 +427,18 @@ def board_main(argv: List[str], hub: Optional[Hub]) -> int:
             hub.post("done", args.text)
             state["handed_off"] = True
             print("handed off; you may stop")
+        elif args.command == "report":
+            fields = {
+                "report": "peer" if (args.about_agent or args.about_task) else "self",
+                "why": args.why,
+                "undo": args.undo,
+                "about_agent": args.about_agent,
+                "about_task": args.about_task,
+                "evidence": args.evidence,
+                "key": args.key,
+            }
+            posted = hub.post("report", args.text, **{k: v for k, v in fields.items() if v})
+            print("reported as #%s; the humans will see it on Slack" % posted.get("id"))
         elif args.command == "no-change":
             hub.post("done", args.text, no_change=True)
             state["handed_off"] = True

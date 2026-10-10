@@ -1859,8 +1859,14 @@ class MacWorker(
                 "execution_started",
                 continuation="local",
             )
+            # Act, then tell (mac.human_reports): what the attempt did that a
+            # person should hear about is filed whatever the attempt's outcome.
+            admin_before = self._repo_admin_snapshot(task)
             started = time.monotonic()
-            execution = self._execute_task(task, lease, task_dir)
+            try:
+                execution = self._execute_task(task, lease, task_dir)
+            finally:
+                self._tell_humans_after_attempt(task, task_dir, admin_before)
             duration_ms = (time.monotonic() - started) * 1000.0
             self._observe_metric(
                 "worker.execution.duration_ms",
@@ -2316,6 +2322,106 @@ class MacWorker(
             lease=lease,
             error=reason,
         )
+
+    def _repo_admin_snapshot(self, task: JsonDict) -> Optional[JsonDict]:
+        """The task repository's administration before the attempt, if watchable."""
+        if not _env_bool("MAC_REPO_ADMIN_WATCH", True):
+            return None
+        remote = str(_current_repository_contract(task).get("canonical_remote_url") or "")
+        if not remote:
+            return None
+        try:
+            from mac import repo_admin_watch
+
+            return repo_admin_watch.snapshot(remote)
+        except Exception as exc:  # noqa: BLE001 - watching must never fail a task
+            self._observe_log(
+                "worker.repo_admin_watch.snapshot_failed",
+                level="warning",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail={"error": str(exc)[:300]},
+            )
+            return None
+
+    def _tell_humans_after_attempt(
+        self, task: JsonDict, task_dir: Path, admin_before: Optional[JsonDict]
+    ) -> None:
+        """File the attempt's reports for people; never raises.
+
+        Two sources: the reports the agent wrote to its workspace
+        (``human-reports.jsonl``), and a repository-administration change the
+        worker saw between its before and after snapshots.
+        """
+        from mac import human_reports
+
+        task_id = str(task.get("id") or "")
+        reports: List[JsonDict] = []
+        path = task_dir / human_reports.WORKSPACE_REPORTS_FILE
+        try:
+            if path.is_file() and not path.is_symlink():
+                reports.extend(human_reports.parse_workspace_reports(path.read_text(encoding="utf-8")))
+        except Exception as exc:  # noqa: BLE001
+            self._observe_log(
+                "worker.human_reports.read_failed",
+                level="warning",
+                subject_type="task",
+                subject_id=task_id,
+                detail={"error": str(exc)[:300]},
+            )
+        if admin_before is not None:
+            try:
+                from mac import repo_admin_watch
+
+                remote = str(_current_repository_contract(task).get("canonical_remote_url") or "")
+                after = repo_admin_watch.snapshot(remote)
+                changes = repo_admin_watch.diff(admin_before, after)
+                if changes:
+                    repository = str(admin_before.get("repository") or remote)
+                    reports.append(
+                        {
+                            "report": "self",
+                            "body": "Repository administration on %s changed while this "
+                            "task's attempt ran on %s (detected by the MAC worker; it may "
+                            "have been made by the agent or by someone else at the same time):\n%s"
+                            % (repository, self.agent_id, repo_admin_watch.describe(changes)),
+                            "undo": "review the change in the repository's Settings on GitHub "
+                            "and revert it there if it was not wanted",
+                            "evidence": "before/after snapshots of settings, rulesets, "
+                            "branch protection and webhooks",
+                            "key": repo_admin_watch.change_key(repository, changes),
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001
+                self._observe_log(
+                    "worker.repo_admin_watch.compare_failed",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"error": str(exc)[:300]},
+                )
+        for report in reports:
+            payload = {"task_id": task_id, **report}
+            try:
+                result = self.client.post("/reports", payload)
+                self._observe_log(
+                    "worker.human_report.filed",
+                    level="info",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={
+                        "status": (result or {}).get("status") if isinstance(result, dict) else None,
+                        "report": report.get("report"),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad report must not stop the rest
+                self._observe_log(
+                    "worker.human_report.file_failed",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"error": str(exc)[:300], "report": report.get("report")},
+                )
 
     def _execute_task(
         self,
@@ -6685,6 +6791,10 @@ def _status_update_slack_text(notification: JsonDict) -> str:
     body = str(notification.get("body") or "").strip()
     title = str(notification.get("title") or "Task update").strip()
     event_type = str(notification.get("event_type") or "").strip()
+    if event_type == "agent.report":
+        # An "act, then tell" report (mac.human_reports): who did what is in
+        # the title, the what/why/undo lines in the body. Both are the point.
+        return ("*%s*\n%s" % (title, body) if body else "*%s*" % title)[:3000]
     text = body if body and body != title else title
     if event_type:
         return ("[%s] %s" % (event_type, text))[:3000]

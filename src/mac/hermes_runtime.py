@@ -763,6 +763,17 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         "run. A message may be a correction, so read it before continuing." % agent["agent_id"],
         "- Announce what you will touch and answer direct questions. Do not narrate "
         "progress -- an inbox of status updates is one everybody learns to ignore.",
+        # Act, then tell (mac.human_reports): keep the authority, but no
+        # consequential action -- or a peer's -- passes without people hearing.
+        "- Act, then tell: when you do something a person might want to know about "
+        "(repository settings, rulesets, branch protection, force-pushes or deletions "
+        "of shared branches, closing others' PRs or issues, host or service changes, "
+        "external side effects), report it right afterwards with what, why and how to "
+        'undo: `mac agent report "..." --why "..." --undo "..." --task <task>`. '
+        "It reaches the humans on Slack once and is kept as an audit record.",
+        "- Tell on others too: if you notice another agent doing something a person "
+        "should know about, report it with `--about-agent <agent>` and/or "
+        '`--about-task <task>` and `--evidence "..."`.',
         "",
         "## Authority",
         "",

@@ -155,6 +155,18 @@ def _no_live_report_executor_approval(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_repo_admin_watch(monkeypatch):
+    """A worker run in a test never snapshots a real GitHub repository.
+
+    The worker reads a task repository's administration before and after each
+    attempt (mac.repo_admin_watch). With a fixture task naming github.com and
+    a forge token in the caller's environment, that would be live API traffic.
+    Tests of the watch call it directly with a fake forge.
+    """
+    monkeypatch.setenv("MAC_REPO_ADMIN_WATCH", "0")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_coding_agent_selection(monkeypatch):
     """Do not let a heartbeat or a previous run choose a test's coding CLI.
 
