@@ -131,6 +131,8 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
 
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
+        _repo_admin_snapshot = worker.MacWorker._repo_admin_snapshot
+        _tell_humans_after_attempt = worker.MacWorker._tell_humans_after_attempt
         agent_id = "agent-planner"
         lease_seconds = 0
         lease_renew_interval_seconds = 0
@@ -219,6 +221,8 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
 
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
+        _repo_admin_snapshot = worker.MacWorker._repo_admin_snapshot
+        _tell_humans_after_attempt = worker.MacWorker._tell_humans_after_attempt
         agent_id = "agent-planner"
         lease_seconds = 0
         lease_renew_interval_seconds = 0

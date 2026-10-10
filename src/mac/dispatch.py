@@ -740,6 +740,40 @@ class RemoteDispatch:
         body = _drop_none({"questions": list(questions or []), "actor": actor, "why": why or None})
         return _Dictish(self._post("/tasks/%s/ask" % quote(task_id, safe=""), body))
 
+    def file_human_report(
+        self,
+        body: str,
+        *,
+        reporter: Optional[str] = None,
+        reporter_kind: Optional[str] = None,
+        task_id: Optional[str] = None,
+        report: str = "self",
+        why: Optional[str] = None,
+        undo: Optional[str] = None,
+        about_agent: Optional[str] = None,
+        about_task: Optional[str] = None,
+        evidence: Optional[str] = None,
+        key: Optional[str] = None,
+        **_: Any,
+    ) -> Any:
+        # The hub derives the reporter from the token; ``reporter`` only names
+        # an operator whose token does not.
+        payload = _drop_none(
+            {
+                "body": body,
+                "report": report,
+                "task_id": task_id,
+                "why": why,
+                "undo": undo,
+                "about_agent": about_agent,
+                "about_task": about_task,
+                "evidence": evidence,
+                "key": key,
+                "reporter": reporter,
+            }
+        )
+        return self._post("/reports", payload)
+
     def post_task_message(
         self,
         task_id: str,

@@ -614,3 +614,32 @@ def test_extended_cli_coverage_gate():
         f"Extended domains in the coverage manifest are no longer registered: {missing_from_cli}. "
         "Did you rename a command? Update extended_covered in this gate test."
     )
+
+
+def test_agent_report_files_a_report_for_people_once(tmp_path):
+    """`mac agent report`: act, then tell (mac.human_reports)."""
+    rc, filed = _run(
+        tmp_path,
+        "agent",
+        "report",
+        "created ruleset required-ci",
+        "--why",
+        "the task asked for it",
+        "--undo",
+        "delete the ruleset",
+        "--reporter",
+        "agent_worker_1",
+    )
+    assert rc == 0
+    assert filed["status"] == "filed" and filed["report"] == "self"
+
+    rc, again = _run(
+        tmp_path, "agent", "report", "created ruleset required-ci", "--reporter", "agent_worker_1"
+    )
+    assert again["status"] == "duplicate"
+    assert again["notification_id"] == filed["notification_id"]
+
+    rc, peer = _run(
+        tmp_path, "agent", "report", "force-pushed main", "--about-agent", "agent_worker_2"
+    )
+    assert rc == 0 and peer["report"] == "peer"

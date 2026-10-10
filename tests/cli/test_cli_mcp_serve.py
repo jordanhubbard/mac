@@ -66,6 +66,7 @@ def test_mcp_serve_answers_a_handshake(tmp_path):
         "mac_task_list",
         "mac_task_ready",
         "mac_task_create",
+        "mac_report",
     }
 
 

@@ -146,6 +146,31 @@ class MacTools:
                     "required": ["title"],
                 },
             },
+            {
+                "name": "mac_report",
+                "description": (
+                    "Act, then tell: report to the humans on Slack something you did "
+                    "that a person might want to know (beyond your own branch and PR: "
+                    "repository settings, rulesets, force-pushes, host changes, "
+                    "external side effects), with why and how to undo it. Set "
+                    "about_agent or about_task to report something you saw ANOTHER "
+                    "agent do. Filed once even if repeated."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "body": {"type": "string", "description": "what happened"},
+                        "why": {"type": "string"},
+                        "undo": {"type": "string"},
+                        "task_id": {"type": "string"},
+                        "about_agent": {"type": "string"},
+                        "about_task": {"type": "string"},
+                        "evidence": {"type": "string"},
+                        "key": {"type": "string"},
+                    },
+                    "required": ["body"],
+                },
+            },
         ]
 
     # -- implementations ----------------------------------------------------
@@ -193,6 +218,40 @@ class MacTools:
                     str(title).strip(),
                     description=str(description or ""),
                     project=project,
+                )
+            )
+        )
+
+    def mac_report(
+        self,
+        body: str = "",
+        why: Optional[str] = None,
+        undo: Optional[str] = None,
+        task_id: Optional[str] = None,
+        about_agent: Optional[str] = None,
+        about_task: Optional[str] = None,
+        evidence: Optional[str] = None,
+        key: Optional[str] = None,
+        **_: Any,
+    ) -> JsonDict:
+        import os
+
+        if not str(body or "").strip():
+            return _error("body is required: what happened")
+        return _text(
+            _one(
+                self._plane.file_human_report(
+                    str(body).strip(),
+                    reporter=os.environ.get("MAC_AGENT_ID") or os.environ.get("USER") or "",
+                    task_id=task_id,
+                    report="peer" if (about_agent or about_task) else "self",
+                    why=why,
+                    undo=undo,
+                    about_agent=about_agent,
+                    about_task=about_task,
+                    evidence=evidence,
+                    key=key,
+                    source="mcp",
                 )
             )
         )

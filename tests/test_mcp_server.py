@@ -47,6 +47,10 @@ class _Plane:
         self.calls.append(("create_task", title, description, project))
         return {"id": "task_new", "title": title}
 
+    def file_human_report(self, body, **kwargs):
+        self.calls.append(("file_human_report", body, kwargs))
+        return {"status": "filed", "notification_id": "note_1"}
+
 
 def _rpc(server, method, params=None, message_id=1):
     return server.handle(
@@ -112,6 +116,7 @@ def test_tools_are_listed_with_schemas(server):
         "mac_task_list",
         "mac_task_ready",
         "mac_task_create",
+        "mac_report",
     }
     for tool in tools:
         assert tool["inputSchema"]["type"] == "object"

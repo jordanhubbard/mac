@@ -13,6 +13,8 @@ Who may write what is decided here, not by the caller:
 
 * an agent posts what it is doing (``status``, ``activity``), what it needs
   (``question``), what it has finished (``done``), or a plain ``message``;
+* anyone posts a ``report`` for people: something it did, or saw another
+  agent do, that a person might want to know (:mod:`mac.human_reports`);
 * a human posts direction (``directive``), an ``answer`` to a question, or a
   ``message``;
 * the hub posts anything, including ``nudge`` and ``verdict``.
@@ -39,12 +41,13 @@ KINDS = (
     "nudge",
     "verdict",
     "done",
+    "report",
 )
 
 #: What each kind of author may post. The hub posts on the system's behalf.
 ALLOWED_KINDS: Mapping[str, frozenset] = {
-    "agent": frozenset({"message", "status", "activity", "question", "done"}),
-    "human": frozenset({"message", "answer", "directive"}),
+    "agent": frozenset({"message", "status", "activity", "question", "done", "report"}),
+    "human": frozenset({"message", "answer", "directive", "report"}),
     "hub": frozenset(KINDS),
 }
 

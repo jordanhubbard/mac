@@ -225,6 +225,7 @@ request and response definitions.
 | `PUT` | `/projects/{project}` | Update Project |
 | `POST` | `/projects/{project}/dispatch` | Set Project Dispatch |
 | `POST` | `/publications` | Publish |
+| `POST` | `/reports` | File Agent Report |
 | `POST` | `/repository-refs/reconcile` | Reconcile Repository Refs |
 | `GET` | `/repository-refs/reconciler` | Repository Ref Reconciler Status |
 | `POST` | `/reviews/default/tick` | Default Review Tick |

@@ -859,6 +859,22 @@ class TaskMessageCreate(BaseModel):
     author: Optional[str] = None
 
 
+class AgentReportCreate(BaseModel):
+    """One "act, then tell" report for people (see mac.human_reports)."""
+
+    body: str
+    report: str = "self"
+    task_id: Optional[str] = None
+    why: Optional[str] = None
+    undo: Optional[str] = None
+    about_agent: Optional[str] = None
+    about_task: Optional[str] = None
+    evidence: Optional[str] = None
+    key: Optional[str] = None
+    #: Who is reporting, for a token that does not say (an operator token).
+    reporter: Optional[str] = None
+
+
 class InferenceTokenMint(BaseModel):
     task_id: str = ""
     ttl_seconds: int = 6 * 60 * 60
@@ -1912,6 +1928,10 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
+    if path == "/reports" and method == "POST":
+        # "Act, then tell" reports. Anyone who may write a task board may
+        # report; the handler narrows a per-task token to its own task.
+        return "task_board"
     if _TASK_BOARD_ROUTE.match(path) and method in {"GET", "POST"}:
         # The task board (mac.task_board). Narrowed per task and per kind in
         # the handler; see _authorize_task_board.
@@ -5545,6 +5565,52 @@ def create_app(
             body=body.body,
             reply_to=body.reply_to,
             metadata=dict(body.metadata or {}),
+        )
+
+    @app.post("/reports")
+    def file_agent_report(
+        body: AgentReportCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """File an "act, then tell" report; it reaches people on Slack once.
+
+        A self-report says what the reporter did; a peer report what it saw
+        another agent do. The reporter is the token's identity when it has
+        one: a per-task token reports as its task's agent and only from that
+        task; an agent credential as its agent. An operator token may name
+        itself, and needs write access.
+        """
+        task_id = str(body.task_id or "").strip() or None
+        if principal.principal_kind == "inference":
+            if not principal.task_id or (task_id and task_id != principal.task_id):
+                raise AuthorizationError("this inference token may only report from its own task")
+            task_id = principal.task_id
+            reporter_kind, reporter = "agent", str(principal.agent_id or "agent")
+        elif principal.agent_id and not principal.is_admin:
+            reporter_kind, reporter = "agent", str(principal.agent_id)
+        else:
+            if not (principal.is_admin or principal.has_scope("write")):
+                raise AuthorizationError("filing a report needs write access")
+            reporter_kind = "human" if principal.human_id else "operator"
+            reporter = str(
+                principal.human_id
+                or (body.reporter or "").strip()
+                or principal.client_id
+                or "operator"
+            )
+        return cp.file_human_report(
+            body.body,
+            reporter=reporter,
+            reporter_kind=reporter_kind,
+            task_id=task_id,
+            report=body.report,
+            why=body.why,
+            undo=body.undo,
+            about_agent=body.about_agent,
+            about_task=body.about_task,
+            evidence=body.evidence,
+            key=body.key,
+            source="api",
         )
 
     @app.post("/tasks/{task_id}/ask")

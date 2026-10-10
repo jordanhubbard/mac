@@ -147,7 +147,7 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
         groups=(
             ("Availability", ("hold", "resume", "heartbeat", "deregister")),
             ("Inspection", ("config", "hardware", "reflect")),
-            ("Communication", ("tell",)),
+            ("Communication", ("tell", "report")),
             (
                 "Administration",
                 (
