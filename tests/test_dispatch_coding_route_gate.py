@@ -76,16 +76,19 @@ def _stale():
     return (parse_time(utcnow()) - timedelta(hours=2)).isoformat()
 
 
-#: (case, resources, task metadata extra, expected refusal)
+#: (case, resources factory, task metadata extra, expected refusal). The
+#: resources are built when the test runs, not at collection: a proof stamped
+#: at import goes stale partway through a long serial run and is then refused
+#: for its age instead of the reason the case is about.
 REFUSED = [
-    ("unverified", _resources(_route(verified=False)), {}, ROUTE_UNVERIFIED),
-    ("unlisted_cli_only", _resources(_route("claude")), {}, ROUTE_UNVERIFIED),
-    ("stale_proof", _resources(_route(checked_at=_stale())), {}, ROUTE_UNVERIFIED),
-    ("no_report", _resources(None), {}, ROUTE_UNREPORTED),
-    ("legacy_report", _resources({}, schema="mac.coding_clis.v1"), {}, ROUTE_UNREPORTED),
+    ("unverified", lambda: _resources(_route(verified=False)), {}, ROUTE_UNVERIFIED),
+    ("unlisted_cli_only", lambda: _resources(_route("claude")), {}, ROUTE_UNVERIFIED),
+    ("stale_proof", lambda: _resources(_route(checked_at=_stale())), {}, ROUTE_UNVERIFIED),
+    ("no_report", lambda: _resources(None), {}, ROUTE_UNREPORTED),
+    ("legacy_report", lambda: _resources({}, schema="mac.coding_clis.v1"), {}, ROUTE_UNREPORTED),
     (
         "pinned_model_unproven",
-        _resources(_route(model="gpt-default")),
+        lambda: _resources(_route(model="gpt-default")),
         {"model": "qwen-pinned"},
         MODEL_UNVERIFIED,
     ),
@@ -134,7 +137,7 @@ def _explained_codes(cp, task_id, agent_id):
 def test_dispatch_once_refuses_a_worker_without_a_listed_fresh_proof(
     strict, case, resources, extra, code
 ):
-    agent = _worker(strict, resources)
+    agent = _worker(strict, resources())
     task = _task(strict, **extra)
 
     assert strict.dispatch_once() is None
