@@ -2010,7 +2010,7 @@ so rather than assuming it will not happen.</p>
 checklist in <a href="../../operations/fleet-update/">Updating the fleet with fleet-update</a>.
 Every host runs MAC from a git checkout at <code>~/.mac/src/mac</code>. Move hosts to a new
 commit with <code>scripts/fleet-update</code>, run on the hub.</p>
-<p><code>~/.mac/fleets.yaml</code>, <code>~/.mac/fleet-hosts</code> and the env files don't belong in
+<p><code>~/.mac/fleets.yaml</code> and the env files don't belong in
 version control. Fleet topology and provider keys are yours, not the product's.</p>
 <h2 id="check-it-came-up">Check it came up<a class="headerlink" href="#check-it-came-up" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac --fleet &lt;name&gt; agent list</span>

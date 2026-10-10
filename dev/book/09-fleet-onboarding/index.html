@@ -1766,8 +1766,8 @@ supervisor, architecture, filesystem, container runtime, and available coding
 CLIs on each selected node.</p>
 <p>Hosts are provisioned by hand from the "Provision a new host" checklist in
 <a href="../../operations/fleet-update/">Updating the fleet with fleet-update</a>, then
-moved to a commit with <code>scripts/fleet-update</code>. Resolve targets from
-<code>~/.mac/fleets.yaml</code> and <code>~/.mac/fleet-hosts</code>.</p>
+moved to a commit with <code>scripts/fleet-update</code>. Targets come from the
+fleet inventory, <code>~/.mac/fleets.yaml</code>; <code>mac admin fleet inventory</code> prints it.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">test</span><span class="w"> </span>-x<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/scripts/fleet-update&quot;</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/scripts/image-publication-identity.py&quot;</span><span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/docs/operations/fleet-update.md&quot;</span>

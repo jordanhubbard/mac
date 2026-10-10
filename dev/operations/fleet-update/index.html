@@ -2063,7 +2063,7 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 </tr>
 <tr>
 <td><code>HOST</code></td>
-<td>Update one Linux worker, named as in <code>~/.mac/fleet-hosts</code>.</td>
+<td>Update one managed host, named as in the fleet inventory (<code>~/.mac/fleets.yaml</code>). The hub's own name updates the hub.</td>
 </tr>
 <tr>
 <td><code>all</code></td>
@@ -2089,15 +2089,57 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 </table>
 <p>Every line of output also goes to <code>~/.mac/logs/fleet-update-&lt;timestamp&gt;.log</code>.</p>
 <h3 id="hosts">Hosts<a class="headerlink" href="#hosts" title="Permanent link">&para;</a></h3>
-<p>Worker names are looked up in <code>~/.mac/fleet-hosts</code> (override the path with
-<code>FLEET_UPDATE_HOSTS</code>). Each line has the form <code>&lt;name&gt; &lt;ssh_target&gt; &lt;agent_id&gt;</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># name       ssh target              hub agent id
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>worker-1     &lt;user&gt;@&lt;mesh-ip-1&gt;      agent_worker-1
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>worker-2     &lt;user&gt;@&lt;mesh-ip-2&gt;      agent_worker-2
+<p>Hosts come from the fleet inventory, <code>~/.mac/fleets.yaml</code> (override the path
+with <code>FLEET_UPDATE_INVENTORY</code>), read through <code>mac.fleet_inventory</code>. There is no
+other host list and no built-in default. <code>mac admin fleet inventory</code> prints
+every entry with its disposition:</p>
+<table>
+<thead>
+<tr>
+<th>Disposition</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>managed</code></td>
+<td>This fleet's updater owns it. <code>all</code> updates every managed worker, in file order.</td>
+</tr>
+<tr>
+<td><code>external</code></td>
+<td>Another named mechanism owns it (<code>managed_by</code>; <code>instance_kind: fungible</code> hosts belong to the fungible provisioner). Never updated here.</td>
+</tr>
+<tr>
+<td><code>retired</code></td>
+<td><code>enabled: false</code> or <code>lifecycle: retired</code>. Never updated.</td>
+</tr>
+<tr>
+<td><code>other_fleet</code></td>
+<td>Enrolled in a different fleet in the same file.</td>
+</tr>
+</tbody>
+</table>
+<p>Each entry's identity is <code>name</code>, <code>target</code> (ssh), <code>agent_id</code>, <code>role</code> (<code>hub</code> or
+<code>worker</code>), <code>os</code>, <code>arch</code> and <code>lifecycle</code>. Any of <code>agent_id</code> (default
+<code>agent_&lt;name&gt;</code>), <code>role</code> (the fleet's <code>hub_agent</code> is the hub) and <code>lifecycle</code>
+may be omitted, and the plan marks what it derived. Write them explicitly when
+the default is wrong:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agents</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">worker-1</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">&lt;user&gt;@&lt;mesh-ip-1&gt;</span><span class="p p-Indicator">,</span><span class="nt"> os</span><span class="p">:</span><span class="w"> </span><span class="nv">linux</span><span class="p p-Indicator">,</span><span class="nt"> arch</span><span class="p">:</span><span class="w"> </span><span class="nv">aarch64</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">lab-box</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">&lt;user&gt;@&lt;ip&gt;</span><span class="p p-Indicator">,</span><span class="nt"> os</span><span class="p">:</span><span class="w"> </span><span class="nv">linux</span><span class="p p-Indicator">,</span><span class="nt"> lifecycle</span><span class="p">:</span><span class="w"> </span><span class="nv">external</span><span class="p p-Indicator">,</span><span class="nt"> managed_by</span><span class="p">:</span><span class="w"> </span><span class="nv">lab-team</span><span class="p p-Indicator">}</span>
 </code></pre></div>
-<p>Create this file before the first run. If it doesn't exist, the script falls
-back to a built-in list of two workers (<code>host_entry</code> in the script), which is
-only right for the fleet it was first written for. <code>all</code> updates every worker listed there, in file order.</p>
+<p>The script stops before touching any host when the inventory is unreadable or
+inconsistent (two entries claiming one name, ssh host or agent id), when the
+named host is not <code>managed</code>, or when the machine answering at a worker's ssh
+target reports a different <code>MAC_AGENT_ID</code> than the inventory's <code>agent_id</code>. A
+replaced host therefore needs an explicit inventory update. The inventory is
+read with the script's own source tree (<code>FLEET_UPDATE_PYTHON</code>, default the
+venv's python, supplies pyyaml).</p>
+<p>The hub's fleet view (<code>/fleet</code>, the Fleet section of every agent's runtime
+context) classifies each agent row from the same inventory: <code>worker</code>, <code>hub</code>,
+<code>virtual_service</code> (the operator persona and reviewer), <code>operator_session</code>
+(interactive CLI sessions) or <code>unenrolled</code>. Only <code>worker</code> rows count as
+execution capacity.</p>
 <p>Other knobs, mostly useful for testing: <code>FLEET_UPDATE_SRC</code> (the checkout, by
 default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 <code>http://127.0.0.1:8789</code>), <code>FLEET_UPDATE_MAC_CLI</code> (default <code>mac</code>),
@@ -2297,7 +2339,7 @@ the host's Hermes home (default <code>~/.hermes</code>).</p>
    <code>PERPLEXITY_API_BASE</code>, <code>FAL_KEY</code>, <code>VLLM_API_KEY</code>, <code>HAIMAKER_API_KEY</code>,
    <code>LLM_KEY</code>, <code>LLM_URL</code>, <code>QDRANT_API_KEY</code> and <code>FIRECRAWL_API_KEY</code> from
    <code>mac.env</code> and <code>$HERMES_HOME/.env</code>.
-7. On the hub, add the host to <code>~/.mac/fleet-hosts</code>. A token can only be
+7. On the hub, enroll the host in <code>~/.mac/fleets.yaml</code> and check it with <code>mac admin fleet inventory</code>. A token can only be
    issued to a registered agent, so register it first:
    <code>mac admin machine register &lt;hostname&gt; --machine-id &lt;machine_id&gt;</code> and
    <code>mac agent register &lt;machine_id&gt; &lt;name&gt; --agent-id &lt;agent_id&gt;</code>. Then run
