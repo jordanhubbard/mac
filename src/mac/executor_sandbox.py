@@ -2468,12 +2468,26 @@ def verifier_runtime_image() -> Tuple[str, str]:
     """
 
     try:
-        return _managed_openshell_runtime_image_ref(), "managed_runtime_pin"
-    except RuntimeImagePinConflict:
-        raise
+        image_ref = _managed_openshell_runtime_image_ref()
     except (RuntimeError, ValueError):
-        pass
-    return (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip(), "MAC_HUB_VERIFY_IMAGE"
+        return (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip(), "MAC_HUB_VERIFY_IMAGE"
+    # One pin, not two: runtime-image-ref is what the bootstrap and
+    # `python -m mac.openshell_image_pin` write. A --from naming a different
+    # image means one was repinned without the other, so refuse rather than
+    # pick one. (The read-only report attestation keeps preferring --from:
+    # it attests what the sandbox will actually run.)
+    path = managed_runtime_image_ref_path()
+    try:
+        pinned = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        pinned = ""
+    if pinned and pinned != image_ref:
+        raise RuntimeImagePinConflict(
+            "OpenShell runtime image pins disagree: MAC_OPENSHELL_CREATE_ARGS "
+            "--from %s but %s names %s; run `python -m mac.openshell_image_pin`"
+            % (image_ref, path, pinned)
+        )
+    return image_ref, "managed_runtime_pin"
 
 
 def _managed_openshell_runtime_image_ref() -> str:
@@ -2503,7 +2517,6 @@ def _managed_openshell_runtime_image_ref() -> str:
         index += 1
     if len(configured_refs) > 1:
         raise ValueError("MAC_OPENSHELL_CREATE_ARGS contains duplicate --from arguments")
-    path = managed_runtime_image_ref_path()
     if configured_refs:
         image_ref = configured_refs[0]
         if not _MANAGED_OPENSHELL_RUNTIME_REF_RE.fullmatch(image_ref):
@@ -2511,22 +2524,9 @@ def _managed_openshell_runtime_image_ref() -> str:
                 "read-only repository reports require MAC_OPENSHELL_CREATE_ARGS "
                 "to select the immutable mac-openshell-runtime@sha256 image"
             )
-        # One pin, not two: the runtime-image-ref file is what the bootstrap
-        # and `python -m mac.openshell_image_pin` write. A --from that names
-        # a different image means one of them was repinned without the other
-        # (task_b1828d67), so refuse rather than pick one.
-        try:
-            pinned = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            pinned = ""
-        if pinned and pinned != image_ref:
-            raise RuntimeImagePinConflict(
-                "OpenShell runtime image pins disagree: MAC_OPENSHELL_CREATE_ARGS "
-                "--from %s but %s names %s; run `python -m mac.openshell_image_pin`"
-                % (image_ref, path, pinned)
-            )
         return image_ref
 
+    path = managed_runtime_image_ref_path()
     try:
         image_ref = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
