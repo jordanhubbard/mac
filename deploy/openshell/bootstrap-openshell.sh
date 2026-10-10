@@ -935,8 +935,12 @@ retire_managed_sandboxes_before_upgrade() {
     echo "ERROR: could not allocate the pre-upgrade sandbox inventory" >&2
     return 1
   fi
+  # 0.0.x bounds the listing with --limit; 0.1.x replaced it with --page-size.
+  # A re-run on an upgraded host must read the API, not fall to the recovery
+  # path below that stops the gateway.
   if [ -x "$cli" ] \
-      && openshell_local_gateway "$cli" sandbox list --limit 1000 --output json > "$inventory" 2>/dev/null; then
+      && { openshell_local_gateway "$cli" sandbox list --limit 1000 --output json > "$inventory" 2>/dev/null \
+        || openshell_local_gateway "$cli" sandbox list --page-size 1000 --output json > "$inventory" 2>/dev/null; }; then
     if ! retire_managed_sandboxes_via_api "$cli" "$inventory"; then
       rm -f "$inventory"
       echo "ERROR: existing OpenShell API could not retire its managed sandboxes" >&2
@@ -1820,6 +1824,10 @@ validate_openshell_runtime_image
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
 sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
+# One image pin (task_b1828d67): with a digest-managed runtime the test gate
+# reads runtime-image-ref too, so a separate MAC_HUB_VERIFY_IMAGE could only
+# drift from it. A local development build keeps any operator-set value.
+[ -n "$OSH_RUNTIME_IMAGE_REF" ] && sed -i '/^\(export \)\{0,1\}MAC_HUB_VERIFY_IMAGE=/d' "$ENVF"
 {
   echo ""
   echo "# OpenShell sandbox enforcement (bootstrap-openshell.sh; Docker Engine/Moby driver, gpu=$OSH_GPU)"

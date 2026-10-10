@@ -215,10 +215,37 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 | `MAC_OPENSHELL_KEEP` | _(off)_ | truthy → `--keep` (don't tear down; debug) |
 | `MAC_OPENSHELL_GC` | set to `1` by bootstrap | reconcile old orphaned MAC-owned sandboxes before new executor or hub-verification work |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | `86400` | minimum age for automatic sandbox garbage collection |
-| `MAC_OPENSHELL_CREATE_ARGS` | _(none)_ | extra `sandbox create` args (shell-split), e.g. `--from img`, `--upload /src:/src` |
+| `MAC_OPENSHELL_CREATE_ARGS` | _(none)_ | extra `sandbox create` args (shell-split), e.g. `--from img`, `--upload /src:/src`. On a worker with a managed image, `--from` must match `runtime-image-ref` (below) |
+| `MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE` | `~/.mac/openshell/runtime-image-ref` | the worker's one sandbox-image pin; coding sandboxes and the repository test gate both run this image |
+| `MAC_HUB_VERIFY_IMAGE` | _(none)_ | test-gate image for a host with no managed pin, such as the hub; ignored where `runtime-image-ref` exists |
 | `MAC_OPENSHELL_ENV_PASSTHROUGH` | hub+gateway vars | comma list of env names forwarded through the private sandbox environment file |
 | `MAC_OPENSHELL_TASK_EGRESS` | _(off)_ | render per-repo egress into each task's policy (ADR 0009 §2a; see below) |
 | `MAC_OPENSHELL_POLICY_SYNC` | `1` | worker pulls its hub-assigned policy between tasks (see below) |
+
+## One sandbox-image pin
+
+A worker pins its sandbox image once, in `~/.mac/openshell/runtime-image-ref`.
+`bootstrap-openshell.sh` and `python -m mac.openshell_image_pin` write it.
+Coding sandboxes use `MAC_OPENSHELL_CREATE_ARGS --from`, which is derived from
+the pin. The repository test gate reads the pin directly. If `--from` and the
+pin disagree, the worker refuses to pick one: the gate reports
+`OpenShell runtime image pins disagree`, and the fix is
+`python -m mac.openshell_image_pin`.
+
+Before this, the gate had its own pin, `MAC_HUB_VERIFY_IMAGE`. A repin on
+2026-10-02 missed it, so for a day every gate ran an older image than the coding
+agent (task_b1828d67). `scripts/fleet-update` re-derives `mac.env` from the pin
+on every worker update, and `--runtime-image REF --runtime-input-sha256 SHA`
+repins the whole fleet to one published image.
+
+The image keeps no runtime `ENV` for tool settings. OpenShell 0.0.x does not
+pass image `ENV` to sandbox processes, while 0.1.x does. So npm's limits live
+in `/usr/local/etc/npmrc` (a link to `/etc/npmrc`), uv's in `/etc/uv/uv.toml`,
+and pnpm's in its `/usr/local/bin` wrappers. Each is smoke-tested under `env -i`
+at build time, so both OpenShell releases see the same settings.
+`UV_PROJECT_ENVIRONMENT` and `VIRTUAL_ENV` are build-only. Under 0.1.x they
+would point a repository's own `uv sync` or `uv pip` at the root-owned
+`/opt/mac-venv`.
 
 ## Policy delivery: the hub assignment reaches the worker
 
