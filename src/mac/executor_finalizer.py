@@ -84,6 +84,7 @@ from mac.fleet_learning import (
     task_repository_remote,
 )
 from mac.evidence_validators import verifier_test_item_problems
+from mac.infrastructure_failure import git_transport_failure
 from mac.gitops import (
     CanonicalFreshnessResult,
     agent_pull_request,
@@ -1802,6 +1803,18 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "reason": "bootstrap/tests failed",
         }
     all_ok = pushed and bootstrap_ok and tests_ok and clean and freshness_ok
+    # The network, not the work, stopped publication: name it in the manifest
+    # so the hub retries the attempt instead of reading "no changed files" as
+    # a broken contract (task_71cfdfd5: tests passed, then the canonical fetch
+    # could not connect to github.com:443 for 136 s).
+    infrastructure_failure: Optional[Dict[str, Any]] = None
+    if not pushed:
+        if publication is not None and not publication.ok:
+            infrastructure_failure = git_transport_failure("guarded_push", publication.error)
+        elif freshness_error is not None:
+            infrastructure_failure = git_transport_failure(
+                "publication_preflight", freshness_error
+            )
     integration_target = publication.target if publication is not None else publication_target
     integrated_on_canonical = bool(
         all_ok
@@ -1861,6 +1874,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     _carry_requirement_coverage(manifest, agent_evidence)
     if freshness_error is not None:
         manifest["freshness_error"] = freshness_error
+    if infrastructure_failure is not None:
+        manifest["infrastructure_failure"] = infrastructure_failure
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
     stamped = host_still_valid_reconcile(task, reconcile_block)

@@ -98,6 +98,9 @@ from mac.repository_contract import (
 from mac.repository_access_env import read_only_repository_content_digest
 from mac.persistence_redaction import redact_for_persistence
 from mac.evidence_validators import repository_gate_failure
+from mac.infrastructure_failure import BLOCK_REASON as INFRASTRUCTURE_BLOCK_REASON
+from mac.infrastructure_failure import describe as describe_infrastructure_failure
+from mac.infrastructure_failure import executor_infrastructure_failure
 from mac.semantic_acceptance import evaluate_acceptance
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
@@ -2033,11 +2036,17 @@ class MacWorker(
                     # 2026-10-03/04 (Aviation task_6c9f4ab2, nanolang
                     # task_2739cdd5 and task_44cc86fa) each went BLOCKED with
                     # manual repair on attempt 1 of 3 for one failing test.
+                    verification_manifest = ensure_json_object(
+                        ensure_json_object(evidence.get("metadata")).get("verification")
+                    )
                     gate_failure = repository_gate_failure(
-                        ensure_json_object(
-                            ensure_json_object(evidence.get("metadata")).get("verification")
-                        ),
+                        verification_manifest,
                         submission_problems,
+                    )
+                    infrastructure = (
+                        executor_infrastructure_failure(verification_manifest)
+                        if gate_failure is None
+                        else None
                     )
                     if gate_failure is not None:
                         blocked_detail.update(
@@ -2046,6 +2055,30 @@ class MacWorker(
                             manual_repair_required=False,
                             repository_gate_failure=gate_failure,
                         )
+                    elif infrastructure is not None:
+                        # The host's own records say the network or the
+                        # coding agent's preflight stopped this attempt, not
+                        # the work (task_71cfdfd5: tests passed, then the
+                        # canonical fetch could not reach github.com;
+                        # task_e95cc31a: preflight rc=124). The hub retries it
+                        # under a bounded budget without charging an attempt.
+                        repo_record = ensure_json_object(verification_manifest.get("repo"))
+                        blocked_detail.update(
+                            reason=INFRASTRUCTURE_BLOCK_REASON,
+                            failure=INFRASTRUCTURE_BLOCK_REASON,
+                            failure_class="environment",
+                            manual_repair_required=False,
+                            infrastructure_failure=infrastructure,
+                            error=describe_infrastructure_failure(infrastructure),
+                        )
+                        unpushed_head = str(repo_record.get("head_sha") or "")
+                        if unpushed_head:
+                            # The work that never reached the remote, so it
+                            # can be found on this host if a retry needs it.
+                            blocked_detail["unpushed_head_sha"] = unpushed_head
+                            blocked_detail["unpushed_ref"] = str(
+                                repo_record.get("remote_ref") or ""
+                            )
                     elif _only_harness_finalization_problems(submission_problems):
                         # Every problem restates a decision the harness made
                         # (it did not push, or recorded no verifier result),

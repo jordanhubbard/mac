@@ -204,6 +204,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_IMAGE_TAG` | str | consumer-defined | core | Core setting: image tag. |
 | `MAC_IMPACT_MAP_CHECKED` | str | consumer-defined | core | Core setting: impact map checked. |
 | `MAC_INFERENCE_TOKEN` | str | consumer-defined | core | Set by the executor inside the task sandbox, never by an operator: a per-task token bound to the worker's agent that may call only POST /v1/chat/completions and /v1/embeddings. It expires after 6 hours and is revoked when the task ends. The worker token never enters the sandbox. |
+| `MAC_INFRASTRUCTURE_REQUEUES` | str | consumer-defined | core | Core setting: infrastructure requeues. |
 | `MAC_JOURNAL_AGENT` | str | consumer-defined | core | Core setting: journal agent. |
 | `MAC_JOURNAL_BACKUP_HOOK` | str | consumer-defined | core | Core setting: journal backup hook. |
 | `MAC_JOURNAL_DATE` | str | consumer-defined | core | Core setting: journal date. |

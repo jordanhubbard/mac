@@ -5742,6 +5742,31 @@ def coding_agent_sandbox_verification(choice: Any) -> Dict[str, object]:
     return result
 
 
+def _cached_preflight_failure_class(choice: Any) -> str:
+    """The failure class of ``choice``'s last in-sandbox preflight, if it failed.
+
+    Reads the cache the preflight just filled; never runs a probe itself.
+    """
+    try:
+        key = choice.route_fingerprint()
+    except Exception:  # noqa: BLE001 - an unkeyable route has no recorded class
+        return ""
+    with _SANDBOX_PREFLIGHT_CACHE_LOCK:
+        cached = _SANDBOX_PREFLIGHT_CACHE.get(key)
+    if not cached or cached.get("verified"):
+        return ""
+    return str(cached.get("failure_class") or "")
+
+
+def _with_preflight_class(item: Mapping[str, Any], classes: Mapping[str, str]) -> Dict[str, Any]:
+    record = dict(item)
+    if record.get("failure_class") == "preflight_failed":
+        cls = str(classes.get(str(record.get("agent") or "")) or "")
+        if cls:
+            record["preflight_failure_class"] = cls
+    return record
+
+
 def _coding_agent_sandbox_ok(choice: Any) -> bool:
     """Whether a coding agent may be used on the SANDBOXED path.
 
@@ -5791,10 +5816,14 @@ def _agent_argv(
     task_id = str(task.get("id") or "").strip() if isinstance(task, dict) else ""
     verified_fingerprints = set()
 
+    preflight_classes: Dict[str, str] = {}
+
     def _accept_sandbox_route(candidate: Any) -> bool:
         accepted = _coding_agent_sandbox_ok(candidate)
         if accepted:
             verified_fingerprints.add(candidate.route_fingerprint())
+        else:
+            preflight_classes[candidate.agent] = _cached_preflight_failure_class(candidate)
         return accepted
 
     resolve_env: Mapping[str, str] = os.environ
@@ -5815,7 +5844,12 @@ def _agent_argv(
     if chosen is not None:
         chosen["order"] = list(choice.order)
         chosen["order_source"] = choice.order_source
-        chosen["skipped"] = [dict(item) for item in choice.skipped]
+        # Name WHY a preflight failed, not just that it did: the hub retries
+        # a timed-out probe as infrastructure (mac.infrastructure_failure) but
+        # not a missing binary or a refused credential.
+        chosen["skipped"] = [
+            _with_preflight_class(item, preflight_classes) for item in choice.skipped
+        ]
         # The caller attributes the transcript to the route that actually ran:
         # `task_agent_transcripts` carries `coding_agent` and `model` columns,
         # and this is the only truthful source for either.
