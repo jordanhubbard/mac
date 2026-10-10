@@ -2141,6 +2141,10 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 <li>Run <code>sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist</code>.</li>
 <li>Poll <code>/health</code>, then require <code>/startup-attestation</code>'s <code>source_commit</code> to equal
    the target. <code>mac-service</code> sets it from the <code>HEAD</code> of <code>~/.mac/src/mac</code>.</li>
+<li>Run <code>python -m mac.fleet_context_service --source ~/.mac/src/mac</code>. It
+    installs or repairs the LaunchAgent <code>com.mac.fleet-context</code>, which refreshes
+    the live fleet block in this agent's runtime context every 3 minutes, and
+    runs one refresh. Its JSON result is logged; a failure never fails the update.</li>
 <li>Run <code>launchctl kickstart -k gui/&lt;uid&gt;/com.mac.agent</code>. With <code>--hermes</code>, also
     kickstart <code>gui/&lt;uid&gt;/ai.hermes.gateway</code>.</li>
 </ol>
@@ -2192,6 +2196,10 @@ the <code>launchctl bootstrap</code> command.</p>
      mac-task-executor, mac-task-executor.py}</code> and <code>deploy/mac-crash-observer.py</code>
      into <code>~/.mac/bin</code>. Each file is renamed into place, so a running wrapper
      keeps its old inode.</li>
+<li><code>python -m mac.fleet_context_service --source ~/.mac/src/mac</code>, as on the
+     hub but with the <code>mac-fleet-context</code> systemd timer: the units are rendered
+     from <code>deploy/systemd</code> into <code>/etc/systemd/system</code>, a failed timer is reset,
+     and one refresh runs. A failure is logged, never fatal.</li>
 <li><code>sudo -n systemctl restart mac-agent</code>. With <code>--hermes</code>, also
      <code>systemctl --user restart hermes-gateway</code>.</li>
 <li>after 10 seconds, <code>systemctl is-active mac-agent</code>.</li>
