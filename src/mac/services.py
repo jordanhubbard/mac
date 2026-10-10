@@ -12267,6 +12267,9 @@ class ControlPlane:
         task = self.get_task(task_id)
         task_id = task.id
         agent = self._require_live_agent(agent_id)
+        # Read before the claim transaction: the gate is then evaluated on the
+        # transaction-locked agent row without a second connection.
+        release_commit = self._selected_release_commit()
         if (
             task.state in {TaskState.WAITING.value, TaskState.BLOCKED.value}
             and self._canonical_task_dependency_ids(task.id)
@@ -12520,6 +12523,7 @@ class ControlPlane:
                 role_reason = None
             if authoritative_allocator_v2:
                 ineligible_reason = self._claim_snapshot_v2_ineligibility_reason(
+                    release_commit=release_commit,
                     agent=current_agent,
                     task=current_task,
                     machine=current_machine,
@@ -12532,6 +12536,7 @@ class ControlPlane:
                 )
             else:
                 ineligible_reason = self._claim_snapshot_ineligibility_reason(
+                    release_commit=release_commit,
                     agent=current_agent,
                     task=current_task,
                     machine=current_machine,
@@ -16094,6 +16099,152 @@ class ControlPlane:
             ),
         )
 
+    # ---- release identity (task_822aada4; see mac.release_identity) ----------
+
+    RELEASE_SELECTION_SCOPE = "fleet"
+    RELEASE_SELECTION_CACHE_SECONDS = 5.0
+
+    def get_release_selection(self) -> Optional[JsonDict]:
+        """The operator-selected release, or None when no release is selected."""
+        row = self.store.query_one(
+            "SELECT * FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,)
+        )
+        return dict(row) if row else None
+
+    def select_release(
+        self,
+        commit_sha: str,
+        *,
+        actor: str,
+        reason: str = "",
+        manifest_sha256: str = "",
+        converge_minutes: Optional[int] = None,
+    ) -> JsonDict:
+        """Select the release every MAC worker must run before it gets work."""
+        commit = str(commit_sha or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise ValidationError("a release is selected by its full 40-hex commit sha")
+        if not str(actor or "").strip():
+            raise ValidationError("a release selection needs an actor")
+        now = utcnow()
+        converge_by = None
+        if converge_minutes is not None:
+            if int(converge_minutes) <= 0:
+                raise ValidationError("converge_minutes must be positive")
+            converge_by = (parse_time(now) + timedelta(minutes=int(converge_minutes))).isoformat()
+        with self.store.transaction() as conn:
+            conn.execute("DELETE FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,))
+            conn.execute(
+                """
+                INSERT INTO release_selection
+                    (scope, commit_sha, manifest_sha256, converge_by, selected_by, reason, selected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.RELEASE_SELECTION_SCOPE,
+                    commit,
+                    str(manifest_sha256 or ""),
+                    converge_by,
+                    str(actor).strip(),
+                    str(reason or ""),
+                    now,
+                ),
+            )
+        self._release_selection_cache = None
+        selection = self.get_release_selection() or {}
+        self.record_log(
+            "fleet.release.selected",
+            layer="control_plane",
+            source="release_identity",
+            detail={"message": "release %s selected by %s" % (commit[:12], actor), **selection},
+        )
+        return selection
+
+    def clear_release_selection(self, *, actor: str) -> JsonDict:
+        previous = self.get_release_selection()
+        self.store.execute("DELETE FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,))
+        self._release_selection_cache = None
+        self.record_log(
+            "fleet.release.cleared",
+            layer="control_plane",
+            source="release_identity",
+            detail={"message": "release selection cleared by %s" % actor, "previous": previous},
+        )
+        return {"cleared": previous is not None, "previous": previous}
+
+    def _selected_release_commit(self) -> str:
+        """The selected commit, cached briefly: dispatch asks per agent per task."""
+        cached = getattr(self, "_release_selection_cache", None)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < self.RELEASE_SELECTION_CACHE_SECONDS:
+            return cached[1]
+        try:
+            selection = self.get_release_selection()
+        except Exception:  # noqa: BLE001 - a schema without the table has no selection
+            selection = None
+        commit = str((selection or {}).get("commit_sha") or "")
+        self._release_selection_cache = (now, commit)
+        return commit
+
+    def _release_ineligibility_reason(self, agent: "Agent") -> Optional[str]:
+        return self._release_verdict(agent, self._selected_release_commit())
+
+    @staticmethod
+    def _release_verdict(agent: "Agent", commit: str) -> Optional[str]:
+        from mac import release_identity
+
+        if not commit:
+            return None
+        return release_identity.evaluate(agent.resources, commit)
+
+    def release_drift(self) -> JsonDict:
+        """Desired versus observed release, per agent that reports a source state."""
+        from mac import release_identity
+
+        now = datetime.now(timezone.utc)
+        agents = [agent.to_dict() for agent in self.list_agents()]
+        ages: Dict[str, Optional[float]] = {}
+        for agent in agents:
+            resources = agent.get("resources") if isinstance(agent.get("resources"), dict) else {}
+            context = resources.get("fleet_context") if isinstance(resources, dict) else None
+            refreshed = (context or {}).get("refreshed_at") if isinstance(context, dict) else None
+            ages[str(agent.get("id"))] = (
+                round((now - parse_time(refreshed)).total_seconds()) if refreshed else None
+            )
+        return release_identity.drift(
+            self.get_release_selection(), agents, now=now, fleet_context_age=ages
+        )
+
+    def observe_release_drift(self) -> Optional[JsonDict]:
+        """Dispatcher-tick observer: record drift when it changes. Never installs."""
+        if not self._selected_release_commit():
+            return None
+        report = self.release_drift()
+        signature = (tuple(report["drifted"]), report["overdue"], report["converged"])
+        if signature == getattr(self, "_release_drift_signature", None):
+            return report
+        self._release_drift_signature = signature
+        self.record_log(
+            "fleet.release.drift",
+            layer="control_plane",
+            source="dispatcher.tick",
+            level="warning" if report["drifted"] else "info",
+            detail={
+                "message": "release %s: %s"
+                % (
+                    str((report.get("selection") or {}).get("commit_sha") or "")[:12],
+                    "converged"
+                    if report["converged"]
+                    else "drifted: %s%s"
+                    % (", ".join(report["drifted"]), " (OVERDUE)" if report["overdue"] else ""),
+                ),
+                "drifted": report["drifted"],
+                "overdue": report["overdue"],
+                "repairs": [row["repair"] for row in report["agents"] if row.get("repair")],
+            },
+        )
+        return report
+
     def set_agent_dispatch_hold(self, agent_id: str, reason: str) -> "Agent":
         """Place a dispatch hold on an agent; held agents are skipped during claim-next.
 
@@ -17446,6 +17597,16 @@ class ControlPlane:
                 source="dispatcher.tick",
                 level="error",
                 message=str(exc)[:300],
+            )
+        try:
+            self.observe_release_drift()
+        except Exception as exc:  # noqa: BLE001 - observation must never stop dispatch.
+            self.record_log(
+                "fleet.release.drift_observe_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:300]},
             )
         stale_agents = []
         if stale_after_seconds is not None:
@@ -24835,6 +24996,7 @@ class ControlPlane:
         break_glass: Optional[BreakGlassAuthorization],
         required_runtime_digest: Optional[str],
         role_reason: Optional[str],
+        release_commit: str = "",
     ) -> Optional[str]:
         """Evaluate mutable claim predicates from transaction-locked rows.
 
@@ -24869,6 +25031,9 @@ class ControlPlane:
             return "project_dispatch_paused"
         if agent.dispatch_hold and not break_glass_active:
             return "agent_dispatch_held"
+        release_reason = self._release_verdict(agent, release_commit)
+        if release_reason is not None and not break_glass_active:
+            return release_reason
 
         metadata = ensure_json_object(task.metadata)
         excluded = (
@@ -24914,6 +25079,7 @@ class ControlPlane:
         break_glass: Optional[BreakGlassAuthorization],
         role_reason: Optional[str],
         allow_retry_exclusion_reuse: bool = False,
+        release_commit: str = "",
     ) -> Optional[str]:
         """Re-check only allocator-v2 hard constraints under transaction locks.
 
@@ -24955,6 +25121,9 @@ class ControlPlane:
             return "project_dispatch_paused"
         if agent.dispatch_hold and not break_glass_active:
             return "agent_dispatch_held"
+        release_reason = self._release_verdict(agent, release_commit)
+        if release_reason is not None and not break_glass_active:
+            return release_reason
 
         if break_glass_active:
             return None
@@ -25140,6 +25309,9 @@ class ControlPlane:
             return False, "break_glass_agent_mismatch"
         if agent.dispatch_hold and break_glass is None:
             return False, "agent_dispatch_held"
+        release_reason = self._release_ineligibility_reason(agent)
+        if release_reason is not None:
+            return False, release_reason
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return False, "agent_status_unavailable"
         if not self._advisory_health_dispatch_ready(agent):

@@ -1824,7 +1824,8 @@
       "src/mac/hermes_question_gate.py",
       "src/mac/hermes_release.py",
       "src/mac/hermes_runtime.py",
-      "src/mac/hermes_startup.py"
+      "src/mac/hermes_startup.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },

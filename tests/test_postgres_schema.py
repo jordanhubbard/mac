@@ -193,6 +193,7 @@ EXPECTED_TABLES = [
     "projects",
     "publications",
     "reconciliation_state",
+    "release_selection",
     "representation_bindings",
     "reviews",
     "runtime_environment_deltas",
@@ -484,6 +485,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0010_inference_tokens",
         "0011_task_messages",
         "0012_drop_conversation_execution_ledger",
+        "0013_release_selection",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -521,6 +523,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0012_drop_conversation_execution_ledger": (
             "e2511c41e8b87ff941816cdd0f0416d1d9f22f2eecc2ddd5067558d9f27b48eb"
+        ),
+        "0013_release_selection": (
+            "7303f77df2342ee87a28d9c028969f49b470d4f0ee5899e32e048f2b9fa1650b"
         ),
     }
     for migration in MIGRATIONS:

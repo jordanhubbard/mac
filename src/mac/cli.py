@@ -4834,6 +4834,33 @@ def cmd_fleet_inventory(args: argparse.Namespace) -> None:
         raise SystemExit(code)
 
 
+def cmd_fleet_release(args: argparse.Namespace) -> None:
+    """Show the selected release and per-worker drift (mac.release_identity)."""
+    _print(_plane(args).release_drift())
+
+
+def cmd_fleet_select_release(args: argparse.Namespace) -> None:
+    """Select the release every MAC worker must be running to get work."""
+    import getpass as _getpass
+
+    _print(
+        _plane(args).select_release(
+            args.commit_sha,
+            actor="cli:%s" % _getpass.getuser(),
+            reason=args.reason,
+            manifest_sha256=args.manifest_sha256,
+            converge_minutes=args.converge_minutes,
+        )
+    )
+
+
+def cmd_fleet_clear_release(args: argparse.Namespace) -> None:
+    """Clear the release selection; dispatch is no longer gated on it."""
+    import getpass as _getpass
+
+    _print(_plane(args).clear_release_selection(actor="cli:%s" % _getpass.getuser()))
+
+
 def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     """fleet-02 + mood-01: refresh the live Fleet section AND this agent's mood
     overlay in its runtime-context markdown, so its next session knows what
@@ -8488,6 +8515,30 @@ def build_parser() -> argparse.ArgumentParser:
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
         dest="fleet_command", required=True
     )
+    fleet_release = fleet.add_parser(
+        "release",
+        help="the selected release and every MAC worker's drift against it "
+        "(loaded commit, restart pending, hold, fleet-context age)",
+    )
+    _set(cmd_fleet_release, fleet_release)
+    fleet_select_release = fleet.add_parser(
+        "select-release",
+        help="select the release every MAC worker must run before it gets work",
+    )
+    fleet_select_release.add_argument("commit_sha", help="full 40-hex commit sha")
+    fleet_select_release.add_argument("--reason", default="")
+    fleet_select_release.add_argument("--manifest-sha256", default="")
+    fleet_select_release.add_argument(
+        "--converge-minutes",
+        type=int,
+        help="deadline for every worker to run it; drift after it is reported OVERDUE",
+    )
+    _set(cmd_fleet_select_release, fleet_select_release)
+    fleet_clear_release = fleet.add_parser(
+        "clear-release", help="remove the release selection (and its dispatch gate)"
+    )
+    _set(cmd_fleet_clear_release, fleet_clear_release)
+
     fleet_build = fleet.add_parser(
         "build-distribution",
         help="aggregate live agents by running_digest",

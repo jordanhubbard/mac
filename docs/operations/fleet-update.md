@@ -109,7 +109,7 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
    `mac-schema-migrate --applied-by fleet-update:<user>@<host>:<sha12>`.
 7. Run `sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist`.
 8. Poll `/health`, then require `/startup-attestation`'s `source_commit` to equal
-   the target. `mac-service` sets it from the `HEAD` of `~/.mac/src/mac`.
+   the target. An empty `source_commit` is a failure, not a pass. `mac-service` sets it from the `HEAD` of `~/.mac/src/mac`.
 9. Run `python -m mac.node_files --source ~/.mac/src/mac --role hub` (see
    [Managed files](#managed-files)). A failure is logged, never fatal.
 10. Run `python -m mac.fleet_context_service --source ~/.mac/src/mac`. It
@@ -175,8 +175,11 @@ the `launchctl bootstrap` command.
    - `sudo -n systemctl restart mac-agent`. With `--hermes`, also
      `systemctl --user restart hermes-gateway`.
    - after 10 seconds, `systemctl is-active mac-agent`.
-4. **Health.** Within 3 minutes, the hub must report the new commit for this
-   agent: `resources.source_state.commit_sha == <sha>` with `dirty == false`.
+4. **Health.** Within 3 minutes, the hub must report that the restarted
+   *process* runs the new commit: `resources.source_state.loaded_commit` and
+   `commit_sha` both equal `<sha>`, `restart_pending == false` and
+   `dirty == false`. A checkout that moved without the process restarting
+   fails here.
 5. **Resume.** The script resumes dispatch only if it placed the hold itself,
    and only if the hold reason is still `fleet-update <sha12>`. If someone
    replaced the hold meanwhile, the script leaves it alone.
@@ -200,6 +203,41 @@ mac-agent-startup-self-test, mac-task-executor}` (0700),
 - Files it never recorded are never touched.
 - One installer per host (`~/.mac/.node-files.lock`). A second run is a no-op.
 - `--plan` reports what would change without changing anything.
+
+## Release identity
+
+A worker reports, in `resources.source_state`, the commit its process loaded at
+boot (`loaded_commit`, `loaded_tree`, `boot_id`, `booted_at`) as well as the
+checkout on disk (`commit_sha`, `dirty`), and `restart_pending` when the two
+differ. It also reports when its runtime-context Fleet block was last refreshed
+(`resources.fleet_context.refreshed_at`).
+
+The operator selects the release the fleet must run:
+
+```console
+mac admin fleet select-release <40-hex sha> --reason "..." [--converge-minutes 60]
+mac admin fleet release          # the selection and each worker's drift
+mac admin fleet clear-release
+```
+
+While a release is selected, every agent that reports a MAC source state must be
+running exactly that commit, from a clean checkout, with no restart pending.
+Otherwise it is excluded from dispatch with `release_mismatch`,
+`release_restart_pending`, `release_dirty` or `release_unknown` (missing
+evidence is never a match). Interactive sessions and the hub's in-process
+reviewer and operator report no source state and aren't gated. An offline
+worker stays excluded until it comes back on the selected commit.
+
+`mac admin fleet release` (`GET /fleet/release`) lists, per worker, liveness,
+the loaded and on-disk commits, the verdict, the dispatch hold and the
+fleet-context age as separate fields, with a repair command for each drifted
+worker. The dispatcher tick records a `fleet.release.drift` event whenever the
+drifted set or the deadline state changes, `OVERDUE` once `--converge-minutes`
+has passed. It only observes: updates still go through `fleet-update`.
+
+Nothing is selected by default, and then there is no release gate. Select the
+release after rolling it out, or before to hold back work from hosts that
+haven't converged.
 
 ### Worker rollback
 

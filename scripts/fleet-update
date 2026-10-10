@@ -104,7 +104,8 @@ hub_down() { ! pgrep -f mac.hub_serve > /dev/null; }
 hub_healthy() { curl -fsS --max-time 5 "$HUB_URL/health" > /dev/null 2>&1; }
 hub_attested() {
   local got; got=$(curl -fsS --max-time 5 "$HUB_URL/startup-attestation" 2>/dev/null | jget source_commit) || return 1
-  [ -z "$got" ] || [ "$got" = "$SHA" ]
+  # A hub that reports no source identity is not attested.
+  [ -n "$got" ] && [ "$got" = "$SHA" ]
 }
 hub_rollback() {  # only ever called before the schema was migrated
   log "hub: ROLLBACK to ${1:0:12} ($2)"
@@ -250,9 +251,12 @@ REMOTE
 )
 agent_json() { "$MAC_CLI" agent show "$1"; }
 agent_idle() { local j; j=$(agent_json "$1") || return 1; [ -z "$(jget current_task_id <<< "$j")" ]; }
-agent_reports_sha() {
+agent_reports_sha() {  # the restarted PROCESS runs $SHA, not just the checkout on disk
   local j; j=$(agent_json "$1") || return 1
-  [ "$(jget resources.source_state.commit_sha <<< "$j")" = "$SHA" ] && [ "$(jget resources.source_state.dirty <<< "$j")" = false ]
+  [ "$(jget resources.source_state.loaded_commit <<< "$j")" = "$SHA" ] \
+    && [ "$(jget resources.source_state.commit_sha <<< "$j")" = "$SHA" ] \
+    && [ "$(jget resources.source_state.restart_pending <<< "$j")" = false ] \
+    && [ "$(jget resources.source_state.dirty <<< "$j")" = false ]
 }
 release_own_hold() {  # resume only a hold this run placed, and only if it is still ours
   local j; j=$(agent_json "$1")

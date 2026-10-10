@@ -149,6 +149,9 @@ request and response definitions.
 | `GET` | `/evidence/{evidence_id}/artifacts` | List Evidence Artifacts |
 | `GET` | `/evidence/{evidence_id}/artifacts/{artifact_id}` | Get Evidence Artifact |
 | `GET` | `/fleet/build-distribution` | Fleet Build Distribution |
+| `DELETE` | `/fleet/release` | Clear Fleet Release |
+| `GET` | `/fleet/release` | Get Fleet Release |
+| `PUT` | `/fleet/release` | Select Fleet Release |
 | `GET` | `/fleet/snapshot` | Fleet Snapshot |
 | `GET` | `/fleets` | List Fleets |
 | `POST` | `/fleets` | Create Fleet |

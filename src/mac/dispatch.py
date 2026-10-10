@@ -1184,6 +1184,15 @@ class RemoteDispatch:
             )
         )
 
+    def release_drift(self) -> _Dictish:
+        return _Dictish(self._get("/fleet/release"))
+
+    def select_release(self, commit_sha: str, **kw: Any) -> _Dictish:
+        return _Dictish(self._put("/fleet/release", _drop_none({"commit_sha": commit_sha, **kw})))
+
+    def clear_release_selection(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._delete("/fleet/release"))
+
     def set_agent_dispatch_hold(self, agent_id: str, reason: str) -> _Dictish:
         return _Dictish(
             self._post(

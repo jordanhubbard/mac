@@ -1786,6 +1786,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"reason": "route-coverage quarantine"},
+        ("PUT", "/fleet/release"): {"commit_sha": "a" * 40, "reason": "route coverage"},
         ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
             "reason": "route-coverage deployment",
             "expected_dispatch_hold": False,
