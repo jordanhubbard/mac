@@ -81,7 +81,6 @@ def registry(monkeypatch):
     )
     monkeypatch.setattr(worker, "_read_only_report_executor_attestation", lambda *_: None)
     monkeypatch.setattr(worker, "_ensure_worker_fleet_membership", lambda *_, **__: None)
-    monkeypatch.delenv("MAC_WORKER_DEPLOY_GENERATION", raising=False)
     monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
     return cp, MacApiClient("http://mac.test", transport=transport)
 

@@ -544,9 +544,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
 | `MAC_WORKER_COMMAND_PROBES` | str | consumer-defined | worker | Worker setting: worker command probes. |
-| `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Worker setting: worker deploy barrier file. |
-| `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Worker setting: worker deploy barrier max age seconds. |
-| `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Worker setting: worker deploy generation. |
+| `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Retired beads bridge selector; ignored by current hub-agent resolution. |
+| `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Retired beads bridge selector; ignored by current hub-agent resolution. |
+| `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Retired beads bridge selector; ignored by current hub-agent resolution. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker executor timeout. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |

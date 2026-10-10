@@ -353,78 +353,32 @@ def _post_with_fenced_write_retry(
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 3300.0
 
 
-#: Ceiling on how long this worker will hold itself out of dispatch waiting
-#: for the deploy controller's release call. deploy-mac-fleet.sh's own
-#: REMOTE_TYPED_BARRIER_RELEASE step is supposed to remove the barrier file
-#: once the node is safe to rejoin the cohort, but that release is not
-#: atomic with the barrier's creation: an interrupted deploy can die between
-#: the two, leaving the worker fenced forever with no external process ever
-#: coming back to unfence it. Observed live on 2026-09-03 (natasha stuck
-#: status=draining for hours after a deploy claimed "synchronized typed
-#: cohort finalized"). Real deploys observed on this fleet complete within
-#: ~15-20 minutes; 45 minutes is a conservative multiple that still resolves
-#: the fence in well under an hour rather than requiring an operator to
-#: notice and intervene by hand.
-DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS = 45 * 60.0
+#: Settings of the deleted release-epoch deploy barrier (fleet-update replaced
+#: it). A worker that still has them set reports them as ignored at startup.
+RETIRED_WORKER_ENV = (
+    "MAC_WORKER_DEPLOY_GENERATION",
+    "MAC_WORKER_DEPLOY_BARRIER_FILE",
+    "MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS",
+)
 
 
-def _deployment_barrier_max_age_seconds() -> float:
-    raw = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS")
-    if not raw:
-        return DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
-    return value if value > 0 else DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+def _retired_env_present(env: Mapping[str, str]) -> List[str]:
+    return [name for name in RETIRED_WORKER_ENV if str(env.get(name) or "").strip()]
 
 
-def _deployment_barrier_state() -> tuple[str, bool]:
-    """Return the configured rollout generation and whether its barrier is live.
-
-    A barrier older than ``_deployment_barrier_max_age_seconds()`` is treated
-    as expired rather than live: the deploy that armed it is long past any
-    realistic completion window, so continuing to fence this worker out of
-    dispatch serves no one and nothing else is coming to release it (see the
-    constant's docstring above).
-    """
-
-    generation = (os.environ.get("MAC_WORKER_DEPLOY_GENERATION") or "").strip()
-    barrier = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_FILE") or ""
-    if not generation or not barrier:
-        return generation, False
-    barrier_path = Path(barrier)
-    try:
-        barrier_generation = barrier_path.read_text(encoding="utf-8").strip()
-        barrier_age = time.time() - barrier_path.stat().st_mtime
-    except OSError:
-        return generation, False
-    if barrier_generation != generation:
-        return generation, False
-    if barrier_age > _deployment_barrier_max_age_seconds():
-        return generation, False
-    return generation, True
-
-
-def _deployment_heartbeat_payload(
+def _heartbeat_payload(
     status: str,
     *,
     resources: Optional[Mapping[str, Any]] = None,
     report_health: bool = False,
 ) -> JsonDict:
-    """Fence every worker-originated status heartbeat behind the local barrier."""
+    """A worker-originated status heartbeat."""
 
-    generation, barrier_active = _deployment_barrier_state()
-    payload: JsonDict = {
-        "status": "draining" if barrier_active else status,
-    }
-    if report_health or barrier_active:
-        payload["health_status"] = "degraded" if barrier_active else "healthy"
+    payload: JsonDict = {"status": status}
+    if report_health:
+        payload["health_status"] = "healthy"
     if resources is not None:
-        stamped_resources = dict(resources)
-        if generation:
-            stamped_resources["deployment_generation"] = generation
-        payload["resources"] = stamped_resources
+        payload["resources"] = dict(resources)
     return payload
 
 
@@ -1101,19 +1055,6 @@ def _worker_source_state(repo: Path) -> JsonDict:
     return state
 
 
-def _active_worker_deployment_generation() -> Optional[str]:
-    """Return the exact generation only while its local start barrier exists."""
-    generation = (os.environ.get("MAC_WORKER_DEPLOY_GENERATION") or "").strip()
-    barrier = (os.environ.get("MAC_WORKER_DEPLOY_BARRIER_FILE") or "").strip()
-    if not generation or not barrier:
-        return None
-    try:
-        observed = Path(barrier).read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return generation if observed == generation else None
-
-
 def _resources_without_retired_gateway(resources: JsonDict) -> JsonDict:
     """Withdraw the chat-gateway advertisement from a node configured with none."""
     from mac.deploy_env import chat_gateway_implementation
@@ -1213,9 +1154,6 @@ def register_worker(
         from mac.deploy_env import normalize_worker_capabilities
 
         capabilities = normalize_worker_capabilities(",".join(capabilities)).split(",")
-    deployment_generation = _active_worker_deployment_generation()
-    if deployment_generation:
-        agent_resources["deployment_generation"] = deployment_generation
     agent = client.post(
         "/agents",
         {
@@ -1225,8 +1163,6 @@ def register_worker(
             "capabilities": capabilities or [],
             "resources": agent_resources,
             "hermes_instance_id": hermes_instance_id,
-            "status": "draining" if deployment_generation else None,
-            "health_status": "degraded" if deployment_generation else None,
         },
     )
     _ensure_worker_fleet_membership(client, agent_name=name, agent_id=str(agent["id"]))
@@ -1712,28 +1648,6 @@ class MacWorker(
         return WorkerRunResult(status="held", evidence=evidence, error=reason)
 
     def run_once(self) -> WorkerRunResult:
-        deployment_generation, deployment_barrier_active = _deployment_barrier_state()
-        if deployment_barrier_active:
-            # A freshly restarted worker must not consume AgentBus controls before
-            # the deployment controller authorizes this exact generation.
-            self._heartbeat()
-            evidence = {
-                "schema": "mac.worker_deployment_barrier.v1",
-                "agent_id": self.agent_id,
-                "deployment_generation": deployment_generation,
-            }
-            self._observe_log(
-                "worker.dispatch_held.deployment_barrier",
-                level="info",
-                subject_type="agent",
-                subject_id=self.agent_id,
-                detail=evidence,
-            )
-            return WorkerRunResult(
-                status="held",
-                evidence=evidence,
-                error="deployment barrier is active",
-            )
         heartbeat_error: Optional[MacApiError] = None
         try:
             self._heartbeat()
@@ -6194,7 +6108,7 @@ class MacWorker(
         try:
             refreshed = self.client.post(
                 "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
-                _deployment_heartbeat_payload("idle", resources=base),
+                _heartbeat_payload("idle", resources=base),
             )
             _apply_read_only_report_executor_approval(
                 refreshed.get("resources") if isinstance(refreshed, Mapping) else None,
@@ -6265,14 +6179,6 @@ class MacWorker(
             agent_read_error = "%s: %s" % (type(exc).__name__, str(exc)[:200])
         self._maybe_start_coding_route_probe()
         command_resources = self._maybe_command_inventory_resources()
-        deployment_generation, _ = _deployment_barrier_state()
-        if deployment_generation:
-            if command_resources is not None:
-                command_resources = dict(command_resources)
-            elif isinstance(current_agent, Mapping) and isinstance(
-                current_agent.get("resources"), Mapping
-            ):
-                command_resources = dict(current_agent["resources"])
         if command_resources is None and isinstance(current_agent, Mapping):
             current_resources = current_agent.get("resources")
             if isinstance(current_resources, Mapping):
@@ -6304,7 +6210,7 @@ class MacWorker(
         # Health is a worker observation, not a controller override. The hub
         # projects this request through sticky startup-self-test resources, so
         # asking for healthy can still correctly remain degraded.
-        payload = _deployment_heartbeat_payload(
+        payload = _heartbeat_payload(
             heartbeat_status,
             resources=command_resources,
             report_health=True,
@@ -9427,6 +9333,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             _apply_read_only_report_executor_approval(registered.get("resources"), os.environ)
         # --- startup behaviors (all default-on, env-gated) ---
         startup_info: JsonDict = {"agent_id": agent_id}
+        retired = _retired_env_present(os.environ)
+        if retired:
+            # Settings of the deleted release-epoch deploy barrier. Nothing
+            # reads them; say so instead of silently ignoring them.
+            startup_info["retired_env"] = retired
+            sys.stderr.write(
+                "mac-worker: ignoring retired settings %s; remove them from mac.env\n"
+                % ", ".join(retired)
+            )
         # Dispatch holds are hub/operator authority. An ordinary worker restart
         # cannot know whether a hold is stale or was just replaced by an
         # operator, so clearing is legacy opt-in rather than the default.
@@ -9497,20 +9412,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return 0 if all(r.get("ok", True) for r in results.values()) else 1
         if args.heartbeat_only:
-            deployment_generation, _ = _deployment_barrier_state()
-            heartbeat_resources: Optional[Mapping[str, Any]] = None
-            if deployment_generation:
-                registered_resources = (
-                    registered.get("resources") if isinstance(registered, Mapping) else None
-                )
-                heartbeat_resources = (
-                    dict(registered_resources) if isinstance(registered_resources, Mapping) else {}
-                )
-            heartbeat_payload = _deployment_heartbeat_payload(
-                "idle",
-                resources=heartbeat_resources,
-                report_health=True,
-            )
+            heartbeat_payload = _heartbeat_payload("idle", report_health=True)
             heartbeat_payload["running_digest"] = args.running_digest
             heartbeat = client.post(
                 "/agents/%s/heartbeat" % quote(agent_id, safe=""),

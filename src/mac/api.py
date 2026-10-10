@@ -6476,12 +6476,6 @@ def create_app(
             if isinstance(resources_value, Mapping)
             else dict(cp.get_agent(agent_id).resources)
         )
-        if not isinstance(resources_value, Mapping):
-            # Deployment generation is a per-heartbeat proof, not sticky hub
-            # state.  A status-only request authenticated with a copied bearer
-            # must not inherit the last worker's release generation merely
-            # because the API clones resources to attach principal facts.
-            resources.pop("deployment_generation", None)
         if resources_value is not None or resources:
             data["resources"] = resources
         refreshed = cp.heartbeat_agent(agent_id, **data).to_dict()

@@ -509,40 +509,6 @@ def test_registration_rejects_non_barrier_status_override():
         )
 
 
-def test_status_only_heartbeat_cannot_inherit_prior_deployment_generation():
-    cp = _make_cp()
-    machine = cp.register_machine("generation-heartbeat-host")
-    agent = cp.register_agent(
-        machine.id,
-        "generation-heartbeat-agent",
-        agent_id="agent_generation_heartbeat",
-        resources={"deployment_generation": "old-generation", "capacity": 2},
-    )
-    client = TestClient(
-        create_app(
-            control_plane=cp,
-            auth_tokens={
-                "worker": {
-                    "scopes": ["agent", "dispatch", "read", "write"],
-                    "agent_id": agent.id,
-                    "principal_kind": "worker",
-                }
-            },
-        )
-    )
-
-    response = client.post(
-        f"/agents/{agent.id}/heartbeat",
-        headers={"Authorization": "Bearer worker"},
-        json={"status": "idle"},
-    )
-
-    assert response.status_code == 200
-    refreshed = cp.get_agent(agent.id)
-    assert refreshed.resources["capacity"] == 2
-    assert "deployment_generation" not in refreshed.resources
-
-
 # ---------------------------------------------------------------------------
 # hold/resume round-trip: hold then clear, check dispatch eligibility restored
 # ---------------------------------------------------------------------------

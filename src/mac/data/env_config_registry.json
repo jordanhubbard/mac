@@ -6426,10 +6426,10 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker deploy barrier file.",
+    "description": "Retired beads bridge selector; ignored by current hub-agent resolution.",
     "family": "worker",
     "name": "MAC_WORKER_DEPLOY_BARRIER_FILE",
-    "retired": false,
+    "retired": true,
     "sources": [
       "src/mac/worker.py"
     ],
@@ -6437,10 +6437,10 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker deploy barrier max age seconds.",
+    "description": "Retired beads bridge selector; ignored by current hub-agent resolution.",
     "family": "worker",
     "name": "MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS",
-    "retired": false,
+    "retired": true,
     "sources": [
       "src/mac/worker.py"
     ],
@@ -6448,10 +6448,10 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker deploy generation.",
+    "description": "Retired beads bridge selector; ignored by current hub-agent resolution.",
     "family": "worker",
     "name": "MAC_WORKER_DEPLOY_GENERATION",
-    "retired": false,
+    "retired": true,
     "sources": [
       "src/mac/worker.py"
     ],

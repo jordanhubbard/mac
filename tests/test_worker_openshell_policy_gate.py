@@ -173,7 +173,6 @@ def test_the_hold_reaches_the_outer_loop_and_no_task_is_claimed(mac_home, tmp_pa
     client.events = [_changed_event(11, to_text=NARROW)]
 
     claims = []
-    monkeypatch.setattr(worker, "_deployment_barrier_state", lambda: (0, False))
     monkeypatch.setattr(worker, "_synchronize_directive_policy", lambda *_a, **_k: None)
     for name, result in (
         ("_heartbeat", None),
