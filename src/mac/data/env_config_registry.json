@@ -4820,6 +4820,39 @@
   },
   {
     "default": null,
+    "description": "Router setting: router outage requeues.",
+    "family": "router",
+    "name": "MAC_ROUTER_OUTAGE_REQUEUES",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Router setting: router outage waiters.",
+    "family": "router",
+    "name": "MAC_ROUTER_OUTAGE_WAITERS",
+    "retired": false,
+    "sources": [
+      "src/mac/router_app.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Router setting: router outage wait seconds.",
+    "family": "router",
+    "name": "MAC_ROUTER_OUTAGE_WAIT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/router_app.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Router setting: router port.",
     "family": "router",
     "name": "MAC_ROUTER_PORT",

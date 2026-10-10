@@ -121,6 +121,35 @@ def _is_provider_failure(status: Optional[int]) -> bool:
     return status is None or status == 429 or status >= 500
 
 
+#: An upstream refusal of the hub's own provider key: fail over, don't return it.
+_PROVIDER_AUTH_CODES = frozenset({401, 403})
+
+#: Ride-out pacing when no provider answers (see ProviderProxy._route). The
+#: breaker cooldown (MAC_ROUTER_COOLDOWN_SECONDS, 30 s) bounds how soon an
+#: opened provider is probed again, so pauses beyond it gain nothing.
+_OUTAGE_FIRST_PAUSE_SECONDS = 2.0
+_OUTAGE_MAX_PAUSE_SECONDS = 15.0
+DEFAULT_OUTAGE_WAIT_SECONDS = 120.0
+DEFAULT_OUTAGE_WAITERS = 8
+#: What a final all-unavailable 503 tells the client to wait before retrying.
+OUTAGE_RETRY_AFTER_SECONDS = 30
+
+
+def _waitable(failures: List[Dict[str, Any]]) -> bool:
+    """Whether an all-unavailable round may clear by itself: some provider was
+    unreachable, overloaded or rate-limited, or none could be selected (open
+    breakers). Rounds refused only by upstream auth are not."""
+    return not failures or any(f.get("status") not in _PROVIDER_AUTH_CODES for f in failures)
+
+
+def outage_headers(status: int, body: Any) -> Dict[str, str]:
+    """``Retry-After`` for the router's own all-providers-unavailable 503."""
+    error = body.get("error") if isinstance(body, dict) else None
+    if status == 503 and isinstance(error, dict) and error.get("type") == "all_providers_unavailable":
+        return {"Retry-After": str(OUTAGE_RETRY_AFTER_SECONDS)}
+    return {}
+
+
 # th-merge-06: provider-healthy but THIS model is unusable (not found / unprocessable).
 # For a wildcard request the router substitutes the next model in the ladder; the
 # provider is NOT penalised. 400 is intentionally excluded (a genuine bad request
@@ -427,8 +456,14 @@ class ProviderProxy:
         stream_timeout: float = 300.0,
         drop_params: Tuple[str, ...] = _DEFAULT_DROP_PARAMS,
         route_observer: Optional[RouteObserver] = None,
+        outage_wait_seconds: float = 0.0,
+        outage_waiters: int = DEFAULT_OUTAGE_WAITERS,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._router = router
+        self._outage_wait_seconds = max(0.0, float(outage_wait_seconds))
+        self._outage_waiters = threading.BoundedSemaphore(max(1, int(outage_waiters)))
+        self._sleep = sleep
         self._forward = forward_fn
         self._stream_forward = stream_forward_fn
         self._default_model = (default_model or "").strip()
@@ -465,24 +500,101 @@ class ProviderProxy:
         *,
         route_context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, Any]:
-        """Shared routing for streaming + non-streaming. Walks the candidate
-        models (wildcard ladder); for each, walks providers with failover +
-        breaker. Returns ``(status, body_or_iterator)``."""
+        """Shared routing for streaming + non-streaming. Returns
+        ``(status, body_or_iterator)``.
+
+        When no provider answers, the request rides out the outage: it waits
+        and routes again, with backoff, for up to ``outage_wait_seconds``. On
+        2026-10-03..09 every provider dropped at the connection level four
+        times, for 1 to 7 minutes each, and each time the coding agent gave up
+        on the first 503 and the task lost its attempt. Only
+        ``outage_waiters`` requests wait at once: the routes run on the hub's
+        request threads. Auth refusals alone are not waited out; a bad key
+        does not heal in minutes."""
         started = time.monotonic()
         route_context = route_context or {}
+        route_attempts: List[Dict[str, Any]] = []
+        state = {"retried_401": False}  # per request: at most one transient-401 retry
+        deadline = started + self._outage_wait_seconds
+        pause = _OUTAGE_FIRST_PAUSE_SECONDS
+        waiting = False
+        try:
+            while True:
+                status, obj, model, provider, outcome, waitable = self._route_round(
+                    path, payload, forward, timeout, route_attempts, state
+                )
+                remaining = deadline - time.monotonic()
+                if (
+                    outcome == "all_providers_unavailable"
+                    and waitable
+                    and remaining > 0
+                    and (waiting or self._outage_waiters.acquire(blocking=False))
+                ):
+                    if not waiting:
+                        logger.info(
+                            "route model=%s no provider available; waiting up to %.0fs",
+                            model,
+                            remaining,
+                        )
+                    waiting = True
+                    self._sleep(min(pause, remaining))
+                    pause = min(pause * 2, _OUTAGE_MAX_PAUSE_SECONDS)
+                    continue
+                return self._observed_return(
+                    status,
+                    obj,
+                    path=path,
+                    payload=payload,
+                    resolved_model=model,
+                    provider=provider,
+                    started=started,
+                    route_context=route_context,
+                    attempts=route_attempts,
+                    outcome=outcome,
+                )
+        finally:
+            if waiting:
+                self._outage_waiters.release()
+
+    def _route_round(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        forward,
+        timeout: float,
+        route_attempts: List[Dict[str, Any]],
+        state: Dict[str, Any],
+    ) -> Tuple[int, Any, str, str, str, bool]:
+        """One pass over the candidate models (wildcard ladder), each with
+        provider failover + breaker. Returns ``(status, body, resolved_model,
+        provider, outcome, waitable)``; ``waitable`` says an all-unavailable
+        result may clear by itself (not only auth refusals)."""
         candidates = self._candidate_models(payload)
         last: Optional[Tuple[int, Any]] = None
         last_model = "*"
         last_provider = ""
-        retried_401 = False  # per-request: at most one transient-401 retry
-        route_attempts = []
         # A provider-health failure applies to the route for the lifetime of
-        # this request, not merely to one model candidate.  Keep it out of all
+        # this round, not merely to one model candidate.  Keep it out of all
         # later selections even when its global breaker threshold is greater
         # than one.  Model-level 404/422 responses do not enter this set: the
         # provider is healthy and may legitimately serve the next candidate.
         failed_providers = set()
         failure_attempts = []
+        refused: Optional[Tuple[int, Any, str, str]] = None  # last upstream auth refusal
+
+        def fail(provider_name: str, model: str, status: Any, outcome: str, attempts) -> None:
+            # An auth refusal is about this provider's key, not its health
+            # for other requests: only a 401 that survived its retry (a bad
+            # key) feeds the breaker; a 403 may be one model's access list.
+            if status != 403:
+                self._router.record_failure(provider_name)
+            failed_providers.add(provider_name)
+            failure = {"provider": provider_name, "model": model, "status": status}
+            attempts.append(failure)
+            failure_attempts.append(failure)
+            route_attempts[-1]["outcome"] = outcome
+            logger.info("route model=%s provider=%s status=%s failover", model, provider_name, status)
+
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
             outgoing = _ensure_max_tokens_floor(
@@ -493,7 +605,7 @@ class ProviderProxy:
             attempted_providers = set()
             # Bounded: each provider/model route is attempted at most once.
             # A provider that failed at transport/provider level is excluded
-            # for the remainder of this request, across model candidates.
+            # for the remainder of this round, across model candidates.
             for _ in range(len(self._router.provider_names())):
                 provider = self._router.select(
                     model,
@@ -507,31 +619,15 @@ class ProviderProxy:
                 status, obj = forward(provider, path, sent, timeout=timeout)
                 route_attempts.append({"provider": provider.name, "model": model, "status": status})
                 if _is_provider_failure(status):
-                    self._router.record_failure(provider.name)
-                    failed_providers.add(provider.name)
-                    failure = {"provider": provider.name, "model": model, "status": status}
-                    attempts.append(failure)
-                    failure_attempts.append(failure)
-                    route_attempts[-1]["outcome"] = "provider_failure"
-                    logger.info(
-                        "route model=%s provider=%s status=%s failover",
-                        model,
-                        provider.name,
-                        status,
-                    )
+                    fail(provider.name, model, status, "provider_failure", attempts)
                     continue
-                # The provider answered (healthy), so close its breaker.
-                self._router.record_success(provider.name)
-                provider_answered = True
-                route_attempts[-1]["outcome"] = "answered"
-                logger.info("route model=%s provider=%s status=%s", model, provider.name, status)
                 # A 401 from upstream is usually a real auth problem, but some
                 # gateways briefly mislabel a transient backend hiccup (e.g.
                 # "can't reach key-verification DB") as 401. One same-provider
-                # retry turns that seconds-long blip into a non-event; a genuine
-                # bad key 401s again and is returned. Bounded to a single retry.
-                if int(status) == 401 and not retried_401:
-                    retried_401 = True
+                # retry turns that seconds-long blip into a non-event. Bounded
+                # to a single retry per request.
+                if int(status) == 401 and not state["retried_401"]:
+                    state["retried_401"] = True
                     logger.info(
                         "route model=%s provider=%s status=401 transient-retry",
                         model,
@@ -547,83 +643,62 @@ class ProviderProxy:
                         }
                     )
                     if _is_provider_failure(status):
-                        self._router.record_failure(provider.name)
-                        failed_providers.add(provider.name)
-                        failure = {"provider": provider.name, "model": model, "status": status}
-                        attempts.append(failure)
-                        failure_attempts.append(failure)
-                        route_attempts[-1]["outcome"] = "provider_failure_after_retry"
-                        logger.info(
-                            "route model=%s provider=%s status=%s failover",
-                            model,
-                            provider.name,
-                            status,
-                        )
+                        fail(provider.name, model, status, "provider_failure_after_retry", attempts)
                         continue
+                # The hub, not the client, holds the upstream key, so an
+                # upstream 401/403 means this provider refused the hub: try the
+                # next one. On 2026-10-10 a stale key on the preferred provider
+                # failed every request with 401 while the other provider was fine.
+                if int(status) in _PROVIDER_AUTH_CODES:
+                    fail(provider.name, model, int(status), "provider_auth_refused", attempts)
+                    refused = (int(status), obj, model, provider.name)
+                    continue
+                # The provider answered (healthy), so close its breaker.
+                self._router.record_success(provider.name)
+                provider_answered = True
+                route_attempts[-1]["outcome"] = "answered"
+                logger.info("route model=%s provider=%s status=%s", model, provider.name, status)
                 if int(status) in _MODEL_RETRY_CODES and not is_last:
                     last = (int(status), obj)  # this model is unusable; substitute the next
                     last_model = model
                     last_provider = provider.name
                     route_attempts[-1]["outcome"] = "model_retry"
                     break
-                return self._observed_return(
-                    int(status),
-                    obj,
-                    path=path,
-                    payload=payload,
-                    resolved_model=model,
-                    provider=provider.name,
-                    started=started,
-                    route_context=route_context,
-                    attempts=route_attempts,
-                )
+                return int(status), obj, model, provider.name, "", False
             if not provider_answered:
                 # Every eligible provider failed or is open for this candidate.
                 # A wildcard ladder can bind later models to different providers,
                 # so continue without retrying any provider that already failed.
                 if not is_last:
                     continue
-                body = self._failfast_body(model, failure_attempts)
-                return self._observed_return(
+                if refused is not None and not _waitable(failure_attempts):
+                    # Every provider refused the hub's key: say so, as before.
+                    return refused[0], refused[1], refused[2], refused[3], "", False
+                return (
                     503,
-                    body,
-                    path=path,
-                    payload=payload,
-                    resolved_model=model,
-                    provider="",
-                    started=started,
-                    route_context=route_context,
-                    attempts=route_attempts,
-                    outcome="all_providers_unavailable",
+                    self._failfast_body(model, failure_attempts),
+                    model,
+                    "",
+                    "all_providers_unavailable",
+                    _waitable(failure_attempts) and self._served(candidates),
                 )
             # provider answered with a model-retry code and more models remain:
             # fall through to the next candidate.
         if last is not None:
-            return self._observed_return(
-                int(last[0]),
-                last[1],
-                path=path,
-                payload=payload,
-                resolved_model=last_model,
-                provider=last_provider,
-                started=started,
-                route_context=route_context,
-                attempts=route_attempts,
-                outcome="model_unavailable",
-            )
-        body = self._failfast_body("*", [])
-        return self._observed_return(
+            return int(last[0]), last[1], last_model, last_provider, "model_unavailable", False
+        return (
             503,
-            body,
-            path=path,
-            payload=payload,
-            resolved_model="*",
-            provider="",
-            started=started,
-            route_context=route_context,
-            attempts=route_attempts,
-            outcome="all_providers_unavailable",
+            self._failfast_body("*", []),
+            "*",
+            "",
+            "all_providers_unavailable",
+            _waitable(failure_attempts) and self._served(candidates),
         )
+
+    def _served(self, candidates: List[str]) -> bool:
+        """Some provider serves a candidate, so waiting can help; a model no
+        provider lists is a configuration answer, not an outage."""
+        return any(self._router.serves(model) for model in candidates)
 
     def complete(
         self,
@@ -1015,6 +1090,8 @@ def build_proxy_from_env(
         stream_timeout=_f("MAC_ROUTER_STREAM_TIMEOUT", 300.0),
         drop_params=drop_params,
         route_observer=route_observer,
+        outage_wait_seconds=_f("MAC_ROUTER_OUTAGE_WAIT_SECONDS", DEFAULT_OUTAGE_WAIT_SECONDS),
+        outage_waiters=int(_f("MAC_ROUTER_OUTAGE_WAITERS", DEFAULT_OUTAGE_WAITERS)),
     )
 
 
@@ -1405,9 +1482,13 @@ def mount_router(
             )
             if status == 200 and not isinstance(obj, dict):
                 return StreamingResponse(obj, media_type="text/event-stream")
-            return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
+            return JSONResponse(
+                obj if isinstance(obj, dict) else {},
+                status_code=status,
+                headers=outage_headers(status, obj),
+            )
         status, out = proxy.complete("/chat/completions", body, route_context=route_context)
-        return JSONResponse(out, status_code=status)
+        return JSONResponse(out, status_code=status, headers=outage_headers(status, out))
 
     @app.post("/v1/embeddings")
     def _embeddings(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
@@ -1420,6 +1501,6 @@ def mount_router(
             _strip_internal_route_context(body),
             route_context=route_context,
         )
-        return JSONResponse(out, status_code=status)
+        return JSONResponse(out, status_code=status, headers=outage_headers(status, out))
 
     return True

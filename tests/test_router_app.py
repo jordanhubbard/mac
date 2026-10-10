@@ -1350,3 +1350,134 @@ def test_failover_sends_each_provider_its_own_name_for_the_model():
     status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": logical})
     assert status == 200 and body == {"ok": True}
     assert sent == [("openrouter", "anthropic/claude-sonnet-4.6"), ("nvidia", logical)]
+
+
+# --- riding out provider outages ------------------------------------------------
+
+
+def _outage_proxy(fwd, *, wait=120.0, waiters=8, observed=None):
+    slept = []
+    r = ProviderRouter(
+        [
+            Provider("primary", "http://p/v1", priority=0),
+            Provider("secondary", "http://s/v1", priority=1),
+        ],
+        failure_threshold=3,
+        cooldown_seconds=0.0,
+    )
+    proxy = ProviderProxy(
+        r,
+        fwd,
+        outage_wait_seconds=wait,
+        outage_waiters=waiters,
+        sleep=slept.append,
+        route_observer=(observed.append if observed is not None else None),
+    )
+    return proxy, slept
+
+
+def test_a_short_outage_of_every_provider_is_ridden_out():
+    """Providers that fail N times at the connection level and then recover."""
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append(provider.name)
+        if len(calls) <= 6:  # three rounds, both providers unreachable
+            return None, {"error": "connection refused"}
+        return 200, {"ok": True}
+
+    observed = []
+    proxy, slept = _outage_proxy(fwd, observed=observed)
+    status, body = proxy.complete("/chat/completions", {"model": "m"})
+
+    assert status == 200 and body == {"ok": True}
+    assert slept == [2.0, 4.0, 8.0]
+    assert len(observed) == 1 and observed[0]["outcome"] == "success"
+    assert [a["status"] for a in observed[0]["attempts"]] == [None] * 6 + [200]
+
+
+def test_an_outage_longer_than_the_window_ends_in_a_503_with_retry_after(monkeypatch):
+    clock = [0.0]
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 503, {"error": "upstream down"}
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock[0] += seconds
+
+    proxy, slept = _outage_proxy(fwd, wait=40.0)
+    monkeypatch.setattr(_ra.time, "monotonic", lambda: clock[0])
+    proxy._sleep = sleep
+    status, body = proxy.complete("/chat/completions", {"model": "m"})
+
+    assert status == 503 and body["error"]["type"] == "all_providers_unavailable"
+    assert sum(slept) == 40.0 and max(slept) <= 15.0
+    assert _ra.outage_headers(status, body) == {"Retry-After": "30"}
+    assert _ra.outage_headers(400, {"error": {"type": "x"}}) == {}
+
+
+def test_only_the_configured_number_of_requests_wait_at_once():
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return None, {}
+
+    proxy, slept = _outage_proxy(fwd, waiters=1)
+    assert proxy._outage_waiters.acquire(blocking=False)  # another request is waiting
+    try:
+        status, _ = proxy.complete("/chat/completions", {"model": "m"})
+    finally:
+        proxy._outage_waiters.release()
+    assert status == 503 and slept == []
+
+
+def test_no_wait_by_default_or_for_a_model_no_provider_serves():
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return None, {}
+
+    r = _router()
+    status, _ = ProviderProxy(r, fwd).complete("/chat/completions", {"model": "m"})
+    assert status == 503  # outage_wait_seconds defaults to 0 outside the hub
+
+    slept = []
+    r2 = ProviderRouter([Provider("only", "http://o/v1", models=("known",))])
+    status, _ = ProviderProxy(r2, fwd, outage_wait_seconds=60, sleep=slept.append).complete(
+        "/chat/completions", {"model": "unknown"}
+    )
+    assert status == 503 and slept == []
+
+
+def test_an_upstream_auth_refusal_fails_over_to_the_next_provider():
+    """The hub holds the upstream keys; a refused key is the provider's problem."""
+    for refusal in (401, 403):
+        r = _router()
+        calls = []
+
+        def fwd(provider, path, payload, *, timeout=60.0, refusal=refusal):
+            calls.append(provider.name)
+            if provider.name == "primary":
+                return refusal, {"error": {"message": "key not allowed"}}
+            return 200, {"ok": True}
+
+        slept = []
+        proxy = ProviderProxy(r, fwd, outage_wait_seconds=60, sleep=slept.append)
+        status, body = proxy.complete("/chat/completions", {"model": "m"})
+        assert status == 200 and body == {"ok": True}
+        assert calls[-1] == "secondary" and slept == []
+
+
+def test_when_every_provider_refuses_the_key_the_refusal_is_returned_without_waiting():
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 403, {"error": {"message": "key not allowed"}}
+
+    slept = []
+    proxy = ProviderProxy(_router(), fwd, outage_wait_seconds=60, sleep=slept.append)
+    status, body = proxy.complete("/chat/completions", {"model": "m"})
+    assert status == 403 and body["error"]["message"] == "key not allowed"
+    assert slept == []
+
+
+def test_build_proxy_from_env_enables_the_ride_out(monkeypatch):
+    env = {"MAC_ROUTER_PROVIDERS": "p=http://p/v1", "MAC_ROUTER_OUTAGE_WAIT_SECONDS": "90"}
+    proxy = build_proxy_from_env(env)
+    assert proxy._outage_wait_seconds == 90.0
+    assert build_proxy_from_env({"MAC_ROUTER_PROVIDERS": "p=http://p/v1"})._outage_wait_seconds == 120.0

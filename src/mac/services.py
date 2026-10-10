@@ -582,6 +582,10 @@ _NODE_FAULT_SIGNATURES = (
     ("broken_worker_install", ("mac-task-executor.py", "no module named 'mac'")),
 )
 NODE_FAULT_QUARANTINE_PREFIX = "auto_quarantine:node_fault:"
+#: Attempts a task may get back for model-router outages (see
+#: ControlPlane._attempt_hit_router_outage); a router that stays down then
+#: fails the task normally instead of requeueing it forever.
+DEFAULT_ROUTER_OUTAGE_REQUEUES = 3
 _FAILURE_ID_RE = re.compile(
     r"\b(?:task|agent|lease|ev|review|pub|obs)_[A-Za-z0-9_-]{8,}\b",
     re.IGNORECASE,
@@ -23269,6 +23273,74 @@ class ControlPlane:
         )
         return reopened
 
+    def _attempt_hit_router_outage(self, task: Task) -> bool:
+        """Whether the hub router answered "no provider could serve" to this
+        task during its latest attempt, and the task has outage requeues left.
+
+        The router records every request as ``llm.route``, attributed to the
+        task, including the in-sandbox route probe that runs before any work.
+        On 2026-10-03 and 10-05 provider outages of 4-7 minutes cost two tasks
+        their attempt: one coding agent exited on the router's 503, and one
+        attempt never started because the route probe timed out."""
+        metadata = ensure_json_object(task.metadata)
+        limit = _int_env(
+            "MAC_ROUTER_OUTAGE_REQUEUES", DEFAULT_ROUTER_OUTAGE_REQUEUES, minimum=0
+        )
+        if _nonnegative_int(metadata.get("router_outage_requeues")) >= limit:
+            return False
+        row = self.store.query_one(
+            "SELECT created_at FROM task_history WHERE task_id = ? AND event_type = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (task.id, "task.claimed"),
+        )
+        if row is None:
+            return False
+        events = self.list_observability(
+            kind="log",
+            name="llm.route",
+            subject_type="task",
+            subject_id=task.id,
+            since=str(row["created_at"]),
+            limit=1000,
+        )
+        return any(
+            ensure_json_object(event.detail).get("outcome") == "all_providers_unavailable"
+            for event in events
+        )
+
+    def _requeue_after_router_outage(self, task: Task, *, detail: JsonDict) -> Task:
+        """Reopen a task whose attempt a router outage cost, without charging it."""
+        metadata = ensure_json_object(task.metadata)
+        count = _nonnegative_int(metadata.get("router_outage_requeues")) + 1
+        metadata["router_outage_requeues"] = count
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, attempt_count = CASE WHEN attempt_count > 0 "
+            "THEN attempt_count - 1 ELSE 0 END WHERE id = ?",
+            (json_dumps(metadata), task.id),
+        )
+        reopen_detail = {
+            **detail,
+            "reason": "model router outage during the attempt: requeued without charging an attempt",
+            "router_outage": True,
+            "router_outage_requeues": count,
+            "attempt_refunded": True,
+        }
+        reopened = self._transition_task_internal(
+            task.id,
+            TaskState.OPEN.value,
+            "dispatcher.tick",
+            reopen_detail,
+        )
+        self._record_history(
+            task.id,
+            "task.auto_reopened",
+            "dispatcher.tick",
+            TaskState.BLOCKED.value,
+            TaskState.OPEN.value,
+            reopen_detail,
+        )
+        return reopened
+
     def _record_retry_worker_exclusion(
         self,
         task: Task,
@@ -23419,6 +23491,13 @@ class ControlPlane:
                 now=now,
             )
             return reopened, None
+        if not non_retryable and self._attempt_hit_router_outage(task):
+            # The hub's model router could not reach any provider during the
+            # attempt: the agent never had a model, so the attempt is not the
+            # task's to pay for. Wait out the usual backoff, then reopen.
+            if parse_time(now) < parse_time(ready_at):
+                return None, None
+            return self._requeue_after_router_outage(task, detail=base_detail), None
         # A failed repository gate carries the same problem text every time
         # the gate is red, whatever the agent changed; each attempt is new work
         # against the gate output, so only max_attempts bounds it.
