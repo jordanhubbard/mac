@@ -412,6 +412,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ROUTER_IMAGE_UPSTREAM` | str | consumer-defined | router | Router setting: router image upstream. |
 | `MAC_ROUTER_MAX_TOKENS_FLOOR` | int | consumer-defined | router | Router setting: router max tokens floor. |
 | `MAC_ROUTER_MEDIA_JSON` | str | consumer-defined | router | Router setting: router media json. |
+| `MAC_ROUTER_OUTAGE_REQUEUES` | str | consumer-defined | router | Router setting: router outage requeues. |
+| `MAC_ROUTER_OUTAGE_WAITERS` | str | consumer-defined | router | Router setting: router outage waiters. |
+| `MAC_ROUTER_OUTAGE_WAIT_SECONDS` | int | consumer-defined | router | Router setting: router outage wait seconds. |
 | `MAC_ROUTER_PORT` | int | consumer-defined | router | Router setting: router port. |
 | `MAC_ROUTER_PROVIDERS` | str | consumer-defined | router | Router setting: router providers. |
 | `MAC_ROUTER_REJECT_MISMATCHED_PRINCIPAL` | bool | consumer-defined | router | Router setting: router reject mismatched principal. |

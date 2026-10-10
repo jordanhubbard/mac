@@ -40,6 +40,22 @@ hub. The replica authenticates callers with the same hub-facing bearer tokens
 (`MAC_ROUTER_TOKENS`); its upstream providers use env keys or `key=none`
 private endpoints — hub vault material is never shipped to it.
 
+**Riding out provider outages.** When no upstream provider answers (all
+unreachable, overloaded or rate-limited, or all breakers open), the router
+holds the request and routes it again with backoff (2, 4, 8, then every 15
+seconds) for up to `MAC_ROUTER_OUTAGE_WAIT_SECONDS` (default 120) before it
+returns 503 `all_providers_unavailable` with `Retry-After: 30`. At most
+`MAC_ROUTER_OUTAGE_WAITERS` requests (default 8) wait at once, because the
+in-process router holds a hub request thread while it waits; the rest get the
+503 straight away. An upstream 401 or 403 means the provider refused the hub's
+own key, so the router fails over to the next provider. When every provider
+refuses, it returns that refusal and does not wait.
+
+If a task's attempt still fails while the router logged
+`all_providers_unavailable` for it, the dispatcher reopens the task after the
+usual retry backoff without charging the attempt, up to
+`MAC_ROUTER_OUTAGE_REQUEUES` times per task (default 3).
+
 ## 2. Ledger bytes are bounded: evidence blobs live outside the DB
 
 With `MAC_EVIDENCE_BLOB_DIR` set (the deploy defaults it to

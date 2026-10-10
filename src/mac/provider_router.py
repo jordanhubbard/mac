@@ -159,6 +159,10 @@ class ProviderRouter:
                     return provider
             return None
 
+    def serves(self, model: str = "*") -> bool:
+        """Whether any enabled provider serves ``model``, open breaker or not."""
+        return any(p.enabled and self._serves(p, model) for p in self._order)
+
     def select_or_raise(self, model: str = "*") -> Provider:
         chosen = self.select(model)
         if chosen is None:
