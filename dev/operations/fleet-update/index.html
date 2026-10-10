@@ -1589,6 +1589,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#managed-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#worker-rollback" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1975,6 +1986,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#managed-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#worker-rollback" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2177,14 +2199,11 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 <li>Run <code>~/.mac/venv/bin/python -c 'import mac.services'</code>.</li>
 <li>Run <code>mac-schema-migrate --status</code>, then
    <code>mac-schema-migrate --applied-by fleet-update:&lt;user&gt;@&lt;host&gt;:&lt;sha12&gt;</code>.</li>
-<li>Write <code>~/.mac/current/source-commit</code> and <code>~/.mac/current/generation-id</code>
-   (<code>legacy-&lt;sha12&gt;</code>). <code>deploy/bin/mac-service</code> ignores them. They are written
-   for a hub still running the <code>mac-service</code> that the deleted
-   <code>deploy/fleet-node-install.sh</code> generated, which runs <code>~/.mac/current/source</code>
-   only when its <code>HEAD</code> equals <code>source-commit</code>.</li>
 <li>Run <code>sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist</code>.</li>
 <li>Poll <code>/health</code>, then require <code>/startup-attestation</code>'s <code>source_commit</code> to equal
    the target. <code>mac-service</code> sets it from the <code>HEAD</code> of <code>~/.mac/src/mac</code>.</li>
+<li>Run <code>python -m mac.node_files --source ~/.mac/src/mac --role hub</code> (see
+   <a href="#managed-files">Managed files</a>). A failure is logged, never fatal.</li>
 <li>Run <code>python -m mac.fleet_context_service --source ~/.mac/src/mac</code>. It
     installs or repairs the LaunchAgent <code>com.mac.fleet-context</code>, which refreshes
     the live fleet block in this agent's runtime context every 3 minutes, and
@@ -2192,20 +2211,16 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 <li>Run <code>launchctl kickstart -k gui/&lt;uid&gt;/com.mac.agent</code>. With <code>--hermes</code>, also
     kickstart <code>gui/&lt;uid&gt;/ai.hermes.gateway</code>.</li>
 </ol>
-<p>The hub step doesn't reinstall <code>~/.mac/bin/mac-service</code>. Its content is in
+<p><code>~/.mac/bin/mac-service</code> is a managed file of the hub role, installed from
 <code>deploy/bin/mac-service</code>: it runs <code>~/.mac/venv/bin/python -m mac.hub_serve</code>
-from <code>~/.mac/src/mac</code> and nothing else. The wrapper that
-the deleted <code>deploy/fleet-node-install.sh</code> used to generate also ran
-<code>~/.mac/current/venv/bin/mac-hub-upgrade-supervisor recover-all</code> when that
-script existed. Hub self-upgrade is deleted, so replace that wrapper with
-<code>deploy/bin/mac-service</code> by hand.</p>
+from <code>~/.mac/src/mac</code> and nothing else. The script no longer writes the legacy
+<code>~/.mac/current/source-commit</code> and <code>generation-id</code> markers; nothing reads them.</p>
 <h3 id="hub-rollback">Hub rollback<a class="headerlink" href="#hub-rollback" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Failure before the schema can have changed.</strong> This covers a backup that
   fails or isn't verified, a failed checkout, install or import, and any
   failure when <code>--status</code> reported no pending migrations. The script checks out
-  the old commit, reinstalls it if the dependency files differ, rewrites
-  <code>source-commit</code>, bootstraps the old hub and exits non-zero.</li>
+  the old commit, reinstalls it if the dependency files differ, bootstraps the old hub and exits non-zero.</li>
 <li><strong>Failure once migrations have run.</strong> This covers a migration that fails
   part-way (the hub is left stopped) and a hub that won't come up healthy after
   migrating. The script <strong>stops</strong> and prints what to do. It never downgrades
@@ -2214,14 +2229,17 @@ script existed. Hub self-upgrade is deleted, so replace that wrapper with
 <li>Stop the hub.</li>
 <li><code>pg_restore</code> the dump into the database. The dump is listed in the
      backup's manifest.</li>
-<li>Run <code>git -C ~/.mac/src/mac checkout --detach &lt;old&gt;</code> and write that sha to
-     <code>~/.mac/current/source-commit</code>.</li>
+<li>Run <code>git -C ~/.mac/src/mac checkout --detach &lt;old&gt;</code>.</li>
 <li>Bootstrap the LaunchDaemon.</li>
 </ul>
 <p>If the script exits while the hub is stopped, its last line says so and gives
 the <code>launchctl bootstrap</code> command.</p>
 <h2 id="linux-worker">Linux worker<a class="headerlink" href="#linux-worker" title="Permanent link">&para;</a></h2>
 <ol>
+<li><strong>Prestage.</strong> Before any hold, over ssh: the checkout must be clean, <code>git
+   fetch</code> must succeed, and the target commit must then exist locally. If not,
+   the script stops and nothing has changed on the host, so a network failure
+   after the drain can't strand an unprepared install.</li>
 <li><strong>Hold.</strong> Read the agent with <code>mac agent show &lt;agent_id&gt;</code>. If it already has
    a dispatch hold, note it and leave it alone; this run will neither add nor
    remove a hold, such as an operator's fleet-wide dispatch pause. If there is
@@ -2230,16 +2248,16 @@ the <code>launchctl bootstrap</code> command.</p>
 <li><strong>Drain.</strong> Wait up to 10 minutes for <code>current_task_id</code> to clear. If it
    doesn't, release the script's own hold (if it set one) and stop. Nothing has
    changed on the host at that point.</li>
-<li><strong>Update over ssh.</strong> A single <code>ssh &lt;target&gt; bash -s</code> runs these steps:</li>
+<li><strong>Update over ssh.</strong> A single <code>ssh &lt;target&gt; bash -s</code> runs these steps, under
+   an exclusive host lock (<code>~/.mac/.fleet-update.lock</code>; a second concurrent run
+   exits 7 and changes nothing):</li>
 <li><code>git fetch</code> and <code>git checkout --detach &lt;sha&gt;</code> in <code>~/.mac/src/mac</code>;</li>
 <li>the locked install when the dependency files changed or the baseline
      check fails, as on the hub;</li>
 <li><code>python -c 'import mac'</code>. If the import fails, the old checkout and its
      dependencies are restored before anything is restarted.</li>
-<li>install <code>deploy/bin/{mac-agent-service, mac-agent-startup-self-test,
-     mac-task-executor, mac-task-executor.py}</code> and <code>deploy/mac-crash-observer.py</code>
-     into <code>~/.mac/bin</code>. Each file is renamed into place, so a running wrapper
-     keeps its old inode.</li>
+<li><code>python -m mac.node_files --source ~/.mac/src/mac --role worker</code> (see
+     <a href="#managed-files">Managed files</a>). A failure restores the old checkout.</li>
 <li><code>python -m mac.fleet_context_service --source ~/.mac/src/mac</code>, as on the
      hub but with the <code>mac-fleet-context</code> systemd timer: the units are rendered
      from <code>deploy/systemd</code> into <code>/etc/systemd/system</code>, a failed timer is reset,
@@ -2255,6 +2273,23 @@ the <code>launchctl bootstrap</code> command.</p>
 <li><strong>Failure.</strong> The rollout stops, the host stays held, and the script prints
    an inspect command, a rollback command and the resume command.</li>
 </ol>
+<h3 id="managed-files">Managed files<a class="headerlink" href="#managed-files" title="Permanent link">&para;</a></h3>
+<p><code>mac.node_files</code> declares the files each role owns and is the only code that
+installs them. Workers get <code>deploy/bin/{mac-agent-service,
+mac-agent-startup-self-test, mac-task-executor}</code> (0700),
+<code>deploy/bin/mac-task-executor.py</code> (0600) and <code>deploy/mac-crash-observer.py</code> as
+<code>bin/mac-crash-observer</code> (0755). The hub gets the same plus
+<code>deploy/bin/mac-service</code> (0755).</p>
+<ul>
+<li>Each file is renamed into place, so a running wrapper keeps its old inode.</li>
+<li>What was installed is recorded, with digests, in <code>~/.mac/managed-files.json</code>.
+  A recorded file that a later release no longer declares is removed, after a
+  copy into <code>~/.mac/backups/node-files-&lt;ts&gt;/</code>. One edited by hand since is kept
+  and reported as <code>kept_modified</code>.</li>
+<li>Files it never recorded are never touched.</li>
+<li>One installer per host (<code>~/.mac/.node-files.lock</code>). A second run is a no-op.</li>
+<li><code>--plan</code> reports what would change without changing anything.</li>
+</ul>
 <h3 id="worker-rollback">Worker rollback<a class="headerlink" href="#worker-rollback" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">ssh &lt;target&gt; &#39;git -C ~/.mac/src/mac checkout --detach &lt;old-sha&gt; &amp;&amp; sudo -n systemctl restart mac-agent&#39;</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac agent resume &lt;agent_id&gt;      # only if fleet-update placed the hold</span>
