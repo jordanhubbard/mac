@@ -16704,12 +16704,14 @@ class ControlPlane:
                     **({"departed_at": agent.deleted_at} if agent.deleted_at else {}),
                 }
             )
-            if len(members) >= limit:
-                break
+        # Live agents (and just-departed ones) before offline ones, then cap: in
+        # name order, long-gone operator sessions filled the cap and live
+        # teammates were cut from every agent's view.
+        members.sort(key=lambda m: m["status"] == AgentStatus.OFFLINE.value and "departed_at" not in m)
         return {
             "schema": "mac.fleet_snapshot.v1",
             "generated_at": utcnow(),
-            "members": members,
+            "members": members[:limit],
         }
 
     def mark_stale_agents_offline(self, stale_after_seconds: int) -> List[Agent]:

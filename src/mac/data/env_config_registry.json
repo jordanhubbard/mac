@@ -196,6 +196,7 @@
       "src/mac/executor_hub_io.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/fleet_context_service.py",
       "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
@@ -1818,7 +1819,6 @@
     "retired": false,
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
-      "deploy/install-fleet-context-service.sh",
       "src/mac/cli.py",
       "src/mac/hermes_question_gate.py",
       "src/mac/hermes_release.py",
@@ -1928,6 +1928,7 @@
       "deploy/mac-crash-observer.py",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
+      "src/mac/fleet_context_service.py",
       "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/mac_paths.py",
@@ -6078,7 +6079,6 @@
     "retired": false,
     "sources": [
       "deploy/install-agent-journal-service.sh",
-      "deploy/install-fleet-context-service.sh",
       "deploy/install-observability-prune.sh"
     ],
     "type": "str"
@@ -6242,6 +6242,7 @@
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/fleet_context_service.py",
       "src/mac/openshell_runtime.py",
       "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py"

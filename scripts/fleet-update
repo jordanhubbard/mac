@@ -145,6 +145,7 @@ soul_install() {
   hh=$(sed -n 's/^HERMES_HOME=//p' "$HOME/.mac/mac.env" 2> /dev/null | tail -1 | tr -d "\"'") || true
   log "hub: soul graph: $("$VENV/bin/python" -m mac.soul_install --hermes-home "${hh:-$HOME/.hermes}" 2>&1 | tail -1)" || true
   log "hub: question gate: $("$VENV/bin/python" -m mac.hermes_question_gate --hermes-home "${hh:-$HOME/.hermes}" 2>&1 | tail -1)" || true
+  log "hub: fleet context: $("$VENV/bin/python" -m mac.fleet_context_service --source "$SRC" 2>&1 | tail -1)" || true
 }
 
 # The hub runs a MAC agent too (com.mac.agent), under the same wrappers and
@@ -171,7 +172,7 @@ update_hub() {
   if [ "$DRY" = 1 ]; then
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; write current/source-commit; bootstrap; poll /health"
-    plan "hub: deploy/bin -> ~/.mac/bin; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
+    plan "hub: deploy/bin -> ~/.mac/bin; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service; kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
@@ -255,6 +256,8 @@ hh=$(sed -n 's/^HERMES_HOME=//p' "$HOME/.mac/mac.env" 2> /dev/null | tail -1 | t
 echo "remote: soul graph: $("$venv/bin/python" -m mac.soul_install --hermes-home "$hh" 2>&1 | tail -1)" || true
 # Question gate plugin + runtime-context refresh (see mac.hermes_question_gate); same rules.
 echo "remote: question gate: $("$venv/bin/python" -m mac.hermes_question_gate --hermes-home "$hh" 2>&1 | tail -1)" || true
+# Periodic fleet-context refresh (see mac.fleet_context_service); same rules.
+echo "remote: fleet context: $("$venv/bin/python" -m mac.fleet_context_service --source "$src" 2>&1 | tail -1)" || true
 sudo -n systemctl restart mac-agent
 [ "$hermes" = 1 ] && systemctl --user restart hermes-gateway
 sleep 10
@@ -289,7 +292,7 @@ update_worker() {
   fi
   if [ "$DRY" = 1 ]; then
     [ "$(jget dispatch_hold <<< "$j")" = true ] || plan "$name: mac agent hold $agent --reason '$reason'"
-    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, mac.soul_install, mac.hermes_question_gate, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
+    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, mac.soul_install, mac.hermes_question_gate, mac.fleet_context_service, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
     plan "$name: verify import, is-active, hub source_state == $SHA12 (clean)$([ "$(jget dispatch_hold <<< "$j")" = true ] || echo '; mac agent resume')"
     return 0
   fi
