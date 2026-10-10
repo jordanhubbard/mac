@@ -59,7 +59,11 @@ case "$*" in
 import json, os, sys
 p = os.environ["FAKE_AGENT_STATE"]; s = json.load(open(p))
 if os.environ.get("FAKE_REPORT_SHA", "1") == "1":
-    s["resources"]["source_state"]["commit_sha"] = sys.argv[1]
+    s["resources"]["source_state"].update(commit_sha=sys.argv[1])
+    if not os.environ.get("FAKE_NOT_RESTARTED"):
+        s["resources"]["source_state"].update(loaded_commit=sys.argv[1], restart_pending=False)
+    else:
+        s["resources"]["source_state"].update(restart_pending=True)
 if os.environ.get("FAKE_STEAL_HOLD"):
     s.update(dispatch_hold=True, dispatch_hold_reason=os.environ["FAKE_STEAL_HOLD"])
 json.dump(s, open(p, "w"))
@@ -172,7 +176,14 @@ def fleet(tmp_path: Path):
                     "dispatch_hold": held,
                     "dispatch_hold_reason": reason,
                     "current_task_id": task,
-                    "resources": {"source_state": {"commit_sha": shas["a"], "dirty": False}},
+                    "resources": {
+                        "source_state": {
+                            "commit_sha": shas["a"],
+                            "loaded_commit": shas["a"],
+                            "restart_pending": False,
+                            "dirty": False,
+                        }
+                    },
                 }
             )
         )
@@ -334,6 +345,14 @@ def test_a_failed_prestage_changes_nothing(fleet) -> None:
     calls = _calls(fleet)
     assert not any(c.startswith(("mac agent hold", "mac agent resume")) for c in calls)
     assert not any("bash -s --" in c for c in calls)
+
+
+def test_a_worker_whose_process_did_not_restart_is_not_healthy(fleet) -> None:
+    result = fleet.run("--yes", "natasha", fleet.shas["b"], FAKE_NOT_RESTARTED="1")
+    assert result.returncode != 0
+    assert "FAILED (code 6)" in result.stdout
+    # The host stays held: its checkout moved but the running process did not.
+    assert json.loads(fleet.state.read_text())["dispatch_hold"] is True
 
 
 def test_worker_never_removes_a_hold_it_did_not_set(fleet) -> None:
@@ -561,7 +580,8 @@ def hub(fleet):
         fleet.tmp / "bin" / "curl": (
             '#!/bin/sh\ncase "$*" in\n'
             '  */health) [ "${FAKE_HEALTH:-1}" = 1 ] ;;\n'
-            '  */startup-attestation) printf \'{"source_commit": "%s"}\' '
+            '  */startup-attestation) [ -n "$FAKE_NO_SOURCE" ] && { printf \'{"source_commit": ""}\'; exit 0; }\n'
+            '    printf \'{"source_commit": "%s"}\' '
             '"$(git -C "$FLEET_UPDATE_SRC" rev-parse HEAD)" ;;\n  *) exit 22 ;;\nesac\n'
         ),
     }
@@ -637,6 +657,12 @@ def test_hub_installs_its_managed_files_including_mac_service(fleet, hub) -> Non
         "bin/mac-crash-observer",
         "bin/mac-service",
     }
+
+
+def test_a_hub_reporting_no_source_identity_is_not_attested(fleet, hub) -> None:
+    result = fleet.run("--yes", "hub", fleet.shas["b"], FAKE_NO_SOURCE="1")
+    assert result.returncode != 0
+    assert "hub did not come up healthy" in result.stdout
 
 
 def test_hub_repairs_a_stale_locked_runtime_while_it_is_stopped(fleet, hub) -> None:

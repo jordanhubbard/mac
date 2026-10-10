@@ -38,7 +38,7 @@ from pathlib import Path
 
 from mac import mac_paths
 from mac.atomic_file import atomic_write_text
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import quote, urlencode
 
 from mac.bus_task_context import (
@@ -766,6 +766,7 @@ def _resources_with_command_inventory(
     merged["commands"] = _detect_command_inventory()
     if source_repo is not None:
         merged["source_state"] = _worker_source_state(source_repo)
+    merged["fleet_context"] = _fleet_context_state()
     # The coding routes' status (secret-free) rides the same refresh cycle so
     # the hub can see which CLIs on its ordered list this worker can run. The
     # wire shape is a per-CLI map with one entry per listed CLI, plus the list
@@ -1033,6 +1034,45 @@ def _apply_read_only_report_executor_approval(resources: Any, environ: Dict[str,
     return True
 
 
+#: What this process loaded, per source repository: captured the first time
+#: the source state is read, which is at startup, before any work. A checkout
+#: advanced later without a restart then shows as ``restart_pending`` instead
+#: of passing for the running version (mac.release_identity).
+_BOOT_ID = secrets.token_hex(8)
+_BOOT_STARTED_AT = ""
+_BOOT_LOADED: Dict[str, Tuple[str, str]] = {}
+
+
+def _boot_identity(repo: Path, commit: str, tree: str) -> JsonDict:
+    global _BOOT_STARTED_AT
+    if not _BOOT_STARTED_AT:
+        _BOOT_STARTED_AT = _utcnow()
+    loaded_commit, loaded_tree = _BOOT_LOADED.setdefault(str(repo), (commit, tree))
+    return {
+        "boot_id": _BOOT_ID,
+        "booted_at": _BOOT_STARTED_AT,
+        "loaded_commit": loaded_commit,
+        "loaded_tree": loaded_tree,
+        "restart_pending": bool(loaded_commit) and loaded_commit != commit,
+    }
+
+
+def _fleet_context_state() -> JsonDict:
+    """When this host's runtime-context Fleet block was last refreshed."""
+    path = Path(
+        os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN")
+        or mac_paths.gateway_home() / "mac-runtime-context.md"
+    ).expanduser()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {"path": str(path), "refreshed_at": None, "error": "missing"}
+    return {
+        "path": str(path),
+        "refreshed_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat(),
+    }
+
+
 def _worker_source_state(repo: Path) -> JsonDict:
     """Return secret-free source attestation used by the hub reconciler."""
     state: JsonDict = {
@@ -1057,6 +1097,7 @@ def _worker_source_state(repo: Path) -> JsonDict:
     state["commit_sha"] = head.stdout.strip()
     state["tree_sha"] = tree.stdout.strip() if tree.returncode == 0 else ""
     state["dirty"] = dirty.returncode != 0 or bool(dirty.stdout.strip())
+    state.update(_boot_identity(repo, state["commit_sha"], state["tree_sha"]))
     return state
 
 

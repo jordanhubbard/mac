@@ -358,6 +358,13 @@ MIGRATIONS: tuple[Migration, ...] = (
         SELECT to_regclass(current_schema() || '.openclaw_conversation_executions') IS NULL
         """,
     ),
+    Migration(
+        "0013_release_selection",
+        _load_sql(MIGRATION_PATH / "0013_release_selection.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.release_selection') IS NOT NULL
+        """,
+    ),
 )
 
 

@@ -1175,6 +1175,14 @@ class DispatchHoldRequest(BaseModel):
     reason: str
 
 
+class ReleaseSelectRequest(BaseModel):
+    commit_sha: str
+    reason: str = ""
+    manifest_sha256: str = ""
+    converge_minutes: Optional[int] = None
+    actor: Optional[str] = None
+
+
 class DispatchHoldAcquireRequest(BaseModel):
     reason: str
     expected_dispatch_hold: bool
@@ -6105,6 +6113,43 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         return cp.roles.unassign_role(agent_id).to_dict()
+
+    @app.get("/fleet/release")
+    def get_fleet_release(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """The selected release and every MAC worker's drift against it."""
+        return cp.release_drift()
+
+    @app.put("/fleet/release")
+    def select_fleet_release(
+        body: ReleaseSelectRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        actor = (
+            body.actor
+            or principal.human_id
+            or principal.agent_id
+            or principal.client_id
+            or principal.principal_kind
+            or "admin"
+        )
+        return cp.select_release(
+            body.commit_sha,
+            actor=str(actor),
+            reason=body.reason,
+            manifest_sha256=body.manifest_sha256,
+            converge_minutes=body.converge_minutes,
+        )
+
+    @app.delete("/fleet/release")
+    def clear_fleet_release(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        actor = principal.human_id or principal.agent_id or principal.client_id or "admin"
+        return cp.clear_release_selection(actor=str(actor))
 
     @app.post("/agents/{agent_id}/dispatch-hold")
     def set_dispatch_hold(
