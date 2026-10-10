@@ -19045,10 +19045,20 @@ class ControlPlane:
             commands=commands,
             attempt=attempt,
         )
+        if check_fix_pr is None:
+            check_fix_pr = self._reopened_task_pull_request(
+                task,
+                api_url=api_url,
+                canonical_branch=canonical_branch,
+                source_branch=branch,
+                agent_pull_request=agent_pull_request,
+                commands=commands,
+                attempt=attempt,
+            )
         if check_fix_pr is not None:
-            # A check-fix attempt lands through the pull request whose checks
-            # failed: its head branch is moved to the fixed head below, so the
-            # checks re-run on that same pull request.
+            # A check-fix or reopened attempt lands through the task's open
+            # pull request: its head branch is moved to the new reviewed head
+            # below, so the checks re-run on that same pull request.
             branch = str(check_fix_pr["head"])
             agent_pull_request = check_fix_pr
         remote_head_ref = "refs/heads/%s" % branch
@@ -19601,6 +19611,83 @@ class ControlPlane:
             "forge": str(observed.get("host") or ""),
             "state": "open",
             "reused_for": "fix_failed_checks",
+        }
+
+    def _reopened_task_pull_request(
+        self,
+        task: Task,
+        *,
+        api_url: str,
+        canonical_branch: str,
+        source_branch: str,
+        agent_pull_request: Optional[JsonDict],
+        commands: List[JsonDict],
+        attempt: int,
+    ) -> Optional[JsonDict]:
+        """The task's open pull request a reopened attempt must land through.
+
+        Every attempt pushes from its own lease-suffixed branch, and the
+        agent's pull-request lookup reuses the task's open PR by task id. A
+        reopened attempt (``mac task reopen``, a review send-back) therefore
+        names a PR whose head branch is still the earlier attempt's. Checks
+        run only on the PR's head, so landing the new branch through it waits
+        on checks that never report (task_f042b8dc: the hub waited on PR #919
+        for over an hour). Like a check-fix attempt, the land step moves that
+        PR's head branch to the new reviewed head, under a lease.
+
+        Only a PR this task owns is moved: open, unmerged, on the canonical
+        branch, and carrying this task's own marker. An evidence reference to
+        any other PR keeps the existing fallback.
+        """
+
+        from . import gitops as _gitops
+
+        agent_pr = ensure_json_object(agent_pull_request)
+        number = _nonnegative_int(agent_pr.get("number"))
+        agent_pr_base = str(agent_pr.get("base") or "").strip()
+        if (
+            not agent_pr.get("opened")
+            or not number
+            or (agent_pr_base and agent_pr_base != canonical_branch)
+        ):
+            return None
+        observed = _gitops.pull_request_state(api_url, number)
+        head = str(observed.get("head_ref") or "").strip()
+        if not observed.get("known") or not head or head == source_branch:
+            return None
+        try:
+            head = validate_git_ref(head)
+        except ValueError:
+            return None
+        owner = str(observed.get("task_id") or "")
+        reuse = bool(
+            not observed.get("merged")
+            and str(observed.get("state") or "") == "open"
+            and owner == task.id
+        )
+        commands.append(
+            {
+                "name": "reopened_task_pull_request",
+                "attempt": attempt,
+                "number": number,
+                "head": head,
+                "source_branch": source_branch,
+                "state": str(observed.get("state") or ""),
+                "owner_task_id": owner,
+                "reused": reuse,
+            }
+        )
+        if not reuse:
+            return None
+        return {
+            "opened": True,
+            "number": number,
+            "url": str(agent_pr.get("url") or ""),
+            "base": canonical_branch,
+            "head": head,
+            "forge": str(observed.get("host") or agent_pr.get("forge") or ""),
+            "state": "open",
+            "reused_for": "reopened_attempt",
         }
 
     @staticmethod

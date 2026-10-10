@@ -1867,6 +1867,9 @@ def pull_request_state(
         "state": str(pr.get("state") or ""),
         "head_sha": str((head or {}).get("sha") or "").strip(),
         "head_ref": str((head or {}).get("ref") or "").strip(),
+        # The task that owns this pull request, from the marker every
+        # MAC-authored PR body carries ("" for a PR MAC did not open).
+        "task_id": _mac_task_id(str(pr.get("title") or ""), str(pr.get("body") or "")),
         # GitHub's "behind" means a strict ruleset will not let it merge until
         # the branch is updated with the base.
         "mergeable_state": str(pr.get("mergeable_state") or "").strip(),
