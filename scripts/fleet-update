@@ -100,16 +100,6 @@ pip_install() {
     --record "$MAC_HOME/logs/native-runtime-locked-$(date -u +%Y%m%dT%H%M%SZ).json"; rc=$?
   rm -f "$snap"; return "$rc"
 }
-# deploy/bin/mac-service ignores ~/.mac/current. A hub still running the
-# mac-service that deploy/fleet-node-install.sh generated reads it: that wrapper
-# runs ~/.mac/current/source only when its HEAD equals current/source-commit.
-# Writing the deployed sha keeps such a wrapper on ~/.mac/src/mac until the
-# wrapper is replaced.
-write_current() {
-  mkdir -p "$MAC_HOME/current"
-  printf '%s\n' "$1" > "$MAC_HOME/current/source-commit"
-  printf 'legacy-%s\n' "${1:0:12}" > "$MAC_HOME/current/generation-id"
-}
 hub_down() { ! pgrep -f mac.hub_serve > /dev/null; }
 hub_healthy() { curl -fsS --max-time 5 "$HUB_URL/health" > /dev/null 2>&1; }
 hub_attested() {
@@ -120,7 +110,6 @@ hub_rollback() {  # only ever called before the schema was migrated
   log "hub: ROLLBACK to ${1:0:12} ($2)"
   git -C "$SRC" checkout -q --detach "$1" || log "hub: WARNING checkout of ${1:0:12} failed"
   if deps_changed "$1"; then pip_install || log "hub: WARNING reinstall of ${1:0:12} failed"; fi
-  write_current "$1"
   sudo -n launchctl bootstrap system "$HUB_PLIST" || true
   HUB_STOPPED=0
   if wait_for "$HEALTH_TIMEOUT" hub_healthy; then log "hub: old code is serving again"; else log "hub: WARNING old code is not healthy either"; fi
@@ -132,7 +121,7 @@ hub_stuck() {  # the schema has (or may have) moved forward: never downgrade it
   log "  1. find the error (sudo launchctl print system/com.mac.control-plane; ~/.mac/logs) and fix forward with a new sha"
   log "  2. the old code may not run against the new schema; the pre-update backup is in $2"
   log "  3. full restore (loses writes since the backup): stop the hub, pg_restore that dump,"
-  log "     git -C $SRC checkout --detach $3, write that sha to $MAC_HOME/current/source-commit, bootstrap"
+  log "     git -C $SRC checkout --detach $3, bootstrap"
   exit 1
 }
 # Soul graph in the hub's own Hermes (see mac.soul_install). Never fails the update.
@@ -144,18 +133,16 @@ soul_install() {
   log "hub: fleet context: $("$VENV/bin/python" -m mac.fleet_context_service --source "$SRC" 2>&1 | tail -1)" || true
 }
 
-# The hub runs a MAC agent too (com.mac.agent), under the same wrappers and
-# crash observer as a worker, so it gets the same files the worker step installs.
+# The hub's managed files (mac.node_files, role hub): the agent wrappers and
+# crash observer a worker gets, plus the control plane's own bin/mac-service.
 # Never fails the update: the hub is already serving the new sha by then.
-hub_put() { install -m "$1" "$SRC/$2" "$3.fleet-update.$$" && mv -f "$3.fleet-update.$$" "$3"; }
 hub_install_bin() {
-  local bin="$MAC_HOME/bin" f ok=1
-  [ -d "$SRC/deploy/bin" ] || return 0
-  mkdir -p "$bin" || ok=0
-  for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; do hub_put 0700 "deploy/bin/$f" "$bin/$f" || ok=0; done
-  hub_put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py" || ok=0
-  hub_put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer" || ok=0
-  if [ "$ok" = 1 ]; then log "hub: installed deploy/bin and the crash observer into $bin"; else log "hub: WARNING installing deploy/bin into $bin failed"; fi
+  local out
+  if out=$(MAC_HOME="$MAC_HOME" "$VENV/bin/python" -m mac.node_files --source "$SRC" --role hub 2>&1); then
+    log "hub: managed files: $out"
+  else
+    log "hub: WARNING managed file install failed: $out"
+  fi
 }
 
 update_hub() {
@@ -167,8 +154,8 @@ update_hub() {
   deps_changed "$old" && log "hub: dependency files changed; will do the locked install"
   if [ "$DRY" = 1 ]; then
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
-    plan "hub: mac-schema-migrate --status/--applied-by; write current/source-commit; bootstrap; poll /health"
-    plan "hub: deploy/bin -> ~/.mac/bin; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service; kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
+    plan "hub: mac-schema-migrate --status/--applied-by; bootstrap; poll /health"
+    plan "hub: mac.node_files (role hub) -> ~/.mac/bin; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service; kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
@@ -196,7 +183,6 @@ update_hub() {
     [ "${pending:-[]}" = "[]" ] && hub_rollback "$old" "mac-schema-migrate failed"
     hub_stuck "mac-schema-migrate failed part-way (the hub is STOPPED)" "$bdir" "$old"
   fi
-  write_current "$SHA"
   log "hub: starting com.mac.control-plane"
   sudo -n launchctl bootstrap system "$HUB_PLIST" || true
   HUB_STOPPED=0
@@ -214,7 +200,10 @@ update_hub() {
 # ---- Linux worker -------------------------------------------------------------
 REMOTE_UPDATE=$(cat << 'REMOTE'
 set -euo pipefail
-sha=$1 hermes=$2 src="$HOME/.mac/src/mac" venv="$HOME/.mac/venv" bin="$HOME/.mac/bin"
+sha=$1 hermes=$2 src="$HOME/.mac/src/mac" venv="$HOME/.mac/venv"
+# One updater per host: a second run waits for nothing and changes nothing.
+exec 9>> "$HOME/.mac/.fleet-update.lock"
+if command -v flock > /dev/null; then flock -n 9 || { echo "remote: another fleet-update holds $HOME/.mac/.fleet-update.lock" >&2; exit 7; }; fi
 cd "$src"
 [ -z "$(git status --porcelain)" ] || { echo "remote: $src has local changes" >&2; exit 3; }
 old=$(git rev-parse HEAD)
@@ -232,7 +221,6 @@ reinstall() {
   rm -f "$snap"; return "$rc"
 }
 undo() { echo "remote: $1; restoring $old" >&2; git checkout -q --detach "$old"; if deps; then reinstall || true; fi; exit 4; }
-put() { install -m "$1" "$2" "$3.fleet-update.$$" && mv -f "$3.fleet-update.$$" "$3"; }
 git fetch -q origin
 git checkout -q --detach "$sha"
 if deps; then echo "remote: dependency files changed; locked install"; reinstall || undo "locked install failed"
@@ -241,11 +229,10 @@ elif ! locked; then
   reinstall || echo "remote: WARNING locked install failed; worker pip installs stay blocked" >&2
 fi
 "$venv/bin/python" -c 'import mac' || undo "import mac failed"
-if [ -d deploy/bin ]; then
-  for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; do put 0700 "deploy/bin/$f" "$bin/$f"; done
-  put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py"
-  put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer"
-fi
+# The node's managed files (mac.node_files): wrappers and the crash observer,
+# installed atomically, with files this installer used to own removed.
+files=$("$venv/bin/python" -m mac.node_files --source "$src" --role worker) || undo "managed file install failed: $files"
+echo "remote: managed files: $files"
 # Soul graph: MCP entry, first-time seed and skill in Hermes' config. Idempotent;
 # a failure is reported but never fails the update. Hermes loads it on restart.
 hh=$(sed -n 's/^HERMES_HOME=//p' "$HOME/.mac/mac.env" 2> /dev/null | tail -1 | tr -d "\"'") || true; hh=${hh:-$HOME/.hermes}
@@ -289,12 +276,22 @@ update_worker() {
   log "$name ($target, $agent): deployed ${cur:0:12}, target $SHA12"
   check_migrations "$cur"
   j=$(agent_json "$agent") || die "$name: 'mac agent show $agent' failed"
+  # Prestage before any hold or drain: the host must have a clean checkout and
+  # the target commit locally, so nothing after the drain needs the network
+  # for the source.
+  if [ "$DRY" != 1 ]; then
+    log "$name: prestaging $SHA12 (fetch; no hold yet)"
+    # shellcheck disable=SC2016  # $HOME must expand on the remote host
+    rssh "$target" 'cd "$HOME/.mac/src/mac" && [ -z "$(git status --porcelain)" ] && git fetch -q origin && git cat-file -e '"$SHA"'^{commit}' \
+      || die "$name: prestage failed (dirty checkout, or $SHA12 not fetchable); nothing changed on the host"
+  fi
   if [ "$(jget dispatch_hold <<< "$j")" = true ]; then
     log "$name: already held ('$(jget dispatch_hold_reason <<< "$j")'); this run will not add or remove a hold"
   fi
   if [ "$DRY" = 1 ]; then
     [ "$(jget dispatch_hold <<< "$j")" = true ] || plan "$name: mac agent hold $agent --reason '$reason'"
-    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, mac.soul_install, mac.hermes_question_gate, mac.fleet_context_service, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
+    plan "$name: prestage (clean checkout, fetch, $SHA12 present) before any hold"
+    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh (host lock): checkout $SHA12, conditional install, mac.node_files (role worker), mac.soul_install, mac.hermes_question_gate, mac.fleet_context_service, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
     plan "$name: verify import, is-active, hub source_state == $SHA12 (clean)$([ "$(jget dispatch_hold <<< "$j")" = true ] || echo '; mac agent resume')"
     return 0
   fi

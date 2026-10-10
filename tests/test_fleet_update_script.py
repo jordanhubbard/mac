@@ -46,6 +46,7 @@ SSH_STUB = r"""#!/usr/bin/env bash
 echo "ssh $*" >> "$FAKE_CALLS"
 case "$*" in
   *"rev-parse HEAD"*) echo "$FAKE_REMOTE_HEAD"; exit 0 ;;
+  *"cat-file -e"*) exit "${FAKE_PRESTAGE_RC:-0}" ;;
   *"MAC_AGENT_ID"*)
     if [ -n "${FAKE_REMOTE_AGENT:-}" ]; then echo "$FAKE_REMOTE_AGENT"
     else case "$*" in *100.121.27.109*) echo agent_bullwinkle ;; *10.0.0.9*) echo agent_boris ;; *) echo agent_natasha ;; esac
@@ -152,6 +153,9 @@ def fleet(tmp_path: Path):
         # The inventory is read with this checkout's src and a Python that
         # has pyyaml; the hub tests stub the venv's python.
         "FLEET_UPDATE_PYTHON": sys.executable,
+        # Stubbed venv pythons run mac.node_files for real, from this checkout.
+        "REAL_PY": sys.executable,
+        "REAL_SRC": str(ROOT / "src"),
     }
 
     class Fleet:
@@ -314,6 +318,24 @@ def test_worker_sets_and_then_releases_its_own_hold(fleet) -> None:
     assert json.loads(fleet.state.read_text())["dispatch_hold"] is False
 
 
+def test_worker_prestages_before_holding(fleet) -> None:
+    result = fleet.run("--yes", "natasha", fleet.shas["b"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet)
+    prestage = next(i for i, c in enumerate(calls) if "cat-file -e %s^{commit}" % fleet.shas["b"] in c)
+    hold = next(i for i, c in enumerate(calls) if c.startswith("mac agent hold"))
+    assert prestage < hold
+
+
+def test_a_failed_prestage_changes_nothing(fleet) -> None:
+    result = fleet.run("--yes", "natasha", fleet.shas["b"], FAKE_PRESTAGE_RC="1")
+    assert result.returncode != 0
+    assert "prestage failed" in result.stdout and "nothing changed on the host" in result.stdout
+    calls = _calls(fleet)
+    assert not any(c.startswith(("mac agent hold", "mac agent resume")) for c in calls)
+    assert not any("bash -s --" in c for c in calls)
+
+
 def test_worker_never_removes_a_hold_it_did_not_set(fleet) -> None:
     stabilization = "stabilization 2026-09-30: fleet-wide dispatch pause"
     fleet.set_agent(held=True, reason=stabilization)
@@ -375,7 +397,8 @@ def worker_home(fleet):
     (home / ".mac" / "bin").mkdir()
     (venv_bin / "python").write_text(
         '#!/bin/sh\necho "python $*" >> "$FAKE_CALLS"\n'
-        'case "$*" in *soul_install*) [ -z "$FAKE_SOUL_FAILS" ] && echo \'{"status": "ok"}\' ;;\n'
+        'case "$*" in *mac.node_files*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
+        '  *soul_install*) [ -z "$FAKE_SOUL_FAILS" ] && echo \'{"status": "ok"}\' ;;\n'
         '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
         '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
         '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
@@ -515,7 +538,8 @@ def hub(fleet):
         venv_bin
         / "python": (
             '#!/bin/sh\necho "import $*" >> "$FAKE_CALLS"\n'
-            'case "$*" in *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
+            'case "$*" in *mac.node_files*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
+            '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
             '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
             '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
         ),
@@ -553,8 +577,8 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
     result = fleet.run("--yes", "--hermes", "hub", target, FAKE_PENDING='["0002_more"]')
     assert result.returncode == 0, result.stdout + result.stderr
     assert _git(fleet.src, "rev-parse", "HEAD") == target
-    assert (hub / "current" / "source-commit").read_text() == target + "\n"
-    assert (hub / "current" / "generation-id").read_text() == "legacy-%s\n" % target[:12]
+    # The legacy ~/.mac/current markers are no longer written.
+    assert not (hub / "current" / "source-commit").exists()
     calls = _calls(fleet)
     order = [
         "sudo -n launchctl bootout system/com.mac.control-plane",
@@ -581,6 +605,40 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
     assert not any(c.startswith("uv ") for c in calls)  # dependency files unchanged a..b
 
 
+def test_hub_installs_its_managed_files_including_mac_service(fleet, hub) -> None:
+    _git(fleet.src, "checkout", "-q", "--detach", "origin/main")
+    files = {
+        "deploy/bin/" + name: name + "\n"
+        for name in (
+            "mac-agent-service",
+            "mac-agent-startup-self-test",
+            "mac-task-executor",
+            "mac-task-executor.py",
+            "mac-service",
+        )
+    }
+    files["deploy/mac-crash-observer.py"] = "# observer\n"
+    target = _commit(fleet.src, "hub wrappers", files)
+    _git(fleet.src, "push", "-q", "origin", "HEAD:main")
+    _git(fleet.src, "checkout", "-q", "--detach", fleet.shas["a"])
+
+    result = fleet.run("--yes", "hub", target)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (hub / "bin" / "mac-service").read_text() == "mac-service\n"
+    assert (hub / "bin" / "mac-service").stat().st_mode & 0o777 == 0o755
+    assert "hub: managed files:" in result.stdout
+    state = json.loads((hub / "managed-files.json").read_text())
+    assert set(state["files"]) == {
+        "bin/mac-agent-service",
+        "bin/mac-agent-startup-self-test",
+        "bin/mac-task-executor",
+        "bin/mac-task-executor.py",
+        "bin/mac-crash-observer",
+        "bin/mac-service",
+    }
+
+
 def test_hub_repairs_a_stale_locked_runtime_while_it_is_stopped(fleet, hub) -> None:
     result = fleet.run("--yes", "hub", fleet.shas["b"], FAKE_UNLOCKED="1")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -597,7 +655,6 @@ def test_hub_failure_before_migrate_restores_the_old_checkout(fleet, hub) -> Non
     assert result.returncode != 0
     assert "ROLLBACK to %s (import mac.services failed)" % fleet.shas["a"][:12] in result.stdout
     assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["a"]
-    assert (hub / "current" / "source-commit").read_text() == fleet.shas["a"] + "\n"
     calls = _calls(fleet)
     assert not any(c.startswith("mac-schema-migrate") for c in calls)
     assert (
