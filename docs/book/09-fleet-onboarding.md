@@ -16,8 +16,8 @@ CLIs on each selected node.
 
 Hosts are provisioned by hand from the "Provision a new host" checklist in
 [Updating the fleet with fleet-update](../operations/fleet-update.md), then
-moved to a commit with `scripts/fleet-update`. Resolve targets from
-`~/.mac/fleets.yaml` and `~/.mac/fleet-hosts`.
+moved to a commit with `scripts/fleet-update`. Targets come from the
+fleet inventory, `~/.mac/fleets.yaml`; `mac admin fleet inventory` prints it.
 
 ```bash
 test -x "$DOCS_ROOT/scripts/fleet-update"

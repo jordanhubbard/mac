@@ -19,7 +19,7 @@ scripts/fleet-update [--dry-run] [--hermes] [--yes] <hub|HOST|all> <sha>
 | Argument | Meaning |
 | --- | --- |
 | `hub` | Update the hub's control plane, then restart the hub's own worker. |
-| `HOST` | Update one Linux worker, named as in `~/.mac/fleet-hosts`. |
+| `HOST` | Update one managed host, named as in the fleet inventory (`~/.mac/fleets.yaml`). The hub's own name updates the hub. |
 | `all` | The hub first, then each worker in turn. Stops at the first failure. |
 | `<sha>` | Any commit on an `origin` branch. A short sha is fine; it is resolved to the full one. |
 | `--dry-run` | Print the plan, including any migrations, and change nothing. The only write is `git fetch`, which updates remote-tracking refs. |
@@ -30,18 +30,43 @@ Every line of output also goes to `~/.mac/logs/fleet-update-<timestamp>.log`.
 
 ### Hosts
 
-Worker names are looked up in `~/.mac/fleet-hosts` (override the path with
-`FLEET_UPDATE_HOSTS`). Each line has the form `<name> <ssh_target> <agent_id>`:
+Hosts come from the fleet inventory, `~/.mac/fleets.yaml` (override the path
+with `FLEET_UPDATE_INVENTORY`), read through `mac.fleet_inventory`. There is no
+other host list and no built-in default. `mac admin fleet inventory` prints
+every entry with its disposition:
 
-```text
-# name       ssh target              hub agent id
-worker-1     <user>@<mesh-ip-1>      agent_worker-1
-worker-2     <user>@<mesh-ip-2>      agent_worker-2
+| Disposition | Meaning |
+| --- | --- |
+| `managed` | This fleet's updater owns it. `all` updates every managed worker, in file order. |
+| `external` | Another named mechanism owns it (`managed_by`; `instance_kind: fungible` hosts belong to the fungible provisioner). Never updated here. |
+| `retired` | `enabled: false` or `lifecycle: retired`. Never updated. |
+| `other_fleet` | Enrolled in a different fleet in the same file. |
+
+Each entry's identity is `name`, `target` (ssh), `agent_id`, `role` (`hub` or
+`worker`), `os`, `arch` and `lifecycle`. Any of `agent_id` (default
+`agent_<name>`), `role` (the fleet's `hub_agent` is the hub) and `lifecycle`
+may be omitted, and the plan marks what it derived. Write them explicitly when
+the default is wrong:
+
+```yaml
+agents:
+- {name: worker-1, target: <user>@<mesh-ip-1>, os: linux, arch: aarch64}
+- {name: lab-box, target: <user>@<ip>, os: linux, lifecycle: external, managed_by: lab-team}
 ```
 
-Create this file before the first run. If it doesn't exist, the script falls
-back to a built-in list of two workers (`host_entry` in the script), which is
-only right for the fleet it was first written for. `all` updates every worker listed there, in file order.
+The script stops before touching any host when the inventory is unreadable or
+inconsistent (two entries claiming one name, ssh host or agent id), when the
+named host is not `managed`, or when the machine answering at a worker's ssh
+target reports a different `MAC_AGENT_ID` than the inventory's `agent_id`. A
+replaced host therefore needs an explicit inventory update. The inventory is
+read with the script's own source tree (`FLEET_UPDATE_PYTHON`, default the
+venv's python, supplies pyyaml).
+
+The hub's fleet view (`/fleet`, the Fleet section of every agent's runtime
+context) classifies each agent row from the same inventory: `worker`, `hub`,
+`virtual_service` (the operator persona and reviewer), `operator_session`
+(interactive CLI sessions) or `unenrolled`. Only `worker` rows count as
+execution capacity.
 
 Other knobs, mostly useful for testing: `FLEET_UPDATE_SRC` (the checkout, by
 default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
@@ -256,7 +281,7 @@ the host's Hermes home (default `~/.hermes`).
    `PERPLEXITY_API_BASE`, `FAL_KEY`, `VLLM_API_KEY`, `HAIMAKER_API_KEY`,
    `LLM_KEY`, `LLM_URL`, `QDRANT_API_KEY` and `FIRECRAWL_API_KEY` from
    `mac.env` and `$HERMES_HOME/.env`.
-7. On the hub, add the host to `~/.mac/fleet-hosts`. A token can only be
+7. On the hub, enroll the host in `~/.mac/fleets.yaml` and check it with `mac admin fleet inventory`. A token can only be
    issued to a registered agent, so register it first:
    `mac admin machine register <hostname> --machine-id <machine_id>` and
    `mac agent register <machine_id> <name> --agent-id <agent_id>`. Then run

@@ -12,8 +12,8 @@ move the fleet to a new commit.
 
 - Do not invent agent names, hostnames, IP addresses, Slack channel names, or
   model selectors. Ask.
-- Do not commit fleet topology or secrets. Client topology belongs in
-  `~/.mac/fleets.yaml`; the hub's worker list in `~/.mac/fleet-hosts`; host
+- Do not commit fleet topology or secrets. The fleet inventory (every
+  host, its role, identity and disposition) belongs in `~/.mac/fleets.yaml`; host
   settings and tokens in `~/.mac/mac.env` (mode `0600`); client tokens in
   `~/.mac/.env`.
 - Provider API keys (`NVIDIA_API_KEY`, `OPENAI_API_KEY`, etc.) never go in fleet
