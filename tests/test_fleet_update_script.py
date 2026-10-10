@@ -30,6 +30,11 @@ with open(os.environ["FAKE_CALLS"], "a") as calls:
     calls.write("mac " + " ".join(sys.argv[1:]) + "\n")
 cmd = sys.argv[1:3]
 if cmd == ["agent", "show"]:
+    if os.environ.get("FAKE_BUSY_AGENT"):
+        if sys.argv[3] == os.environ["FAKE_BUSY_AGENT"]:
+            state["current_task_id"] = os.environ.get("FAKE_BUSY_TASK", "task_busy")
+        else:
+            state["current_task_id"] = None
     print(json.dumps(state))
 elif cmd == ["agent", "hold"]:
     state.update(dispatch_hold=True, dispatch_hold_reason=sys.argv[sys.argv.index("--reason") + 1])
@@ -392,6 +397,33 @@ def test_busy_worker_is_released_untouched_when_the_task_does_not_clear(fleet) -
     calls = _calls(fleet)
     assert not any("bash -s" in c for c in calls)
     assert "mac agent resume agent_natasha" in calls
+
+
+def test_all_skips_a_busy_worker_and_updates_the_rest(fleet, hub) -> None:
+    result = fleet.run(
+        "--yes",
+        "all",
+        fleet.shas["b"],
+        FAKE_BUSY_AGENT="agent_natasha",
+        FAKE_BUSY_TASK="task_busy",
+    )
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "natasha: SKIPPED (still running task_busy)" in result.stdout
+    assert "INCOMPLETE: skipped workers: natasha (task_busy): " in result.stdout
+    assert "fleet-update --yes natasha %s" % fleet.shas["b"] in result.stdout
+    assert "fleet-update: done" not in result.stdout
+    calls = _calls(fleet)
+    assert "mac agent resume agent_natasha" in calls
+    assert any("100.121.27.109 bash -s -- %s" % fleet.shas["b"] in call for call in calls)
+
+
+def test_all_stops_before_the_second_worker_when_first_fails_health(fleet, hub) -> None:
+    result = fleet.run("--yes", "all", fleet.shas["b"], FAKE_REPORT_SHA="0")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "natasha: FAILED (code 6)" in result.stdout
+    assert not any("100.121.27.109" in call for call in _calls(fleet))
 
 
 def _remote_script() -> str:
