@@ -4575,7 +4575,8 @@
     "retired": false,
     "sources": [
       "deploy/reviewed-tool-assets.sh",
-      "scripts/bootstrap-verifier-python.sh"
+      "scripts/bootstrap-verifier-python.sh",
+      "src/mac/release_manifest.py"
     ],
     "type": "str"
   },
@@ -4586,7 +4587,8 @@
     "name": "MAC_REVIEWED_UV_VERSION",
     "retired": false,
     "sources": [
-      "deploy/reviewed-tool-assets.sh"
+      "deploy/reviewed-tool-assets.sh",
+      "src/mac/release_manifest.py"
     ],
     "type": "str"
   },

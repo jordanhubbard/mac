@@ -1066,6 +1066,29 @@ jobs:
             openshell-runtime-publication/
           if-no-files-found: error
           retention-days: 30
+      - name: Build the release manifest from this exact source and receipt
+        # mac.release_manifest names every component of the release (lock,
+        # tools, Hermes recipe, OpenShell, one coding+verification image pin,
+        # service templates, config schema, migration level). It is derived
+        # from files and the receipt above only, so it is reproducible, and it
+        # fails if any image pin is left open.
+        run: |
+          PYTHONPATH=src python3 -m mac.release_manifest build \
+            --source . \
+            --commit "$GITHUB_SHA" \
+            --runtime-receipt openshell-runtime-publication/publication-receipt.json \
+            --require-complete \
+            --output mac-release-manifest.json
+          PYTHONPATH=src python3 -m mac.release_manifest verify mac-release-manifest.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload the release manifest
+        # actions/upload-artifact v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mac-release-manifest
+          path: mac-release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
 
   certifier-image:
     name: Publish trusted certifier image
