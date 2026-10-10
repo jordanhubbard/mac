@@ -1,8 +1,22 @@
 # ADR 0035: The all-fleet deployment transaction is replaced, not extended
 
-- Status: Proposed
+- Status: Accepted, then superseded in implementation (2026-10-10)
 - Date: 2026-09-23
 - Context: `docs/investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md`
+
+> **Outcome.** The decision held: the all-fleet transaction, release epochs,
+> hub self-upgrade and the node installer were deleted, not extended. What
+> replaced them is simpler than the design below. `scripts/fleet-update`
+> ([Updating the fleet](../operations/fleet-update.md)) updates one host at a
+> time from the single fleet inventory, prestages before it drains, installs a
+> declared managed-file set per role (`mac.node_files`), and verifies the
+> restarted process's loaded commit. An operator-selected release gates
+> dispatch and reports drift (`mac admin fleet release`). The
+> [release manifest](../operations/release-manifest.md) names every component
+> of a release. The worker-side deploy barrier (`MAC_WORKER_DEPLOY_GENERATION`,
+> `MAC_WORKER_DEPLOY_BARRIER_FILE`) is deleted; a worker that still has them set
+> reports them as ignored. The rest of this record describes the proposal as
+> written.
 
 ## Context
 
