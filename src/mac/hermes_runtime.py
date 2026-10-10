@@ -904,6 +904,10 @@ def render_fleet_section(snapshot: Dict[str, Any]) -> str:
         % snapshot.get("generated_at", "?"),
         "",
     ]
+    # Offline members are counted, not listed: every past CLI session stays
+    # registered, and a list of them buries the teammates who are actually here.
+    offline = [m for m in members if m.get("status") == "offline" and not m.get("departed_at")]
+    members = [m for m in members if m not in offline]
     if not members:
         lines.append("- (no other agents currently online)")
     for m in members:
@@ -914,6 +918,8 @@ def render_fleet_section(snapshot: Dict[str, Any]) -> str:
             "- **%s** [%s/%s] — %s"
             % (m.get("name", "?"), m.get("status", "?"), m.get("health", "?"), doing)
         )
+    if offline:
+        lines.append("- _%d more offline; the `fleet` tool lists them._" % len(offline))
     lines.append(FLEET_SECTION_END)
     return "\n".join(lines)
 

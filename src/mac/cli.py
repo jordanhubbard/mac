@@ -4815,8 +4815,17 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
         render_mood_section,
     )
 
-    plane = _plane(args)
+    from mac.fleet_env import resolve_first as _rt
+
     agent = getattr(args, "agent", None)
+    # Read the fleet as this agent, with the same credential as the mood read
+    # below. Workers keep an operator MAC_API_TOKEN that can go stale while
+    # their worker token stays valid, and then every refresh failed with 403.
+    if not getattr(args, "token", None):
+        token = _rt(["MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=_os.environ.get("MAC_FLEET"))
+        if token:
+            args.token = token.strip()
+    plane = _plane(args)
     snapshot = plane.fleet_snapshot(exclude_agent_id=agent)
     markdown = (
         getattr(args, "markdown", None)

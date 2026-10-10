@@ -82,3 +82,68 @@ def test_render_and_refresh_fleet_section_is_idempotent(tmp_path):
 def test_render_fleet_section_handles_empty_fleet():
     section = render_fleet_section({"generated_at": "t", "members": []})
     assert "no other agents currently online" in section
+
+
+def test_fleet_snapshot_keeps_live_agents_ahead_of_offline_ones_under_the_cap():
+    cp = ControlPlane.in_memory()
+    for i in range(5):
+        stale = _agent(cp, "aaa-old-session-%d" % i)
+        cp.heartbeat_agent(stale.id, status="offline")
+    _agent(cp, "natasha")
+
+    names = [m["name"] for m in cp.fleet_snapshot(limit=3)["members"]]
+
+    assert names[0] == "natasha" and len(names) == 3
+
+
+def test_render_fleet_section_counts_offline_members_instead_of_listing_them():
+    section = render_fleet_section(
+        {
+            "generated_at": "t",
+            "members": [
+                {"name": "natasha", "status": "idle", "health": "healthy"},
+                {"name": "old-session", "status": "offline", "health": "healthy"},
+                {"name": "gone", "status": "offline", "health": "healthy", "departed_at": "t"},
+            ],
+        }
+    )
+    assert "**natasha**" in section and "**gone**" in section
+    assert "old-session" not in section
+    assert "1 more offline" in section
+
+
+def test_refresh_context_reads_the_fleet_with_the_agents_own_credential(
+    tmp_path, monkeypatch, capsys
+):
+    """A worker's operator MAC_API_TOKEN can be stale while its worker token works."""
+    import argparse
+
+    from mac import cli
+
+    seen = {}
+
+    class Plane:
+        def fleet_snapshot(self, exclude_agent_id=None):
+            return {"generated_at": "t", "members": []}
+
+    def plane(args):
+        seen["token"] = args.token
+        return Plane()
+
+    monkeypatch.setattr(cli, "_plane", plane)
+    monkeypatch.delenv("MAC_HUB_URL", raising=False)
+    monkeypatch.delenv("MAC_URL", raising=False)
+    monkeypatch.setenv("MAC_FLEET", "mac")
+    monkeypatch.setenv("MAC_API_TOKEN", "stale-operator-token")
+    monkeypatch.setenv("MAC_WORKER_TOKEN__MAC", "worker-token")
+    md = tmp_path / "ctx.md"
+
+    cli.cmd_fleet_refresh_context(argparse.Namespace(agent="agent_x", markdown=str(md), token=None))
+
+    assert seen["token"] == "worker-token"
+    assert FLEET_SECTION_BEGIN in md.read_text()
+
+    cli.cmd_fleet_refresh_context(
+        argparse.Namespace(agent="agent_x", markdown=str(md), token="explicit")
+    )
+    assert seen["token"] == "explicit"

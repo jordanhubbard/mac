@@ -373,6 +373,9 @@ def test_remote_update_installs_the_soul_graph_before_restarting(fleet, worker_h
     assert soul in calls
     assert calls.index(soul) < calls.index("sudo -n systemctl restart mac-agent")
     assert 'remote: soul graph: {"status": "ok"}' in result.stdout
+    fleet_context = "python -m mac.fleet_context_service --source %s/.mac/src/mac" % home
+    assert fleet_context in calls
+    assert calls.index(fleet_context) < calls.index("sudo -n systemctl restart mac-agent")
 
 
 def test_a_failed_soul_install_does_not_fail_the_update(fleet, worker_home) -> None:
@@ -512,6 +515,7 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
     assert soul.endswith("--hermes-home %s/.hermes" % hub.parent)
     hermes = next(c for c in calls if c.endswith("/ai.hermes.gateway"))
     assert calls.index(soul) < calls.index(hermes)
+    assert "import -m mac.fleet_context_service --source %s" % fleet.src in calls
     assert not any(c.startswith("uv ") for c in calls)  # dependency files unchanged a..b
 
 
