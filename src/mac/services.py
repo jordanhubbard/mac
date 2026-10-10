@@ -11025,6 +11025,8 @@ class ControlPlane:
             self._notify_task_question(message)
         elif message.kind == "answer" and message.reply_to is not None:
             self._resume_task_answered_on_board(board, message)
+        elif message.kind == "report":
+            self._announce_board_report(message)
         return message.to_dict()
 
     def list_recent_board(
@@ -11085,6 +11087,164 @@ class ControlPlane:
             "open_questions": [_with_task(row) for row in open_rows],
             "cursor": messages[-1]["id"] if messages else int(after or 0),
         }
+
+    def file_human_report(
+        self,
+        body: str,
+        *,
+        reporter: str,
+        reporter_kind: str = "agent",
+        task_id: Optional[str] = None,
+        report: str = "self",
+        why: Optional[str] = None,
+        undo: Optional[str] = None,
+        about_agent: Optional[str] = None,
+        about_task: Optional[str] = None,
+        evidence: Optional[str] = None,
+        key: Optional[str] = None,
+        source: str = "api",
+        task_message_id: Optional[int] = None,
+    ) -> JsonDict:
+        """Tell people what an agent did, or saw another agent do.
+
+        "Act, then tell" (:mod:`mac.human_reports`): agents keep their
+        authority but report anything a person might want to know. The report
+        becomes one ``agent.report`` notification, which the notifier delivers
+        to the human Slack channels, and an ``agent.report.filed`` log. It is
+        written now, so it reaches people even if the reporting task fails
+        later. Filing the same report again (same dedupe key) notifies nobody
+        a second time and returns the first filing.
+        """
+        from mac import human_reports
+
+        fields = human_reports.normalize_report(
+            body,
+            report=report,
+            why=why,
+            undo=undo,
+            about_agent=about_agent,
+            about_task=about_task,
+            evidence=evidence,
+            key=key,
+        )
+        reporter_value = str(reporter or "").strip() or "unknown"
+        task_value = str(task_id or "").strip()
+        task_title = ""
+        project = None
+        if task_value:
+            task = self.get_task(task_value)
+            task_title = str(task.title or "")
+            project = task.project
+        dedupe = human_reports.dedupe_key(fields, reporter=reporter_value, task_id=task_value)
+        text = human_reports.notification_text(
+            fields, reporter=reporter_value, task_id=task_value, task_title=task_title
+        )
+        metadata: JsonDict = {
+            "dedupe_key": dedupe,
+            "reporter": reporter_value,
+            "reporter_kind": reporter_kind,
+            "source": source,
+            "project": project,
+            **{name: value for name, value in fields.items() if name != "body"},
+        }
+        if task_message_id is not None:
+            metadata["task_message_id"] = task_message_id
+        if fields["report"] == "peer":
+            subject_type, subject_id = (
+                ("task", fields["about_task"])
+                if fields.get("about_task")
+                else ("agent", fields["about_agent"])
+            )
+        elif task_value:
+            subject_type, subject_id = "task", task_value
+        else:
+            subject_type, subject_id = "agent", reporter_value
+        with self.store.transaction() as conn:
+            # One filing per dedupe key, even when two reporters race: the
+            # lock serializes filings of the same key for this transaction.
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (dedupe,))
+            existing = conn.execute(
+                """
+                SELECT id FROM operator_notifications
+                WHERE event_type = ? AND json_extract(metadata, '$.dedupe_key') = ?
+                ORDER BY created_at, id
+                LIMIT 1
+                """,
+                (human_reports.REPORT_EVENT, dedupe),
+            ).fetchone()
+            if existing is not None:
+                notification_id = str(existing["id"])
+                duplicate = True
+            else:
+                notification = self.record_notification(
+                    human_reports.REPORT_EVENT,
+                    text["title"],
+                    text["body"],
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    # "hermes" reaches the Slack/Telegram channels (an explicit
+                    # subscription, or the auto-discovered home channels).
+                    channels=["dashboard", "hermes"],
+                    metadata=metadata,
+                    conn=conn,
+                )
+                notification_id = notification.id
+                duplicate = False
+        self.record_log(
+            human_reports.REPORT_LOG,
+            layer="control_plane",
+            source=reporter_value,
+            level="warning" if fields["report"] == "peer" else "info",
+            subject_type=subject_type,
+            subject_id=subject_id,
+            detail={
+                **metadata,
+                "body": fields["body"],
+                "task_id": task_value or None,
+                "notification_id": notification_id,
+                "duplicate": duplicate,
+            },
+        )
+        return {
+            "schema": "mac.agent_report.v1",
+            "status": "duplicate" if duplicate else "filed",
+            "notification_id": notification_id,
+            "dedupe_key": dedupe,
+            "report": fields["report"],
+            "task_id": task_value or None,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+        }
+
+    def _announce_board_report(self, message: Any) -> None:
+        """A ``report`` posted on a task board goes to people, once.
+
+        The board row is the agent's own record; the notification is what
+        reaches Slack. A malformed report stays on the board and is logged,
+        because a post the agent already made must not be refused late.
+        """
+        try:
+            from mac import human_reports
+
+            fields = human_reports.report_from_metadata(message.body, message.metadata)
+            self.file_human_report(
+                fields.pop("body"),
+                reporter=message.author,
+                reporter_kind=message.author_kind,
+                task_id=message.task_id,
+                source="task_board",
+                task_message_id=message.id,
+                **fields,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.record_log(
+                "task_board.report_notification_failed",
+                layer="control_plane",
+                level="warning",
+                subject_type="task",
+                subject_id=message.task_id,
+                detail={"task_message_id": message.id, "error": str(exc)[:500]},
+            )
 
     def _notify_task_question(self, message: Any) -> None:
         """Send an agent's question to people through the notification outbox.

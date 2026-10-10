@@ -1643,6 +1643,12 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "operator",
             "reason": "route coverage force-complete",
         },
+        ("POST", "/reports"): {
+            "body": "route coverage report: rotated a webhook secret",
+            "why": "route coverage",
+            "undo": "rotate it back",
+            "reporter": "operator",
+        },
         ("POST", "/leases/{lease_id}/renew"): {
             "agent_id": ctx["lease_agent_id"],
             "lease_seconds": 120,

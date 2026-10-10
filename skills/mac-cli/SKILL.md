@@ -71,6 +71,31 @@ gives you both.
 A hold survives a heartbeat, and should: a held session reports itself alive
 without becoming eligible for dispatch.
 
+## Act, then tell
+
+You keep your authority: do what the work needs. But whenever you do something
+a person might want to know about -- anything beyond your own task branch and
+pull request, such as changing repository settings, rulesets, branch
+protection, webhooks, secrets or collaborators; force-pushing or deleting a
+shared branch; closing someone else's PR or issue; changing a host or service;
+or causing an external side effect -- tell the humans right afterwards:
+
+    mac agent report "created ruleset required-ci on acme/widgets" \
+        --why "the task asked for required CI" \
+        --undo "Settings > Rules > required-ci > Delete" --task <task_id>
+
+If you notice ANOTHER agent doing something a person should know about, report
+that too, naming it:
+
+    mac agent report "force-pushed main, dropping 3 commits" \
+        --about-agent agent_worker_2 --about-task <task_id> --evidence "<sha>"
+
+A report reaches the humans on Slack once (repeats are deduplicated) and is
+kept as an `agent.report.filed` observability event. Routine work -- your own
+branch, your own PR, running tests -- needs no report. The rule exists because
+on 2026-10-02 an agent created an active ruleset on a repository and nobody was
+told; the owner did not mind the action, only the silence.
+
 ## The traps
 
 These are not hypothetical. Each one cost a wrong command against a live fleet.

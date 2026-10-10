@@ -371,6 +371,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | int | consumer-defined | repository-lifecycle | Repository Lifecycle setting: repository ref reconciler interval seconds. |
 | `MAC_REPOSITORY_REF_RECONCILER_MODE` | str | consumer-defined | repository-lifecycle | Repository Lifecycle setting: repository ref reconciler mode. |
 | `MAC_REPOSITORY_REF_RECONCILER_REMOTE` | str | consumer-defined | repository-lifecycle | Repository Lifecycle setting: repository ref reconciler remote. |
+| `MAC_REPO_ADMIN_WATCH` | str | consumer-defined | core | Core setting: repo admin watch. |
 | `MAC_REPO_BOOTSTRAP_COMMAND` | str | consumer-defined | core | Core setting: repo bootstrap command. |
 | `MAC_REPO_BOOTSTRAP_CREATES` | str | consumer-defined | core | Core setting: repo bootstrap creates. |
 | `MAC_REPO_BOOTSTRAP_SETUP_RAN` | str | consumer-defined | core | Core setting: repo bootstrap setup ran. |

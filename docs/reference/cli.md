@@ -214,7 +214,8 @@ Inspection:
   reflect   publish an agent's runtime self-description over AgentBus
 
 Communication:
-  tell  send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction
+  tell    send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction
+  report  act, then tell: report to the humans on Slack something you did that a person might want to know, or (with --about-agent/--about-task) something you saw another agent do; filed once, even if repeated
 
 Administration:
   report-executor-approve  approve the exact current startup-attested OpenShell report executor

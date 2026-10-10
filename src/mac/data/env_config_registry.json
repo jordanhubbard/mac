@@ -200,6 +200,7 @@
       "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
+      "src/mac/mcp_server.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_runtime.py",
       "src/mac/openshell_supervisor.py",
@@ -4350,6 +4351,17 @@
     "retired": false,
     "sources": [
       "src/mac/repository_ref_reconciler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: repo admin watch.",
+    "family": "core",
+    "name": "MAC_REPO_ADMIN_WATCH",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
