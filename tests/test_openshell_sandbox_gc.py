@@ -5,8 +5,11 @@ import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from mac.openshell_sandbox_gc import (
     _process_identity,
+    parse_sandbox_list,
     reconcile_stale_sandboxes,
     run_sandbox_list,
     stale_sandbox_candidates,
@@ -127,6 +130,32 @@ def test_reconcile_dry_run_does_not_delete(monkeypatch):
     assert [row["name"] for row in report["candidates"]] == ["mac-task-old"]
     assert report["deleted"] == []
     assert len(calls) == 1
+
+
+def test_reconcile_reads_the_paged_list_openshell_0_1_prints(monkeypatch):
+    """0.1.x wraps the entries in a page object; a bare-array check rejected
+    every listing, so GC and orphan reaping did nothing on 0.1.2 workers."""
+
+    def fake_run(argv, **_kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"next_page_token": "", "sandboxes": [_sandbox("mac-task-old")]}),
+            stderr="",
+        )
+
+    monkeypatch.setattr("mac.openshell_sandbox_gc.subprocess.run", fake_run)
+
+    report = reconcile_stale_sandboxes(stale_after_seconds=0, apply=False, now=NOW)
+
+    assert [row["name"] for row in report["candidates"]] == ["mac-task-old"]
+
+
+@pytest.mark.parametrize(
+    "stdout", ['{"next_page_token": ""}', '{"sandboxes": {}}', '"mac-task-old"', "not json"]
+)
+def test_an_unrecognised_list_shape_fails_loudly(stdout):
+    with pytest.raises(RuntimeError):
+        parse_sandbox_list(stdout)
 
 
 def test_reconcile_apply_reports_delete_failures(monkeypatch):

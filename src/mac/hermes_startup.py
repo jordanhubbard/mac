@@ -518,7 +518,7 @@ def _session_capability_availability(
             policy_text = os.environ.get("MAC_OPENSHELL_POLICY") or ""
             policy = Path(policy_text).expanduser() if policy_text else None
             from mac.executor_sandbox import verifier_runtime_image
-            from mac.openshell_sandbox_gc import run_sandbox_list
+            from mac.openshell_sandbox_gc import parse_sandbox_list, run_sandbox_list
 
             try:
                 image, _image_source = verifier_runtime_image()
@@ -536,11 +536,10 @@ def _session_capability_availability(
                         if gateway_endpoint
                         else (),
                     )
-                    inventory = (
-                        json.loads(route_probe.stdout) if route_probe.returncode == 0 else None
-                    )
-                    route_reachable = isinstance(inventory, list)
-                except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+                    if route_probe.returncode == 0:
+                        parse_sandbox_list(route_probe.stdout)
+                        route_reachable = True
+                except (OSError, subprocess.SubprocessError, ValueError, RuntimeError):
                     route_reachable = False
             route_checks = {
                 "host_platform_declared": bool(host_platform and host_platform in platforms),

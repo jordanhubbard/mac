@@ -86,6 +86,27 @@ def run_sandbox_list(
     return attempt()
 
 
+def parse_sandbox_list(stdout: Optional[str]) -> List[Any]:
+    """Return the sandbox entries from ``sandbox list --output json``.
+
+    Releases before 0.1 printed a bare array. 0.1.x wraps it as
+    ``{"sandboxes": [...], "next_page_token": ""}``; the entries keep the same
+    ``name``/``labels``/``phase``/``created_at`` fields. Anything else raises
+    RuntimeError so a changed format fails loudly instead of listing nothing.
+    """
+    try:
+        payload = json.loads(stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
+    if isinstance(payload, dict) and isinstance(payload.get("sandboxes"), list):
+        payload = payload["sandboxes"]
+    if not isinstance(payload, list):
+        raise RuntimeError(
+            'OpenShell sandbox list JSON is not an array or a {"sandboxes": [...]} page'
+        )
+    return payload
+
+
 def _created_at(value: Any) -> Optional[datetime]:
     text = str(value or "").strip()
     if not text:
@@ -327,12 +348,7 @@ def reconcile_stale_sandboxes(
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
-    try:
-        payload = json.loads(listed.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
-    if not isinstance(payload, list):
-        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+    payload = parse_sandbox_list(listed.stdout)
 
     candidates = stale_sandbox_candidates(
         payload,
@@ -548,12 +564,7 @@ def reap_orphaned_task_sandboxes(
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
-    try:
-        payload = json.loads(listed.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
-    if not isinstance(payload, list):
-        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+    payload = parse_sandbox_list(listed.stdout)
 
     classified = [
         classify_orphan_task_sandbox(row, pid_is_alive=pid_is_alive)
@@ -773,12 +784,7 @@ def reconcile_task_sandboxes_from_lease_authority(
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
-    try:
-        payload = json.loads(listed.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
-    if not isinstance(payload, list):
-        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+    payload = parse_sandbox_list(listed.stdout)
 
     candidates = lease_orphan_task_sandbox_candidates(payload, lookup_task, now=now)
     protected = sum(1 for row in payload if isinstance(row, Mapping)) - len(candidates)
@@ -1031,12 +1037,7 @@ def reconcile_leftover_task_sandboxes(
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
-    try:
-        payload = json.loads(listed.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
-    if not isinstance(payload, list):
-        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+    payload = parse_sandbox_list(listed.stdout)
 
     candidates = leftover_task_sandbox_candidates(
         payload, lookup_task, now=now, pid_is_alive=pid_is_alive
@@ -1257,12 +1258,7 @@ def reconcile_task_sandbox_lifecycle(
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "").strip()
         raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
-    try:
-        payload = json.loads(listed.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
-    if not isinstance(payload, list):
-        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+    payload = parse_sandbox_list(listed.stdout)
 
     candidates = lifecycle_orphan_task_sandbox_candidates(
         payload, lookup_task, trigger=clean_trigger, now=now

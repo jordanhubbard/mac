@@ -859,13 +859,24 @@ def test_repository_verification_route_preserves_unknown_and_unsupported_states(
         assert "quality_gate" in unsupported["missing"]
 
 
-def test_repository_verification_requires_authenticated_gateway_inventory(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "listing,reachable",
+    [
+        ("exit 1", False),
+        # OpenShell 0.1.x prints a page object, not a bare array.
+        ('echo \'{"next_page_token": "", "sandboxes": []}\'', True),
+        ("echo '[]'", True),
+    ],
+)
+def test_repository_verification_requires_authenticated_gateway_inventory(
+    monkeypatch, tmp_path, listing, reachable
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     contract = workspace / "project.yaml"
     contract.write_text("schema: mac.repository_contract.v1\n", encoding="utf-8")
     openshell = tmp_path / "openshell"
-    _executable(openshell, "#!/bin/sh\nexit 1\n")
+    _executable(openshell, "#!/bin/sh\n%s\n" % listing)
     policy = tmp_path / "policy.yaml"
     policy.write_text("version: 1\n", encoding="utf-8")
     monkeypatch.setenv("MAC_OPENSHELL_BIN", str(openshell))
@@ -899,9 +910,10 @@ def test_repository_verification_requires_authenticated_gateway_inventory(monkey
     )
 
     verification = availability["repository_verification"]
-    assert verification["status"] == "unavailable"
-    assert verification["checks"]["authenticated_gateway_inventory_succeeded"] is False
-    assert "quality_gate" in availability["missing"]
+    assert verification["checks"]["authenticated_gateway_inventory_succeeded"] is reachable
+    if not reachable:
+        assert verification["status"] == "unavailable"
+        assert "quality_gate" in availability["missing"]
 
 
 def test_required_task_project_runtime_context_blocks_when_markdown_contract_missing(
