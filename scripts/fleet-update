@@ -22,6 +22,9 @@ done
 # (see mac.openshell_image_pin); repinning needs the image and its CI identity.
 { [ -n "$RIMG" ] && [ -n "$RINPUT" ]; } || { [ -z "$RIMG" ] && [ -z "$RINPUT" ]; } || usage
 TARGET=$1 REQ=$2
+ALL_MODE=0
+SKIPPED_WORKERS=()
+[ "$TARGET" = all ] && ALL_MODE=1
 
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 SRC="${FLEET_UPDATE_SRC:-$MAC_HOME/src/mac}"
@@ -282,7 +285,7 @@ release_own_hold() {  # resume only a hold this run placed, and only if it is st
   fi
 }
 update_worker() {
-  local name=$1 target agent cur ident j reason="fleet-update $SHA12" ours=0 rc=0
+  local name=$1 target agent cur ident j task reason="fleet-update $SHA12" ours=0 rc=0
   host_entry "$name"; target=$H_TARGET agent=$H_AGENT
   [ "$H_ROLE" = worker ] || die "$name is the $H_ROLE in the inventory; update it with 'fleet-update hub'"
   # shellcheck disable=SC2016  # $HOME must expand on the remote host
@@ -321,7 +324,13 @@ update_worker() {
   log "$name: waiting up to ${DRAIN_TIMEOUT}s for the current task to clear"
   if ! wait_for "$DRAIN_TIMEOUT" agent_idle "$agent"; then
     [ "$ours" = 1 ] && release_own_hold "$agent" "$reason"
-    die "$name: still running $(agent_json "$agent" | jget current_task_id); nothing changed on the host"
+    task=$(agent_json "$agent" | jget current_task_id)
+    if [ "$ALL_MODE" = 1 ]; then
+      log "$name: SKIPPED (still running $task); nothing changed on the host"
+      SKIPPED_WORKERS+=("$name:$task")
+      return 0
+    fi
+    die "$name: still running $task; nothing changed on the host"
   fi
   log "$name: updating over ssh"
   rssh "$target" bash -s -- "$SHA" "$HERMES" "$RIMG" "$RINPUT" <<< "$REMOTE_UPDATE" || rc=$?
@@ -354,4 +363,13 @@ case "$TARGET" in
   all) update_hub; for w in $(worker_names); do update_worker "$w"; done ;;
   *) if [ "$H_ROLE" = hub ]; then update_hub; else update_worker "$TARGET"; fi ;;
 esac
+if [ "${#SKIPPED_WORKERS[@]}" -gt 0 ]; then
+  reruns=""
+  for skipped in "${SKIPPED_WORKERS[@]}"; do
+    name=${skipped%%:*}; task=${skipped#*:}
+    reruns="${reruns}${reruns:+; }$name ($task): fleet-update --yes $name $SHA"
+  done
+  log "INCOMPLETE: skipped workers: $reruns"
+  exit 3
+fi
 log "done"
