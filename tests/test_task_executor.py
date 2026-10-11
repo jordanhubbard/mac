@@ -278,7 +278,9 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "mac/test")
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
 
-    env_file, _toolchain_file = te._write_sandbox_runtime_files(workspace, "/sandbox/task")
+    env_file, _toolchain_file, _context_file = te._write_sandbox_runtime_files(
+        workspace, "/sandbox/task"
+    )
     argv = te._build_sandbox_create_argv(
         "sb",
         workspace,

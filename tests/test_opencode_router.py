@@ -152,7 +152,7 @@ def test_runtime_files_point_opencode_at_the_generated_config(monkeypatch, tmp_p
     monkeypatch.setenv("MAC_INFERENCE_TOKEN", "mac_inference_task")
     monkeypatch.setenv("MAC_CODING_MODELS", "gpt-5.6-sol")
 
-    env_file, _toolchain = es._write_sandbox_runtime_files(tmp_path, "/sandbox/ws")
+    env_file, _toolchain, _context = es._write_sandbox_runtime_files(tmp_path, "/sandbox/ws")
 
     exports = {}
     for line in env_file.read_text().splitlines():

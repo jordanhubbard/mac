@@ -17,6 +17,7 @@ import base64
 import hashlib
 import json
 import os
+import runpy
 import shlex
 import subprocess
 import sys
@@ -351,12 +352,53 @@ def test_build_whitelists_uploaded_paths_for_git(create_argv):
 def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
     workspace = tmp_path / "task-7"
     workspace.mkdir()
-    env_file, toolchain_file = te._write_sandbox_runtime_files(workspace, "/sandbox/task-7")
+    env_file, toolchain_file, context_file = te._write_sandbox_runtime_files(
+        workspace, "/sandbox/task-7"
+    )
     content = env_file.read_text(encoding="utf-8")
     assert "HOME=/tmp" in content
     assert "MAC_TASK_WORKSPACE=/sandbox/task-7" in content
     assert "MAC_TASK_FILE=/sandbox/task-7/task.json" in content
     assert toolchain_file.stat().st_mode & 0o777 == 0o700
+    assert context_file.stat().st_mode & 0o777 == 0o700
+
+
+def test_launch_keeps_runtime_files_for_retry_and_checks_workspace(create_argv):
+    inner = _inner(create_argv)
+    assert "rm -f ./.mac-openshell-env.sh" not in inner
+    assert "rm -f ./.mac-sandbox-toolchain.sh" not in inner
+    assert "sandbox_task_environment_missing" in inner
+    assert inner.index("sandbox_task_environment_missing") < inner.index("\nexec ")
+
+
+def test_sandbox_context_rewrites_host_paths_to_sandbox_paths(tmp_path, monkeypatch):
+    workspace = tmp_path / "task-7"
+    workspace.mkdir()
+    context_path = workspace / "repository-worktree.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "repository_worktree": "/host/tasks/task-7/repo",
+                "repository_source_path": "/host/source/mac",
+                "repository_declared_path": "/Users/operator/src/mac",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, _, context_file = te._write_sandbox_runtime_files(workspace, "/sandbox/task-7")
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(workspace))
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", "/sandbox/task-7/repo")
+
+    runpy.run_path(str(context_file), run_name="__main__")
+    runpy.run_path(str(context_file), run_name="__main__")
+
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context["repository_worktree"] == "/sandbox/task-7/repo"
+    assert context["repository_worktree_host_only"] == "/host/tasks/task-7/repo"
+    assert context["repository_source_path_host_only"] == "/host/source/mac"
+    assert context["repository_declared_path_host_only"] == "/Users/operator/src/mac"
+    assert "repository_source_path" not in context
+    assert "repository_declared_path" not in context
 
 
 def test_build_separator_appears_once_before_command(create_argv):
