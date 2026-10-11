@@ -135,12 +135,13 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev libffi-dev pkg-config openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends iproute2 iptables git procps ripgrep make cmake ninja-build build-essential libssl-dev libffi-dev pkg-config openjdk-17-jre-headless clang llvm lld \
     && apt-get install -y --no-install-recommends valgrind libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libncurses-dev libreadline-dev libevent-dev libuv1-dev libbullet-dev libglfw3-dev libglew-dev freeglut3-dev libutf8proc-dev libsqlite3-dev libcurl4-openssl-dev gforth \
     && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \
+    && rg --version \
     && pkg-config --exists libffi \
     && echo '#include <ffi.h>' | cc $(pkg-config --cflags libffi) -fsyntax-only -x c - \
     && pkg-config --exists SDL2_mixer SDL2_image SDL2_ttf sdl2 glfw3 glew libuv libevent sqlite3 libcurl \

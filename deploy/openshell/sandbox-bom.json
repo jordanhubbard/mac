@@ -38,6 +38,7 @@
     "procps",
     "python3",
     "qemu-system-riscv64",
+    "rg",
     "tar",
     "uv",
     "valgrind",
@@ -121,6 +122,7 @@
     "opencode",
     "procps",
     "python3",
+    "rg",
     "tar",
     "uv",
     "xz-utils"
@@ -155,6 +157,7 @@
     "pkg-config",
     "procps",
     "qemu-system-misc",
+    "ripgrep",
     "tar",
     "valgrind",
     "xz-utils"
