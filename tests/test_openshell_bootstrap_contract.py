@@ -52,6 +52,7 @@ def _run_api_retirement_function(
     tmp_path: Path,
     post_delete_inventories: list[str],
     *,
+    initial_sandboxes: list[dict] | None = None,
     hang_list: bool = False,
     retirement_timeout_seconds: int = 1,
     extra_env: dict[str, str] | None = None,
@@ -65,7 +66,9 @@ def _run_api_retirement_function(
     initial_inventory = tmp_path / "initial-inventory.json"
     initial_inventory.write_text(
         json.dumps(
-            [
+            initial_sandboxes
+            if initial_sandboxes is not None
+            else [
                 {
                     "name": "mac-task-deadbeef",
                     "phase": "Ready",
@@ -973,6 +976,62 @@ def test_api_readable_upgrade_retires_only_ready_owned_dead_pid_sandboxes(
     ):
         result = _run_api_retirement_planner(tmp_path, [gateway])
         assert result.returncode != 0
+
+
+def test_api_retirement_reports_all_retained_sandboxes_before_deleting(tmp_path):
+    def sandbox(name, keep):
+        return {
+            "name": name,
+            "phase": "Ready",
+            "labels": {
+                "mac.owner": "mac",
+                "mac.task.id": f"task-{name}",
+                "mac.kind": "task",
+                "mac.keep": keep,
+                "mac.pid": "99999999",
+            },
+        }
+
+    result, operations = _run_api_retirement_function(
+        tmp_path,
+        ["[]"],
+        initial_sandboxes=[
+            sandbox("mac-task-retained-one", "true"),
+            sandbox("mac-task-disposable", "false"),
+            sandbox("mac-task-retained-two", "cancelled"),
+        ],
+    )
+
+    assert result.returncode != 0
+    assert "retained managed sandbox mac-task-retained-one" in result.stderr
+    assert "retained managed sandbox mac-task-retained-two" in result.stderr
+    assert "task task-mac-task-retained-one, kind task, keep true, pid 99999999" in result.stderr
+    assert result.stderr.count("openshell sandbox exec --name <name>") == 1
+    assert operations == []
+
+
+def test_api_retirement_sanitizes_and_bounds_reported_labels(tmp_path):
+    retained = {
+        "name": "mac-task-retained",
+        "phase": "Ready",
+        "labels": {
+            "mac.owner": "mac",
+            "mac.task.id": "task-safe\nforged\x00" + "x" * 200,
+            "mac.kind": "task",
+            "mac.keep": "true\rforged",
+            "mac.pid": "99999999\tforged",
+            "environment": "SECRET_TOKEN=must-not-leak",
+        },
+    }
+
+    result = _run_api_retirement_planner(tmp_path, [retained])
+
+    assert result.returncode != 0
+    assert "\nforged" not in result.stderr
+    assert "\rforged" not in result.stderr
+    assert "\tforged" not in result.stderr
+    assert "SECRET_TOKEN" not in result.stderr
+    assert "x" * 161 not in result.stderr
 
 
 def test_api_retirement_waits_for_inventory_to_converge(tmp_path):
