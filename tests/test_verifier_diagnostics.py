@@ -125,6 +125,43 @@ def test_a_failing_gate_reports_what_the_gate_said(monkeypatch):
     assert "1 failed, 900 passed" in detail
 
 
+def test_failing_tests_survive_a_long_coverage_table(monkeypatch):
+    """The gate prints its coverage table after pytest's summary. A tail-only
+    excerpt kept the table and dropped the failing test names (2026-10-11,
+    task_b9696e32), so the failures are pulled out and reported first."""
+    import json as _json
+    import subprocess as _subprocess
+
+    from mac import executor_sandbox
+
+    coverage = "\n".join(
+        "src/mac/module_%03d.py   100   5   20   1  95.00%%   1-5" % i for i in range(400)
+    )
+    report = {
+        "returncode": 1,
+        "status": "fail",
+        "stdout": "....F....\n"
+        "[gw5] node down: Not properly terminated\n"
+        "FAILED tests/test_alpha.py::test_one - AssertionError: boom\n"
+        "FAILED tests/test_beta.py::test_two - TimeoutError\n"
+        "==== 2 failed, 8950 passed, 3 skipped in 700.00s ====\n" + coverage,
+        "stderr": "",
+    }
+
+    def fake_run(argv, **_kwargs):
+        return _subprocess.CompletedProcess(argv, 0, stdout=_json.dumps(report), stderr="")
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", fake_run)
+    detail = executor_sandbox._sandbox_verification_report_detail("s", "/sandbox/task")
+
+    assert detail.startswith("failures=")
+    assert "tests/test_alpha.py::test_one - AssertionError: boom" in detail
+    assert "tests/test_beta.py::test_two" in detail
+    assert "2 failed, 8950 passed" in detail
+    assert "[gw5] node down" in detail
+    assert "module_399.py" in detail  # the tail excerpt is still there
+
+
 def test_an_unreadable_report_leaves_the_original_failure_intact(monkeypatch):
     """Recovery runs on the failure path. A sandbox that has already died, or
     a truncated report, must not turn a reported gate failure into a crash --
