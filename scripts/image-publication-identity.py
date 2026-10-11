@@ -597,11 +597,11 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "/usr/local/bin/mac-verify-rust-contract 1.95.0; "
         'test "$(node --version)" = v22.23.1; '
         'test "$(pnpm --version)" = 11.13.1; '
-        # pnpm 11 ignores npmrc/npm_config_*, and OpenShell drops image ENV:
-        # prove the proxy limits reach pnpm with an empty environment.
-        'test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get network-concurrency)" = 2; '
-        'test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get minimum-release-age)" = 0; '
-        'test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp pnpm config get pm-on-fail)" = ignore; '
+        # OpenShell 0.1.2 preserves image ENV; prove those settings reach the
+        # unmodified pnpm entry point under the normal runtime environment.
+        'test "$(pnpm config get network-concurrency)" = 2; '
+        'test "$(pnpm config get minimum-release-age)" = 0; '
+        'test "$(pnpm config get pm-on-fail)" = ignore; '
         "gh --version | head -n1 | grep -F 'gh version 2.95.0'; "
         "opencode --version | grep -F '1.18.18'; "
         "clang --version; "

@@ -265,32 +265,24 @@ RUN install -d -m0755 /etc/uv \
     && env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" uv python install 3.12 2>&1 \
       | grep -F 'python-downloads = "never"' \
     && cd / && rm -rf "$smoke_home"
-# OpenShell 0.0.x does NOT pass image ENV to sandbox processes (verified
-# 2026-10-03: zero pnpm_config_*/npm_config_* inside a sandbox, login shell or
-# not, and the sandbox HOME is not writable for a per-user pnpm config.yaml).
-# 0.1.x does, but the image keeps no runtime ENV for these so both releases
-# behave the same. What reaches the sandbox is a file on
-# PATH: replace the pnpm/pnpx symlinks with wrappers that default the same
-# pnpm_config_* values (a caller's own value still wins) and exec the real
-# entry point. The runtime smoke proves this under `env -i`.
-RUN for tool in pnpm pnpx; do \
-      rm -f "/usr/local/bin/$tool" \
-      && printf '%s\n' \
-        '#!/bin/sh' \
-        ': "${pnpm_config_network_concurrency:=2}" "${pnpm_config_child_concurrency:=2}"' \
-        ': "${pnpm_config_fetch_retries:=6}" "${pnpm_config_fetch_retry_mintimeout:=20000}"' \
-        ': "${pnpm_config_fetch_retry_maxtimeout:=120000}" "${pnpm_config_fetch_timeout:=300000}"' \
-        ': "${pnpm_config_minimum_release_age:=0}" "${pnpm_config_pm_on_fail:=ignore}"' \
-        'export pnpm_config_network_concurrency pnpm_config_child_concurrency pnpm_config_fetch_retries' \
-        'export pnpm_config_fetch_retry_mintimeout pnpm_config_fetch_retry_maxtimeout pnpm_config_fetch_timeout' \
-        'export pnpm_config_minimum_release_age pnpm_config_pm_on_fail' \
-        "exec /usr/local/lib/node_modules/pnpm/bin/$tool.mjs \"\$@\"" \
-        > "/usr/local/bin/$tool" \
-      && chmod 0755 "/usr/local/bin/$tool" || exit 1; \
-    done \
-    && smoke_home=$(mktemp -d -p /root) \
-    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get network-concurrency)" = 2 \
-    && test "$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get minimum-release-age)" = 0 \
+# OpenShell 0.1.2 passes image ENV to sandbox processes. Keep pnpm itself
+# unmodified and set only the same eight constrained-egress defaults that the
+# former wrappers supplied. The smoke runs as the sandbox user with the image
+# environment intact, matching how OpenShell starts a process.
+ENV pnpm_config_network_concurrency=2 \
+    pnpm_config_child_concurrency=2 \
+    pnpm_config_fetch_retries=6 \
+    pnpm_config_fetch_retry_mintimeout=20000 \
+    pnpm_config_fetch_retry_maxtimeout=120000 \
+    pnpm_config_fetch_timeout=300000 \
+    pnpm_config_minimum_release_age=0 \
+    pnpm_config_pm_on_fail=ignore
+RUN ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs /usr/local/bin/pnpm \
+    && ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.cjs /usr/local/bin/pnpx \
+    && smoke_home=$(mktemp -d -p /tmp) \
+    && chown sandbox:sandbox "$smoke_home" \
+    && test "$(runuser -u sandbox -- env HOME="$smoke_home" pnpm config get network-concurrency)" = 2 \
+    && test "$(runuser -u sandbox -- env HOME="$smoke_home" pnpm config get minimum-release-age)" = 0 \
     && rm -rf "$smoke_home"
 
 # Install the mac runtime into the in-image venv. The vendored Hermes lives at

@@ -1541,10 +1541,10 @@ validate_openshell_runtime_image() {
       --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
-      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v opencode; opencode --version | grep -F 1.18.18; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; test "$(pnpm config get network-concurrency)" = 2; test "$(pnpm config get minimum-release-age)" = 0; command -v gh; gh --version | head -1; command -v opencode; opencode --version | grep -F 1.18.18; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: Bash >=5.2 plus gh/opencode/buildx visible through OpenShell"
+    log "runtime image smoke: pnpm limits plus Bash >=5.2 and gh/opencode/buildx visible through OpenShell"
   else
     rc=$?
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
