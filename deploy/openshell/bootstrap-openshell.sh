@@ -794,17 +794,43 @@ value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 if not isinstance(value, list):
     raise SystemExit("OpenShell sandbox inventory is not a list")
 plan = []
+blockers = []
+retained_task = False
+
+
+def safe(value):
+    return "".join(character for character in str(value) if character.isprintable())[:160]
+
+
+def describe(name, labels):
+    details = []
+    for key, title in (
+        ("mac.task.id", "task"),
+        ("mac.kind", "kind"),
+        ("mac.keep", "keep"),
+        ("mac.pid", "pid"),
+    ):
+        if key in labels:
+            details.append(f"{title} {safe(labels[key])}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return f"{safe(name)}{suffix}"
+
+
 for item in value:
     if not isinstance(item, dict):
         raise SystemExit("OpenShell sandbox inventory contains a non-object")
     name = item.get("name")
     labels = item.get("labels") or {}
     if not isinstance(name, str) or not re.fullmatch(r"mac-[A-Za-z0-9._-]+", name):
-        raise SystemExit("non-MAC OpenShell sandbox blocks the gateway upgrade")
+        blockers.append(f"non-MAC OpenShell sandbox {safe(name)} blocks the gateway upgrade")
+        continue
     if not isinstance(labels, dict):
-        raise SystemExit("OpenShell sandbox labels are malformed")
+        blockers.append(f"OpenShell sandbox {safe(name)} labels are malformed")
+        continue
+    sandbox = describe(name, labels)
     if str(item.get("phase") or "").strip().lower() != "ready":
-        raise SystemExit("non-ready OpenShell sandbox blocks the gateway upgrade")
+        blockers.append(f"non-ready OpenShell sandbox {sandbox} blocks the gateway upgrade")
+        continue
     if labels.get("mac.owner") == "mac":
         kind = str(labels.get("mac.kind") or "").strip()
         disposable_patterns = {
@@ -818,9 +844,15 @@ for item in value:
         }
         pattern = disposable_patterns.get(kind)
         if pattern is None or re.fullmatch(pattern, name) is None:
-            raise SystemExit("managed sandbox kind or identity is not disposable")
+            blockers.append(
+                f"managed sandbox {sandbox} kind or identity is not disposable and blocks "
+                "the gateway upgrade"
+            )
+            continue
         if str(labels.get("mac.keep") or "").strip().lower() != "false":
-            raise SystemExit("retained managed sandbox blocks the gateway upgrade")
+            blockers.append(f"retained managed sandbox {sandbox} blocks the gateway upgrade")
+            retained_task = retained_task or kind == "task"
+            continue
         raw_pid = str(labels.get("mac.pid") or "").strip()
         try:
             pid = int(raw_pid)
@@ -830,15 +862,32 @@ for item in value:
         except ProcessLookupError:
             pass
         except ValueError:
-            raise SystemExit("invalid managed sandbox creator PID blocks the gateway upgrade")
+            blockers.append(
+                f"invalid managed sandbox creator PID for {sandbox} blocks the gateway upgrade"
+            )
+            continue
         except PermissionError:
-            raise SystemExit("live managed sandbox creator blocks the gateway upgrade")
+            blockers.append(f"live managed sandbox creator blocks the gateway upgrade: {sandbox}")
+            continue
         else:
-            raise SystemExit("live managed sandbox creator blocks the gateway upgrade")
+            blockers.append(f"live managed sandbox creator blocks the gateway upgrade: {sandbox}")
+            continue
         action = "disposable"
     else:
-        raise SystemExit("unowned or retained OpenShell sandbox blocks the gateway upgrade")
+        blockers.append(f"unowned or retained OpenShell sandbox {sandbox} blocks the gateway upgrade")
+        continue
     plan.append((action, name))
+if blockers:
+    for blocker in blockers:
+        print(blocker, file=sys.stderr)
+    if retained_task:
+        print(
+            "Hint: inspect retained task work with `openshell sandbox exec --name <name> -- "
+            "git -C /sandbox/mac-clone status`, save anything wanted, then "
+            "`openshell sandbox " "delete <name>` and re-run.",
+            file=sys.stderr,
+        )
+    raise SystemExit(1)
 for action, name in sorted(plan):
     print("%s\t%s" % (action, name))
 PY
