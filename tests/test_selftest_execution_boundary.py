@@ -7,7 +7,7 @@ appended a problem, so the check reported ``true``.
 
 That is not hypothetical. A sandbox A/B experiment left jordanh-worker6 and
 jordanh-worker7 with ``MAC_OPENSHELL_SANDBOX=0`` and
-``MAC_OPENSHELL_REQUIRED=0`` but without ``MAC_ALLOW_UNSANDBOXED_YOLO``, so
+``MAC_OPENSHELL_REQUIRED=0``, so
 the executor refused to launch anything while the self-test reported the
 hosts healthy, the hub accepted their registration, and every task dispatched
 to them died at first execution.
@@ -143,7 +143,6 @@ def test_the_worker6_configuration_fails_the_self_test(tmp_path, monkeypatch):
         {
             "MAC_OPENSHELL_SANDBOX": "0",
             "MAC_OPENSHELL_REQUIRED": "0",
-            "MAC_ALLOW_UNSANDBOXED_YOLO": "0",
         },
     )
 
@@ -156,7 +155,6 @@ def test_the_worker6_configuration_fails_the_self_test(tmp_path, monkeypatch):
 
 
 def test_requiring_openshell_without_the_sandbox_fails(tmp_path, monkeypatch):
-    """Unset YOLO defaults to 0 exactly when OpenShell is required."""
     exit_code, report = _run_self_test(
         tmp_path,
         monkeypatch,
@@ -165,24 +163,22 @@ def test_requiring_openshell_without_the_sandbox_fails(tmp_path, monkeypatch):
 
     assert report["checks"]["openshell_executor_config"] is False
     assert exit_code == 1
-    assert any("MAC_OPENSHELL_REQUIRED=1" in p for p in _boundary_problems(report))
+    assert _boundary_problems(report)
 
 
-def test_explicitly_allowing_unsandboxed_execution_passes(tmp_path, monkeypatch):
-    """An operator who accepts the risk is not blocked -- the worker can run."""
+def test_unsandboxed_execution_cannot_be_enabled_by_environment(tmp_path, monkeypatch):
     exit_code, report = _run_self_test(
         tmp_path,
         monkeypatch,
         {
             "MAC_OPENSHELL_SANDBOX": "0",
             "MAC_OPENSHELL_REQUIRED": "0",
-            "MAC_ALLOW_UNSANDBOXED_YOLO": "1",
         },
     )
 
-    assert report["checks"]["openshell_executor_config"] is True
-    assert _boundary_problems(report) == []
-    assert exit_code == 0
+    assert report["checks"]["openshell_executor_config"] is False
+    assert _boundary_problems(report)
+    assert exit_code == 1
 
 
 def test_an_enabled_sandbox_still_passes(tmp_path, monkeypatch):
@@ -199,15 +195,12 @@ def test_an_enabled_sandbox_still_passes(tmp_path, monkeypatch):
     assert exit_code == 0
 
 
-def test_an_undeterminable_boundary_is_not_guessed(tmp_path, monkeypatch):
-    """With neither variable set, the executor consults an identity allowlist
-    the self-test cannot see. Guessing would block workers that can in fact
-    run, so the check stays silent rather than inventing a problem."""
+def test_an_unconfigured_boundary_fails_closed(tmp_path, monkeypatch):
     exit_code, report = _run_self_test(tmp_path, monkeypatch, {"MAC_OPENSHELL_SANDBOX": "0"})
 
-    assert report["checks"]["openshell_executor_config"] is True
-    assert _boundary_problems(report) == []
-    assert exit_code == 0
+    assert report["checks"]["openshell_executor_config"] is False
+    assert _boundary_problems(report)
+    assert exit_code == 1
 
 
 def test_the_check_matches_the_executors_own_refusal(tmp_path, monkeypatch):
@@ -217,25 +210,10 @@ def test_the_check_matches_the_executors_own_refusal(tmp_path, monkeypatch):
     no `mac` package importable), so the two can silently diverge. This pins
     them together on every combination the self-test claims to decide.
     """
-    from mac.openshell_runtime import truthy
-
     for required in ("0", "1"):
-        for yolo in (None, "0", "1"):
-            sandbox_env = {"MAC_OPENSHELL_SANDBOX": "0", "MAC_OPENSHELL_REQUIRED": required}
-            if yolo is not None:
-                sandbox_env["MAC_ALLOW_UNSANDBOXED_YOLO"] = yolo
-
-            # What executor_sandbox._unsandboxed_agent_argv would decide.
-            default_unsandboxed = "0" if truthy(required) else "1"
-            executor_allows = truthy(yolo or default_unsandboxed)
-
-            _, report = _run_self_test(tmp_path / f"{required}-{yolo}", monkeypatch, sandbox_env)
-            self_test_allows = report["checks"]["openshell_executor_config"]
-
-            assert self_test_allows is executor_allows, (
-                f"MAC_OPENSHELL_REQUIRED={required} MAC_ALLOW_UNSANDBOXED_YOLO={yolo}: "
-                f"self-test says {self_test_allows}, executor says {executor_allows}"
-            )
+        sandbox_env = {"MAC_OPENSHELL_SANDBOX": "0", "MAC_OPENSHELL_REQUIRED": required}
+        _, report = _run_self_test(tmp_path / required, monkeypatch, sandbox_env)
+        assert report["checks"]["openshell_executor_config"] is False
 
 
 def test_disagreeing_sandbox_image_pins_fail_the_self_test(tmp_path, monkeypatch):

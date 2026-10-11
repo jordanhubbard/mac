@@ -487,10 +487,6 @@ def _write_agent_command_bundle(
 #                                 inside the sandbox
 #   MAC_OPENSHELL_ENV_PASSTHROUGH comma list of env names copied through a
 #                                 private mode-0600 workspace file
-#   MAC_ALLOW_UNSANDBOXED_YOLO    truthy (default "1") -> allow --yolo with no
-#                                 sandbox (current fleet, logs a warning). Set
-#                                 "0" to fail closed: refuse unguarded YOLO so
-#                                 --yolo is only ever used inside the sandbox.
 # ---------------------------------------------------------------------------
 
 # Forward the env the agent needs to reach the hub + model gateway from inside
@@ -5403,50 +5399,11 @@ def _prepare_host_break_glass_environment(
     )
 
 
-def _unsandboxed_agent_argv(
-    agent_argv: List[str],
-    *,
-    break_glass_authorization: Optional[Mapping[str, Any]] = None,
-) -> List[str]:
-    """Gate an already-built agent argv for an UNSANDBOXED run.
-
-    The agent runs with its own approval bypass (Hermes ``--yolo`` or a coding
-    agent's ``--dangerously-*``); running that unsandboxed is unguarded,
-    permitted ONLY via ``MAC_ALLOW_UNSANDBOXED_YOLO`` (default "1" to preserve
-    the current live fleet; "0" fails closed). Raises when fail-closed. The
-    sandboxed path does not go through here — see :func:`_invoke_agent`.
-    """
-    if break_glass_authorization is not None:
-        _force_child_yolo_env()
-        authorization_id = str(break_glass_authorization.get("id") or "unknown")
-        sys.stderr.write(
-            "[executor] BREAK-GLASS: launching exact lease directly on the host "
-            "under authorization %s; OpenShell bypass is task-scoped.\n" % authorization_id
-        )
-        emit_telemetry(
-            "break_glass_host_execution",
-            level="warning",
-            authorization_id=authorization_id,
-            execution_boundary="host",
-            authorized_by=break_glass_authorization.get("authorized_by"),
-        )
-        return agent_argv
-    default_unsandboxed = "0" if _openshell_required_for_local_agent() else "1"
-    if _truthy(env_str("MAC_ALLOW_UNSANDBOXED_YOLO") or default_unsandboxed):
-        _force_child_yolo_env()
-        sys.stderr.write(
-            "[executor] WARNING: launching an approval-bypassed agent WITHOUT an "
-            "OpenShell sandbox (MAC_OPENSHELL_SANDBOX unset) — the agent's own "
-            "approval gate is disabled and there is no sandbox confinement. Enable "
-            "MAC_OPENSHELL_SANDBOX=1 (with a policy), or set "
-            "MAC_ALLOW_UNSANDBOXED_YOLO=0 to fail closed.\n"
-        )
-        return agent_argv
+def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
+    """Refuse an already-built agent argv when OpenShell is unavailable."""
     raise RuntimeError(
         "refusing to launch an approval-bypassed agent without an OpenShell sandbox: "
-        "MAC_OPENSHELL_SANDBOX is unset and MAC_ALLOW_UNSANDBOXED_YOLO is disabled. "
-        "Set MAC_OPENSHELL_SANDBOX=1 with a policy to enforce silently, or "
-        "MAC_ALLOW_UNSANDBOXED_YOLO=1 to explicitly allow unsandboxed YOLO."
+        "MAC_OPENSHELL_SANDBOX is unset or unusable; this worker cannot execute tasks"
     )
 
 
@@ -6115,7 +6072,7 @@ def _invoke_agent(
       * sandbox enabled  -> full OpenShell lifecycle (upload workspace, run the
         agent confined, download results, delete). Fails closed if no policy
         resolves or the kernel can't enforce Landlock.
-      * sandbox disabled -> direct run, gated by MAC_ALLOW_UNSANDBOXED_YOLO.
+      * sandbox disabled -> refuse the task.
     The agent argv is a detected coding-agent CLI when one is available + authed;
     otherwise execution fails closed (see :func:`_agent_argv`).
     Returns the runner's result (carries .returncode)."""
@@ -6126,44 +6083,14 @@ def _invoke_agent(
     # the production supervisor (which runs this whole process inside a sandbox,
     # with MAC_OPENSHELL_SANDBOX off but the agent required). Coding-agent
     # enablement is gated on `confined`, not `wrap`.
-    break_glass_authorization = _validated_host_break_glass_authorization(opts.get("task"))
-    if break_glass_authorization is not None:
-        _prepare_host_break_glass_environment(break_glass_authorization)
-    wrap = _openshell_enabled() and break_glass_authorization is None
-    approved_macos_host = (
-        sys.platform == "darwin"
-        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM") == "darwin"
-        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE")
-        == REPORT_REPOSITORY_MACOS_HOST_POSTURE
-        and all(
-            os.environ.get(name)
-            for name in (
-                "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
-                "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
-                "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH",
-                "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256",
-                "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH",
-                "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
-                "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
-                "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
-                "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256",
-            )
-        )
-    )
-    if read_only_repository and (
-        break_glass_authorization is not None or (not wrap and not approved_macos_host)
-    ):
+    wrap = _openshell_enabled()
+    confined = wrap or _openshell_required_for_local_agent()
+    if read_only_repository and not wrap:
         raise RuntimeError(
             "read-only repository reports require per-task OpenShell confinement; "
-            "direct, supervisor-only, and host break-glass execution are forbidden"
+            "direct and supervisor-only execution are forbidden"
         )
     expected_git_control_digest = ""
-    if read_only_repository and approved_macos_host and not wrap:
-        _assert_approved_read_only_report_runtime(runtime_image_ref="")
-        expected_git_control_digest = _capture_read_only_report_git_control(
-            opts.get("task"), workspace
-        )
-    confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
     route: Dict[str, Any] = {}
     resume = str(opts.get("resume_session") or "")
     route_kwargs: Dict[str, Any] = {}
@@ -6206,23 +6133,15 @@ def _invoke_agent(
                 _opts_with_route(opts, route),
             )
             return result
+        if not confined:
+            _unsandboxed_agent_argv(bundle.argv())
         result = runner(
-            _unsandboxed_agent_argv(
-                bundle.argv(),
-                break_glass_authorization=break_glass_authorization,
-            ),
+            bundle.argv(),
             workspace,
             audit_id,
             {
                 **_opts_with_route(opts, route),
-                "execution_boundary": (
-                    "host" if break_glass_authorization is not None else "unsandboxed"
-                ),
-                "break_glass_authorization_id": (
-                    break_glass_authorization.get("id")
-                    if break_glass_authorization is not None
-                    else None
-                ),
+                "execution_boundary": "sandbox",
             },
         )
         if expected_git_control_digest:
@@ -6989,7 +6908,6 @@ def _run_executor(
 ) -> int:
     """Inner executor body extracted so the relay scope wraps the whole run."""
     started = time.monotonic()
-    break_glass_authorization = _validated_host_break_glass_authorization(task)
     # Planning-phase flag — determined after the scope estimate below.
     _is_planning = False
     _wanted_planning = False
@@ -7007,11 +6925,8 @@ def _run_executor(
         task_id=task_id,
         kind="task",
         recalled_lessons=len(lessons),
-        sandboxed=_openshell_enabled() and break_glass_authorization is None,
-        execution_boundary=("host" if break_glass_authorization is not None else "sandbox"),
-        break_glass_authorization_id=(
-            break_glass_authorization.get("id") if break_glass_authorization is not None else None
-        ),
+        sandboxed=_openshell_enabled(),
+        execution_boundary="sandbox",
     )
 
     # Scope-estimate preflight (scope-01): on the FIRST attempt of a task,
@@ -7095,9 +7010,6 @@ def _run_executor(
         if _wanted_planning:
             prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
 
-    if break_glass_authorization is not None:
-        prompt += _break_glass_prompt(break_glass_authorization)
-
     _agent_started_at = utcnow()
     _task_opts = {"execution_kind": "task", "timeout": _agent_timeout(), "task": task}
     result = _invoke_agent(
@@ -7108,7 +7020,7 @@ def _run_executor(
         _task_opts,
     )
     _announce_skips(str(task_id or ""))
-    if not _is_planning and break_glass_authorization is None:
+    if not _is_planning:
         result = _fail_over_coding_agent(
             runner,
             prompt,
@@ -7121,7 +7033,6 @@ def _run_executor(
     _task_metadata = task.get("metadata") if isinstance(task, dict) else None
     if (
         not _is_planning
-        and break_glass_authorization is None
         and not metadata_declares_read_only_report_repository(_task_metadata)
         and not metadata_declares_report_deliverable(_task_metadata)
     ):

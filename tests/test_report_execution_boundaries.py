@@ -91,9 +91,8 @@ def _inspection(tmp_path):
     return repo, git
 
 
-@pytest.mark.parametrize("mutation", ["", "config", "missing"])
-def test_native_hermes_dispatch_captures_controls_before_agent(
-    report_boundary_env, tmp_path, monkeypatch, mutation
+def test_native_hermes_dispatch_refuses_host_report_agent(
+    report_boundary_env, tmp_path, monkeypatch
 ):
     executor, _ = report_boundary_env
     monkeypatch.setattr(worker.sys, "platform", "darwin")
@@ -136,36 +135,11 @@ def test_native_hermes_dispatch_captures_controls_before_agent(
 
     def run(argv, *args):
         seen.append(True)
-        if mutation == "config":
-            with (repo / ".git" / "config").open("a") as f:
-                f.write("\n[core]\nfsmonitor = malicious-monitor\n")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    if mutation == "missing":
-        task["metadata"]["runtime"].pop("repository_worktree")
-        with pytest.raises(RuntimeError, match="task-owned worktree"):
-            sandbox._invoke_agent(run, "inspect", tmp_path, task["id"], {"task": task})
-        assert not seen
-        return
-    result = sandbox._invoke_agent(run, "inspect", tmp_path, task["id"], {"task": task})
-    assert seen and result.mac_read_only_git_control_digest
-    if mutation:
-        monkeypatch.setattr(
-            sandbox,
-            "_git_for_read_only_verifier",
-            lambda *a: pytest.fail("post-agent Git ran before raw control check"),
-        )
-        assert (
-            sandbox._read_only_report_repository_violation(
-                task, result.mac_read_only_git_control_digest
-            )
-            == "read-only repository report Git control metadata changed"
-        )
-    else:
-        reason = sandbox._read_only_report_repository_violation(
-            task, result.mac_read_only_git_control_digest
-        )
-        assert reason == ""
+    with pytest.raises(RuntimeError, match="per-task OpenShell confinement"):
+        sandbox._invoke_agent(run, "inspect", tmp_path, task["id"], {"task": task})
+    assert not seen
 
 
 @pytest.mark.parametrize("forged_rc", [0, 1, None])

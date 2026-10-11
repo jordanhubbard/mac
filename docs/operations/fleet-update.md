@@ -128,13 +128,24 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
 8. Poll `/health`, then require `/startup-attestation`'s `source_commit` to equal
    the target. An empty `source_commit` is a failure, not a pass. `mac-service` sets it from the `HEAD` of `~/.mac/src/mac`.
 9. Run `python -m mac.node_files --source ~/.mac/src/mac --role hub` (see
-   [Managed files](#managed-files)). A failure is logged, never fatal.
+    [Managed files](#managed-files)). The hub role owns only `mac-service`; the
+    transition removes previously managed task-worker wrappers. A failure is
+    logged, never fatal.
 10. Run `python -m mac.fleet_context_service --source ~/.mac/src/mac`. It
     installs or repairs the LaunchAgent `com.mac.fleet-context`, which refreshes
     the live fleet block in this agent's runtime context every 3 minutes, and
     runs one refresh. Its JSON result is logged; a failure never fails the update.
-11. Run `launchctl kickstart -k gui/<uid>/com.mac.agent`. With `--hermes`, also
-    kickstart `gui/<uid>/ai.hermes.gateway`.
+11. Run `launchctl bootout gui/<uid>/com.mac.agent`; an already absent service
+    is a successful no-op. Decommission the inventory's hub agent record with
+    `mac agent delete <hub-agent-id> --actor fleet-update`, which is idempotent
+    and prevents dispatch even without a hold. With `--hermes`, kickstart
+    `gui/<uid>/ai.hermes.gateway`.
+
+Hermes, the fleet-context LaunchAgent, heartbeat capability reporting, and the
+hub review verifier are control-plane or dedicated LaunchAgent services; none
+uses `com.mac.agent`. The historical hub agent row is not needed by those
+services and should be decommissioned with `mac agent delete <hub-agent-id>`;
+operational docs must not use `mac agent show <hub-agent-id>` as a health check.
 
 `~/.mac/bin/mac-service` is a managed file of the hub role, installed from
 `deploy/bin/mac-service`: it runs `~/.mac/venv/bin/python -m mac.hub_serve`

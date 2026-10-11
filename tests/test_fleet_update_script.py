@@ -711,9 +711,9 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
     backup = order[1]
     assert backup.endswith("dsn=postgresql://stub/mac") and "--dsn" not in backup
     assert "postgresql://stub/mac" not in result.stdout
-    assert any(
-        c.startswith("launchctl kickstart -k gui/") and c.endswith("/com.mac.agent") for c in calls
-    )
+    assert any(c.startswith("launchctl bootout gui/") and c.endswith("/com.mac.agent") for c in calls)
+    assert not any("kickstart" in c and c.endswith("/com.mac.agent") for c in calls)
+    assert any("agent delete agent_rocky --actor fleet-update" in c for c in calls)
     assert any(c.endswith("/ai.hermes.gateway") for c in calls)
     soul = next(c for c in calls if "mac.soul_install" in c)
     assert soul.endswith("--hermes-home %s/.hermes" % hub.parent)
@@ -747,14 +747,7 @@ def test_hub_installs_its_managed_files_including_mac_service(fleet, hub) -> Non
     assert (hub / "bin" / "mac-service").stat().st_mode & 0o777 == 0o755
     assert "hub: managed files:" in result.stdout
     state = json.loads((hub / "managed-files.json").read_text())
-    assert set(state["files"]) == {
-        "bin/mac-agent-service",
-        "bin/mac-agent-startup-self-test",
-        "bin/mac-task-executor",
-        "bin/mac-task-executor.py",
-        "bin/mac-crash-observer",
-        "bin/mac-service",
-    }
+    assert set(state["files"]) == {"bin/mac-service"}
 
 
 def test_a_hub_reporting_no_source_identity_is_not_attested(fleet, hub) -> None:

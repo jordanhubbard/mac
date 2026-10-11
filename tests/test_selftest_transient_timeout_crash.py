@@ -56,6 +56,9 @@ def _run_self_test_with_probe_error(tmp_path, monkeypatch, probe_error):
     (mac_home / "bin").mkdir(parents=True, exist_ok=True)
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
     report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
+    openshell_bin = mac_home / "bin" / "openshell"
+    openshell_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    openshell_bin.chmod(0o755)
 
     # A fully-configured pure worker: identity present, no chat gateway, and both mandatory
     # shared services are required and have URLs — the only failure comes from the
@@ -74,6 +77,8 @@ def _run_self_test_with_probe_error(tmp_path, monkeypatch, probe_error):
         # Exercise the hub heartbeat path too; it must never change the exit code.
         "MAC_HUB_URL": "http://hub.local:8789",
         "MAC_WORKER_TOKEN": "token-1",
+        "MAC_OPENSHELL_SANDBOX": "1",
+        "MAC_OPENSHELL_BIN": str(openshell_bin),
         "MAC_AGENT_STARTUP_SELF_TEST_REPORT": str(report_path),
     }
 

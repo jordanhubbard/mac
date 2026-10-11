@@ -63,7 +63,6 @@ _OPENSHELL_ENVS = [
     "MAC_TASK_REPO_WORKTREE",
     "MAC_TASK_REPO_ACCESS_MODE",
     "MAC_HERMES_PYTHON",
-    "MAC_ALLOW_UNSANDBOXED_YOLO",
     "HERMES_YOLO_MODE",
 ]
 
@@ -225,20 +224,17 @@ def test_enabled_default_off():
 
 
 # ---------------------------------------------------------------------------
-# default OFF -> the agent runs directly, unwrapped (critical safety property)
+# default OFF -> the agent refuses to run
 # ---------------------------------------------------------------------------
 
 
-def test_invoke_unsandboxed_uses_private_prompt_wrapper(tmp_path):
+def test_invoke_unsandboxed_refuses(tmp_path):
     r = FakeRunner()
     workspace = tmp_path / "t"
     workspace.mkdir()
-    te._invoke_agent(r, "do the thing", workspace, "tid", {})
-    assert len(r.calls) == 1
-    argv = r.calls[0][0]
-    assert "openshell" not in argv[0] and argv[0].endswith("python")
-    assert "mac.agent_command" in argv
-    assert "do the thing" not in argv
+    with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
+        te._invoke_agent(r, "do the thing", workspace, "tid", {})
+    assert r.calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +436,7 @@ def test_env_passthrough_only_set_vars(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_ENV_PASSTHROUGH", "FOO,BAR,FOO")
     monkeypatch.setenv("FOO", "fooval")
     monkeypatch.delenv("BAR", raising=False)
+    monkeypatch.delenv("MAC_INFERENCE_TOKEN", raising=False)
     values = te._openshell_environment()
     assert values == {"FOO": "fooval"}
 
@@ -970,27 +967,25 @@ def test_merge_fails_closed_on_escaping_symlink_above_repository_root(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_unsandboxed_allowed_by_default(monkeypatch):
+def test_unsandboxed_refused_by_default(monkeypatch):
     agent_argv = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
-    argv = te._unsandboxed_agent_argv(agent_argv)
-    assert argv == agent_argv
+    with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
+        te._unsandboxed_agent_argv(agent_argv)
 
 
-def test_unsandboxed_explicit_allow(monkeypatch):
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+def test_removed_unsandboxed_env_cannot_enable_host_execution(monkeypatch):
     agent_argv = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
-    assert te._unsandboxed_agent_argv(agent_argv) == agent_argv
+    with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
+        te._unsandboxed_agent_argv(agent_argv)
 
 
 def test_unsandboxed_fail_closed_raises(monkeypatch):
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
         te._unsandboxed_agent_argv(["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"])
 
 
 def test_invoke_unsandboxed_fail_closed_raises(monkeypatch, tmp_path):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
         te._invoke_agent(FakeRunner(), "do it", tmp_path / "t", "tid", {})
 
@@ -998,7 +993,6 @@ def test_invoke_unsandboxed_fail_closed_raises(monkeypatch, tmp_path):
 def test_invoke_sandbox_overrides_failclosed_hatch(monkeypatch, tmp_path):
     # sandbox on -> safe regardless of the unsandboxed hatch (no raise)
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     r = FakeRunner()
     te._invoke_agent(r, "do it", tmp_path / "t", "tid", {})
@@ -1524,12 +1518,11 @@ def test_read_only_report_and_reviewer_reject_direct_execution(monkeypatch, tmp_
         )
 
 
-def test_controller_approved_macos_host_report_may_run_without_openshell(
+def test_controller_approved_macos_host_report_still_requires_openshell(
     monkeypatch, tmp_path, report_boundary_env
 ):
     executor, _policy = report_boundary_env
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
     monkeypatch.setattr(te.sys, "platform", "darwin")
     attestation = worker._read_only_report_executor_attestation([str(executor)])
     assert attestation is not None
@@ -1539,17 +1532,12 @@ def test_controller_approved_macos_host_report_may_run_without_openshell(
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     runner = FakeRunner()
 
-    result = te._invoke_agent(runner, "inspect", workspace, "tid", {"task": task})
-
-    assert runner.calls
-    assert result.mac_read_only_git_control_digest
-    assert (
-        te._read_only_report_repository_violation(task, result.mac_read_only_git_control_digest)
-        == ""
-    )
+    with pytest.raises(RuntimeError, match="per-task OpenShell confinement"):
+        te._invoke_agent(runner, "inspect", workspace, "tid", {"task": task})
+    assert runner.calls == []
 
 
-def test_read_only_report_rejects_host_break_glass(monkeypatch, tmp_path):
+def test_read_only_report_ignores_host_break_glass_and_uses_openshell(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setattr(
         te,
@@ -1557,14 +1545,16 @@ def test_read_only_report_rejects_host_break_glass(monkeypatch, tmp_path):
         lambda _task: {"id": "auth_x"},
     )
     monkeypatch.setattr(te, "_prepare_host_break_glass_environment", lambda _auth: None)
-    with pytest.raises(RuntimeError, match="host break-glass execution are forbidden"):
-        te._invoke_agent(
-            FakeRunner(),
-            "inspect",
-            tmp_path / "task",
-            "tid",
-            {"task": _read_only_report_task()},
-        )
+    sentinel = object()
+    monkeypatch.setattr(te, "_run_sandboxed", lambda *_args, **_kwargs: sentinel)
+    result = te._invoke_agent(
+        FakeRunner(),
+        "inspect",
+        tmp_path / "task",
+        "tid",
+        {"task": _read_only_report_task()},
+    )
+    assert result is sentinel
 
 
 # ---------------------------------------------------------------------------
@@ -1719,15 +1709,16 @@ def test_sets_child_yolo_env_when_sandboxed(monkeypatch, tmp_path):
     assert os.environ.get("HERMES_YOLO_MODE") == "1"
 
 
-def test_sets_child_yolo_env_when_unsandboxed_allowed(monkeypatch, tmp_path):
+def test_unsandboxed_refusal_does_not_set_yolo_env(monkeypatch, tmp_path):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    te._invoke_agent(FakeRunner(), "x", tmp_path / "t", "tid", {})
-    assert os.environ.get("HERMES_YOLO_MODE") == "1"
+    monkeypatch.delenv("HERMES_YOLO_MODE", raising=False)
+    with pytest.raises(RuntimeError):
+        te._invoke_agent(FakeRunner(), "x", tmp_path / "t", "tid", {})
+    assert os.environ.get("HERMES_YOLO_MODE") != "1"
 
 
 def test_failclosed_does_not_set_yolo_env(monkeypatch, tmp_path):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError):
         te._invoke_agent(FakeRunner(), "x", tmp_path / "t", "tid", {})
     assert os.environ.get("HERMES_YOLO_MODE") != "1"

@@ -298,19 +298,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: allow unsandboxed yolo.",
-    "family": "core",
-    "name": "MAC_ALLOW_UNSANDBOXED_YOLO",
-    "retired": false,
-    "sources": [
-      "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/executor_sandbox.py",
-      "src/mac/openshell_supervisor.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Api Auth setting: api allow open.",
     "family": "api-auth",
     "name": "MAC_API_ALLOW_OPEN",
@@ -4060,7 +4047,6 @@
     "name": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -4073,7 +4059,6 @@
     "name": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
     ],

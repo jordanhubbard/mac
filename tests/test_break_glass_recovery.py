@@ -137,7 +137,7 @@ def _claimed_projection(task_id: str, agent_id: str, lease_id: str):
     }
 
 
-def test_executor_uses_direct_host_path_only_for_valid_claimed_projection(
+def test_executor_refuses_direct_host_path_for_valid_claimed_projection(
     monkeypatch, tmp_path: Path
 ):
     task_id = "task_break_glass"
@@ -155,7 +155,6 @@ def test_executor_uses_direct_host_path_only_for_valid_claimed_projection(
     monkeypatch.setenv("MAC_LEASE_ID", lease_id)
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     monkeypatch.setattr(
         te,
         "_agent_argv",
@@ -164,7 +163,9 @@ def test_executor_uses_direct_host_path_only_for_valid_claimed_projection(
     monkeypatch.setattr(
         te,
         "_run_sandboxed",
-        lambda *_args, **_kwargs: pytest.fail("break-glass execution entered OpenShell"),
+        lambda runner, argv, workspace, audit_id, opts: runner(
+            argv, workspace, audit_id, {**opts, "execution_boundary": "sandbox"}
+        ),
     )
     calls = []
 
@@ -181,8 +182,8 @@ def test_executor_uses_direct_host_path_only_for_valid_claimed_projection(
     )
 
     assert result.returncode == 0
-    assert calls[0][3]["execution_boundary"] == "host"
-    assert calls[0][3]["break_glass_authorization_id"].startswith("breakglass_")
+    assert calls[0][3]["execution_boundary"] == "sandbox"
+    assert "break_glass_authorization_id" not in calls[0][3]
 
 
 def test_executor_rejects_replayed_break_glass_projection(monkeypatch):

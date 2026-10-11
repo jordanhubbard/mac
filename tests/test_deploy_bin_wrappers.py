@@ -2,8 +2,8 @@
 
 mac.node_files (run by scripts/fleet-update) installs mac-agent-service,
 mac-agent-startup-self-test, mac-task-executor and mac-task-executor.py from here
-into ~/.mac/bin on each worker and on the hub, whose own agent runs under them;
-mac-service is the hub's control-plane wrapper, a managed file of the hub role.
+into ~/.mac/bin on each worker. mac-service is the hub's control-plane wrapper
+and the only deploy/bin file managed by the hub role.
 Nothing generates them any more, so these checks prove the files are present,
 parse, and are what the node installer declares.
 """
@@ -44,8 +44,7 @@ def test_the_node_installer_declares_every_wrapper_from_deploy_bin() -> None:
         assert worker["deploy/bin/" + name] == ("bin/" + name, 0o700)
     assert worker["deploy/bin/mac-task-executor.py"] == ("bin/mac-task-executor.py", 0o600)
     hub = {src: (dest, mode) for src, dest, mode in node_files.MANAGED["hub"]}
-    assert hub["deploy/bin/mac-service"] == ("bin/mac-service", 0o755)
-    assert set(worker) < set(hub)
+    assert hub == {"deploy/bin/mac-service": ("bin/mac-service", 0o755)}
     script = (ROOT / "scripts" / "fleet-update").read_text(encoding="utf-8")
     assert '-m mac.node_files --source "$src" --role worker' in script
     assert '-m mac.node_files --source "$SRC" --role hub' in script
@@ -100,16 +99,11 @@ def _venv(tmp_path: Path) -> Path:
     return venv
 
 
-def test_fleet_update_installs_the_worker_wrappers_on_the_hub_too(tmp_path: Path) -> None:
-    """The hub's own agent runs under deploy/bin and the crash observer too.
-
-    Before this, a hub update left them at whatever was copied by hand, so the
-    hub's agent ran without #928's attempt timeout and #960's live log tee.
-    """
+def test_fleet_update_installs_only_the_control_plane_wrapper_on_the_hub(tmp_path: Path) -> None:
     home = tmp_path / "mac"
     (home / "bin").mkdir(parents=True)
     stale = home / "bin" / "mac-agent-service"
-    stale.write_text("stale\n", encoding="utf-8")
+    stale.write_text("not managed by this fresh hub state\n", encoding="utf-8")
     result = subprocess.run(
         ["bash", "-c", _hub_install_bin_functions() + "hub_install_bin"],
         capture_output=True,
@@ -118,15 +112,13 @@ def test_fleet_update_installs_the_worker_wrappers_on_the_hub_too(tmp_path: Path
     )
     assert result.returncode == 0, result.stderr
     assert "hub: managed files:" in result.stdout
-    for name in SHELL_WRAPPERS:
-        installed = home / "bin" / name
-        assert installed.read_bytes() == (BIN / name).read_bytes()
-        assert stat.S_IMODE(installed.stat().st_mode) == (0o755 if name == "mac-service" else 0o700)
-    executor = home / "bin" / "mac-task-executor.py"
-    assert stat.S_IMODE(executor.stat().st_mode) == 0o600
-    observer = home / "bin" / "mac-crash-observer"
-    assert observer.read_bytes() == (ROOT / "deploy" / "mac-crash-observer.py").read_bytes()
-    assert stat.S_IMODE(observer.stat().st_mode) == 0o755
+    installed = home / "bin" / "mac-service"
+    assert installed.read_bytes() == (BIN / "mac-service").read_bytes()
+    assert stat.S_IMODE(installed.stat().st_mode) == 0o755
+    assert stale.read_text(encoding="utf-8") == "not managed by this fresh hub state\n"
+    assert not (home / "bin" / "mac-task-executor").exists()
+    assert not (home / "bin" / "mac-task-executor.py").exists()
+    assert not (home / "bin" / "mac-crash-observer").exists()
 
 
 def test_a_failed_hub_wrapper_install_warns_without_failing_the_update(tmp_path: Path) -> None:

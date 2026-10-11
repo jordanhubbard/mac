@@ -45,11 +45,9 @@ _AGENT_FILES: Tuple[Tuple[str, str, int], ...] = (
     ("deploy/mac-crash-observer.py", "bin/mac-crash-observer", 0o755),
 )
 
-#: The hub runs a MAC agent too, under the same wrappers, plus the control
-#: plane's own wrapper (the LaunchDaemon runs ``bin/mac-service``).
 MANAGED: Dict[str, Tuple[Tuple[str, str, int], ...]] = {
     "worker": _AGENT_FILES,
-    "hub": _AGENT_FILES + (("deploy/bin/mac-service", "bin/mac-service", 0o755),),
+    "hub": (("deploy/bin/mac-service", "bin/mac-service", 0o755),),
 }
 
 
