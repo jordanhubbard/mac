@@ -322,8 +322,7 @@ def test_a_worker_with_no_execution_boundary_is_an_environment_failure_and_retri
     refusal = (
         "[executor] coding-agent routing: claude\n"
         "RuntimeError: refusing to launch an approval-bypassed agent without an "
-        "OpenShell sandbox: MAC_OPENSHELL_SANDBOX is unset and "
-        "MAC_ALLOW_UNSANDBOXED_YOLO is disabled."
+        "OpenShell sandbox: MAC_OPENSHELL_SANDBOX is unset or unusable."
     )
     detail = _executor_failure_transition_detail(
         WorkerExecution(

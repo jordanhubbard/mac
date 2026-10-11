@@ -29,7 +29,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENT_STALE_AFTER_SECONDS` | int | consumer-defined | agent | Agent setting: agent stale after seconds. |
 | `MAC_AGENT_STATE_DIR` | str | consumer-defined | agent | Agent setting: agent state dir. |
 | `MAC_AGENT_ZOMBIE_STREAM_AGE_SECONDS` | int | consumer-defined | agent | Agent setting: agent zombie stream age seconds. |
-| `MAC_ALLOW_UNSANDBOXED_YOLO` | bool | consumer-defined | core | Core setting: allow unsandboxed yolo. |
 | `MAC_API_ALLOW_OPEN` | bool | consumer-defined | api-auth | Api Auth setting: api allow open. |
 | `MAC_API_TIMEOUT_SECONDS` | int | consumer-defined | api-auth | Api Auth setting: api timeout seconds. |
 | `MAC_API_TOKEN` | str | consumer-defined | api-auth | Api Auth setting: api token. |

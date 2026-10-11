@@ -1915,6 +1915,7 @@ def test_main_salvages_evidence_when_agent_run_times_out(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
     posts = []
     monkeypatch.setattr(
         memory, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True
@@ -1958,6 +1959,7 @@ def test_main_fails_when_timeout_and_no_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
     monkeypatch.setattr(memory, "_hub_post", lambda *a, **k: True)
     monkeypatch.setattr(memory, "_hub_get", lambda *a, **k: [])
     # timeout with NO deliverable written → honest failure, not salvaged
@@ -3487,7 +3489,7 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
 
     # Runner selection has its own focused tests. Keep this end-to-end executor
     # test independent of host CLI installation without reintroducing a runtime
@@ -3560,8 +3562,7 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
     from mac import coding_agent as ca
 
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "0")  # unconfined -> no preflight gate
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
     choice = ca.CodingAgentChoice(
         agent="opencode",
         available=True,
@@ -3569,6 +3570,7 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
         auth_source="MAC_INFERENCE_TOKEN",
     )
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda _choice: True)
 
     captured = {}
 
@@ -3583,7 +3585,7 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
     agent_argv = captured["agent_argv"]
     assert "mac.agent_command" in argv
     assert "fix the bug" not in argv
-    assert agent_argv[:3] == ["/usr/local/bin/opencode", "run", "--auto"]
+    assert agent_argv[:3] == ["opencode", "run", "--auto"]
     assert agent_argv[-1] == te.PROMPT_SENTINEL
     assert "--mcp-config" not in agent_argv
 
@@ -3592,8 +3594,7 @@ def test_invoke_agent_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
-    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "0")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
     none = ca.CodingAgentChoice(agent="", available=False)
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: none)
 
@@ -3828,7 +3829,6 @@ def test_coding_agent_required_failure_preserves_private_prompt_bundle_contract(
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
     monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
-    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
     choice = ca.CodingAgentChoice(agent="opencode", available=True, binary="/b/opencode")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
@@ -4333,6 +4333,7 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
 
     posts = []
     monkeypatch.setattr(

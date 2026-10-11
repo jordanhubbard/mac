@@ -192,7 +192,7 @@ host-harvested receipt requirement.
   config cannot mark a mac unready for missing Docker.
 - `deploy/fleet-node-install.sh` — darwin always takes the "optional OpenShell
   runtime disabled" path, records `MAC_OPENSHELL_SANDBOX=0`,
-  `MAC_OPENSHELL_REQUIRED=0`, `MAC_ALLOW_UNSANDBOXED_YOLO=1` in `mac.env`, and
+  `MAC_OPENSHELL_REQUIRED=0` in `mac.env`, and
   drops `MAC_OPENSHELL_ALLOW_NO_LANDLOCK`. Legacy gateway-container cleanup no
   longer *requires* Docker: if Docker is absent or unreachable, no container
   can be running, and its absence must not block the migration that removes the

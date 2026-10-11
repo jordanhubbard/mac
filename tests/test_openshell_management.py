@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mac.openshell_collector import normalize_openshell_event
-from mac.openshell_supervisor import build_supervisor_argv
+from mac.openshell_supervisor import build_supervisor_argv, main
 from mac.services import ControlPlane
 
 
@@ -140,3 +140,26 @@ def test_openshell_collector_normalizes_denials_and_supervisor_command():
     ]
     assert "--name" in argv
     assert argv[argv.index("--") + 1 :] == ["mac-hermes-gateway"]
+
+
+def test_supervisor_refuses_missing_openshell_instead_of_running_child(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "0")
+    monkeypatch.setattr("mac.openshell_supervisor.shutil.which", lambda _binary: None)
+    called = []
+    monkeypatch.setattr("mac.openshell_supervisor.subprocess.call", lambda argv: called.append(argv))
+
+    result = main(
+        [
+            "--agent-id",
+            "agent_worker",
+            "--openshell-bin",
+            str(tmp_path / "missing-openshell"),
+            "--policy",
+            str(tmp_path / "missing-policy.yaml"),
+            "--",
+            "coding-agent",
+        ]
+    )
+
+    assert result == 78
+    assert called == []

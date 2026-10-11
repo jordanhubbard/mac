@@ -973,7 +973,7 @@ def evaluate_pair(
         # `review` is exactly what the review verifier exists for. What it must
         # not do is claim undeclared work, which is how both stand-ins came to
         # hold implementation tasks they never started.
-        if task.requires_execution and agent.operator_persona and not task.required_capabilities:
+        if task.requires_execution and agent.operator_persona:
             reasons.append(AGENT_OPERATOR_PERSONA)
         if not agent.bound_role_eligible:
             reasons.append(AGENT_ROLE_INELIGIBLE)

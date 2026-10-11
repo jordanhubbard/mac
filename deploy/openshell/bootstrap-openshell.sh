@@ -10,7 +10,7 @@
 #
 # It does NOT flip enforcement by default. After it succeeds, validate a real
 # task, then enable:  --enable (MAC_OPENSHELL_SANDBOX=1) and, once validated,
-# --fail-closed (MAC_ALLOW_UNSANDBOXED_YOLO=0).
+# --fail-closed (OpenShell is mandatory for task execution).
 #
 # Knobs (env):
 #   OPENSHELL_VERSION   default 0.1.2         — CLI + gateway + supervisor version (must match)
@@ -1866,7 +1866,7 @@ chmod 600 "$MAC_HOME/openshell-policy.yaml"
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
 validate_openshell_runtime_image
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
+sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
 sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
 # One image pin (task_b1828d67): with a digest-managed runtime the test gate
 # reads runtime-image-ref too, so a separate MAC_HUB_VERIFY_IMAGE could only
@@ -1894,7 +1894,6 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
   # per-agent credential explanation, because they were all quietly hitting
   # the wrong gateway.
   echo "OPENSHELL_GATEWAY_ENDPOINT=$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"
-  [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)
 ( set -a; . "$ENVF" >/dev/null 2>&1; ) || { echo "ERROR: mac.env failed to source after edit" >&2; exit 1; }

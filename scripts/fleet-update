@@ -86,6 +86,7 @@ host_entry() {  # name -> sets H_TARGET (ssh target), H_AGENT (hub agent id), H_
   read -r _ H_TARGET H_AGENT H_ROLE <<< "$line"
 }
 worker_names() { inventory workers | awk '{ print $1 }'; }
+hub_agent_id() { inventory hub | awk '{ print $3 }'; }
 
 check_migrations() {  # $1 = commit currently deployed on the host being updated
   local gone new
@@ -150,8 +151,8 @@ soul_install() {
   log "hub: fleet context: $("$VENV/bin/python" -m mac.fleet_context_service --source "$SRC" 2>&1 | tail -1)" || true
 }
 
-# The hub's managed files (mac.node_files, role hub): the agent wrappers and
-# crash observer a worker gets, plus the control plane's own bin/mac-service.
+# The hub's managed files (mac.node_files, role hub): only the control plane's
+# bin/mac-service. Worker wrappers are removed by the role transition.
 # Never fails the update: the hub is already serving the new sha by then.
 hub_install_bin() {
   local out
@@ -229,7 +230,7 @@ update_hub() {
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; bootstrap; poll /health"
     plan "hub: resume the workers this run held, once healthy"
-    plan "hub: mac.node_files (role hub) -> ~/.mac/bin; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service; kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
+    plan "hub: mac.node_files (role hub, no worker) -> ~/.mac/bin; bootout gui/$(id -u)/com.mac.agent; decommission the inventory hub agent; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service$([ "$HERMES" = 1 ] && echo '; kickstart ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
@@ -271,8 +272,9 @@ update_hub() {
   log "hub: healthy on $SHA12"
   hub_release_holds
   hub_install_bin
+  launchctl bootout "gui/$(id -u)/com.mac.agent" || log "hub: com.mac.agent already absent"
+  "$MAC_CLI" agent delete "$(hub_agent_id)" --actor fleet-update || log "hub: agent record already absent"
   soul_install
-  launchctl kickstart -k "gui/$(id -u)/com.mac.agent" || log "hub: WARNING kickstart com.mac.agent failed"
   if [ "$HERMES" = 1 ]; then launchctl kickstart -k "gui/$(id -u)/ai.hermes.gateway" || log "hub: WARNING kickstart hermes failed"; fi
 }
 

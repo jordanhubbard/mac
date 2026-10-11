@@ -403,6 +403,7 @@ def test_task_executor_main_calls_create_agent_scope(tmp_path, monkeypatch):
 
     monkeypatch.setattr(te, "_hub_post", lambda *a, **kw: False)
     monkeypatch.setattr(te, "_hub_get", lambda *a, **kw: None)
+    monkeypatch.setattr(te, "_invoke_agent", lambda *a, **kw: _fake_runner([], tmp_path, task_id, {}))
 
     te.main(runner=_fake_runner)
 

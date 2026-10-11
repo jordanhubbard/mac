@@ -197,7 +197,6 @@ cp deploy/openshell/mac-hermes-policy.yaml /etc/mac/openshell-policy.yaml
 $EDITOR /etc/mac/openshell-policy.yaml      # fill in __PLACEHOLDER__ tokens
 
 export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml
-export MAC_ALLOW_UNSANDBOXED_YOLO=0
 mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -- mac-hermes-gateway
 ```
 
@@ -209,7 +208,6 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 | `MAC_OPENSHELL_BIN` | `openshell` | path to the `openshell` binary |
 | `MAC_OPENSHELL_POLICY` | _(resolved)_ | explicit policy path; MAC-managed materialized policy should be set here |
 | `MAC_OPENSHELL_EVENTS_FILE` | _(none)_ | JSONL/OCSF event stream for `mac-openshell-collector` |
-| `MAC_ALLOW_UNSANDBOXED_YOLO` | `0` on required agents | explicit hatch for non-required hosts |
 | `MAC_OPENSHELL_SANDBOX` | _(off)_ | deprecated compatibility: one-shot task executor wrapping |
 | `MAC_OPENSHELL_SANDBOX_NAME` | _(ephemeral)_ | fixed sandbox name (debug only) |
 | `MAC_OPENSHELL_KEEP` | _(off)_ | truthy → `--keep` (don't tear down; debug) |

@@ -90,7 +90,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--sandbox-name")
     parser.add_argument("--no-keep", action="store_true")
-    parser.add_argument("--allow-unsandboxed", action="store_true")
     parser.add_argument("child", nargs=argparse.REMAINDER)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -122,13 +121,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 78
     if not openshell or not policy.is_file():
-        if args.allow_unsandboxed:
-            return subprocess.call(child)
         sys.stderr.write("OpenShell supervisor cannot start without OpenShell and a policy\n")
         return 78
 
     os.environ["MAC_OPENSHELL_SANDBOX"] = "1"
-    os.environ["MAC_ALLOW_UNSANDBOXED_YOLO"] = "0"
     os.environ["MAC_OPENSHELL_POLICY"] = str(policy)
     command = build_supervisor_argv(
         agent_id=args.agent_id,

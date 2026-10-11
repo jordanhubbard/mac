@@ -15,7 +15,7 @@ from mac.node_files import NodeFilesError
 @pytest.fixture()
 def source(tmp_path: Path) -> Path:
     root = tmp_path / "src"
-    for src_rel, _, _ in node_files.MANAGED["hub"]:
+    for src_rel, _, _ in node_files.MANAGED["worker"] + node_files.MANAGED["hub"]:
         path = root / src_rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("v1 %s\n" % src_rel)
@@ -56,28 +56,25 @@ def test_a_changed_source_or_mode_is_updated(source, tmp_path):
 
 def test_files_no_longer_declared_are_removed_with_a_backup(source, tmp_path, monkeypatch):
     home = tmp_path / "home"
-    node_files.apply(source, home, "hub")
-    hub_only = "bin/mac-service"
-    # The hub stops declaring mac-service: it was ours, so it goes.
-    monkeypatch.setitem(node_files.MANAGED, "hub", node_files.MANAGED["worker"])
+    node_files.apply(source, home, "worker")
+    retired = "bin/mac-agent-service"
     result = node_files.apply(source, home, "hub")
-    assert result["actions"][hub_only] == "removed"
-    assert not (home / hub_only).exists()
-    assert (Path(result["backup"]) / hub_only).read_text() == "v1 deploy/bin/mac-service\n"
+    assert result["actions"][retired] == "removed"
+    assert not (home / retired).exists()
+    assert (Path(result["backup"]) / retired).read_text() == "v1 deploy/bin/mac-agent-service\n"
     state = json.loads((home / "managed-files.json").read_text())
-    assert hub_only not in state["files"]
+    assert set(state["files"]) == {"bin/mac-service"}
     # And a second run does nothing.
     assert node_files.apply(source, home, "hub")["changed"] == []
 
 
 def test_a_hand_edited_retired_file_is_kept_and_reported(source, tmp_path, monkeypatch):
     home = tmp_path / "home"
-    node_files.apply(source, home, "hub")
-    (home / "bin/mac-service").write_text("local fix\n")
-    monkeypatch.setitem(node_files.MANAGED, "hub", node_files.MANAGED["worker"])
+    node_files.apply(source, home, "worker")
+    (home / "bin/mac-agent-service").write_text("local fix\n")
     result = node_files.apply(source, home, "hub")
-    assert result["actions"]["bin/mac-service"] == "kept_modified"
-    assert (home / "bin/mac-service").read_text() == "local fix\n"
+    assert result["actions"]["bin/mac-agent-service"] == "kept_modified"
+    assert (home / "bin/mac-agent-service").read_text() == "local fix\n"
 
 
 def test_unrecorded_files_are_never_touched(source, tmp_path):

@@ -92,14 +92,11 @@ def test_the_review_verifier_is_rejected_for_undeclared_work_too(tmp_path=None):
     assert AGENT_OPERATOR_PERSONA in evaluation.rejections
 
 
-def test_a_stand_in_may_still_take_work_that_asks_for_what_it_is():
-    """A task declaring `review` is precisely what the review verifier exists
-    for. Rejecting that would trade a frozen implementation task for a review
-    stage that never runs."""
+def test_a_stand_in_is_never_offered_a_task_even_when_capabilities_match():
     agent = _agent(virtual=True, hub_review_verifier={"enabled": True})
     agent = replace(agent, capabilities=frozenset({"review"}))
     task = replace(_task(), required_capabilities=frozenset({"review"}))
 
     evaluation = evaluate_pair(task, agent)
 
-    assert AGENT_OPERATOR_PERSONA not in evaluation.rejections
+    assert AGENT_OPERATOR_PERSONA in evaluation.rejections
