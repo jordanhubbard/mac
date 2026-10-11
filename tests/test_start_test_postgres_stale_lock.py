@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import glob
 import os
+import pwd
 import shutil
 import socket
 import subprocess
@@ -46,6 +47,16 @@ def _pg_bin() -> Path | None:
             if (candidate.parent / "initdb").is_file():
                 return candidate.parent
     return None
+
+
+def _login_name() -> str:
+    """The superuser the script connects as: `id -un`, not $USER.
+
+    An OpenShell sandbox sets USER to the numeric uid ("999") while `id -un`
+    says "sandbox", so a cluster initialised for $USER rejects the script's
+    connection with 'role "sandbox" does not exist'.
+    """
+    return pwd.getpwuid(os.getuid()).pw_name
 
 
 def _free_port() -> int:
@@ -122,7 +133,7 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
             "-D",
             str(datadir),
             "-U",
-            os.environ.get("USER") or "postgres",
+            _login_name(),
             "--auth=trust",
         ],
         capture_output=True,
@@ -186,6 +197,15 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
             text=True,
         )
         assert ready.returncode == 0, ready.stdout + ready.stderr
+        # A throwaway test cluster skips fsync; on a slow sandbox disk every
+        # per-test CREATE/DROP DATABASE otherwise waits on a checkpoint.
+        fsync = subprocess.run(
+            [str(pg_bin / "psql"), "-h", "127.0.0.1", "-p", str(port), "-d", "mac_socket_only_probe"]
+            + ["-U", _login_name(), "-Atc", "show fsync"],
+            capture_output=True,
+            text=True,
+        )
+        assert fsync.stdout.strip() == "off", fsync.stdout + fsync.stderr
     finally:
         subprocess.run(
             [str(pg_bin / "pg_ctl"), "-D", str(datadir), "-m", "immediate", "stop"],
