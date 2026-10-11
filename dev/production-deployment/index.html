@@ -2755,6 +2755,13 @@ Both are described in <a href="../operations/fleet-update/">Updating the fleet w
 <li><strong>New host:</strong> follow its "Provision a new host" checklist.</li>
 <li><strong>Update:</strong> run <code>scripts/fleet-update &lt;hub|HOST|all&gt; &lt;sha&gt;</code> on the hub.</li>
 </ul>
+<p>In <code>all</code> mode, a worker that remains busy after the drain timeout is left
+unchanged and its update hold is released; the rollout continues with the
+remaining workers. The command then prints the skipped workers, their task IDs,
+and a <code>fleet-update --yes &lt;worker&gt; &lt;sha&gt;</code> command for each, and exits with code
+3 rather than reporting success. Other update failures still stop the rollout
+immediately. Updating a single busy worker retains the existing immediate
+failure behavior.</p>
 <p>The old setup wizard (<code>setup.sh</code> / <code>make setup</code>), the declarative
 <code>mac.fleet_setup.v1</code> specs and <code>make deploy</code> / <code>deploy/deploy-mac-fleet.sh</code>
 have been deleted.</p>
