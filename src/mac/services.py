@@ -53,11 +53,8 @@ from mac.agentbus_control import (
     REFLECT_REQUEST_SCHEMA,
     REFLECT_REQUEST_TOPIC,
     REFLECT_RESULT_TOPIC,
-    REPO_UPDATE_CONTENT_TYPE,
-    REPO_UPDATE_TOPIC,
     agent_reflection_payload,
     reflect_request_payload,
-    repo_update_payload,
 )
 
 if TYPE_CHECKING:
@@ -18399,55 +18396,6 @@ class ControlPlane:
 
     def get_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> Optional[JsonDict]:
         return self.agentbus.get_consumer_cursor(*args, **kwargs)
-
-    def publish_agentbus_repo_update(
-        self,
-        sender_agent_id: str,
-        recipient_agent_ids: Optional[List[str]] = None,
-        *,
-        all_agents: bool = False,
-        repo_path: Optional[str] = None,
-        remote: str = "origin",
-        branch: str = "main",
-        restart: bool = True,
-        restart_services: Optional[List[str]] = None,
-        request_id: Optional[str] = None,
-        target_sha: Optional[str] = None,
-        desired_generation: Optional[int] = None,
-        release_id: Optional[str] = None,
-    ) -> JsonDict:
-        recipients = list(recipient_agent_ids or [])
-        if all_agents:
-            recipients.extend(agent.id for agent in self.list_agents())
-        recipients = list(dict.fromkeys(item for item in recipients if item))
-        if not recipients:
-            raise ValidationError("repo-update requires recipient_agent_ids or all_agents=true")
-        payload = repo_update_payload(
-            repo_path=repo_path,
-            remote=remote,
-            branch=branch,
-            restart=restart,
-            restart_services=list(restart_services or []),
-            request_id=request_id,
-            target_sha=target_sha,
-            desired_generation=desired_generation,
-            release_id=release_id,
-        )
-        published = [
-            self.publish_agentbus_content(
-                sender_agent_id=sender_agent_id,
-                recipient_agent_id=recipient_id,
-                content_type=REPO_UPDATE_CONTENT_TYPE,
-                topic=REPO_UPDATE_TOPIC,
-                payload=payload,
-            )
-            for recipient_id in recipients
-        ]
-        return {
-            "schema": "mac.agentbus.repo_update_publish.v1",
-            "count": len(published),
-            "streams": [item["stream"] for item in published],
-        }
 
     def publish_agent_reflection(
         self,

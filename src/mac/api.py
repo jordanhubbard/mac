@@ -1410,21 +1410,6 @@ class AgentBusBroadcast(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentBusRepoUpdate(BaseModel):
-    sender_agent_id: str
-    recipient_agent_ids: List[str] = Field(default_factory=list)
-    all_agents: bool = False
-    repo_path: Optional[str] = None
-    remote: str = "origin"
-    branch: str = "main"
-    restart: bool = True
-    restart_services: List[str] = Field(default_factory=list)
-    request_id: Optional[str] = None
-    target_sha: Optional[str] = None
-    desired_generation: Optional[int] = None
-    release_id: Optional[str] = None
-
-
 class AgentBusArtifactPublish(BaseModel):
     sender_agent_id: str
     operation: str = "upsert"
@@ -7757,38 +7742,6 @@ def create_app(
         principal.assert_actor(body.sender_agent_id)
         _refuse_agent_minted_directives(principal, body.topic)
         return cp.publish_agentbus_content(**_data(body))
-
-    @app.post("/agentbus/repo-update")
-    def publish_agentbus_repo_update(
-        body: AgentBusRepoUpdate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        # mac-si4l: /agentbus/repo-update is a restart primitive. Require
-        # admin scope for any peer/fleet fanout; a non-admin agent token can
-        # only request a repo-update stream addressed to its own future self.
-        if not principal.is_admin:
-            principal.assert_actor(body.sender_agent_id)
-            if body.all_agents:
-                raise AuthorizationError(
-                    "fleet-wide repo-update (all_agents=true) requires admin scope"
-                )
-            recipients = set(body.recipient_agent_ids)
-            if recipients != {body.sender_agent_id}:
-                raise AuthorizationError("repo-update to peer agents requires admin scope")
-        return cp.publish_agentbus_repo_update(
-            sender_agent_id=body.sender_agent_id,
-            recipient_agent_ids=body.recipient_agent_ids,
-            all_agents=body.all_agents,
-            repo_path=body.repo_path,
-            remote=body.remote,
-            branch=body.branch,
-            restart=body.restart,
-            restart_services=body.restart_services,
-            request_id=body.request_id,
-            target_sha=body.target_sha,
-            desired_generation=body.desired_generation,
-            release_id=body.release_id,
-        )
 
     @app.post("/agentbus/artifact-publish")
     def publish_agentbus_artifact(

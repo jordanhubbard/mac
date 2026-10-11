@@ -213,40 +213,6 @@ fleets:
     assert [row["agent_name"] for row in result["agents"]] == ["present"]
 
 
-def test_agentbus_repo_update_targets_one_agent_and_is_readable(tmp_path):
-    rc, machine = _run(tmp_path, "admin", "machine", "register", "refresh-host")
-    assert rc == 0
-    rc, sender = _run(tmp_path, "agent", "register", machine["id"], "hub")
-    assert rc == 0
-    rc, worker = _run(tmp_path, "agent", "register", machine["id"], "worker")
-    assert rc == 0
-
-    rc, targeted = _run(
-        tmp_path,
-        "admin",
-        "agentbus",
-        "repo-update",
-        sender["id"],
-        "--recipient-agent-id",
-        worker["id"],
-        "--request-id",
-        "refresh-targeted",
-        "--restart-service",
-        "mac.service",
-    )
-
-    assert rc == 0
-    assert targeted["schema"] == "mac.agentbus.repo_update_publish.v1"
-    assert targeted["count"] == 1
-    assert targeted["streams"][0]["recipient_agent_id"] == worker["id"]
-
-    rc, chunks = _run(
-        tmp_path, "admin", "agentbus", "read", targeted["streams"][0]["id"], worker["id"]
-    )
-    assert rc == 0
-    assert chunks[0]["payload"]["restart_services"] == ["mac.service"]
-
-
 def test_agentbus_cli_wrappers_pass_sender_as_keyword(monkeypatch, capsys):
     from mac.cli import cmd_agentbus_append, cmd_agentbus_close, cmd_agentbus_open
 

@@ -1547,40 +1547,6 @@ class RemoteDispatch:
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus", _drop_none(kw)))
 
-    def publish_agentbus_repo_update(
-        self,
-        *,
-        sender_agent_id: str,
-        recipient_agent_ids: Optional[List[str]] = None,
-        all_agents: bool = False,
-        repo_path: Optional[str] = None,
-        remote: str = "origin",
-        branch: str = "main",
-        restart: bool = True,
-        restart_services: Optional[List[str]] = None,
-        request_id: Optional[str] = None,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/agentbus/repo-update",
-                _drop_none(
-                    {
-                        "sender_agent_id": sender_agent_id,
-                        "recipient_agent_ids": list(recipient_agent_ids or []),
-                        "all_agents": all_agents,
-                        "repo_path": repo_path,
-                        "remote": remote,
-                        "branch": branch,
-                        "restart": restart,
-                        "restart_services": list(restart_services or [])
-                        if restart_services
-                        else None,
-                        "request_id": request_id,
-                    }
-                ),
-            )
-        )
-
     def publish_agentbus_artifact(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus/artifact-publish", _drop_none(kw)))
 

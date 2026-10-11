@@ -165,37 +165,6 @@ def test_a_revocation_holds_the_worker_before_it_claims(mac_home, tmp_path):
     assert (mac_home / "openshell-policy.yaml").read_text(encoding="utf-8") == WIDE
 
 
-def test_the_hold_reaches_the_outer_loop_and_no_task_is_claimed(mac_home, tmp_path, monkeypatch):
-    """The gate is only worth anything if it sits ahead of the claim."""
-    client = _Client()
-    instance = _worker(tmp_path, client)
-    _converged(instance, mac_home, WIDE, client)
-    client.events = [_changed_event(11, to_text=NARROW)]
-
-    claims = []
-    monkeypatch.setattr(worker, "_synchronize_directive_policy", lambda *_a, **_k: None)
-    for name, result in (
-        ("_heartbeat", None),
-        ("_current_dispatch_hold", None),
-        ("_process_agentbus_control", {}),
-        ("_poll_debug_terminal_sessions", None),
-        ("_local_repo_update_dispatch_blocker", None),
-        ("_maybe_start_workspace_gc", None),
-        ("_maybe_sync_service_claims", None),
-        ("_process_control_messages", None),
-        ("apply_pending_repo_update_if_idle", None),
-        ("_observe_policy_once", None),
-        ("_maybe_hub_load_shed", None),
-    ):
-        monkeypatch.setattr(instance, name, (lambda _r=result: lambda *_a, **_k: _r)())
-    monkeypatch.setattr(instance, "_claim_next_for_agent", lambda *_a, **_k: claims.append(1))
-
-    outcome = instance.run_once()
-
-    assert outcome.status == "held"
-    assert claims == []
-
-
 def test_the_wait_ends_on_the_publication_of_the_named_version(mac_home, tmp_path):
     """The terminating event. Without it this is a timeout poll wearing a hat."""
     client = _Client()

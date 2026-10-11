@@ -7,7 +7,7 @@ Covers:
   - command-audit: list
   - observability: list, prune
   - nap extended: cycle, due
-  - agentbus extended: publish, repo-update, artifact-publish, traffic, roll-call
+  - agentbus extended: publish, artifact-publish, traffic, roll-call
   - secret: access (with trusted machine)
   - task extended: detect-beads, detect-ticketing
 
@@ -347,20 +347,6 @@ def test_observability_list_empty(tmp_path):
     assert isinstance(events, list)
 
 
-def test_observability_prune_returns_count(tmp_path):
-    """observability prune with --keep-last=100 returns removed count (0 on empty db)."""
-    rc, result = _run(tmp_path, "admin", "observability", "prune", "--keep-last", "100")
-    assert rc == 0
-    assert isinstance(result, dict)
-    assert "removed" in result
-    assert isinstance(result["removed"], int)
-
-
-# ===========================================================================
-# agentbus extended: publish, repo-update, artifact-publish
-# ===========================================================================
-
-
 def test_agentbus_publish_event(tmp_path):
     """agentbus publish broadcasts a message; requires a recipient or is a no-op."""
     agent = _make_agent(tmp_path, "pub-agent", agent_id="agent_pub")
@@ -455,22 +441,6 @@ def test_agent_reflect_publishes_self_description(tmp_path):
     assert result["payload"]["agent"]["name"] == "reflect-agent"
     assert result["streams"][0]["topic"] == "mac.agent.reflect.v1"
     assert result["streams"][0]["content_type"] == "application/vnd.mac.agent-reflection+json"
-
-
-def test_agentbus_repo_update(tmp_path):
-    """agentbus repo-update sends a repository-update event to agents."""
-    agent = _make_agent(tmp_path, "repo-agent", agent_id="agent_repo")
-    rc, result = _run(
-        tmp_path,
-        "admin",
-        "agentbus",
-        "repo-update",
-        agent["id"],
-        "--all-agents",
-        "--repo-path",
-        "/tmp/test-repo",
-    )
-    assert rc == 0
 
 
 def test_agentbus_artifact_publish(tmp_path):

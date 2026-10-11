@@ -190,7 +190,7 @@ def _gateway_registration_source() -> str:
         encoding="utf-8"
     )
     start = bootstrap.index("register_and_select_local_gateway(){")
-    end = bootstrap.index("\n}\n\nclear_repo_update_dispatch_blocker", start) + len("\n}\n")
+    end = bootstrap.index("\n}\n\nresolve_deployed_source_revision", start) + len("\n}\n")
     return bootstrap[start:end]
 
 
@@ -646,62 +646,6 @@ def test_runtime_image_smoke_checks_the_coding_cli_on_path() -> None:
         assert "opencode --version | grep -F 1.18.18" in line
         for retired in ("codex", "claude", "cursor-agent"):
             assert f"command -v {retired}" not in line, (retired, line)
-
-
-def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
-    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
-
-    # The 0.1.2 supervisor index (what the v0.1.2 tag resolves to). 0.1 runs it
-    # as its own host-networked container, so it is verified, not extracted.
-    assert (
-        "ghcr.io/nvidia/openshell/supervisor@sha256:"
-        "d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a" in bootstrap
-    )
-    assert "80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d" not in bootstrap
-    assert '"$OSH_DOCKER_BIN" run --rm "$OSH_SUPERVISOR_IMAGE" --version' in bootstrap
-    assert '"openshell-supervisor $OPENSHELL_VERSION"' in bootstrap
-    assert 'if value != ["/openshell-supervisor"]:' in bootstrap
-    assert '"$MAC_HOME/bin/openshell-sandbox"' not in bootstrap
-    firewall = bootstrap.index("# --- 7. firewall :17670")
-    gateway = bootstrap.index("# --- 8. gateway service + register")
-    assert firewall < gateway
-    assert "stop_gateway_fail_closed" in bootstrap
-    assert "refusing to run the unauthenticated OpenShell gateway without its firewall" in bootstrap
-    assert "systemctl restart mac-openshell-firewall.service" in bootstrap
-    assert "supervisorctl start mac-openshell-firewall >/dev/null 2>&1 || true" not in bootstrap
-    assert 'OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"' in bootstrap
-    assert 'OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" "$cli" "$@"' in bootstrap
-    sandbox_operations = [
-        line
-        for line in bootstrap.splitlines()
-        if " sandbox create" in line or " sandbox delete" in line
-    ]
-    assert sandbox_operations
-    assert all("openshell_local_gateway" in line for line in sandbox_operations)
-    assert 'gateway add --name openshell "$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"' in bootstrap
-    assert "gateway select openshell" in bootstrap
-    assert "gateway list --output json" in bootstrap
-    assert "--label mac.owner=mac --label mac.kind=openshell-gateway" in bootstrap
-    assert 'matches[0].get("endpoint") != endpoint' in bootstrap
-    assert "gateway add http://127.0.0.1:17670 >/dev/null 2>&1 || true" not in bootstrap
-    assert "gateway select openshell >/dev/null 2>&1 || true" not in bootstrap
-    linux = bootstrap.index("ensure_docker_engine")
-    retirement = bootstrap.index("retire_managed_sandboxes_before_upgrade || exit $?", linux)
-    stop_existing = bootstrap.index(
-        "stop_gateway_fail_closed\n"
-        "backup_openshell_install_for_upgrade || exit $?\n"
-        "verify_supervisor_image",
-        retirement,
-    )
-    install_cli = bootstrap.index("# --- 1. openshell CLI")
-    assert retirement < stop_existing < install_cli
-    # One runtime-image smoke block, not two: the darwin block went away
-    # with the macOS Docker path (ADR 0015). Linux is unchanged.
-    assert bootstrap.count("clear_repo_update_dispatch_blocker") == 2
-    assert "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE" in bootstrap
-    assert "Path(key).unlink()" in bootstrap
 
 
 def test_macos_bootstrap_is_a_host_install_with_no_container_runtime():
@@ -1290,47 +1234,6 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     assert retirement.count("sandbox list --limit 1000 --output json") == 1
 
 
-def test_complete_openshell_bootstrap_clears_default_and_configured_dispatch_holds(
-    tmp_path,
-):
-    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
-    start = bootstrap.index("clear_repo_update_dispatch_blocker(){")
-    end = bootstrap.index("\n}\n\nresolve_deployed_source_revision(){", start) + len("\n}\n")
-    helper = bootstrap[start:end]
-
-    mac_home = tmp_path / "mac home"
-    override = mac_home / "state" / "custom dispatch hold.json"
-    default = mac_home / "repo-update-dispatch-blocked.json"
-    override.parent.mkdir(parents=True)
-    (mac_home / "venv" / "bin").mkdir(parents=True)
-    (mac_home / "venv" / "bin" / "python").symlink_to(sys.executable)
-    override.write_text("override\n", encoding="utf-8")
-    default.write_text("default\n", encoding="utf-8")
-    env_file = mac_home / "mac.env"
-    env_file.write_text(
-        'MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE="state/custom dispatch hold.json"\n',
-        encoding="utf-8",
-    )
-
-    completed = subprocess.run(
-        ["/bin/bash", "-c", helper + "\nclear_repo_update_dispatch_blocker\n"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "MAC_HOME": str(mac_home),
-            "ENVF": str(env_file),
-        },
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert not default.exists()
-    assert not override.exists()
-
-
 def test_runtime_source_revision_prefers_checkout_head_over_stale_marker(
     tmp_path,
 ):
@@ -1519,10 +1422,6 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert "gh-arm64.tgz" in preparer
     assert "raw.githubusercontent.com/technomancy/leiningen/${LEIN_COMMIT}/bin/lein" in preparer
     assert "SHA-256 mismatch" in preparer
-    # bookworm's make 4.3 spawns with POSIX_SPAWN_RESETIDS, which OpenShell
-    # 0.1's seccomp filter denies; the image builds 4.4.1 instead.
-    assert 'MAKE_VERSION="4.4.1"' in preparer
-    assert "ftp.gnu.org/gnu/make/make-${MAKE_VERSION}.tar.gz" in preparer
     assert "trap cleanup EXIT" in script
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
     assert '--build-arg "NODE_VERSION=$NODE_VERSION"' in script

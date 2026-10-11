@@ -124,19 +124,8 @@ eventual claim." The commit 898f050 is the `repository_base_sha` for this
 analysis worktree — it was the HEAD of the mac repo when the probe task was
 created.
 
-In the MAC fleet, code updates are pushed via AgentBus repo-update control
-messages. When a publication like 898f050 is pushed:
-
-1. The hub detects the new commit and publishes a `REPO_UPDATE_TOPIC` stream to
-   each worker agent.
-2. Workers polling `_process_agentbus_control()` receive the stream on their
-   next `run_once()` call.
-3. `_handle_repo_update_stream()` pulls, installs, and if the new code requires
-   a restart sets `restart_requested=True`.
-4. `run_once()` returns `status="self_update_restart"`, the worker marks itself
-   offline, and `run_forever()` exits.
-5. The process-manager (macOS launchd, Linux systemd, or K8s) restarts the worker.
-6. On restart, `_reconcile_runtime_deps_best_effort()` is called before first poll.
+At the time, MAC fleet code updates used an AgentBus self-update mechanism.
+That mechanism has since been removed in favor of the fleet update script.
 
 **During this window: worker is offline, no `POST /agents/{id}/claim-next` calls
 are made, no hub-push dispatch can match them (agents must be IDLE/BUSY and

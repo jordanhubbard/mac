@@ -202,52 +202,6 @@ if len(matches) != 1 or matches[0].get("endpoint") != endpoint or not matches[0]
   fi
 }
 
-clear_repo_update_dispatch_blocker(){
-  local configured="${MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE:-}"
-  # The worker normally receives the override from mac.env, while this bootstrap
-  # is launched in a fresh SSH shell. Resolve that same setting without importing
-  # the rest of mac.env into bootstrap's own control variables.
-  if [ -z "$configured" ] && [ -f "$ENVF" ]; then
-    if ! configured="$(
-      set +u
-      # shellcheck disable=SC1090 -- this is the managed worker environment file.
-      if ! . "$ENVF" >/dev/null 2>&1; then
-        exit 1
-      fi
-      printf '%s' "${MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE:-}"
-    )"; then
-      echo "ERROR: could not resolve MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE from $ENVF" >&2
-      return 1
-    fi
-  fi
-  "$MAC_HOME/venv/bin/python" - "$MAC_HOME" "$configured" <<'PY'
-import os
-import sys
-from pathlib import Path
-
-mac_home = Path(sys.argv[1]).expanduser()
-configured = sys.argv[2].strip()
-raw_paths = [str(mac_home / "repo-update-dispatch-blocked.json")]
-if configured:
-    raw_paths.append(configured)
-
-seen = set()
-for raw in raw_paths:
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        # Fleet services run with MAC_HOME as their working directory.
-        path = mac_home / path
-    key = os.path.abspath(os.fspath(path))
-    if key in seen:
-        continue
-    seen.add(key)
-    try:
-        Path(key).unlink()
-    except FileNotFoundError:
-        pass
-PY
-}
-
 resolve_deployed_source_revision(){
   local git_revision="" marker_revision="" revision=""
   git_revision="$(git -C "$MAC_SRC" rev-parse HEAD 2>/dev/null || true)"
@@ -1944,8 +1898,6 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)
 ( set -a; . "$ENVF" >/dev/null 2>&1; ) || { echo "ERROR: mac.env failed to source after edit" >&2; exit 1; }
-clear_repo_update_dispatch_blocker
-
 log "DONE. sandbox-enabled=$DO_ENABLE fail-closed=$DO_FAILCLOSED"
 if [ "$DO_ENABLE" = 1 ]; then
   if [ "$gateway_manager" = "supervisord" ]; then

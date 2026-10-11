@@ -2166,14 +2166,6 @@ edges:
             "project": "mac",
             "payload": {"note": "route case"},
         },
-        ("POST", "/agentbus/repo-update"): {
-            "sender_agent_id": ctx["agent_id"],
-            "recipient_agent_ids": [ctx["reviewer_agent_id"]],
-            "repo_path": "/repo",
-            "remote": "origin",
-            "branch": "main",
-            "restart": False,
-        },
         ("POST", "/agentbus/artifact-publish"): {
             "sender_agent_id": ctx["agent_id"],
             "recipient_agent_ids": [ctx["reviewer_agent_id"]],
