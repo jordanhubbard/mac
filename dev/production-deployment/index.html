@@ -3340,22 +3340,6 @@ instead:</p>
 <p>This is a typed transport channel, not an execution channel. Agents must still
 turn received content into explicit task/evidence/review actions through the
 normal API.</p>
-<p>mac-agent also listens for one constrained AgentBus control topic before it
-claims tasks:</p>
-<ul>
-<li>Topic: <code>mac.repo.update.v1</code></li>
-<li>Content type: <code>application/vnd.mac.repo-update+json</code></li>
-<li>Payload schema: <code>mac.agentbus.repo_update.v1</code></li>
-</ul>
-<p>The listener runs <code>git pull --ff-only</code> in <code>MAC_SELF_UPDATE_REPO</code> and exits for
-service-manager restart only when the worktree HEAD changes. Dirty worktrees,
-non-git source trees, invalid remotes/branches, and pull failures are reported
-as result streams instead of being forced. Result streams use topic
-<code>mac.repo.update.result.v1</code> and content type
-<code>application/vnd.mac.repo-update-result+json</code>.</p>
-<p>To broadcast a source update from the hub:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="go">mac admin agentbus repo-update agent_&lt;hub&gt; --all-agents</span>
-</code></pre></div>
 <h2 id="roles-and-workflows">Roles and Workflows<a class="headerlink" href="#roles-and-workflows" title="Permanent link">&para;</a></h2>
 <p>Production mac includes an API-level organization model for coordinated work:</p>
 <ul>
@@ -3381,18 +3365,18 @@ Firecrawl, test PostgreSQL, and telemetry collectors. It is never an OpenShell
 execution runtime on darwin, and its availability does not alter the node's
 <code>macos_host</code> posture. <code>docker ps</code> should therefore show only the expected
 service containers; investigate any container presented as a task sandbox.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="go">docker build -t mac:latest .</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="go">docker run -d --name mac \</span>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="go">    -e MAC_SECRET_KEY=&quot;$(openssl rand -base64 48)&quot; \</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="go">    -e MAC_API_TOKEN=&quot;$(openssl rand -hex 32)&quot; \</span>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="go">    -v mac-data:/var/lib/mac \</span>
-<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="go">    -p 127.0.0.1:8789:8789 \</span>
-<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="go">    --restart unless-stopped \</span>
-<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="go">    mac:latest</span>
-<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>
-<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="gp"># </span>Healthcheck<span class="w"> </span>is<span class="w"> </span>built<span class="w"> </span>into<span class="w"> </span>the<span class="w"> </span>image<span class="p">;</span><span class="w"> </span><span class="sb">`</span>docker<span class="w"> </span>ps<span class="sb">`</span><span class="w"> </span>shows<span class="w"> </span><span class="o">(</span>healthy<span class="o">)</span><span class="w"> </span>once<span class="w"> </span>up.
-<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="go">curl -fsS http://127.0.0.1:8789/health</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="go">docker build -t mac:latest .</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="go">docker run -d --name mac \</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="go">    -e MAC_SECRET_KEY=&quot;$(openssl rand -base64 48)&quot; \</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="go">    -e MAC_API_TOKEN=&quot;$(openssl rand -hex 32)&quot; \</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="go">    -v mac-data:/var/lib/mac \</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="go">    -p 127.0.0.1:8789:8789 \</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="go">    --restart unless-stopped \</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="go">    mac:latest</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="gp"># </span>Healthcheck<span class="w"> </span>is<span class="w"> </span>built<span class="w"> </span>into<span class="w"> </span>the<span class="w"> </span>image<span class="p">;</span><span class="w"> </span><span class="sb">`</span>docker<span class="w"> </span>ps<span class="sb">`</span><span class="w"> </span>shows<span class="w"> </span><span class="o">(</span>healthy<span class="o">)</span><span class="w"> </span>once<span class="w"> </span>up.
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="go">curl -fsS http://127.0.0.1:8789/health</span>
 </code></pre></div>
 <p>For Kubernetes, ship the same image as a single-replica <code>Deployment</code> with a
 PVC mounted at <code>/var/lib/mac</code>. Use a <code>ConfigMap</code> for non-secret env and a
@@ -3401,8 +3385,8 @@ PVC mounted at <code>/var/lib/mac</code>. Use a <code>ConfigMap</code> for non-s
 <p>Use PostgreSQL backup tooling against the configured authority. Keep credentials
 in a protected PostgreSQL service/password file or the process environment.
 A custom-format dump supports a deliberate restore into a separate target:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="go">pg_dump --format=custom --file=/backups/mac.dump</span>
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="go">pg_restore --list /backups/mac.dump</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="go">pg_dump --format=custom --file=/backups/mac.dump</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="go">pg_restore --list /backups/mac.dump</span>
 </code></pre></div>
 <p>Set the connection environment for the intended database first. A dump listing
 is an inventory check, not a restore drill. Verify a restore into an isolated
@@ -3455,9 +3439,9 @@ Qdrant sizes its actix/tokio thread pools from <code>/proc/cpuinfo</code> (the <
 core count, not the cgroup quota) and tries to spawn far more threads than the
 container's PID cap allows. Thread creation then fails with <code>EAGAIN</code> and Qdrant
 panics at startup:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>ERROR qdrant::startup: Panic ... Cannot spawn Arbiter&#39;s thread:
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>  &quot;actix-rt|system:0|arbiter:NNN&quot;: Os { code: 11, kind: WouldBlock,
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>  message: &quot;Resource temporarily unavailable&quot; }
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>ERROR qdrant::startup: Panic ... Cannot spawn Arbiter&#39;s thread:
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>  &quot;actix-rt|system:0|arbiter:NNN&quot;: Os { code: 11, kind: WouldBlock,
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>  message: &quot;Resource temporarily unavailable&quot; }
 </code></pre></div>
 <p><code>mac-qdrant-run</code> (or the systemd unit) exits immediately, supervisord/systemd
 marks the program FATAL, and the deploy aborts because Qdrant is mandatory on
@@ -3474,10 +3458,10 @@ and redeploy. Quick check on the affected host: <code>--pids-limit=512</code> â†
 <code>supervisorctl ...</code> in a manual session needs <code>sudo</code>.</p>
 <h3 id="private-repository-review-is-retracted-or-remains-in-reviewing">Private repository review is retracted or remains in <code>reviewing</code><a class="headerlink" href="#private-repository-review-is-retracted-or-remains-in-reviewing" title="Permanent link">&para;</a></h3>
 <p>Start with the task and shared learning records:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="go">mac --json task show task_...</span>
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="go">mac --json admin memory search \</span>
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
-<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="go">  --order desc --limit 50</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="go">mac --json task show task_...</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="go">mac --json admin memory search \</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="go">  --order desc --limit 50</span>
 </code></pre></div>
 <p>Interpret the review reason before retrying:</p>
 <ul>
@@ -3523,11 +3507,11 @@ default model unless <code>--model</code> also pins one.</p>
   PostgreSQL sequences. A count-only copy is never reported as successful.
   Example:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="gp">$ </span><span class="nb">export</span><span class="w"> </span><span class="nv">MAC_MIGRATION_DATABASE_URL</span><span class="o">=</span><span class="s1">&#39;postgresql:///mac&#39;</span>
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="gp">$ </span>mac<span class="w"> </span>admin<span class="w"> </span>database<span class="w"> </span>migrate-sqlite-to-postgres<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="w">    </span>--sqlite<span class="w"> </span>~/.mac/mac.db<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">    </span>--report<span class="w"> </span>~/.mac/migrations/sqlite-to-postgres.json<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="w">    </span>--hub-stopped
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="gp">$ </span><span class="nb">export</span><span class="w"> </span><span class="nv">MAC_MIGRATION_DATABASE_URL</span><span class="o">=</span><span class="s1">&#39;postgresql:///mac&#39;</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="gp">$ </span>mac<span class="w"> </span>admin<span class="w"> </span>database<span class="w"> </span>migrate-sqlite-to-postgres<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">    </span>--sqlite<span class="w"> </span>~/.mac/mac.db<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">    </span>--report<span class="w"> </span>~/.mac/migrations/sqlite-to-postgres.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">    </span>--hub-stopped
 </code></pre></div>
 <p>Use <code>--resume</code> only with that same receipt/source/target, or <code>--verify-only</code>
   for a later full verification. <code>--restart</code> explicitly truncates the target

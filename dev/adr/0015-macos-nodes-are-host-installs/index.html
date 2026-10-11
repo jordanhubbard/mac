@@ -1835,7 +1835,8 @@ enforced; path confinement did not. macOS nodes carried
 <code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1</code> as a documented waiver.</p>
 <p><strong>The operational cost, observed 2026-08-16/17.</strong> The hub could not take <em>any</em>
 source update, and the only symptom was a rollback event nobody was reading:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>worker.agentbus.repo_update.rolled_back
+<p>The AgentBus source-update mechanism was removed; fleet-update is authoritative.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  worker source update rolled_back
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  before_sha 68602744 -&gt; after_sha 68602744  attempted_after_sha 44820d4a
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  openshell_image_rebuild.status = managed_image_stale
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  summary &quot;source update required a new published runtime digest; checkout rolled back&quot;

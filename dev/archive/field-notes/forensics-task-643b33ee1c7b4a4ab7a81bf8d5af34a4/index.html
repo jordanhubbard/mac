@@ -1994,20 +1994,8 @@ a few seconds, not 90s.</strong></p>
 eventual claim." The commit 898f050 is the <code>repository_base_sha</code> for this
 analysis worktree — it was the HEAD of the mac repo when the probe task was
 created.</p>
-<p>In the MAC fleet, code updates are pushed via AgentBus repo-update control
-messages. When a publication like 898f050 is pushed:</p>
-<ol>
-<li>The hub detects the new commit and publishes a <code>REPO_UPDATE_TOPIC</code> stream to
-   each worker agent.</li>
-<li>Workers polling <code>_process_agentbus_control()</code> receive the stream on their
-   next <code>run_once()</code> call.</li>
-<li><code>_handle_repo_update_stream()</code> pulls, installs, and if the new code requires
-   a restart sets <code>restart_requested=True</code>.</li>
-<li><code>run_once()</code> returns <code>status="self_update_restart"</code>, the worker marks itself
-   offline, and <code>run_forever()</code> exits.</li>
-<li>The process-manager (macOS launchd, Linux systemd, or K8s) restarts the worker.</li>
-<li>On restart, <code>_reconcile_runtime_deps_best_effort()</code> is called before first poll.</li>
-</ol>
+<p>At the time, MAC fleet code updates used an AgentBus self-update mechanism.
+That mechanism has since been removed in favor of the fleet update script.</p>
 <p><strong>During this window: worker is offline, no <code>POST /agents/{id}/claim-next</code> calls
 are made, no hub-push dispatch can match them (agents must be IDLE/BUSY and
 HEALTHY to receive push assignments — an OFFLINE agent is excluded by
