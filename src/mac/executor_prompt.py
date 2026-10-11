@@ -980,6 +980,31 @@ def _repository_gate_failure_section(task: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _operator_reopen_note_section(task: Dict[str, Any]) -> str:
+    """Pass on what the operator said when they reopened this task.
+
+    ``mac task reopen --reason`` is how an operator steers a retry: which tests
+    still fail, what the diagnosis is, what not to do. The hub stores the
+    latest reason in ``metadata.operator_reopen_note``.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    note = metadata.get("operator_reopen_note") if isinstance(metadata, dict) else None
+    if not isinstance(note, dict):
+        return ""
+    reason = str(note.get("reason") or "").strip()
+    if not reason:
+        return ""
+    return (
+        "Operator note: %s reopened this task%s with this guidance. Treat it as part of "
+        "the task: address it first, and say in your recap how you did.\n%s"
+        % (
+            note.get("actor") or "an operator",
+            " from %s" % note["from_state"] if note.get("from_state") else "",
+            reason,
+        )
+    )
+
+
 def _fix_failed_checks_section(task: Dict[str, Any]) -> str:
     """Tell a sent-back task which required checks failed, and how.
 
@@ -1264,6 +1289,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
     gate_section = _repository_gate_failure_section(task)
     if gate_section:
         parts.append(gate_section)
+    reopen_section = _operator_reopen_note_section(task)
+    if reopen_section:
+        parts.append(reopen_section)
     parts.append(
         "Finally, for the per-task activity log, print a short plain-language recap "
         "of what you did and how you verified it (1-3 sentences, no code or diff), "

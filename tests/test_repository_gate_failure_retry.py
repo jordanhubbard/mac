@@ -312,3 +312,31 @@ def test_operator_reopen_drops_the_previous_gate_failure():
     cp.reopen_task(task.id, actor="operator")
 
     assert "repository_gate_failure" not in cp.get_task(task.id).metadata
+
+
+def test_operator_reopen_reason_reaches_the_next_attempts_prompt():
+    """`mac task reopen --reason` is how an operator steers a retry. The reason
+    used to live only in history, so task_77031acb was reopened five times
+    with diagnoses its prompts never contained (2026-10-11)."""
+    cp = ControlPlane.in_memory()
+    task = _gate_task(cp)
+    _block_attempt(cp, task.id, 3, {"reason": "verification_contract_failed"})
+    cp.tick(limit=0)
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+
+    guidance = "Set MAC_OPENSHELL_SANDBOX=1 in the fixture; keep every assertion."
+    cp.reopen_task(task.id, actor="operator", reason=guidance)
+
+    reopened = cp.get_task(task.id)
+    note = reopened.metadata["operator_reopen_note"]
+    assert note["reason"] == guidance and note["from_state"] == TaskState.FAILED.value
+    prompt = build_task_prompt(reopened.to_dict())
+    assert "Operator note: operator reopened this task from failed" in prompt
+    assert guidance in prompt
+
+    # A later reopen without a reason does not replay stale guidance.
+    _block_attempt(cp, task.id, 3, {"reason": "verification_contract_failed"})
+    cp.tick(limit=0)
+    cp.reopen_task(task.id, actor="operator")
+    assert "operator_reopen_note" not in cp.get_task(task.id).metadata
+    assert guidance not in build_task_prompt(cp.get_task(task.id).to_dict())
