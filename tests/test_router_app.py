@@ -1476,6 +1476,50 @@ def test_when_every_provider_refuses_the_key_the_refusal_is_returned_without_wai
     assert slept == []
 
 
+def test_an_account_out_of_credit_fails_over_and_stays_out_of_rotation():
+    """2026-10-10: OpenRouter answered 402 "requires more credits" and the judge
+    got the 402 back instead of the next provider's answer."""
+    clock = [0.0]
+    r = ProviderRouter(
+        [
+            Provider("primary", "http://p/v1", priority=0),
+            Provider("secondary", "http://s/v1", priority=1),
+        ],
+        failure_threshold=3,
+        cooldown_seconds=30.0,
+        clock=lambda: clock[0],
+    )
+    fwd, calls = _fake_forward(
+        {
+            "primary": (402, {"error": {"message": "This request requires more credits"}}),
+            "secondary": (200, {"ok": True}),
+        }
+    )
+    slept = []
+    proxy = ProviderProxy(r, fwd, outage_wait_seconds=60, sleep=slept.append)
+    status, body = proxy.complete("/chat/completions", {"model": "m"})
+    assert status == 200 and body == {"ok": True}
+    assert [c[0] for c in calls] == ["primary", "secondary"] and slept == []
+    # One 402 opens the breaker despite failure_threshold=3, and the ordinary
+    # 30 s cooldown does not let the empty account straight back in.
+    assert r.status()["primary"]["state"] == "open"
+    clock[0] = 31.0
+    calls.clear()
+    proxy.complete("/chat/completions", {"model": "m"})
+    assert [c[0] for c in calls] == ["secondary"]
+
+
+def test_when_every_account_is_out_of_credit_the_402_is_returned_without_waiting():
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 402, {"error": {"message": "This request requires more credits"}}
+
+    slept = []
+    proxy = ProviderProxy(_router(), fwd, outage_wait_seconds=60, sleep=slept.append)
+    status, body = proxy.complete("/chat/completions", {"model": "m"})
+    assert status == 402 and "more credits" in body["error"]["message"]
+    assert slept == []
+
+
 def test_build_proxy_from_env_enables_the_ride_out(monkeypatch):
     env = {"MAC_ROUTER_PROVIDERS": "p=http://p/v1", "MAC_ROUTER_OUTAGE_WAIT_SECONDS": "90"}
     proxy = build_proxy_from_env(env)
