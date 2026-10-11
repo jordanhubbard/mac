@@ -2350,7 +2350,7 @@ def _write_private_shell_env(path: Path, values: Mapping[str, str]) -> Path:
     return path
 
 
-def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tuple[Path, Path]:
+def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tuple[Path, ...]:
     env_values: Dict[str, str] = {
         **_openshell_environment(),
         **_sandbox_repository_environment(workspace, sandbox_workspace),
@@ -2377,7 +2377,28 @@ def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tup
     toolchain_file = workspace / ".mac-sandbox-toolchain.sh"
     toolchain_file.write_text(_sandbox_toolchain_setup_shell(), encoding="utf-8")
     toolchain_file.chmod(0o700)
-    return env_file, toolchain_file
+    context_file = workspace / ".mac-sandbox-context.py"
+    context_file.write_text(
+        """import json, os
+from pathlib import Path
+
+path = Path(os.environ["MAC_TASK_WORKSPACE"]) / "repository-worktree.json"
+if path.is_file():
+    context = json.loads(path.read_text(encoding="utf-8"))
+    sandbox_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "")
+    host_worktree = context.get("repository_worktree")
+    if host_worktree and host_worktree != sandbox_worktree:
+        context.setdefault("repository_worktree_host_only", host_worktree)
+    context["repository_worktree"] = sandbox_worktree
+    for name in ("repository_declared_path", "repository_source_path"):
+        if context.get(name):
+            context.setdefault(name + "_host_only", context.pop(name))
+    path.write_text(json.dumps(context, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    context_file.chmod(0o700)
+    return env_file, toolchain_file, context_file
 
 
 def _task_requires_gpu(task: Any) -> bool:
@@ -2804,11 +2825,11 @@ def _build_sandbox_create_argv(
             "set -a",
             ". ./.mac-openshell-env.sh",
             "set +a",
-            "rm -f ./.mac-openshell-env.sh",
+            'if [ -z "${MAC_TASK_WORKSPACE:-}" ] || [ ! -d "$MAC_TASK_WORKSPACE" ]; then printf \'%s\\n\' \'{"schema":"mac.infrastructure_failure.v1","kind":"sandbox_task_environment_missing","message":"MAC_TASK_WORKSPACE is unset or not a directory before coding-agent exec"}\' >&2; exit 70; fi',
             verifier_resource_profile()[2],
+            '"$MAC_SANDBOX_PYTHON" ./.mac-sandbox-context.py',
             'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && [ ! -e /sandbox/mac-clone ]; then ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone || true; fi',
             ". ./.mac-sandbox-toolchain.sh",
-            "rm -f ./.mac-sandbox-toolchain.sh",
             "mac_sandbox_toolchain_setup || true",
             # The workspace is tar-uploaded, so its files can be owned by a
             # different uid than the sandbox user; without a safe.directory
@@ -3326,6 +3347,7 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
         "executor-evidence.json",
         ".mac-executor-policy.txt",
         ".mac-openshell-env.sh",
+        ".mac-sandbox-context.py",
         _OPENCODE_CONFIG_FILENAME,
         ".mac-sandbox-toolchain.sh",
         ".mac-sandbox-repository-verify.sh",
