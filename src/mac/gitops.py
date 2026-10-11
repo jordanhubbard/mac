@@ -1877,6 +1877,41 @@ def pull_request_state(
     }
 
 
+def task_pull_request_state(
+    repo_url: str,
+    task_id: str,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Dict[str, object]:
+    """Find the forge pull request carrying ``task_id`` in its title or body."""
+    host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+        repo_url, github_token=github_token, gitea_token=gitea_token
+    )
+    try:
+        pulls = _http_get_json(
+            "%s/repos/%s/%s/pulls?state=all&per_page=100" % (api_base, owner, repo), headers
+        )
+    except Exception as exc:  # noqa: BLE001 - an unavailable lookup is an unknown state
+        return {"known": False, "error": _scrub_secret(str(exc), token)[:300]}
+    if not isinstance(pulls, list):
+        return {"known": False}
+    for pull in pulls:
+        if not isinstance(pull, dict):
+            continue
+        if _mac_task_id(str(pull.get("title") or ""), str(pull.get("body") or "")) != task_id:
+            continue
+        number = int(pull.get("number") or 0)
+        if number:
+            return pull_request_state(
+                repo_url,
+                number,
+                github_token=github_token,
+                gitea_token=gitea_token,
+            ) | {"number": number, "host": host_kind}
+    return {"known": True, "found": False, "host": host_kind}
+
+
 def update_pull_request_branch(
     repo_url: str,
     number: int,

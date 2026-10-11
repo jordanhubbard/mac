@@ -188,3 +188,91 @@ def test_pull_request_state_names_the_task_that_owns_the_pull_request(monkeypatc
     payload["body"] = ""
     payload["title"] = "a human's pull request"
     assert gitops.pull_request_state("https://github.com/acme/widgets.git", 101)["task_id"] == ""
+
+
+def _delete_evidence_branch(source, branch="task/feature-lease_2"):
+    git(source, "push", "origin", "--delete", branch)
+
+
+def test_deleted_evidence_ref_uses_the_merged_task_pull_request(cp, tmp_path, monkeypatch):
+    remote, source, main_head, first_head = build_repo(tmp_path)
+    forge = OwnedPullRequestForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    second_head = _second_attempt(source)
+    task, evidence, reviewer = drive_to_approval(
+        cp,
+        source,
+        second_head,
+        pull_request=_REUSED_PR,
+        repo_extra={
+            "remote_ref": "refs/heads/task/feature-lease_2",
+            "remote_url": str(remote),
+        },
+    )
+    forge.owner_task_id = task.id
+    merged = forge.land_from_queue(second_head)
+    _delete_evidence_branch(source)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "published"
+    assert result["canonical_sha"] == merged
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+
+
+def test_deleted_evidence_ref_and_closed_pr_blocks_and_reports_once(cp, tmp_path, monkeypatch):
+    remote, source, main_head, first_head = build_repo(tmp_path)
+    forge = OwnedPullRequestForge(remote, tmp_path / "forge")
+    forge.pr_state = "closed"
+    install_forge(monkeypatch, forge)
+    second_head = _second_attempt(source)
+    task, evidence, reviewer = drive_to_approval(
+        cp,
+        source,
+        second_head,
+        pull_request=_REUSED_PR,
+        repo_extra={
+            "remote_ref": "refs/heads/task/feature-lease_2",
+            "remote_url": str(remote),
+        },
+    )
+    forge.owner_task_id = task.id
+    _delete_evidence_branch(source)
+
+    result = cp.advance_default_review_workflow(task.id)
+    again = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "pull_request_closed_unmerged"
+    assert again["status"] == "not_reviewable"
+    reports = [
+        item for item in cp.list_observability(limit=100) if item.name == "agent.report.filed"
+    ]
+    assert len(reports) == 1
+
+
+def test_merged_pr_commit_not_on_canonical_branch_is_rejected(cp, tmp_path, monkeypatch):
+    remote, source, main_head, first_head = build_repo(tmp_path)
+    forge = OwnedPullRequestForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    second_head = _second_attempt(source)
+    task, evidence, reviewer = drive_to_approval(
+        cp,
+        source,
+        second_head,
+        pull_request=_REUSED_PR,
+        repo_extra={
+            "remote_ref": "refs/heads/task/feature-lease_2",
+            "remote_url": str(remote),
+        },
+    )
+    forge.owner_task_id = task.id
+    forge.queue_merged_sha = second_head
+    git(source, "push", "origin", "%s:refs/heads/not-main" % second_head)
+    _delete_evidence_branch(source)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "merged_pull_request_not_on_canonical_branch"
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
