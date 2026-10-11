@@ -75,6 +75,7 @@ IMAGE_SPECS = {
             "OPENCODE_VERSION": "1.18.18",
             "CLAUDE_CODE_VERSION": "2.1.292",
             "GH_VERSION": "2.95.0",
+            "MAKE_VERSION": "4.4.1",
             "NODE_VERSION": "22.23.1",
             "PNPM_VERSION": "11.13.1",
             "RUST_VERSION": "1.95.0",
