@@ -29,6 +29,12 @@ LOCKS="${MAC_TEST_PG_MAX_LOCKS:-1024}"
 # connections than the 100 default allows; exhaustion surfaces as an opaque
 # "couldn't get a connection after 30s" rather than a test failure.
 CONNS="${MAC_TEST_PG_MAX_CONNECTIONS:-400}"
+# A server this script starts holds nothing worth keeping, so it skips
+# durability. Every test builds a database from the full schema, and on a slow
+# disk each one waits on fsync and a checkpoint: in an OpenShell 0.1 sandbox a
+# single DROP DATABASE sat in CheckpointDone for 40 minutes and the gate timed
+# out at 98%.
+NO_DURABILITY=(-c fsync=off -c synchronous_commit=off -c full_page_writes=off)
 
 # Launchd and non-interactive SSH on Darwin do not put Homebrew on PATH.
 # The hub-mediated upgrade gate runs this helper from that environment and
@@ -127,7 +133,7 @@ for engine in docker podman; do
         -e POSTGRES_PASSWORD=test -e POSTGRES_DB="$DB" \
         -p "$PORT:5432" "$IMAGE" \
         -c max_locks_per_transaction="$LOCKS" \
-        -c max_connections="$CONNS" 2>&1); then
+        -c max_connections="$CONNS" "${NO_DURABILITY[@]}" 2>&1); then
         echo "error: $engine could not start $CONTAINER:" >&2
         echo "$run_log" >&2
         continue
@@ -261,7 +267,7 @@ if [ -n "$PGBIN" ]; then
   pg_locale="$(pg_utf8_locale)"
   if ! start_log=$(LC_ALL="$pg_locale" LANG="$pg_locale" \
       "$PGBIN/pg_ctl" -D "$DATADIR" -l "$LOGFILE" -w -t 60 start \
-      -o "-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$DATADIR -c max_locks_per_transaction=$LOCKS -c max_connections=$CONNS" 2>&1); then
+      -o "-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$DATADIR -c max_locks_per_transaction=$LOCKS -c max_connections=$CONNS ${NO_DURABILITY[*]}" 2>&1); then
     echo "error: pg_ctl could not start a server in $DATADIR:" >&2
     echo "$start_log" >&2
     tail -20 "$LOGFILE" >&2 2>/dev/null || true

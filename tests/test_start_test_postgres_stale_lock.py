@@ -186,6 +186,15 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
             text=True,
         )
         assert ready.returncode == 0, ready.stdout + ready.stderr
+        # A throwaway test cluster skips fsync; on a slow sandbox disk every
+        # per-test CREATE/DROP DATABASE otherwise waits on a checkpoint.
+        fsync = subprocess.run(
+            [str(pg_bin / "psql"), "-h", "127.0.0.1", "-p", str(port), "-d", "mac_socket_only_probe"]
+            + ["-U", os.environ.get("USER") or "postgres", "-Atc", "show fsync"],
+            capture_output=True,
+            text=True,
+        )
+        assert fsync.stdout.strip() == "off", fsync.stdout + fsync.stderr
     finally:
         subprocess.run(
             [str(pg_bin / "pg_ctl"), "-D", str(datadir), "-m", "immediate", "stop"],
