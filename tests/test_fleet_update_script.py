@@ -22,9 +22,17 @@ MIG = "src/mac/data/postgres/migrations"
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 
+# One state file per agent: agent_natasha's is FAKE_AGENT_STATE itself; any
+# other agent starts as a copy of it with no hold and no task of its own.
 MAC_STUB = r"""#!/usr/bin/env python3
 import json, os, sys
-state_path = os.environ["FAKE_AGENT_STATE"]
+base = os.environ["FAKE_AGENT_STATE"]
+agent = sys.argv[3] if len(sys.argv) > 3 else "agent_natasha"
+state_path = base if agent == "agent_natasha" else "%s.%s" % (base, agent)
+if not os.path.exists(state_path):
+    seed = json.load(open(base))
+    seed.update(id=agent, dispatch_hold=False, dispatch_hold_reason=None, current_task_id=None)
+    json.dump(seed, open(state_path, "w"))
 state = json.load(open(state_path))
 with open(os.environ["FAKE_CALLS"], "a") as calls:
     calls.write("mac " + " ".join(sys.argv[1:]) + "\n")
@@ -60,9 +68,17 @@ case "$*" in
   *"bash -s --"*)
     cat > /dev/null
     sha=$(printf '%s\n' "$@" | grep -E '^[0-9a-f]{40}$' | head -1)
-    python3 - "$sha" <<'PY'
+    case "$*" in *100.121.27.109*) who=agent_bullwinkle ;; *) who=agent_natasha ;; esac
+    python3 - "$sha" "$who" <<'PY'
 import json, os, sys
-p = os.environ["FAKE_AGENT_STATE"]; s = json.load(open(p))
+p = os.environ["FAKE_AGENT_STATE"]
+if sys.argv[2] != "agent_natasha":
+    p = "%s.%s" % (p, sys.argv[2])
+    if not os.path.exists(p):
+        s = json.load(open(os.environ["FAKE_AGENT_STATE"]))
+        s.update(id=sys.argv[2], dispatch_hold=False, dispatch_hold_reason=None, current_task_id=None)
+        json.dump(s, open(p, "w"))
+s = json.load(open(p))
 if os.environ.get("FAKE_REPORT_SHA", "1") == "1":
     s["resources"]["source_state"].update(commit_sha=sys.argv[1])
     if not os.environ.get("FAKE_NOT_RESTARTED"):
@@ -400,8 +416,10 @@ def test_busy_worker_is_released_untouched_when_the_task_does_not_clear(fleet) -
 
 
 def test_all_skips_a_busy_worker_and_updates_the_rest(fleet, hub) -> None:
+    # --no-drain: the hub boundary would otherwise refuse the whole rollout.
     result = fleet.run(
         "--yes",
+        "--no-drain",
         "all",
         fleet.shas["b"],
         FAKE_BUSY_AGENT="agent_natasha",
@@ -759,10 +777,10 @@ def test_hub_failure_before_migrate_restores_the_old_checkout(fleet, hub) -> Non
     assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["a"]
     calls = _calls(fleet)
     assert not any(c.startswith("mac-schema-migrate") for c in calls)
-    assert (
-        calls[-1]
-        == "sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist"
-    )
+    restart = "sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist"
+    # The old hub is serving again, so the drain holds are released after it.
+    acts = [c for c in calls if not c.startswith("mac agent show")]
+    assert acts[-3:] == [restart, "mac agent resume agent_natasha", "mac agent resume agent_bullwinkle"]
 
 
 @pytest.mark.parametrize("failure", [{"FAKE_MIGRATE_RC": "1"}, {"FAKE_HEALTH": "0"}])
@@ -847,3 +865,71 @@ def test_startup_attestation_reports_only_the_source_commit(monkeypatch) -> None
         "schema": "mac.hub_startup_attestation.v1",
         "source_commit": "a" * 40,
     }
+
+
+HUB_HOLD = "fleet-update hub %s"
+
+
+def test_hub_drains_every_worker_before_stopping_and_resumes_them_once_healthy(fleet, hub) -> None:
+    result = fleet.run("--yes", "hub", fleet.shas["b"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet)
+    reason = HUB_HOLD % fleet.shas["b"][:12]
+    order = [
+        "mac agent hold agent_natasha --reason %s" % reason,
+        "mac agent hold agent_bullwinkle --reason %s" % reason,
+        "sudo -n launchctl bootout system/com.mac.control-plane",
+        "sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist",
+        "mac agent resume agent_natasha",
+        "mac agent resume agent_bullwinkle",
+    ]
+    assert [calls.index(c) for c in order] == sorted(calls.index(c) for c in order)
+    assert json.loads(fleet.state.read_text())["dispatch_hold"] is False
+
+
+def test_a_busy_worker_leaves_the_hub_untouched(fleet, hub) -> None:
+    result = fleet.run(
+        "--yes", "hub", fleet.shas["b"], FAKE_BUSY_AGENT="agent_bullwinkle", FAKE_BUSY_TASK="task_long"
+    )
+    assert result.returncode == 1
+    assert "hub: still running bullwinkle (task_long); nothing changed" in result.stdout
+    assert "--no-drain" in result.stdout
+    calls = _calls(fleet)
+    assert not any("launchctl" in c or c.startswith("mac-pg-backup") for c in calls)
+    assert "mac agent resume agent_natasha" in calls and "mac agent resume agent_bullwinkle" in calls
+    assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["a"]
+
+
+def test_the_hub_drain_never_releases_a_hold_it_did_not_set(fleet, hub) -> None:
+    fleet.set_agent(held=True, reason="operator: investigating")
+    result = fleet.run("--yes", "hub", fleet.shas["b"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "natasha already held ('operator: investigating')" in result.stdout
+    calls = _calls(fleet)
+    assert not any(c.startswith("mac agent hold agent_natasha") for c in calls)
+    assert "mac agent resume agent_natasha" not in calls
+    assert "mac agent resume agent_bullwinkle" in calls
+    assert json.loads(fleet.state.read_text())["dispatch_hold_reason"] == "operator: investigating"
+
+
+def test_no_drain_restarts_the_hub_without_holding_anyone(fleet, hub) -> None:
+    result = fleet.run("--yes", "--no-drain", "hub", fleet.shas["b"], FAKE_BUSY_AGENT="agent_natasha")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--no-drain: in-flight tasks lose the hub" in result.stdout
+    assert not any(c.startswith("mac agent hold") for c in _calls(fleet))
+
+
+def test_a_hub_stuck_after_migrating_keeps_its_workers_held(fleet, hub) -> None:
+    result = fleet.run("--yes", "hub", fleet.shas["b"], FAKE_PENDING='["0002_more"]', FAKE_HEALTH="0")
+    assert result.returncode == 1
+    assert "NOT HEALTHY" in result.stdout
+    assert "agent_natasha stays held. When the hub is healthy: mac agent resume agent_natasha" in result.stdout
+    assert not any(c.startswith("mac agent resume") for c in _calls(fleet))
+    assert json.loads(fleet.state.read_text())["dispatch_hold"] is True
+
+
+def test_hub_dry_run_plans_the_drain_and_holds_no_one(fleet, hub) -> None:
+    result = fleet.run("--dry-run", "hub", fleet.shas["b"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PLAN: hub: hold every worker not already held" in result.stdout
+    assert not any(c.startswith("mac agent hold") for c in _calls(fleet))

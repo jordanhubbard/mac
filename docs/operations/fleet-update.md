@@ -16,7 +16,7 @@ exact release, so a host's state can be compared with more than its Git HEAD.
 ## Usage
 
 ```console
-scripts/fleet-update [--dry-run] [--hermes] [--yes] \
+scripts/fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] \
     [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all> <sha>
 ```
 
@@ -24,11 +24,12 @@ scripts/fleet-update [--dry-run] [--hermes] [--yes] \
 | --- | --- |
 | `hub` | Update the hub's control plane, then restart the hub's own worker. |
 | `HOST` | Update one managed host, named as in the fleet inventory (`~/.mac/fleets.yaml`). The hub's own name updates the hub. |
-| `all` | The hub first, then each worker in turn. Stops at the first failure. |
+| `all` | The hub first, then each worker in turn. A worker still busy after the drain timeout is skipped, and the run ends with exit code 3 and a rerun command for each skipped worker. Any other failure stops the run. |
 | `<sha>` | Any commit on an `origin` branch. A short sha is fine; it is resolved to the full one. |
 | `--dry-run` | Print the plan, including any migrations, and change nothing. The only write is `git fetch`, which updates remote-tracking refs. |
 | `--hermes` | Also restart the Hermes gateway (`ai.hermes.gateway` on the hub, `hermes-gateway` user unit on Linux). |
 | `--yes` | Don't ask for confirmation before each host. |
+| `--no-drain` | Restart the hub without first draining the workers (see step 0 under [Hub](#hub-macos)). Tasks in flight lose the hub and its model router for the length of the restart, and usually fail. Use it only when the hub must go down now. |
 | `--runtime-image REF --runtime-input-sha256 SHA` | Repin each worker's sandbox image to a published `ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:...` digest and its CI frozen-input identity, both from the image's CI publication. Give both or neither. This changes only the image, never the OpenShell version. |
 
 Every line of output also goes to `~/.mac/logs/fleet-update-<timestamp>.log`.
@@ -94,6 +95,20 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
 
 ## Hub (macOS)
 
+0. **Drain.** The control plane also serves the model router, so while the hub
+   is down every in-flight task loses its lease renewals, its heartbeats and
+   its model calls. The backup in step 2 alone takes minutes. For each worker
+   in the inventory, the script records any existing dispatch hold and leaves
+   it alone. Otherwise it runs
+   `mac agent hold <agent_id> --reason "fleet-update hub <sha12>"`.
+   It then waits up to the drain timeout (`FLEET_UPDATE_DRAIN_TIMEOUT`,
+   default 600s) for every worker to be idle. If one is still busy, the script
+   releases its own holds, names the busy workers and their tasks, and stops.
+   Nothing has changed at that point. Rerun later, or pass `--no-drain`. The
+   holds are released once the new hub is healthy (after step 8), or once a
+   rollback has the old hub serving again. A hub left stopped or unhealthy keeps
+   its workers held, and the script prints the `mac agent resume` command for
+   each one.
 1. `sudo -n launchctl bootout system/com.mac.control-plane`, then wait for the
    `mac.hub_serve` process to exit.
 2. Run `~/.mac/venv/bin/mac-pg-backup --json --out ~/.mac/backups/fleet-update-<ts>`

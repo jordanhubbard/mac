@@ -4,13 +4,13 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all>  (HOST: a managed host in ~/.mac/fleets.yaml) <sha>" >&2
+  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all>  (HOST: a managed host in ~/.mac/fleets.yaml) <sha>" >&2
   exit 2
 }
-DRY=0 HERMES=0 YES=0 RIMG="" RINPUT=""
+DRY=0 HERMES=0 YES=0 NO_DRAIN=0 RIMG="" RINPUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dry-run) DRY=1 ;; --hermes) HERMES=1 ;; --yes) YES=1 ;;
+    --dry-run) DRY=1 ;; --hermes) HERMES=1 ;; --yes) YES=1 ;; --no-drain) NO_DRAIN=1 ;;
     --runtime-image) [ $# -ge 2 ] || usage; RIMG=$2; shift ;;
     --runtime-input-sha256) [ $# -ge 2 ] || usage; RINPUT=$2; shift ;;
     -*) usage ;; *) break ;;
@@ -47,7 +47,13 @@ mkdir -p "$MAC_HOME/logs"
 LOG="$MAC_HOME/logs/fleet-update-$TS.log"
 exec > >(tee -a "$LOG") 2>&1
 HUB_STOPPED=0
-trap '[ "$HUB_STOPPED" = 1 ] && log "WARNING: the hub is STOPPED; start it with: sudo launchctl bootstrap system $HUB_PLIST"' EXIT
+# Workers this run held so the hub could restart under no in-flight task.
+HUB_HOLDS=()
+on_exit() {
+  [ "$HUB_STOPPED" = 1 ] && log "WARNING: the hub is STOPPED; start it with: sudo launchctl bootstrap system $HUB_PLIST"
+  hub_release_holds
+}
+trap on_exit EXIT
 
 log() { printf '%s fleet-update: %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*"; exit 1; }
@@ -123,6 +129,7 @@ hub_rollback() {  # only ever called before the schema was migrated
   sudo -n launchctl bootstrap system "$HUB_PLIST" || true
   HUB_STOPPED=0
   if wait_for "$HEALTH_TIMEOUT" hub_healthy; then log "hub: old code is serving again"; else log "hub: WARNING old code is not healthy either"; fi
+  hub_release_holds
   die "hub update failed: $2"
 }
 hub_stuck() {  # the schema has (or may have) moved forward: never downgrade it
@@ -155,6 +162,60 @@ hub_install_bin() {
   fi
 }
 
+# The hub maintenance boundary. The control plane serves the model router too,
+# so a restart cuts every in-flight task's leases, heartbeats and model calls
+# for as long as the hub is down (the backup alone takes minutes). Hold every
+# worker and let its current task finish before stopping the hub; a worker
+# that is still busy after the drain timeout leaves the hub untouched.
+workers_idle() {
+  local w
+  for w in $(worker_names); do host_entry "$w"; agent_idle "$H_AGENT" || return 1; done
+}
+busy_workers() {
+  local w t out=""
+  for w in $(worker_names); do
+    host_entry "$w"; t=$(agent_json "$H_AGENT" | jget current_task_id) || t="?"
+    [ -z "$t" ] || out="$out${out:+, }$w ($t)"
+  done
+  printf '%s' "$out"
+}
+hub_drain() {
+  local w j reason="fleet-update hub $SHA12"
+  if [ "$NO_DRAIN" = 1 ]; then
+    log "hub: --no-drain: in-flight tasks lose the hub and its model router while it restarts"
+    return 0
+  fi
+  for w in $(worker_names); do
+    host_entry "$w"
+    j=$(agent_json "$H_AGENT") || die "hub: 'mac agent show $H_AGENT' failed; nothing changed"
+    if [ "$(jget dispatch_hold <<< "$j")" = true ]; then
+      log "hub: $w already held ('$(jget dispatch_hold_reason <<< "$j")'); this run will not add or remove its hold"
+    else
+      log "hub: holding $w ('$reason')"
+      "$MAC_CLI" agent hold "$H_AGENT" --reason "$reason" > /dev/null
+      HUB_HOLDS+=("$H_AGENT")
+    fi
+  done
+  log "hub: waiting up to ${DRAIN_TIMEOUT}s for in-flight tasks to finish"
+  if ! wait_for "$DRAIN_TIMEOUT" workers_idle; then
+    local busy; busy=$(busy_workers)
+    hub_release_holds
+    die "hub: still running ${busy:-a task}; nothing changed. Rerun later, or pass --no-drain to restart under them"
+  fi
+}
+# Release the drain holds, but only while a hub is serving: a hub left stopped
+# or unhealthy keeps its workers held, and says how to resume them.
+hub_release_holds() {
+  local a
+  [ "${#HUB_HOLDS[@]}" -gt 0 ] || return 0
+  if ! hub_healthy; then
+    for a in "${HUB_HOLDS[@]}"; do log "hub: not serving; $a stays held. When the hub is healthy: $MAC_CLI agent resume $a"; done
+    return 0
+  fi
+  for a in "${HUB_HOLDS[@]}"; do release_own_hold "$a" "fleet-update hub $SHA12"; done
+  HUB_HOLDS=()
+}
+
 update_hub() {
   local old pending receipt bdir="$MAC_HOME/backups/fleet-update-$TS"
   old=$(git -C "$SRC" rev-parse HEAD)
@@ -163,14 +224,18 @@ update_hub() {
   [ -z "$(git -C "$SRC" status --porcelain)" ] || die "hub checkout $SRC has local changes"
   deps_changed "$old" && log "hub: dependency files changed; will do the locked install"
   if [ "$DRY" = 1 ]; then
+    if [ "$NO_DRAIN" = 1 ]; then plan "hub: --no-drain: restart under any in-flight tasks"
+    else plan "hub: hold every worker not already held; wait ${DRAIN_TIMEOUT}s for in-flight tasks (refuse if still busy)"; fi
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; bootstrap; poll /health"
+    plan "hub: resume the workers this run held, once healthy"
     plan "hub: mac.node_files (role hub) -> ~/.mac/bin; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service; kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
   export MAC_DATABASE_URL; MAC_DATABASE_URL=$(hub_dsn)
   [ -n "$MAC_DATABASE_URL" ] || die "MAC_DATABASE_URL is not set in $MAC_HOME/mac.env"
+  hub_drain
   log "hub: stopping com.mac.control-plane"
   HUB_STOPPED=1
   sudo -n launchctl bootout system/com.mac.control-plane || log "hub: bootout returned non-zero (not loaded?)"
@@ -201,6 +266,7 @@ update_hub() {
     hub_stuck "NOT HEALTHY on $SHA12 after migrating" "$bdir" "$old"
   fi
   log "hub: healthy on $SHA12"
+  hub_release_holds
   hub_install_bin
   soul_install
   launchctl kickstart -k "gui/$(id -u)/com.mac.agent" || log "hub: WARNING kickstart com.mac.agent failed"
