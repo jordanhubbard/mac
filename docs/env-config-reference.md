@@ -211,7 +211,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_DIR` | str | consumer-defined | core | Core setting: journal dir. |
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
-| `MAC_JUDGE_MODEL` | str | consumer-defined | core | Hub setting, inherited by workers with the coding-CLI list: the model the independent judge uses through the hub router (default `claude-opus-4-8`). |
+| `MAC_JUDGE_MODEL` | str | consumer-defined | core | Hub setting, inherited by workers with the coding-CLI list: the model the independent judge uses through the hub router (default `claude-opus-4-8`). If it is unavailable, tasks proceed unjudged and one human report is filed per model and failure class. |
 | `MAC_LANDING_DEADLINE_SECONDS` | int | 86400 | core | Wall-clock deadline, from the first landing attempt, for every review/landing wait (reviewer, hub verify, publication target/evidence, checks pending, release barrier). Past it the task moves to BLOCKED with `landing_budget_exhausted`. |
 | `MAC_LANDING_MAX_ATTEMPTS` | int | 8 | core | Landing attempts (publication retries, unavailable hub verifies) a task may spend between review and landing before it moves to BLOCKED with `landing_budget_exhausted`. Attempts back off from 5 to 60 minutes. |
 | `MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd artifact timeout seconds. |

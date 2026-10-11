@@ -2493,12 +2493,13 @@
   },
   {
     "default": null,
-    "description": "Hub setting, inherited by workers with the coding-CLI list: the model the independent judge uses through the hub router (default `claude-opus-4-8`).",
+    "description": "Hub setting, inherited by workers with the coding-CLI list: the model the independent judge uses through the hub router (default `claude-opus-4-8`). If it is unavailable, tasks proceed unjudged and one human report is filed per model and failure class.",
     "family": "core",
     "name": "MAC_JUDGE_MODEL",
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/task_judge.py"
     ],
     "type": "str"

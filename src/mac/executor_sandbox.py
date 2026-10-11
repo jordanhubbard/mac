@@ -6776,6 +6776,26 @@ _CONTINUE_FOOTER = (
 )
 
 
+def _report_judge_unavailable(task_id: str, verdict: Any) -> None:
+    """Tell humans once per judge model and failure class, without blocking work."""
+    model = str(verdict.model or "unknown")
+    failure_class = str(getattr(verdict, "failure_class", "") or "unavailable")
+    try:
+        _hub_post(
+            "/reports",
+            {
+                "task_id": task_id,
+                "body": "Tasks are proceeding unjudged because judge model %s is unavailable: %s"
+                % (model, verdict.reason),
+                "why": "Acceptance review is unavailable; task execution continues by design.",
+                "undo": "Restore the judge model route or configure a working MAC_JUDGE_MODEL.",
+                "key": "judge-unavailable:%s:%s" % (model, failure_class),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - reporting must never fail the task
+        sys.stderr.write("[executor] WARNING: judge-unavailable report not filed: %s\n" % type(exc).__name__)
+
+
 def _continue_claude_session(
     runner: Callable[..., Any],
     task: Any,
@@ -6826,6 +6846,7 @@ def _continue_claude_session(
             emit_telemetry("judge_verdict", task_id=task_id, round=round_number, verdict=verdict.verdict)
             if verdict.verdict == "unavailable":
                 _post_board_as_hub(task_id, "verdict", "judge unavailable: %s" % verdict.reason, verdict="unavailable")
+                _report_judge_unavailable(task_id, verdict)
                 return result
             _post_board_as_hub(
                 task_id,

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,7 @@ class Verdict:
     model: str = ""
     raw: str = ""
     problems: List[str] = field(default_factory=list)
+    failure_class: str = ""
 
     @property
     def met(self) -> bool:
@@ -53,6 +55,7 @@ class Verdict:
             "next": self.next_steps,
             "model": self.model,
             "problems": list(self.problems),
+            "failure_class": self.failure_class,
         }
 
 
@@ -167,6 +170,47 @@ def parse_reply(text: str, *, model: str = "") -> Verdict:
 Completion = Callable[[str, str], str]
 
 
+def _http_failure(exc: Exception) -> tuple[Optional[int], str]:
+    """Return an HTTP status and provider message without inspecting headers."""
+    status = getattr(exc, "status", None) or getattr(exc, "code", None)
+    response = getattr(exc, "response", None)
+    if status is None and response is not None:
+        status = getattr(response, "status_code", None) or getattr(response, "status", None)
+    try:
+        status = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status = None
+    if status is None:
+        return None, ""
+
+    raw: Any = ""
+    try:
+        if isinstance(exc, urllib.error.HTTPError):
+            raw = exc.read(4096)
+        elif response is not None:
+            raw = getattr(response, "text", "")
+            if callable(raw):
+                raw = raw()
+    except Exception:  # noqa: BLE001 - diagnostics must not mask the failure
+        raw = ""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    text = str(raw or "").strip()
+    if text:
+        try:
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                detail = payload.get("detail") or payload.get("message") or payload.get("error")
+                if isinstance(detail, dict):
+                    detail = detail.get("message") or detail.get("detail")
+                text = str(detail or "")
+            else:
+                text = ""
+        except ValueError:
+            pass
+    return status, " ".join(text.split())[:300]
+
+
 def hub_completion(base_url: str, token: str, *, timeout: float = 300.0) -> Completion:
     """A completion function over the hub router's chat endpoint."""
 
@@ -212,5 +256,20 @@ def judge(
     try:
         reply = complete(model, prompt)
     except Exception as exc:  # noqa: BLE001 - an absent judge must not fail the work
-        return Verdict("unavailable", "the judge could not be reached: %s" % type(exc).__name__, model=model)
+        status, message = _http_failure(exc)
+        if status is not None:
+            detail = "HTTP %d%s" % (status, (": " + message) if message else "")
+            return Verdict(
+                "unavailable",
+                "the judge could not be reached: %s" % detail,
+                model=model,
+                failure_class="http-%d" % status,
+            )
+        failure_class = type(exc).__name__
+        return Verdict(
+            "unavailable",
+            "the judge could not be reached: %s" % failure_class,
+            model=model,
+            failure_class=failure_class.lower(),
+        )
     return parse_reply(reply, model=model)
