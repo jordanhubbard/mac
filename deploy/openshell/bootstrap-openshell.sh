@@ -140,21 +140,53 @@ wait_for_local_gateway(){
 }
 
 register_and_select_local_gateway(){
-  local cli="$1" registrations
-  # `gateway add` is not idempotent. Remove the reviewed name when it already
-  # exists, then recreate and select it without allowing ambient gateway env to
-  # redirect these metadata operations.
-  if env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
-      "$cli" gateway info --name openshell >/dev/null 2>&1; then
-    env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
-      "$cli" gateway remove openshell >/dev/null
+  local cli="$1" registrations registration_state
+  if ! registrations="$(env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+      "$cli" gateway list --output json)"; then
+    echo "ERROR: failed to list OpenShell gateway registrations" >&2
+    return 1
   fi
-  env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
-    "$cli" gateway add --name openshell "$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" >/dev/null
-  env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
-    "$cli" gateway select openshell >/dev/null
-  registrations="$(env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
-    "$cli" gateway list --output json)"
+  if ! registration_state="$(printf '%s\n' "$registrations" | \
+      "$MAC_HOME/venv/bin/python" -c '
+import json
+import sys
+
+endpoint = sys.argv[1]
+matches = [item for item in json.load(sys.stdin) if item.get("name") == "openshell"]
+if not matches:
+    print("absent")
+elif len(matches) == 1 and matches[0].get("endpoint") == endpoint:
+    print("correct")
+else:
+    print("wrong")
+' "$OPENSHELL_LOCAL_GATEWAY_ENDPOINT")"; then
+    echo "ERROR: failed to parse OpenShell gateway registrations" >&2
+    return 1
+  fi
+  if [ "$registration_state" = wrong ]; then
+    if ! env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+        "$cli" gateway remove openshell >/dev/null; then
+      echo "ERROR: failed to remove stale OpenShell gateway registration" >&2
+      return 1
+    fi
+  fi
+  if [ "$registration_state" != correct ]; then
+    if ! env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+        "$cli" gateway add --name openshell "$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" >/dev/null; then
+      echo "ERROR: failed to add local OpenShell gateway registration" >&2
+      return 1
+    fi
+  fi
+  if ! env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+      "$cli" gateway select openshell >/dev/null; then
+    echo "ERROR: failed to select local OpenShell gateway registration" >&2
+    return 1
+  fi
+  if ! registrations="$(env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+      "$cli" gateway list --output json)"; then
+    echo "ERROR: failed to list selected OpenShell gateway registration" >&2
+    return 1
+  fi
   if ! printf '%s\n' "$registrations" | "$MAC_HOME/venv/bin/python" -c '
 import json
 import sys
