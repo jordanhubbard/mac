@@ -233,7 +233,9 @@ update_hub() {
     return 0
   fi
   confirm "update the hub to $SHA12"
-  "$VENV/bin/python" -m mac.credential_aliases --convert --env-file "$MAC_HOME/mac.env" || die "hub credential alias conversion refused"
+  # The hub checkout is still the old commit here, so its venv may not have
+  # this module yet: run the converter from the tree this script ships in.
+  PYTHONPATH="$SCRIPT_SRC" "$VENV/bin/python" -m mac.credential_aliases --convert --env-file "$MAC_HOME/mac.env" || die "hub credential alias conversion refused"
   export MAC_DATABASE_URL; MAC_DATABASE_URL=$(hub_dsn)
   [ -n "$MAC_DATABASE_URL" ] || die "MAC_DATABASE_URL is not set in $MAC_HOME/mac.env"
   hub_drain
