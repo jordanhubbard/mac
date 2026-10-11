@@ -2593,8 +2593,7 @@ truthful.</p>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="gp">$</span>EDITOR<span class="w"> </span>/etc/mac/openshell-policy.yaml<span class="w">      </span><span class="c1"># fill in __PLACEHOLDER__ tokens</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="go">export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">export MAC_ALLOW_UNSANDBOXED_YOLO=0</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">mac-openshell-supervisor --agent-id agent_hub --policy &quot;$MAC_OPENSHELL_POLICY&quot; -- mac-hermes-gateway</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">mac-openshell-supervisor --agent-id agent_hub --policy &quot;$MAC_OPENSHELL_POLICY&quot; -- mac-hermes-gateway</span>
 </code></pre></div>
 <h3 id="environment-knobs">Environment knobs<a class="headerlink" href="#environment-knobs" title="Permanent link">&para;</a></h3>
 <table>
@@ -2625,11 +2624,6 @@ truthful.</p>
 <td><code>MAC_OPENSHELL_EVENTS_FILE</code></td>
 <td><em>(none)</em></td>
 <td>JSONL/OCSF event stream for <code>mac-openshell-collector</code></td>
-</tr>
-<tr>
-<td><code>MAC_ALLOW_UNSANDBOXED_YOLO</code></td>
-<td><code>0</code> on required agents</td>
-<td>explicit hatch for non-required hosts</td>
 </tr>
 <tr>
 <td><code>MAC_OPENSHELL_SANDBOX</code></td>

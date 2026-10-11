@@ -2260,14 +2260,24 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 <li>Poll <code>/health</code>, then require <code>/startup-attestation</code>'s <code>source_commit</code> to equal
    the target. An empty <code>source_commit</code> is a failure, not a pass. <code>mac-service</code> sets it from the <code>HEAD</code> of <code>~/.mac/src/mac</code>.</li>
 <li>Run <code>python -m mac.node_files --source ~/.mac/src/mac --role hub</code> (see
-   <a href="#managed-files">Managed files</a>). A failure is logged, never fatal.</li>
+    <a href="#managed-files">Managed files</a>). The hub role owns only <code>mac-service</code>; the
+    transition removes previously managed task-worker wrappers. A failure is
+    logged, never fatal.</li>
 <li>Run <code>python -m mac.fleet_context_service --source ~/.mac/src/mac</code>. It
     installs or repairs the LaunchAgent <code>com.mac.fleet-context</code>, which refreshes
     the live fleet block in this agent's runtime context every 3 minutes, and
     runs one refresh. Its JSON result is logged; a failure never fails the update.</li>
-<li>Run <code>launchctl kickstart -k gui/&lt;uid&gt;/com.mac.agent</code>. With <code>--hermes</code>, also
-    kickstart <code>gui/&lt;uid&gt;/ai.hermes.gateway</code>.</li>
+<li>Run <code>launchctl bootout gui/&lt;uid&gt;/com.mac.agent</code>; an already absent service
+    is a successful no-op. Decommission the inventory's hub agent record with
+    <code>mac agent delete &lt;hub-agent-id&gt; --actor fleet-update</code>, which is idempotent
+    and prevents dispatch even without a hold. With <code>--hermes</code>, kickstart
+    <code>gui/&lt;uid&gt;/ai.hermes.gateway</code>.</li>
 </ol>
+<p>Hermes, the fleet-context LaunchAgent, heartbeat capability reporting, and the
+hub review verifier are control-plane or dedicated LaunchAgent services; none
+uses <code>com.mac.agent</code>. The historical hub agent row is not needed by those
+services and should be decommissioned with <code>mac agent delete &lt;hub-agent-id&gt;</code>;
+operational docs must not use <code>mac agent show &lt;hub-agent-id&gt;</code> as a health check.</p>
 <p><code>~/.mac/bin/mac-service</code> is a managed file of the hub role, installed from
 <code>deploy/bin/mac-service</code>: it runs <code>~/.mac/venv/bin/python -m mac.hub_serve</code>
 from <code>~/.mac/src/mac</code> and nothing else. The script no longer writes the legacy
