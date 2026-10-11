@@ -116,7 +116,7 @@ fi
 
 # 2. A server already listening locally (brew services, a running container).
 if command -v pg_isready >/dev/null 2>&1 && pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
-  createdb -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+  createdb -w -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
   require_sql psql -h 127.0.0.1 -p "$PORT" -U "$(whoami)" -d "$DB"
   for setting in "max_locks_per_transaction:$LOCKS:out of shared memory" \
                  "max_connections:$CONNS:couldn't get a connection"; do
@@ -259,7 +259,7 @@ if [ -n "$PGBIN" ]; then
     # about to advertise, it IS the answer.
     if command -v pg_isready >/dev/null 2>&1 \
         && pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
-      "$PGBIN/createdb" -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+      "$PGBIN/createdb" -w -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
       require_sql "$PGBIN/psql" -h 127.0.0.1 -p "$PORT" -U "$(id -un)" -d "$DB"
       emit "postgresql://$(id -un)@127.0.0.1:$PORT/$DB"
       exit 0
@@ -280,7 +280,7 @@ if [ -n "$PGBIN" ]; then
     tail -20 "$LOGFILE" >&2 2>/dev/null || true
     exit 1
   fi
-  "$PGBIN/createdb" -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+  "$PGBIN/createdb" -w -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
   # The superuser is named for the invoking user, not "postgres", so a second
   # call -- which finds this server listening and takes the branch above --
   # emits a DSN that authenticates instead of "role does not exist".
