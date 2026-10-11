@@ -21111,6 +21111,73 @@ class ControlPlane:
             return {"task_id": task_id, "status": "disabled_by_task_policy"}
 
         evidence, evidence_assessment = self._bound_review_evidence(task)
+        if evidence is None and evidence_assessment.get("reason") == "pull_request_already_landed":
+            target_id = str(evidence_assessment.get("executor_evidence_id") or "")
+            source = self.get_evidence(target_id)
+            approved = [
+                review
+                for review in self.list_reviews(task_id)
+                if review.status == ReviewStatus.APPROVED.value
+                and self._review_verdict_targets(review, source.id)
+            ]
+            if not approved:
+                return self._block_default_review(
+                    task_id, "landed_pull_request_lacks_approved_review", evidence_assessment, actor
+                )
+            merge_sha = str(evidence_assessment["merge_sha"])
+            number = int(evidence_assessment["pull_request_number"])
+            self._record_canonical_integration_proof(
+                task_id,
+                source.id,
+                approved[-1].reviewer_agent_id,
+                {
+                    "final_sha": merge_sha,
+                    "head_sha": (
+                        ensure_json_object(
+                            ensure_json_object(source.metadata).get("verification")
+                        )
+                        .get("repo", {})
+                        .get("head_sha")
+                    ),
+                    "publication_mode": "pull_request_squash",
+                    "contains_reviewed_head": False,
+                    "pull_request_number": number,
+                    "pull_request_url": "",
+                    "pull_request_opened_by": "external",
+                },
+            )
+            publication = self.reviews.publish_task(
+                task_id,
+                self._default_publication_target(task) or "git://main",
+                approved[-1].reviewer_agent_id,
+                evidence_id=source.id,
+            )
+            return {
+                "task_id": task_id,
+                "status": "published",
+                "publication_id": publication.id,
+                "pull_request_number": number,
+                "canonical_sha": merge_sha,
+            }
+        if evidence is None and evidence_assessment.get("reason") in {
+            "pull_request_closed_unmerged",
+            "task_pull_request_not_found",
+            "merged_pull_request_not_on_canonical_branch",
+        }:
+            reason = str(evidence_assessment["reason"])
+            blocked = self._block_default_review(task_id, reason, evidence_assessment, actor)
+            self.file_human_report(
+                "Task %s cannot complete after its evidence ref disappeared: %s"
+                % (task_id, reason),
+                reporter=str(actor or "default-review-workflow"),
+                task_id=task_id,
+                why="The task-owned pull request is not a verified landing on the canonical branch.",
+                undo="Restore the task ref or land the task-owned pull request, then reopen the task.",
+                evidence="pull_request_number=%s"
+                % (evidence_assessment.get("pull_request_number") or "none"),
+                key="missing-ref-pull-request:%s" % task_id,
+            )
+            return blocked
         if (
             evidence is None
             and task.state == TaskState.REVIEWING.value
@@ -25699,6 +25766,9 @@ class ControlPlane:
             assessment = self._assess_default_review_evidence(task, evidence)
             if assessment.get("valid"):
                 return evidence, assessment
+            recovered = self._recover_missing_ref_pull_request(task, evidence, assessment)
+            if recovered is not None:
+                return None, recovered
             return None, {
                 "reason": "bound_evidence_not_verifiable",
                 "executor_evidence_id": target_id,
@@ -25719,6 +25789,107 @@ class ControlPlane:
                 (json_dumps(metadata), utcnow(), task.id),
             )
         return evidence, assessment
+
+    def _recover_missing_ref_pull_request(
+        self, task: Task, evidence: Evidence, assessment: JsonDict
+    ) -> Optional[JsonDict]:
+        """Resolve deleted task refs through the task-owned forge pull request."""
+        problems = [str(item) for item in assessment.get("problems", [])]
+        if not any(
+            "did not match any ref" in item or "does not resolve" in item for item in problems
+        ):
+            return None
+        from . import gitops as _gitops
+
+        manifest = ensure_json_object(ensure_json_object(evidence.metadata).get("verification"))
+        repo = ensure_json_object(manifest.get("repo"))
+        pull = ensure_json_object(repo.get("pull_request"))
+        number = _nonnegative_int(pull.get("number"))
+        remote = str(repo.get("remote_url") or repo.get("push_remote") or "").strip()
+        if not remote:
+            origin = ensure_json_object(ensure_json_object(task.metadata).get("origin"))
+            remote = str(origin.get("repository_url") or "").strip()
+        state: JsonDict = {}
+        if remote and number:
+            state = ensure_json_object(_gitops.pull_request_state(remote, number))
+        elif remote:
+            state = ensure_json_object(_gitops.task_pull_request_state(remote, task.id))
+            number = _nonnegative_int(state.get("number"))
+        owner = str(state.get("task_id") or "")
+        if state.get("known") and state.get("merged") and number and owner == task.id:
+            merge_sha = str(state.get("sha") or "").strip()
+            canonical = self._repository_contract_for_task(task)
+            branch = resolve_task_repository_branch(
+                task.to_dict(),
+                legacy_branch=canonical.get("canonical_branch"),
+                default_branch="main",
+            )
+            if self._remote_branch_contains(remote, branch, merge_sha):
+                return {
+                    "reason": "pull_request_already_landed",
+                    "executor_evidence_id": evidence.id,
+                    "pull_request_number": number,
+                    "merge_sha": merge_sha,
+                    "canonical_branch": branch,
+                }
+            return {
+                "reason": "merged_pull_request_not_on_canonical_branch",
+                "executor_evidence_id": evidence.id,
+                "pull_request_number": number,
+                "merge_sha": merge_sha,
+            }
+        reason = (
+            "pull_request_closed_unmerged"
+            if state.get("known") and number
+            else "task_pull_request_not_found"
+        )
+        return {
+            "reason": reason,
+            "executor_evidence_id": evidence.id,
+            "pull_request_number": number or None,
+        }
+
+    @staticmethod
+    def _remote_branch_contains(remote: str, branch: str, commit: str) -> bool:
+        if not remote or not _GIT_SHA_RE.match(commit):
+            return False
+        with tempfile.TemporaryDirectory(prefix="mac-pr-proof-") as directory:
+            initialized = subprocess.run(
+                ["git", "init", "--bare", directory], capture_output=True, text=True
+            )
+            if initialized.returncode != 0:
+                return False
+            fetched = subprocess.run(
+                [
+                    "git",
+                    "--git-dir",
+                    directory,
+                    "fetch",
+                    "--quiet",
+                    remote,
+                    "+refs/heads/%s:refs/heads/canonical" % branch,
+                    commit,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if fetched.returncode != 0:
+                return False
+            return (
+                subprocess.run(
+                    [
+                        "git",
+                        "--git-dir",
+                        directory,
+                        "merge-base",
+                        "--is-ancestor",
+                        commit,
+                        "canonical",
+                    ],
+                    capture_output=True,
+                ).returncode
+                == 0
+            )
 
     def _assess_default_review_evidence(self, task: Task, evidence: Evidence) -> JsonDict:
         if self._evidence_returncode(evidence) != 0:
