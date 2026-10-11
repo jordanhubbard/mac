@@ -834,7 +834,13 @@ def test_port_process_and_stop_helpers(login_files, monkeypatch):
         listener.listen()
         port = listener.getsockname()[1]
         assert client_login._port_open(port) is True
-    assert client_login._port_open(port) is False
+    # Probe a port nothing ever listened on. The closed listener's own port is
+    # not a refusal everywhere: OpenShell 0.1's network broker keeps its copy of
+    # a listening socket, so that port goes on accepting after close().
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        refused_port = unused.getsockname()[1]
+    assert client_login._port_open(refused_port) is False
 
     assert client_login._pid_alive(os.getpid()) is True
     assert client_login._pid_alive("not-a-pid") is False
