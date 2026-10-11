@@ -1344,6 +1344,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#canonical-host-credential-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical host credential variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#precedence-and-retirement" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1908,6 +1919,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canonical-host-credential-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical host credential variables
+      
+    </span>
+  </a>
   
 </li>
       
@@ -5972,6 +5994,47 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 </tr>
 </tbody>
 </table>
+<h2 id="canonical-host-credential-variables">Canonical host credential variables<a class="headerlink" href="#canonical-host-credential-variables" title="Permanent link">&para;</a></h2>
+<p>Host services read only these canonical names after <code>python -m mac.credential_aliases --convert</code> rewrites <code>~/.mac/mac.env</code>. The converter backs up changed files, refuses conflicting values, and is idempotent.</p>
+<table>
+<thead>
+<tr>
+<th>Canonical variable</th>
+<th>Credential</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAC_API_TOKEN</code></td>
+<td>hub API administrator token</td>
+</tr>
+<tr>
+<td><code>MAC_API_TOKENS</code></td>
+<td>hub API principal map</td>
+</tr>
+<tr>
+<td><code>MAC_WORKER_TOKEN</code></td>
+<td>worker bearer token</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_HUB_TOKEN</code></td>
+<td>deployment hub token</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_TOKENHUB_API_KEY</code></td>
+<td>legacy TokenHub deployment key</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_TAILSCALE_AUTH_KEY</code></td>
+<td>Tailscale enrollment key</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_GITHUB_REVIEW_KEY_B64</code></td>
+<td>GitHub review key</td>
+</tr>
+</tbody>
+</table>
+<p>Fleet selection is separate: operator clients may select <code>--fleet</code> or <code>MAC_FLEET</code> and use <code>MAC_API_TOKEN__&lt;FLEET&gt;</code> alongside the corresponding entry in <code>~/.mac/fleets.yaml</code>. That multi-fleet client feature is not a host credential alias and is intentionally retained.</p>
 <h2 id="precedence-and-retirement">Precedence and retirement<a class="headerlink" href="#precedence-and-retirement" title="Permanent link">&para;</a></h2>
 <p>Fallback precedence is left-to-right in <code>resolve_env_chain</code>. Fleet-scoped credential keys are resolved before legacy flat keys by their owning subsystem. <code>MAC_BEADS_BRIDGE_HUB_AGENT</code> is retained only as a documented retired name and is never consulted by <code>resolve_hub_agent</code>.</p>
 
