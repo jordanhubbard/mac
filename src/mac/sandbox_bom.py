@@ -75,6 +75,11 @@ MAC_CORE_COMMANDS: Tuple[str, ...] = (
     "iptables",
     "procps",
     "python3",
+    # ripgrep: opencode's Grep/Glob tools shell out to `rg`, and agents run it
+    # directly. Without it opencode tries to download ripgrep from GitHub at
+    # first use, which the sandbox egress policy blocks, so every search tool
+    # failed ("ripgrep execution failed") on every task from 2026-10-10.
+    "rg",
     "tar",
     "uv",
     "xz-utils",
@@ -92,6 +97,7 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     "g++": ("build-essential",),
     "ld": ("build-essential",),
     "make": ("make",),
+    "rg": ("ripgrep",),
     # cmake/ninja arrived from isaacsim7-poc's contract, which the first
     # derivation could not read at all -- see _derive_sandbox_bom in cli.py.
     # PostgreSQL. The mac suite runs against it because the fleet does, and the
