@@ -9,8 +9,10 @@ is retried rather than treated as bad work.
 
 from __future__ import annotations
 
+from io import BytesIO
 import json
 import subprocess
+import urllib.error
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -59,7 +61,28 @@ def test_an_unreachable_judge_is_unavailable_not_a_failure():
     def broken(model, prompt):
         raise OSError("down")
 
-    assert task_judge.judge({"title": "t"}, "", broken).verdict == "unavailable"
+    verdict = task_judge.judge({"title": "t"}, "", broken)
+    assert verdict.verdict == "unavailable"
+    assert verdict.reason == "the judge could not be reached: OSError"
+
+
+def test_an_http_error_includes_status_and_provider_message_without_headers():
+    def broken(model, prompt):
+        raise urllib.error.HTTPError(
+            "https://hub.invalid/v1/chat/completions",
+            402,
+            "Payment Required",
+            {"Authorization": "Bearer secret"},
+            BytesIO(b'{"detail":"This request requires more credits to run the model"}'),
+        )
+
+    verdict = task_judge.judge({"title": "t"}, "", broken, model="anthropic/claude-opus-5.5")
+    assert verdict.reason == (
+        "the judge could not be reached: HTTP 402: "
+        "This request requires more credits to run the model"
+    )
+    assert verdict.failure_class == "http-402"
+    assert "secret" not in verdict.reason
 
 
 def test_collect_change_shows_tracked_and_new_files_without_staging(tmp_path):
@@ -141,6 +164,37 @@ def test_not_met_hands_the_next_steps_back_until_met(claude_workspace, monkeypat
     ex._continue_claude_session(None, {}, workspace, "task_1", _Result(), {})
     assert len(prompts) == 1 and "add a test for empty input" in prompts[0]
     assert "Next: add a test for empty input" in posts[0]["body"]
+
+
+@pytest.mark.parametrize("report_raises", [False, True])
+def test_unavailable_judge_reports_once_and_still_proceeds(
+    claude_workspace, monkeypatch, report_raises
+):
+    workspace, posts = claude_workspace
+    reports = []
+    verdict = task_judge.Verdict(
+        "unavailable",
+        "the judge could not be reached: HTTP 402: credits required",
+        model="anthropic/claude-opus-5.5",
+        failure_class="http-402",
+    )
+    monkeypatch.setattr(ex, "_judge_task_change", lambda *a: verdict)
+
+    def report(path, payload):
+        reports.append((path, payload))
+        if report_raises:
+            raise RuntimeError("hub down")
+        return True
+
+    monkeypatch.setattr(ex, "_hub_post", report)
+    result = _Result()
+    assert ex._continue_claude_session(None, {}, workspace, "task_1", result, {}) is result
+    assert len(reports) == 1
+    assert reports[0][0] == "/reports"
+    assert reports[0][1]["key"] == "judge-unavailable:anthropic/claude-opus-5.5:http-402"
+    assert "proceeding unjudged" in reports[0][1]["body"]
+    assert "anthropic/claude-opus-5.5" in reports[0][1]["body"]
+    assert [post for post in posts if post["kind"] == "verdict"]
 
 
 def test_the_loop_is_bounded_and_stops_for_a_blocking_question(claude_workspace, monkeypatch):

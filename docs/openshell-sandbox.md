@@ -609,6 +609,12 @@ sandbox**:
 
 ### Environment knobs
 
+The independent judge is advisory: if its completion fails, the executor posts
+the reason on the task board and continues the task unjudged. HTTP failures name
+the status and a short provider message. The executor also files an act-then-tell
+human report, deduplicated by judge model and failure class, so a broken judge
+route produces one Slack notification rather than one notification per task.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MAC_PREFER_CODING_AGENT` | `1` | master switch; `0` disables the coding route and the executor fails closed |

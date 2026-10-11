@@ -158,7 +158,9 @@ CURATED_DESCRIPTIONS = {
     ),
     "MAC_JUDGE_MODEL": (
         "Hub setting, inherited by workers with the coding-CLI list: the model the "
-        "independent judge uses through the hub router (default `claude-opus-4-8`)."
+        "independent judge uses through the hub router (default `claude-opus-4-8`). "
+        "If it is unavailable, tasks proceed unjudged and one human report is filed per "
+        "model and failure class."
     ),
     "MAC_CODING_MODELS": (
         "Comma-separated logical model names the generated opencode config declares under "
