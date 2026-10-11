@@ -2921,6 +2921,28 @@ def _verifier_output_excerpt(stdout_file, stderr_file, *, limit: int = 600) -> s
     return "; ".join(parts)
 
 
+#: Lines a pytest run uses to say WHAT failed. The gate's stdout ends with the
+#: coverage table, so a tail excerpt kept the table and cut these: on
+#: 2026-10-11 a blocked task reported only coverage rows and its failing tests
+#: had to be recovered by re-running the gate by hand.
+_PYTEST_FAILURE_LINE = _re.compile(
+    r"^(?:FAILED |ERROR |=+ .*\b(?:failed|errors?|passed)\b.*=+$|\[gw\d+\] node down|"
+    r"\+{3,} Timeout \+{3,})"
+)
+
+
+def _pytest_failure_summary(text: str, *, limit: int) -> str:
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line and _PYTEST_FAILURE_LINE.match(line) and line not in lines:
+            lines.append(line)
+    summary = " | ".join(lines)
+    if len(summary) > limit:
+        summary = summary[:limit] + "... (truncated)"
+    return summary
+
+
 def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 1200) -> str:
     """Recover what the gate said from the report the sandbox wrote.
 
@@ -2992,6 +3014,14 @@ def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 120
                 ": " + detail.replace("\n", " | ") if detail else "",
             )
         )
+    # The failing tests first: they are what the reader needs, and the tail
+    # excerpt below is dominated by the coverage table printed after them.
+    failures = _pytest_failure_summary(
+        "\n".join(str(payload.get(label) or "") for label in ("stdout", "stderr")),
+        limit=limit,
+    )
+    if failures:
+        parts.append("failures=%s" % failures)
     # stdout before stderr, unlike the launcher excerpt: pytest names the failing
     # tests and prints its summary line there, while stderr is usually warnings.
     for label in ("stdout", "stderr"):
