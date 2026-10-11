@@ -136,7 +136,11 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
     the live fleet block in this agent's runtime context every 3 minutes, and
     runs one refresh. Its JSON result is logged; a failure never fails the update.
 11. Run `launchctl bootout gui/<uid>/com.mac.agent`; an already absent service
-    is a successful no-op. Decommission the inventory's hub agent record with
+    is a successful no-op. Rename `~/Library/LaunchAgents/com.mac.agent.plist`
+    to `.plist.disabled` so login does not start it again, and remove
+    `MAC_WORKER_TOKEN` from `~/.mac/mac.env` (backup `mac.env.bak-hub-agent-<ts>`):
+    it belongs to the deleted agent, and `mac admin fleet refresh-context`
+    prefers it over `MAC_API_TOKEN`. Decommission the inventory's hub agent record with
     `mac agent delete <hub-agent-id> --actor fleet-update`, which is idempotent
     and prevents dispatch even without a hold. With `--hermes`, kickstart
     `gui/<uid>/ai.hermes.gateway`.

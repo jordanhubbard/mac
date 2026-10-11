@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -721,6 +722,34 @@ def test_hub_update_runs_the_manual_swap_in_order(fleet, hub) -> None:
     assert calls.index(soul) < calls.index(hermes)
     assert "import -m mac.fleet_context_service --source %s" % fleet.src in calls
     assert not any(c.startswith("uv ") for c in calls)  # dependency files unchanged a..b
+
+
+def test_hub_retires_its_agent_for_good(fleet, hub) -> None:
+    """The plist would restart the agent at login; the token would break refreshes."""
+    agents = fleet.tmp / "home" / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    (agents / "com.mac.agent.plist").write_text("<plist/>\n")
+    env = hub / "mac.env"
+    env.write_text(
+        "MAC_DATABASE_URL=postgresql://stub/mac\n"
+        "MAC_WORKER_TOKEN=retired-agent-token\n"
+        "export MAC_WORKER_TOKEN__MAC=retired-agent-token\n"
+        "MAC_API_TOKEN=admin-token\n"
+    )
+    env.chmod(0o600)
+    result = fleet.run("--yes", "hub", fleet.shas["b"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (agents / "com.mac.agent.plist").exists()
+    assert (agents / "com.mac.agent.plist.disabled").read_text() == "<plist/>\n"
+    assert env.read_text() == "MAC_DATABASE_URL=postgresql://stub/mac\nMAC_API_TOKEN=admin-token\n"
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    (backup,) = hub.glob("mac.env.bak-hub-agent-*")
+    assert "MAC_WORKER_TOKEN=retired-agent-token" in backup.read_text()
+    assert "retired-agent-token" not in result.stdout
+
+    again = fleet.run("--yes", "hub", fleet.shas["b"])
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert len(list(hub.glob("mac.env.bak-hub-agent-*"))) == 1
 
 
 def test_hub_installs_its_managed_files_including_mac_service(fleet, hub) -> None:
