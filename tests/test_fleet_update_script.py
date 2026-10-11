@@ -651,7 +651,11 @@ def hub(fleet):
         venv_bin
         / "python": (
             '#!/bin/sh\necho "import $*" >> "$FAKE_CALLS"\n'
-            'case "$*" in *mac.node_files*|*mac.credential_aliases*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
+            'case "$*" in *mac.node_files*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
+            # The deployed (old) venv has no mac.credential_aliases: the hub
+            # converts before checkout, so only the script's own tree has it.
+            '  *mac.credential_aliases*) [ "$PYTHONPATH" = "$REAL_SRC" ] || '
+            '{ echo "No module named mac.credential_aliases" >&2; exit 1; }; exec "$REAL_PY" "$@" ;;\n'
             '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
             '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
             '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
