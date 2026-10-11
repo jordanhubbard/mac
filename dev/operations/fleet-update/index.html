@@ -2105,7 +2105,7 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 <p>The <a href="../release-manifest/">release manifest</a> names every component of one
 exact release, so a host's state can be compared with more than its Git HEAD.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] \</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">    [--runtime-image REF --runtime-input-sha256 SHA] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
 </code></pre></div>
 <table>
@@ -2126,7 +2126,7 @@ exact release, so a host's state can be compared with more than its Git HEAD.</p
 </tr>
 <tr>
 <td><code>all</code></td>
-<td>The hub first, then each worker in turn. Stops at the first failure.</td>
+<td>The hub first, then each worker in turn. A worker still busy after the drain timeout is skipped, and the run ends with exit code 3 and a rerun command for each skipped worker. Any other failure stops the run.</td>
 </tr>
 <tr>
 <td><code>&lt;sha&gt;</code></td>
@@ -2143,6 +2143,10 @@ exact release, so a host's state can be compared with more than its Git HEAD.</p
 <tr>
 <td><code>--yes</code></td>
 <td>Don't ask for confirmation before each host.</td>
+</tr>
+<tr>
+<td><code>--no-drain</code></td>
+<td>Restart the hub without first draining the workers (see step 0 under <a href="#hub-macos">Hub</a>). Tasks in flight lose the hub and its model router for the length of the restart, and usually fail. Use it only when the hub must go down now.</td>
 </tr>
 <tr>
 <td><code>--runtime-image REF --runtime-input-sha256 SHA</code></td>
@@ -2223,6 +2227,20 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 </ol>
 <h2 id="hub-macos">Hub (macOS)<a class="headerlink" href="#hub-macos" title="Permanent link">&para;</a></h2>
 <ol>
+<li><strong>Drain.</strong> The control plane also serves the model router, so while the hub
+   is down every in-flight task loses its lease renewals, its heartbeats and
+   its model calls. The backup in step 2 alone takes minutes. For each worker
+   in the inventory, the script records any existing dispatch hold and leaves
+   it alone. Otherwise it runs
+   <code>mac agent hold &lt;agent_id&gt; --reason "fleet-update hub &lt;sha12&gt;"</code>.
+   It then waits up to the drain timeout (<code>FLEET_UPDATE_DRAIN_TIMEOUT</code>,
+   default 600s) for every worker to be idle. If one is still busy, the script
+   releases its own holds, names the busy workers and their tasks, and stops.
+   Nothing has changed at that point. Rerun later, or pass <code>--no-drain</code>. The
+   holds are released once the new hub is healthy (after step 8), or once a
+   rollback has the old hub serving again. A hub left stopped or unhealthy keeps
+   its workers held, and the script prints the <code>mac agent resume</code> command for
+   each one.</li>
 <li><code>sudo -n launchctl bootout system/com.mac.control-plane</code>, then wait for the
    <code>mac.hub_serve</code> process to exit.</li>
 <li>Run <code>~/.mac/venv/bin/mac-pg-backup --json --out ~/.mac/backups/fleet-update-&lt;ts&gt;</code>
