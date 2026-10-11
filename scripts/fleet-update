@@ -233,6 +233,7 @@ update_hub() {
     return 0
   fi
   confirm "update the hub to $SHA12"
+  "$VENV/bin/python" -m mac.credential_aliases --convert --env-file "$MAC_HOME/mac.env" || die "hub credential alias conversion refused"
   export MAC_DATABASE_URL; MAC_DATABASE_URL=$(hub_dsn)
   [ -n "$MAC_DATABASE_URL" ] || die "MAC_DATABASE_URL is not set in $MAC_HOME/mac.env"
   hub_drain
@@ -305,6 +306,7 @@ elif ! locked; then
   reinstall || echo "remote: WARNING locked install failed; worker pip installs stay blocked" >&2
 fi
 "$venv/bin/python" -c 'import mac' || undo "import mac failed"
+"$venv/bin/python" -m mac.credential_aliases --convert --env-file "$HOME/.mac/mac.env" || undo "credential alias conversion refused"
 # The node's managed files (mac.node_files): wrappers and the crash observer,
 # installed atomically, with files this installer used to own removed.
 files=$("$venv/bin/python" -m mac.node_files --source "$src" --role worker) || undo "managed file install failed: $files"

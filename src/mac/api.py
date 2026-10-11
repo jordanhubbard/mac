@@ -1881,16 +1881,13 @@ class EvalRunRecord(BaseModel):
 
 
 def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
-    # Server-side hub is single-fleet, but honor the fleet-scoped form
-    # so a hub started from a multi-fleet ~/.mac/.env (e.g., via
-    # `source ~/.mac/.env`) picks the right token (mac-g55y).
-    from mac.fleet_env import resolve as _resolve_env
+    from mac.credential_aliases import canonical_value
 
-    raw = _resolve_env("MAC_API_TOKENS")
+    raw = canonical_value("MAC_API_TOKENS")
     if raw:
         loaded = json.loads(raw)
         return _normalize_auth_tokens(loaded)
-    single = _resolve_env("MAC_API_TOKEN")
+    single = canonical_value("MAC_API_TOKEN")
     if single is None:
         return {}
     single = single.strip()

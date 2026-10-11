@@ -39,9 +39,9 @@ mac task show <task_id>             # detail + history
 mac task close <task_id> --reason="..."
 
 # Memories (cross-session knowledge)
-mac memory remember <key> "<content>" --project=mac
-mac memory list --project=mac
-mac memory forget <key> --project=mac
+mac admin memory remember <key> "<content>" --project=mac
+mac admin memory list --project=mac
+mac admin memory forget <key> --project=mac
 
 # Migration / inspection of repos that still have legacy beads state
 mac task detect-beads <repo>
@@ -54,7 +54,7 @@ mac task migrate-beads <repo> --project=<name> --tickets-only
 
 - Read issues via `mac task show <id>` (the ledger is authoritative). A local `.tickets/<id>.md` mirror, if present, is a convenience copy — do NOT commit it (`.tickets/` is gitignored).
 - Create / claim / close issues via `mac task` — do NOT run `bd`, do NOT use TodoWrite / TaskCreate / markdown TODO lists.
-- Use `mac memory remember` for persistent project knowledge — do NOT use MEMORY.md files.
+- Use `mac admin memory remember` for persistent project knowledge — do NOT use MEMORY.md files.
 - `mac task create` / `close` auto-emit the local `.tickets/<id>.md` mirror; it stays out of git. Never check `.tickets/` into the repo — it is operational state, not product content.
 
 ### How `mac task` finds the hub

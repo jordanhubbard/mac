@@ -101,9 +101,10 @@ def test_worker_main_requires_identity_and_executor(worker_main, capsys):
     assert "--executor is required" in capsys.readouterr().out
 
 
-def test_worker_main_resolves_fleet_token_and_heartbeat(worker_main, monkeypatch, capsys):
+def test_worker_main_resolves_canonical_token_and_heartbeat(worker_main, monkeypatch, capsys):
     monkeypatch.setattr(
-        "mac.fleet_env.resolve_first", lambda names, fleet=None: "fleet-token" if fleet else None
+        "mac.credential_aliases.canonical_value",
+        lambda name, fleet=None: "worker-token" if name == "MAC_WORKER_TOKEN" else None,
     )
     assert (
         worker.main(
@@ -119,7 +120,7 @@ def test_worker_main_resolves_fleet_token_and_heartbeat(worker_main, monkeypatch
         )
         == 0
     )
-    assert worker_main[-1].token == "fleet-token"
+    assert worker_main[-1].token == "worker-token"
     assert worker_main[-1].posts[-1][1]["running_digest"] == "sha256:test"
     assert json.loads(capsys.readouterr().out)["status"] == "heartbeat"
 

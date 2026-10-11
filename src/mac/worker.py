@@ -9278,15 +9278,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    # Resolve the token fleet-aware now that --fleet (or MAC_FLEET) is
-    # known. An explicit --token still wins; otherwise the fleet-scoped
-    # MAC_*__<FLEET> form takes precedence over the legacy flat form, and
-    # the mac-g55y deprecation warning only fires when we actually fall
-    # back to the flat form.
+    # Deployed hosts use one canonical worker credential. Fleet-scoped API
+    # tokens remain available to the multi-fleet CLI, not to host readers.
     if args.token is None:
-        from mac.fleet_env import resolve_first as _rt
+        from mac.credential_aliases import canonical_value
 
-        args.token = _rt(["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet)
+        args.token = canonical_value("MAC_WORKER_TOKEN", fleet=args.fleet)
     client = MacApiClient(args.url, token=args.token)
     agent_id = args.agent_id
     try:

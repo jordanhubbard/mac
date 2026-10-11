@@ -466,7 +466,7 @@ def worker_home(fleet):
     (home / ".mac" / "bin").mkdir()
     (venv_bin / "python").write_text(
         '#!/bin/sh\necho "python $*" >> "$FAKE_CALLS"\n'
-        'case "$*" in *mac.node_files*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
+        'case "$*" in *mac.node_files*|*mac.credential_aliases*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
         '  *soul_install*) [ -z "$FAKE_SOUL_FAILS" ] && echo \'{"status": "ok"}\' ;;\n'
         '  *"openshell_image_pin --image"*) [ -z "$FAKE_PIN_FAILS" ] ;;\n'
         '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
@@ -651,7 +651,7 @@ def hub(fleet):
         venv_bin
         / "python": (
             '#!/bin/sh\necho "import $*" >> "$FAKE_CALLS"\n'
-            'case "$*" in *mac.node_files*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
+            'case "$*" in *mac.node_files*|*mac.credential_aliases*) PYTHONPATH="$REAL_SRC" exec "$REAL_PY" "$@" ;;\n'
             '  *"native_runtime --check"*) [ -z "$FAKE_UNLOCKED" ] ;;\n'
             '  *native_runtime*) [ -z "$FAKE_LOCK_FAILS" ] ;;\n'
             '  *) [ -z "$FAKE_IMPORT_FAILS" ] ;; esac\n'
