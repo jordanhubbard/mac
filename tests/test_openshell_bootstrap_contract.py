@@ -319,8 +319,8 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store" in script
     assert "podman load" in script
     assert (
-        "runtime image smoke: Bash >=5.2 plus gh/opencode/buildx visible through OpenShell"
-        in script
+        "runtime image smoke: pnpm limits plus Bash >=5.2 and "
+        "gh/opencode/buildx visible through OpenShell" in script
     )
     assert (
         script.count("/usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1")
@@ -567,6 +567,40 @@ def test_openshell_image_uses_pinned_offline_assets():
     assert "https://cli.github.com/packages" not in containerfile
     assert "github.com" not in containerfile
     assert "raw.githubusercontent.com" not in containerfile
+
+
+def test_runtime_image_preserves_the_pnpm_limits_without_wrappers() -> None:
+    containerfile = (ROOT / "deploy/openshell/mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
+
+    for setting in (
+        "pnpm_config_network_concurrency=2",
+        "pnpm_config_child_concurrency=2",
+        "pnpm_config_fetch_retries=6",
+        "pnpm_config_fetch_retry_mintimeout=20000",
+        "pnpm_config_fetch_retry_maxtimeout=120000",
+        "pnpm_config_fetch_timeout=300000",
+        "pnpm_config_minimum_release_age=0",
+        "pnpm_config_pm_on_fail=ignore",
+    ):
+        assert setting in containerfile
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs /usr/local/bin/pnpm" in containerfile
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.cjs /usr/local/bin/pnpx" in containerfile
+    assert 'runuser -u sandbox -- env HOME="$smoke_home" pnpm config get network-concurrency' in containerfile
+    assert 'runuser -u sandbox -- env HOME="$smoke_home" pnpm config get minimum-release-age' in containerfile
+    assert 'env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get' not in containerfile
+    assert ': "${pnpm_config_network_concurrency:=2}"' not in containerfile
+
+
+def test_runtime_image_smoke_proves_pnpm_limits_through_openshell() -> None:
+    bootstrap = (ROOT / "deploy/openshell/bootstrap-openshell.sh").read_text(encoding="utf-8")
+    smoke = bootstrap[bootstrap.index("validate_openshell_runtime_image() {") :]
+
+    assert '--policy "$MAC_HOME/openshell-policy.yaml"' in smoke
+    assert '--from "$OSH_IMAGE_TAG"' in smoke
+    assert 'test "$(pnpm config get network-concurrency)" = 2' in smoke
+    assert 'test "$(pnpm config get minimum-release-age)" = 0' in smoke
 
 
 def test_runtime_image_proves_the_coding_cli_resolves_on_path() -> None:

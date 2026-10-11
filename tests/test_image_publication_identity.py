@@ -156,6 +156,19 @@ def test_frozen_contract_covers_every_copy_arg_and_base_digest_boundary() -> Non
         assert all(re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in lines)
 
 
+def test_runtime_image_uses_environment_defaults_with_unmodified_pnpm() -> None:
+    text = (ROOT / "deploy/openshell/mac-hermes.Containerfile").read_text(encoding="utf-8")
+
+    assert "ENV pnpm_config_network_concurrency=2" in text
+    assert "pnpm_config_minimum_release_age=0" in text
+    assert "pnpm_config_pm_on_fail=ignore" in text
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs /usr/local/bin/pnpm" in text
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.cjs /usr/local/bin/pnpx" in text
+    assert 'runuser -u sandbox -- env HOME="$smoke_home" pnpm config get' in text
+    assert 'env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get' not in text
+    assert ': "${pnpm_config_network_concurrency:=2}"' not in text
+
+
 def test_plan_digest_changes_only_for_frozen_material(tmp_path: Path) -> None:
     module = _load_module()
     root = _minimal_root(tmp_path, module, "mac")
