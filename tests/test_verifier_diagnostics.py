@@ -193,6 +193,57 @@ def test_the_sandbox_failure_list_is_used_when_stdout_was_clipped(monkeypatch):
     assert "1 failed, 8955 passed" in detail
 
 
+def test_every_failure_name_survives_the_workers_diagnosis_clip(monkeypatch):
+    """The worker keeps 1000 head + 3000 tail chars of its output, and the gate
+    report sits near the end, before the agent's closing summary. A 1200-char
+    coverage excerpt after the failures pushed four of seven names into the
+    clipped middle (task_77031acb, 2026-10-11)."""
+    import json as _json
+    import subprocess as _subprocess
+
+    from mac import executor_sandbox
+    from mac.worker import _truncate_process_text
+
+    # Sized like the live report: ~120-char node ids, and a closing block of
+    # ~1000 chars (profile line, "I am editing ..." and the task summary).
+    names = [
+        "FAILED tests/test_selftest_report_executor_%d.py::"
+        "test_host_loop_worker_serializes_obtainable_attestation_case_%d" % (i, i)
+        for i in range(7)
+    ]
+    report = {
+        "returncode": 1,
+        "status": "fail",
+        "stdout": "\n".join(
+            "src/mac/module_%03d.py   100   5   20   1  95.00%%   1-5" % i for i in range(400)
+        ),
+        "stderr": "",
+        "failures": names + ["= 7 failed, 8977 passed in 676.58s ="],
+    }
+
+    def fake_run(argv, **_kwargs):
+        return _subprocess.CompletedProcess(argv, 0, stdout=_json.dumps(report), stderr="")
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", fake_run)
+    detail = executor_sandbox._sandbox_verification_report_detail("s", "/sandbox/task")
+    summary = (
+        "[hub-verifier-profile] bounded-tmpfs ready\n"
+        + "I am editing "
+        + "y" * 300
+        + "\n"
+        + "=== MAC TASK SUMMARY ===\n"
+        + "x" * 600
+        + "\n=== END MAC TASK SUMMARY ==="
+    )
+    output = "agent log line\n" * 5000 + "[gate] phase tests: rc=1: " + detail + "\n" + summary
+
+    tail = _truncate_process_text(output, 4000)
+
+    for name in names:
+        assert name.split(" ", 1)[1] in tail
+    assert "7 failed, 8977 passed" in tail
+
+
 def test_the_sandbox_and_host_agree_on_what_a_failure_line_is():
     from mac import executor_sandbox
 
