@@ -3046,14 +3046,19 @@ def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 120
     )
     if failures:
         parts.append("failures=%s" % failures)
+    # With the failures named, the tail of stdout is the coverage table, and a
+    # full-size excerpt of it pushed the failure list into the middle the
+    # worker clips out of its 4000-char diagnosis: 7 failures, 3 names left
+    # (task_77031acb, 2026-10-11). Keep only a short tail for context.
+    excerpt = min(limit, 200) if failures else limit
     # stdout before stderr, unlike the launcher excerpt: pytest names the failing
     # tests and prints its summary line there, while stderr is usually warnings.
     for label in ("stdout", "stderr"):
         text = str(payload.get(label) or "").strip()
         if not text:
             continue
-        if len(text) > limit:
-            text = "... (head omitted) " + text[-limit:]
+        if len(text) > excerpt:
+            text = "... (head omitted) " + text[-excerpt:]
         parts.append("%s=%s" % (label, text.replace("\n", " | ")))
     return "; ".join(parts)
 
