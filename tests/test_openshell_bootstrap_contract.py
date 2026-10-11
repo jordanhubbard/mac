@@ -180,6 +180,124 @@ def _gateway_fail_closed_source() -> str:
     return bootstrap[start:end]
 
 
+def _gateway_registration_source() -> str:
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    start = bootstrap.index("register_and_select_local_gateway(){")
+    end = bootstrap.index("\n}\n\nclear_repo_update_dispatch_blocker", start) + len("\n}\n")
+    return bootstrap[start:end]
+
+
+def _run_gateway_registration(
+    tmp_path: Path,
+    existing_endpoint: str | None,
+    *,
+    fail_add: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    mac_home = tmp_path / "mac-home"
+    python_bin = mac_home / "venv" / "bin"
+    python_bin.mkdir(parents=True)
+    (python_bin / "python").symlink_to(sys.executable)
+    state = tmp_path / "endpoint"
+    if existing_endpoint is not None:
+        state.write_text(existing_endpoint, encoding="utf-8")
+    operations = tmp_path / "operations.log"
+    fake_cli = tmp_path / "openshell"
+    fake_cli.write_text(
+        """#!/bin/bash
+set -u
+[ -z "${OPENSHELL_GATEWAY_ENDPOINT+x}" ] || exit 90
+[ -z "${OPENSHELL_GATEWAY+x}" ] || exit 91
+printf '%s\n' "$*" >> "$OPERATIONS"
+case "$1:$2" in
+  gateway:info)
+    printf '%s\n' "error: unexpected argument '--name' found" >&2
+    exit 2
+    ;;
+  gateway:list)
+    if [ -f "$STATE" ]; then
+      "$PYTHON" -c 'import json, os, pathlib; print(json.dumps([{"name": "openshell", "endpoint": pathlib.Path(os.environ["STATE"]).read_text(), "active": pathlib.Path(os.environ["ACTIVE"]).exists()}]))'
+    else
+      printf '%s\n' '[]'
+    fi
+    ;;
+  gateway:remove)
+    rm -f "$STATE" "$ACTIVE"
+    ;;
+  gateway:add)
+    [ "$FAIL_ADD" = 0 ] || exit 42
+    printf '%s' "$5" > "$STATE"
+    ;;
+  gateway:select)
+    [ -f "$STATE" ] || exit 43
+    : > "$ACTIVE"
+    ;;
+  *) exit 99 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            _gateway_registration_source()
+            + '\nrc=0\nregister_and_select_local_gateway "$FAKE_CLI" || rc=$?\nexit "$rc"\n',
+        ],
+        env={
+            **os.environ,
+            "ACTIVE": str(tmp_path / "active"),
+            "FAIL_ADD": "1" if fail_add else "0",
+            "FAKE_CLI": str(fake_cli),
+            "MAC_HOME": str(mac_home),
+            "OPERATIONS": str(operations),
+            "OPENSHELL_GATEWAY": "ambient-name",
+            "OPENSHELL_GATEWAY_ENDPOINT": "http://ambient.invalid",
+            "OPENSHELL_LOCAL_GATEWAY_ENDPOINT": "http://127.0.0.1:17670",
+            "PYTHON": sys.executable,
+            "STATE": str(state),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = operations.read_text(encoding="utf-8").splitlines()
+    return result, calls
+
+
+@pytest.mark.parametrize(
+    ("existing_endpoint", "expected_mutations"),
+    [
+        ("http://127.0.0.1:17670", []),
+        ("http://stale.invalid", ["gateway remove openshell", "gateway add --name openshell http://127.0.0.1:17670"]),
+        (None, ["gateway add --name openshell http://127.0.0.1:17670"]),
+    ],
+)
+def test_gateway_registration_is_idempotent_on_openshell_0_1_2(
+    tmp_path: Path,
+    existing_endpoint: str | None,
+    expected_mutations: list[str],
+) -> None:
+    result, calls = _run_gateway_registration(tmp_path, existing_endpoint)
+
+    assert result.returncode == 0, result.stderr
+    assert not any(call.startswith("gateway info") for call in calls)
+    mutations = [call for call in calls if call.startswith(("gateway remove", "gateway add"))]
+    assert mutations == expected_mutations
+    assert calls[0] == "gateway list --output json"
+    assert calls[-2:] == ["gateway select openshell", "gateway list --output json"]
+
+
+def test_gateway_registration_returns_nonzero_when_add_fails(tmp_path: Path) -> None:
+    result, calls = _run_gateway_registration(tmp_path, None, fail_add=True)
+
+    assert result.returncode != 0
+    assert "failed to add local OpenShell gateway registration" in result.stderr
+    assert calls == ["gateway list --output json", "gateway add --name openshell http://127.0.0.1:17670"]
+
+
 def test_openshell_bootstrap_is_docker_engine_only():
     script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
 
