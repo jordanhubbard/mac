@@ -6,8 +6,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | Variable | Type | Default | Family | Description |
 | --- | --- | --- | --- | --- |
 | `MAC_ACTIVE_CODING_AGENT` | str | consumer-defined | core | Set by the executor for one run, never by an operator: the coding CLI it chose from the list. |
-| `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS` | int | consumer-defined | core | Core setting: agentbus service result publish attempts. |
-| `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS` | int | consumer-defined | core | Core setting: agentbus service result publish retry seconds. |
 | `MAC_AGENT_ATTESTATION_KEY` | str | consumer-defined | agent | Agent setting: agent attestation key. |
 | `MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS` | int | consumer-defined | agent | Agent setting: agent command exit grace seconds. |
 | `MAC_AGENT_DIR` | str | consumer-defined | agent | Agent setting: agent dir. |
@@ -266,7 +264,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_NOTIFIER_DRAIN_ON_HEARTBEAT` | str | consumer-defined | notifier | Notifier setting: notifier drain on heartbeat. |
 | `MAC_NO_TICKET_MIRROR` | str | consumer-defined | core | Core setting: no ticket mirror. |
 | `MAC_OBSERVABILITY_VERBOSE_POLL` | bool | consumer-defined | core | Core setting: observability verbose poll. |
-| `MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell adopt published runtime. |
 | `MAC_OPENSHELL_ALLOW_NO_LANDLOCK` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow no landlock. |
 | `MAC_OPENSHELL_BIN` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell bin. |
 | `MAC_OPENSHELL_BUILD_LOCK_POLL_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell build lock poll seconds. |
@@ -283,8 +280,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_GC` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gc. |
 | `MAC_OPENSHELL_GPU_AVAILABLE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gpu available. |
 | `MAC_OPENSHELL_HOST_ALIAS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell host alias. |
-| `MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell image source sha file. |
-| `MAC_OPENSHELL_IMAGE_TAG` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell image tag. |
 | `MAC_OPENSHELL_KEEP` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell keep. |
 | `MAC_OPENSHELL_POLICY` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy. |
 | `MAC_OPENSHELL_POLICY_BUS_GATE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy bus gate. |
@@ -293,7 +288,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_POLICY_WAIT_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy wait seconds. |
 | `MAC_OPENSHELL_PROGRESS_INTERVAL` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell progress interval. |
 | `MAC_OPENSHELL_REAP_ORPHANS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell reap orphans. |
-| `MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell rebuild on source update. |
 | `MAC_OPENSHELL_RECONCILE_LEASES` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell reconcile leases. |
 | `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell repo requires coding agent. |
 | `MAC_OPENSHELL_REQUIRED` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell required. |
@@ -380,9 +374,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPO_BOOTSTRAP_SETUP_STATUS` | str | consumer-defined | core | Core setting: repo bootstrap setup status. |
 | `MAC_REPO_REQUIRED_COMMANDS` | bool | consumer-defined | core | Core setting: repo required commands. |
 | `MAC_REPO_TEST_COMMAND` | str | consumer-defined | core | Core setting: repo test command. |
-| `MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE` | str | consumer-defined | core | Core setting: repo update dispatch blocker file. |
-| `MAC_REPO_UPDATE_SELF_TEST` | str | consumer-defined | core | Core setting: repo update self test. |
-| `MAC_REPO_UPDATE_SELF_TEST_PYTHON` | str | consumer-defined | core | Core setting: repo update self test python. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | bool | consumer-defined | core | Core setting: require hermes startup ready. |
 | `MAC_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | core | Core setting: require qdrant memory. |
 | `MAC_REQUIRE_TOKENHUB` | bool | consumer-defined | core | Core setting: require tokenhub. |

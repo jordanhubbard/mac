@@ -5332,24 +5332,6 @@ def cmd_agentbus_publish(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_agentbus_repo_update(args: argparse.Namespace) -> None:
-    if not args.recipient_agent_id and not args.all_agents:
-        raise MACError("repo-update requires --recipient-agent-id or --all-agents")
-    _print(
-        _plane(args).publish_agentbus_repo_update(
-            sender_agent_id=args.sender_agent_id,
-            recipient_agent_ids=args.recipient_agent_id,
-            all_agents=args.all_agents,
-            repo_path=args.repo_path,
-            remote=args.remote,
-            branch=args.branch,
-            restart=not args.no_restart,
-            restart_services=list(args.restart_service or []),
-            request_id=args.request_id,
-        )
-    )
-
-
 def cmd_agentbus_artifact_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_agentbus_artifact(
@@ -8989,18 +8971,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
     )
     _set(cmd_agentbus_publish, bus_publish)
-
-    bus_repo_update = agentbus.add_parser("repo-update")
-    bus_repo_update.add_argument("sender_agent_id")
-    bus_repo_update.add_argument("--recipient-agent-id", action="append")
-    bus_repo_update.add_argument("--all-agents", action="store_true")
-    bus_repo_update.add_argument("--repo-path")
-    bus_repo_update.add_argument("--remote", default="origin")
-    bus_repo_update.add_argument("--branch", default="main")
-    bus_repo_update.add_argument("--request-id")
-    bus_repo_update.add_argument("--no-restart", action="store_true")
-    bus_repo_update.add_argument("--restart-service", action="append")
-    _set(cmd_agentbus_repo_update, bus_repo_update)
 
     bus_artifact_publish = agentbus.add_parser("artifact-publish")
     bus_artifact_publish.add_argument("sender_agent_id")

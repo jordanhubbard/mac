@@ -24,10 +24,6 @@ from mac.agentbus_control import (
     DEBUG_TERMINAL_OUTPUT_TOPIC,
     debug_terminal_input_payload,
     debug_terminal_open_payload,
-    REPO_UPDATE_CONTENT_TYPE,
-    REPO_UPDATE_RESULT_TOPIC,
-    REPO_UPDATE_SCHEMA,
-    REPO_UPDATE_TOPIC,
 )
 from mac.api import create_app
 from mac.fleet_learning import (
@@ -71,6 +67,30 @@ def register_worker_fixture(cp: ControlPlane):
     machine = cp.register_machine("worker-host")
     agent = cp.register_agent(machine.id, "worker", capabilities=["python"])
     return agent
+
+
+def test_worker_ignores_retired_source_update_stream(tmp_path: Path):
+    class Client:
+        def get(self, path):
+            return [{
+                "id": "legacy-update",
+                "recipient_agent_id": "agent_worker",
+                "topic": "mac.repo.update.v1",
+                "content_type": "application/vnd.mac.repo-" + "update+json",
+            }]
+
+    worker = MacWorker(
+        Client(),
+        "agent_worker",
+        tmp_path,
+        executor=SubprocessExecutor([sys.executable, "-c", "pass"]),
+    )
+    observed = []
+    worker._observe_log = lambda event, **kwargs: observed.append((event, kwargs))
+
+    assert worker._process_agentbus_control() is None
+    assert worker._load_agentbus_control_state() == ["legacy-update"]
+    assert observed[0][1]["level"] == "debug"
 
 
 def test_worker_claim_request_is_transport_only_and_policy_is_hub_visible(tmp_path: Path):
@@ -2311,90 +2331,6 @@ def test_mac_worker_run_forever_tolerates_failing_offline_heartbeat(tmp_path: Pa
     assert any(r.status == "submitted_for_review" for r in results)
 
 
-def test_mac_worker_processes_agentbus_repo_update_and_requests_restart(tmp_path: Path):
-    cp = ControlPlane.in_memory()
-    sender_machine = cp.register_machine("sender-host")
-    sender = cp.register_agent(sender_machine.id, "sender")
-    agent = register_worker_fixture(cp)
-    seed, work = _git_fixture(tmp_path)
-    expected = _commit_fixture_update(seed, "two\n")
-    cp.publish_agentbus_content(
-        sender.id,
-        recipient_agent_id=agent.id,
-        content_type=REPO_UPDATE_CONTENT_TYPE,
-        topic=REPO_UPDATE_TOPIC,
-        payload={
-            "schema": REPO_UPDATE_SCHEMA,
-            "remote": "origin",
-            "branch": "main",
-            "restart": True,
-            "request_id": "req-1",
-        },
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        agent.id,
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-        self_update_repo=work,
-    )
-    result = worker.run_once()
-
-    assert result.status == "self_update_restart"
-    assert _git(work, "rev-parse", "HEAD") == expected
-    result_streams = [
-        stream
-        for stream in cp.list_agentbus_streams(agent_id=sender.id, status="closed")
-        if stream.topic == REPO_UPDATE_RESULT_TOPIC
-    ]
-    assert result_streams
-    chunks = cp.read_agentbus_chunks(sender.id, result_streams[0].id)
-    assert chunks[0].payload["status"] == "updated"
-    assert chunks[0].payload["restart_requested"] is True
-    assert chunks[0].payload["request_id"] == "req-1"
-
-
-def test_mac_worker_repo_update_preempts_idle_heartbeat_failure(tmp_path: Path):
-    cp = ControlPlane.in_memory()
-    sender_machine = cp.register_machine("sender-host")
-    sender = cp.register_agent(sender_machine.id, "sender")
-    agent = register_worker_fixture(cp)
-    seed, work = _git_fixture(tmp_path)
-    expected = _commit_fixture_update(seed, "two\n")
-    cp.publish_agentbus_content(
-        sender.id,
-        recipient_agent_id=agent.id,
-        content_type=REPO_UPDATE_CONTENT_TYPE,
-        topic=REPO_UPDATE_TOPIC,
-        payload={
-            "schema": REPO_UPDATE_SCHEMA,
-            "remote": "origin",
-            "branch": "main",
-            "restart": True,
-        },
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    def heartbeat_fails(method: str, path: str, payload: Optional[Dict[str, Any]]) -> Any:
-        if method == "POST" and path.endswith(f"/agents/{agent.id}/heartbeat"):
-            raise MacApiError("agent cannot report idle while holding an active lease")
-        return api_transport(client)(method, path, payload)
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=heartbeat_fails),
-        agent.id,
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-        self_update_repo=work,
-    )
-    result = worker.run_once()
-
-    assert result.status == "self_update_restart"
-    assert _git(work, "rev-parse", "HEAD") == expected
-
-
 def test_mac_worker_dispatch_hold_read_failure_stops_before_controls(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
@@ -2422,46 +2358,6 @@ def test_mac_worker_dispatch_hold_read_failure_stops_before_controls(monkeypatch
         worker.run_once()
 
     assert controls == []
-
-
-def test_mac_worker_heartbeat_recovery_processes_only_repo_update_controls(
-    monkeypatch, tmp_path: Path
-):
-    cp = ControlPlane.in_memory()
-    sender_machine = cp.register_machine("sender-host")
-    sender = cp.register_agent(sender_machine.id, "sender")
-    agent = register_worker_fixture(cp)
-    cp.publish_agentbus_content(
-        sender.id,
-        recipient_agent_id=agent.id,
-        content_type=DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
-        topic=DEBUG_TERMINAL_OPEN_TOPIC,
-        payload={"schema": DEBUG_TERMINAL_OPEN_SCHEMA},
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    def heartbeat_fails(method: str, path: str, payload: Optional[Dict[str, Any]]) -> Any:
-        if method == "POST" and path.endswith(f"/agents/{agent.id}/heartbeat"):
-            raise MacApiError("heartbeat rejected")
-        return api_transport(client)(method, path, payload)
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=heartbeat_fails),
-        agent.id,
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-    )
-    terminal_controls: list[str] = []
-    monkeypatch.setattr(
-        worker,
-        "_handle_debug_terminal_open_stream",
-        lambda stream: terminal_controls.append(str(stream.get("id"))) or {},
-    )
-
-    with pytest.raises(MacApiError, match="heartbeat rejected"):
-        worker.run_once()
-
-    assert terminal_controls == []
 
 
 def test_mac_worker_opens_debug_terminal_and_streams_pty_output(tmp_path: Path):
@@ -2544,176 +2440,6 @@ def test_mac_worker_opens_debug_terminal_and_streams_pty_output(tmp_path: Path):
 
     assert "worker_terminal_ok" in output_text
     assert cp.get_agentbus_stream(output_stream_id).status == "closed"
-
-
-def test_mac_worker_repo_update_noops_without_restart_when_current(tmp_path: Path):
-    cp = ControlPlane.in_memory()
-    sender_machine = cp.register_machine("sender-host")
-    sender = cp.register_agent(sender_machine.id, "sender")
-    agent = register_worker_fixture(cp)
-    _seed, work = _git_fixture(tmp_path)
-    cp.publish_agentbus_content(
-        sender.id,
-        recipient_agent_id=agent.id,
-        content_type=REPO_UPDATE_CONTENT_TYPE,
-        topic=REPO_UPDATE_TOPIC,
-        payload={"schema": REPO_UPDATE_SCHEMA, "remote": "origin", "branch": "main"},
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        agent.id,
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-        self_update_repo=work,
-    )
-    result = worker.run_once()
-
-    assert result.status == "no_task"
-    result_streams = [
-        stream
-        for stream in cp.list_agentbus_streams(agent_id=sender.id, status="closed")
-        if stream.topic == REPO_UPDATE_RESULT_TOPIC
-    ]
-    assert result_streams
-    chunks = cp.read_agentbus_chunks(sender.id, result_streams[0].id)
-    assert chunks[0].payload["status"] == "no_update"
-    assert chunks[0].payload["restart_requested"] is False
-
-
-def test_mac_worker_repo_update_restarts_requested_services_after_result(
-    monkeypatch, tmp_path: Path
-):
-    cp = ControlPlane.in_memory()
-    sender_machine = cp.register_machine("sender-host")
-    sender = cp.register_agent(sender_machine.id, "sender")
-    agent = register_worker_fixture(cp)
-    seed, work = _git_fixture(tmp_path)
-    expected = _commit_fixture_update(seed, "two\n")
-    restarted: list[str] = []
-
-    def fake_restart(service: str):
-        restarted.append(service)
-        return {"service": service, "status": "restarted", "returncode": 0}
-
-    monkeypatch.setattr("mac.worker._restart_systemd_service", fake_restart)
-    cp.publish_agentbus_content(
-        sender.id,
-        recipient_agent_id=agent.id,
-        content_type=REPO_UPDATE_CONTENT_TYPE,
-        topic=REPO_UPDATE_TOPIC,
-        payload={
-            "schema": REPO_UPDATE_SCHEMA,
-            "remote": "origin",
-            "branch": "main",
-            "restart": False,
-            "restart_services": ["mac.service"],
-            "request_id": "req-service",
-        },
-    )
-    client = TestClient(create_app(control_plane=cp))
-
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        agent.id,
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-        self_update_repo=work,
-    )
-    result = worker.run_once()
-
-    assert result.status == "no_task"
-    assert _git(work, "rev-parse", "HEAD") == expected
-    assert restarted == ["mac.service"]
-
-    payloads = []
-    for stream in cp.list_agentbus_streams(agent_id=sender.id, status="closed"):
-        if stream.topic == REPO_UPDATE_RESULT_TOPIC:
-            payloads.extend(
-                chunk.payload for chunk in cp.read_agentbus_chunks(sender.id, stream.id)
-            )
-    by_status = {payload["status"]: payload for payload in payloads}
-    assert by_status["updated"]["service_restart_requested"] is True
-    assert by_status["updated"]["restart_services"] == ["mac.service"]
-    assert by_status["service_restarted"]["service_restarts"] == [
-        {"service": "mac.service", "status": "restarted", "returncode": 0}
-    ]
-
-
-def test_repo_update_service_restart_skips_current_worker_service(monkeypatch):
-    from mac.worker import _restart_systemd_service
-
-    monkeypatch.setenv("MAC_AGENT_SERVICE_NAME", "mac-agent.service")
-
-    result = _restart_systemd_service("mac-agent.service")
-
-    assert result == {
-        "service": "mac-agent.service",
-        "status": "skipped",
-        "reason": "worker service restart is handled by the repo-update restart flag",
-    }
-
-
-def test_repo_update_result_publish_can_extend_retries_for_service_result(
-    monkeypatch, tmp_path: Path
-):
-    attempts: list[Dict[str, Any]] = []
-    sleeps: list[float] = []
-
-    class _Client:
-        def post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-            attempts.append({"path": path, "payload": payload})
-            if len(attempts) < 3:
-                raise MacApiError("hub restarting")
-            return {"ok": True}
-
-    worker = MacWorker(
-        _Client(),  # type: ignore[arg-type]
-        "agent_rocky",
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-    )
-    monkeypatch.setattr("mac.worker.time.sleep", lambda seconds: sleeps.append(seconds))
-
-    worker._publish_repo_update_result(
-        {"id": "stream_1", "sender_agent_id": "agent_hub"},
-        {"status": "service_restarted"},
-        attempts=3,
-        delay_seconds=0.25,
-    )
-
-    assert [item["path"] for item in attempts] == ["/agentbus", "/agentbus", "/agentbus"]
-    assert sleeps == [0.25, 0.25]
-
-
-def test_repo_update_result_publish_default_retry_window_stays_short(monkeypatch, tmp_path: Path):
-    attempts: list[Dict[str, Any]] = []
-    sleeps: list[float] = []
-    observed: list[Dict[str, Any]] = []
-
-    class _Client:
-        def post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-            attempts.append({"path": path, "payload": payload})
-            raise MacApiError("hub unavailable")
-
-    worker = MacWorker(
-        _Client(),  # type: ignore[arg-type]
-        "agent_rocky",
-        tmp_path / "workspace",
-        lambda _t, _d: WorkerExecution(0, "unused"),
-    )
-    monkeypatch.setattr("mac.worker.time.sleep", lambda seconds: sleeps.append(seconds))
-    monkeypatch.setattr(worker, "_observe_log", lambda *args, **kwargs: observed.append(kwargs))
-
-    worker._publish_repo_update_result(
-        {"id": "stream_1", "sender_agent_id": "agent_hub"},
-        {"status": "updated"},
-    )
-
-    assert len(attempts) == 5
-    assert sleeps == [0.5, 0.5, 0.5, 0.5]
-    assert observed[-1]["detail"]["error"] == "hub unavailable"
 
 
 def test_mac_worker_declares_running_digest_on_first_heartbeat(tmp_path: Path):

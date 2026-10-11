@@ -1,7 +1,7 @@
 """AgentBus control-plane message schemas and payload builders.
 
 Defines the versioned schema identifiers, topics, and content types for the
-repository-update, artifact-publish, and agent-reflection AgentBus events, along
+artifact-publish and agent-reflection AgentBus events, along
 with helpers that assemble their JSON payloads.
 """
 
@@ -10,14 +10,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 JsonDict = Dict[str, Any]
-
-REPO_UPDATE_SCHEMA = "mac.agentbus.repo_update.v1"
-REPO_UPDATE_TOPIC = "mac.repo.update.v1"
-REPO_UPDATE_CONTENT_TYPE = "application/vnd.mac.repo-update+json"
-
-REPO_UPDATE_RESULT_SCHEMA = "mac.agentbus.repo_update_result.v1"
-REPO_UPDATE_RESULT_TOPIC = "mac.repo.update.result.v1"
-REPO_UPDATE_RESULT_CONTENT_TYPE = "application/vnd.mac.repo-update-result+json"
 
 ARTIFACT_PUBLISH_SCHEMA = "mac.agentbus.artifact_publish.v1"
 ARTIFACT_PUBLISH_TOPIC = "mac.artifact.publish.v1"
@@ -243,7 +235,6 @@ def lifecycle_ack_payload(
 
 
 CONTROL_STREAM_TYPES = {
-    (REPO_UPDATE_TOPIC, REPO_UPDATE_CONTENT_TYPE),
     (REFLECT_REQUEST_TOPIC, REFLECT_REQUEST_CONTENT_TYPE),
     (LIFECYCLE_TOPIC, LIFECYCLE_CONTENT_TYPE),
 }
@@ -253,40 +244,6 @@ def is_control_stream(topic: str, content_type: str) -> bool:
     """Return whether the topic and content type identify a control stream."""
     base_content_type = str(content_type or "").split(";", 1)[0]
     return (str(topic or ""), base_content_type) in CONTROL_STREAM_TYPES
-
-
-def repo_update_payload(
-    *,
-    repo_path: Optional[str] = None,
-    remote: str = "origin",
-    branch: str = "main",
-    restart: bool = True,
-    restart_services: Optional[List[str]] = None,
-    request_id: Optional[str] = None,
-    target_sha: Optional[str] = None,
-    desired_generation: Optional[int] = None,
-    release_id: Optional[str] = None,
-) -> JsonDict:
-    """Build a repository-update control payload."""
-    payload: JsonDict = {
-        "schema": REPO_UPDATE_SCHEMA,
-        "remote": remote,
-        "branch": branch,
-        "restart": bool(restart),
-    }
-    if repo_path:
-        payload["repo_path"] = repo_path
-    if restart_services:
-        payload["restart_services"] = list(restart_services)
-    if request_id:
-        payload["request_id"] = request_id
-    if target_sha:
-        payload["target_sha"] = target_sha
-    if desired_generation is not None:
-        payload["desired_generation"] = int(desired_generation)
-    if release_id:
-        payload["release_id"] = release_id
-    return payload
 
 
 def artifact_publish_payload(

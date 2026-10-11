@@ -835,26 +835,6 @@ This is a typed transport channel, not an execution channel. Agents must still
 turn received content into explicit task/evidence/review actions through the
 normal API.
 
-mac-agent also listens for one constrained AgentBus control topic before it
-claims tasks:
-
-- Topic: `mac.repo.update.v1`
-- Content type: `application/vnd.mac.repo-update+json`
-- Payload schema: `mac.agentbus.repo_update.v1`
-
-The listener runs `git pull --ff-only` in `MAC_SELF_UPDATE_REPO` and exits for
-service-manager restart only when the worktree HEAD changes. Dirty worktrees,
-non-git source trees, invalid remotes/branches, and pull failures are reported
-as result streams instead of being forced. Result streams use topic
-`mac.repo.update.result.v1` and content type
-`application/vnd.mac.repo-update-result+json`.
-
-To broadcast a source update from the hub:
-
-```console
-mac admin agentbus repo-update agent_<hub> --all-agents
-```
-
 ## Roles and Workflows
 
 Production mac includes an API-level organization model for coordinated work:

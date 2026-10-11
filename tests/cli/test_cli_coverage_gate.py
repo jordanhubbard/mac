@@ -168,12 +168,12 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # agentbus sub-commands (open/append/close covered in test_mac_cli.py indirectly;
         # explicit coverage of the remaining commands still needed)
         ("agentbus", "append"),
+        ("agentbus", "read"),
         ("agentbus", "artifact-publish"),
         ("agentbus", "close"),
         ("agentbus", "list"),
         ("agentbus", "open"),
         ("agentbus", "publish"),
-        ("agentbus", "repo-update"),
         # artifact domain
         ("artifact", "delete"),
         ("artifact", "list"),

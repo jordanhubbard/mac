@@ -54,7 +54,6 @@ PER_RUN_INVESTIGATION_ARTIFACTS: Tuple[str, ...] = (
     "recovery-test.stderr.txt",
     "stdout.txt",
     "stderr.txt",
-    ".mac-agentbus-control-pending-repo-update.json",
     ".mac-executor-policy.txt",
     ".mac-agentbus-control.json",
     ".mac-withheld-executor-evidence.json",

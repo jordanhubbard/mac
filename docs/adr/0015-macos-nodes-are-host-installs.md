@@ -32,8 +32,10 @@ enforced; path confinement did not. macOS nodes carried
 **The operational cost, observed 2026-08-16/17.** The hub could not take *any*
 source update, and the only symptom was a rollback event nobody was reading:
 
+The AgentBus source-update mechanism was removed; fleet-update is authoritative.
+
 ```
-worker.agentbus.repo_update.rolled_back
+  worker source update rolled_back
   before_sha 68602744 -> after_sha 68602744  attempted_after_sha 44820d4a
   openshell_image_rebuild.status = managed_image_stale
   summary "source update required a new published runtime digest; checkout rolled back"

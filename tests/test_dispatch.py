@@ -756,51 +756,6 @@ def test_remote_dispatch_memory_wrappers_hit_hub_paths():
     assert fake.calls[4][1] == "http://hub:8789/memory/remembered/k?project=mac"
 
 
-def test_remote_dispatch_repo_update_hits_hub_endpoint():
-    from mac.http_client import HubClient
-
-    fake = _FakeTransport(
-        response_for={
-            ("POST", "/agentbus/repo-update"): {
-                "schema": "mac.agentbus.repo_update_publish.v1",
-                "count": 3,
-            }
-        }
-    )
-    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
-
-    result = disp.publish_agentbus_repo_update(
-        sender_agent_id="agent_hub",
-        all_agents=True,
-        repo_path="/home/mac/.mac/src/mac",
-        remote="origin",
-        branch="main",
-        restart=True,
-        restart_services=["mac.service"],
-        request_id="refresh-1",
-    )
-
-    assert result.to_dict() == {
-        "schema": "mac.agentbus.repo_update_publish.v1",
-        "count": 3,
-    }
-    method, url, payload, token = fake.calls[0]
-    assert method == "POST"
-    assert url == "http://hub:8789/agentbus/repo-update"
-    assert token == "tok"
-    assert payload == {
-        "sender_agent_id": "agent_hub",
-        "recipient_agent_ids": [],
-        "all_agents": True,
-        "repo_path": "/home/mac/.mac/src/mac",
-        "remote": "origin",
-        "branch": "main",
-        "restart": True,
-        "restart_services": ["mac.service"],
-        "request_id": "refresh-1",
-    }
-
-
 def test_remote_dispatch_agent_reflect_hits_hub_endpoint():
     from mac.http_client import HubClient
 
@@ -1157,70 +1112,6 @@ def test_remote_dispatch_memory_list_via_cli_uses_hub(monkeypatch):
     method, url, _payload, _token = fake.calls[0]
     assert method == "GET"
     assert url == "http://hub.example:8789/memory/remembered?project=mac"
-
-
-def test_remote_dispatch_agentbus_repo_update_via_cli_uses_hub(monkeypatch):
-    import json as _json
-
-    from mac.cli import main
-    from mac.http_client import HubClient
-
-    monkeypatch.delenv("MAC_DB", raising=False)
-    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
-
-    fake = _FakeTransport(
-        response_for={
-            ("POST", "/agentbus/repo-update"): {
-                "schema": "mac.agentbus.repo_update_publish.v1",
-                "count": 3,
-            }
-        }
-    )
-    orig_init = HubClient.__init__
-    monkeypatch.setattr(
-        HubClient,
-        "__init__",
-        lambda self, base_url, *, token=None, transport=None: orig_init(
-            self, base_url, token=token, transport=fake
-        ),
-    )
-
-    out = io.StringIO()
-    old = sys.stdout
-    sys.stdout = out
-    try:
-        rc = main(
-            [
-                "--hub-url",
-                "http://hub.example:8789",
-                "admin",
-                "agentbus",
-                "repo-update",
-                "agent_hub",
-                "--all-agents",
-                "--request-id",
-                "refresh-1",
-                "--restart-service",
-                "mac.service",
-            ]
-        )
-    finally:
-        sys.stdout = old
-    assert rc == 0
-    assert _json.loads(out.getvalue()) == {
-        "schema": "mac.agentbus.repo_update_publish.v1",
-        "count": 3,
-    }
-    method, url, payload, _token = fake.calls[0]
-    assert method == "POST"
-    assert url == "http://hub.example:8789/agentbus/repo-update"
-    assert payload["sender_agent_id"] == "agent_hub"
-    assert payload["all_agents"] is True
-    assert payload["remote"] == "origin"
-    assert payload["branch"] == "main"
-    assert payload["restart"] is True
-    assert payload["restart_services"] == ["mac.service"]
-    assert payload["request_id"] == "refresh-1"
 
 
 def test_remote_dispatch_task_close_uses_api_transition_shape(monkeypatch):
