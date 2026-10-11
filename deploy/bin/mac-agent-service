@@ -117,24 +117,52 @@ capabilities="$capabilities,cpu"
 #
 # Fails closed. If the sandbox cannot be probed, nothing is advertised, so work
 # routes to a host that has proven it can run it.
-probe_sandbox_tool() {
-  local tool="$1"
+#
+# `openshell run` never existed in any OpenShell release, so until 2026-10-11
+# every probe failed and no worker advertised c/make/python3. Probe the way a
+# task runs: one throwaway sandbox from the same image and policy, and RUN each
+# tool rather than look it up (bookworm's make 4.3 was on PATH under OpenShell
+# 0.1 yet could not run a single recipe). Each proof prints a marker.
+probe_sandbox_toolchain() {
   [ -n "${MAC_OPENSHELL_BIN:-}" ] || return 1
   command -v "$MAC_OPENSHELL_BIN" >/dev/null 2>&1 || return 1
-  "$MAC_OPENSHELL_BIN" run --quiet -- command -v "$tool" >/dev/null 2>&1
+  local policy="${MAC_OPENSHELL_POLICY:-$HOME/.mac/openshell-policy.yaml}"
+  [ -f "$policy" ] || return 1
+  # OpenShell caps sandbox names at 19 characters.
+  local name="mac-tp-$$"
+  local bound=()
+  command -v timeout >/dev/null 2>&1 && bound=(timeout 300)
+  # MAC_OPENSHELL_CREATE_ARGS is a flag list ("--from IMAGE"), split on purpose.
+  # shellcheck disable=SC2086
+  ${bound[@]+"${bound[@]}"} "$MAC_OPENSHELL_BIN" sandbox create \
+      --no-auto-providers \
+      --policy "$policy" \
+      --name "$name" \
+      --label mac.owner=mac \
+      --label mac.kind=toolchain-probe \
+      --label mac.keep=false \
+      ${MAC_OPENSHELL_CREATE_ARGS:-} \
+      --env HOME=/tmp \
+      -- /bin/sh -c 'cd /tmp || exit 0
+printf "int main(void) { return 0; }\n" > mac-probe.c && cc mac-probe.c -o mac-probe && ./mac-probe && echo MAC_PROBE_OK:c
+printf "all:\n\t@true\n" > mac-probe.mk && make -f mac-probe.mk && echo MAC_PROBE_OK:make
+python3 -c "pass" && echo MAC_PROBE_OK:python3
+exit 0' </dev/null 2>/dev/null | sed -n 's/^.*MAC_PROBE_OK:\([a-z0-9]*\).*$/\1/p' || true
+  "$MAC_OPENSHELL_BIN" sandbox delete "$name" </dev/null >/dev/null 2>&1 || true
 }
 
+# A probe that cannot run proves nothing; it must never stop the service.
+proved_toolchain=" $({ probe_sandbox_toolchain || true; } | tr '\n' ' ') "
 for probe_pair in "cc:c" "make:make" "python3:python3"; do
   probe_tool="${probe_pair%%:*}"
   probe_cap="${probe_pair##*:}"
   case ",$capabilities," in
     *",$probe_cap,"*) continue ;;
   esac
-  if probe_sandbox_tool "$probe_tool"; then
-    capabilities="$capabilities,$probe_cap"
-  else
-    echo "mac-agent: sandbox cannot run '$probe_tool'; not advertising '$probe_cap' so that work routes to a host that can" >&2
-  fi
+  case "$proved_toolchain" in
+    *" $probe_cap "*) capabilities="$capabilities,$probe_cap" ;;
+    *) echo "mac-agent: sandbox cannot run '$probe_tool'; not advertising '$probe_cap' so that work routes to a host that can" >&2 ;;
+  esac
 done
 mkdir -p "$workspace"
 
