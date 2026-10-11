@@ -79,6 +79,11 @@ require_sql() {
     # auth, no such database). Reporting both as "check the database" sent an
     # operator chasing Postgres while the forward was the problem.
     case "$sql_err" in
+      *"FATAL:"*)
+        echo "error: test PostgreSQL refused SQL readiness for the requested database." >&2
+        echo "       The server answered, so this is not a dead port forward." >&2
+        echo "       psql said: $sql_err" >&2
+        ;;
       *"server closed the connection unexpectedly"*|\
       *"could not connect to server"*|\
       *"Connection refused"*|\
@@ -90,10 +95,12 @@ require_sql() {
         echo "       Docker Desktop can stop relaying 127.0.0.1:${PORT} while the" >&2
         echo "       container stays healthy. Restart Docker Desktop or the container," >&2
         echo "       or start a native server, then retry." >&2
+        echo "       psql said: $sql_err" >&2
         ;;
       *)
         echo "error: test PostgreSQL failed SQL readiness for the requested database." >&2
         echo "       Check database existence, authentication and server storage before retrying." >&2
+        echo "       psql said: $sql_err" >&2
         ;;
     esac
     exit 1
