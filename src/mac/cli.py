@@ -7150,7 +7150,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation",
     )
     reopen.add_argument("task_id")
-    reopen.add_argument("--reason", default="")
+    reopen.add_argument(
+        "--reason",
+        default="",
+        help="why, and what the retry should do; shown to the next attempt's agent",
+    )
     reopen.add_argument("--actor", default="human")
     _set(cmd_task_reopen, reopen)
 

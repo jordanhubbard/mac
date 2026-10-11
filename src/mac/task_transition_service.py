@@ -313,6 +313,23 @@ class TaskTransitionService:
                 "dependency_resolution",
             ):
                 candidate_metadata.pop(key, None)
+            # The reason is how an operator steers the retry ("these tests
+            # still fail; fix the fixture, keep the assertion"). Kept only in
+            # history it never reached the agent: task_77031acb was reopened
+            # five times with diagnoses its prompts never contained
+            # (2026-10-11). The executor prompt renders this note; a reopen
+            # without a reason clears the previous one.
+            reason = str(detail.get("reason") or "").strip()
+            if reason:
+                candidate_metadata["operator_reopen_note"] = {
+                    "schema": "mac.operator_reopen_note.v1",
+                    "reason": reason[:4000],
+                    "actor": actor,
+                    "from_state": task.state,
+                    "reopened_at": now,
+                }
+            else:
+                candidate_metadata.pop("operator_reopen_note", None)
             if task.state in _LANDING_BUDGET_RESET_STATES:
                 # An operator reopen is a fresh landing budget: the send-back
                 # counters (check_fixes, rebases), landing attempts, deadline,
