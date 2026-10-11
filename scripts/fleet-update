@@ -230,7 +230,7 @@ update_hub() {
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; bootstrap; poll /health"
     plan "hub: resume the workers this run held, once healthy"
-    plan "hub: mac.node_files (role hub, no worker) -> ~/.mac/bin; bootout gui/$(id -u)/com.mac.agent; decommission the inventory hub agent; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service$([ "$HERMES" = 1 ] && echo '; kickstart ai.hermes.gateway')"
+    plan "hub: mac.node_files (role hub, no worker) -> ~/.mac/bin; bootout gui/$(id -u)/com.mac.agent and disable its plist; decommission the inventory hub agent and drop its MAC_WORKER_TOKEN; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service$([ "$HERMES" = 1 ] && echo '; kickstart ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"
@@ -272,10 +272,28 @@ update_hub() {
   log "hub: healthy on $SHA12"
   hub_release_holds
   hub_install_bin
-  launchctl bootout "gui/$(id -u)/com.mac.agent" || log "hub: com.mac.agent already absent"
-  "$MAC_CLI" agent delete "$(hub_agent_id)" --actor fleet-update || log "hub: agent record already absent"
+  hub_retire_agent
   soul_install
   if [ "$HERMES" = 1 ]; then launchctl kickstart -k "gui/$(id -u)/ai.hermes.gateway" || log "hub: WARNING kickstart hermes failed"; fi
+}
+
+# The hub runs no task agent. Booting it out is not enough on its own: the
+# LaunchAgent plist would start it again at the next login, to crash-loop on the
+# wrappers node_files just removed, and the deleted agent's MAC_WORKER_TOKEN
+# would keep winning `mac admin fleet refresh-context`'s token lookup, which
+# then fails every 3 minutes with "unknown bearer token".
+hub_retire_agent() {
+  local plist="$HOME/Library/LaunchAgents/com.mac.agent.plist" env="$MAC_HOME/mac.env"
+  local token='^(export )?MAC_WORKER_TOKEN(__[A-Za-z0-9_]+)?='
+  launchctl bootout "gui/$(id -u)/com.mac.agent" || log "hub: com.mac.agent already absent"
+  if [ -f "$plist" ]; then mv "$plist" "$plist.disabled" && log "hub: disabled $plist"; fi
+  "$MAC_CLI" agent delete "$(hub_agent_id)" --actor fleet-update || log "hub: agent record already absent"
+  if [ -f "$env" ] && grep -qE "$token" "$env"; then
+    cp -p "$env" "$env.bak-hub-agent-$TS"
+    # Rewrite in place so the file keeps its owner and mode.
+    grep -vE "$token" "$env.bak-hub-agent-$TS" > "$env" || true
+    log "hub: removed the retired agent's MAC_WORKER_TOKEN from $env (backup $env.bak-hub-agent-$TS)"
+  fi
 }
 
 # ---- Linux worker -------------------------------------------------------------
