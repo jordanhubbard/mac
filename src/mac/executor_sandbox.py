@@ -1913,7 +1913,7 @@ def _sandbox_repository_verification_shell(
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
             r'''$MAC_SANDBOX_PYTHON - <<'PY'
-import json, os, signal, subprocess, sys, tempfile, time
+import json, os, re, signal, subprocess, sys, tempfile, time
 workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
@@ -2090,6 +2090,24 @@ def missing_bootstrap_outputs():
         for path in bootstrap_creates
         if not os.path.exists(os.path.join(worktree, path))
     ]
+
+# The same pattern as the host's _PYTEST_FAILURE_LINE. clip() below keeps a
+# head and a tail, and in a full-suite run both are the coverage table, so the
+# FAILED lines in between never left the sandbox. Pick them out first.
+_FAILURE_LINE = re.compile(
+    r"^(?:FAILED |ERROR |=+ .*\b(?:failed|errors?|passed)\b.*=+$|\[gw\d+\] node down|\+{3,} Timeout \+{3,})"
+)
+
+def failure_lines(*streams, limit=50):
+    found = []
+    for stream in streams:
+        for line in str(stream or "").splitlines():
+            line = line.strip()
+            if line and _FAILURE_LINE.match(line) and line not in found:
+                found.append(line)
+                if len(found) >= limit:
+                    return found
+    return found
 
 def clip(value, limit=4000):
     # Keep head AND tail — pytest/pip print the diagnosis LAST; a head-only
@@ -2274,6 +2292,7 @@ else:
         "returncode": returncode,
         "stdout": clip(stdout),
         "stderr": clip(stderr),
+        "failures": failure_lines(stdout, stderr),
         "duration_ms": int((time.time() - started) * 1000),
         "worktree": worktree,
         "environment_delta": delta,
@@ -3016,8 +3035,13 @@ def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 120
         )
     # The failing tests first: they are what the reader needs, and the tail
     # excerpt below is dominated by the coverage table printed after them.
+    # The sandbox extracts these from the unclipped output; the stdout it
+    # reports is clipped to a head and tail that can both be coverage table.
+    reported = payload.get("failures")
     failures = _pytest_failure_summary(
-        "\n".join(str(payload.get(label) or "") for label in ("stdout", "stderr")),
+        "\n".join(str(line) for line in reported)
+        if isinstance(reported, list) and reported
+        else "\n".join(str(payload.get(label) or "") for label in ("stdout", "stderr")),
         limit=limit,
     )
     if failures:

@@ -16,6 +16,7 @@ reading either.
 from __future__ import annotations
 
 import io
+import json
 
 from mac.executor_sandbox import _verifier_output_excerpt
 
@@ -160,6 +161,106 @@ def test_failing_tests_survive_a_long_coverage_table(monkeypatch):
     assert "2 failed, 8950 passed" in detail
     assert "[gw5] node down" in detail
     assert "module_399.py" in detail  # the tail excerpt is still there
+
+
+def test_the_sandbox_failure_list_is_used_when_stdout_was_clipped(monkeypatch):
+    """The sandbox clips stdout to a head and a tail, and in a full-suite run
+    both are coverage table: the FAILED lines between them never reached the
+    host (task_14104f23, 2026-10-11). The sandbox reports them separately."""
+    import json as _json
+    import subprocess as _subprocess
+
+    from mac import executor_sandbox
+
+    report = {
+        "returncode": 1,
+        "status": "fail",
+        "stdout": "src/mac/a.py  100  5  95%\n… [90000 chars omitted] …\nTOTAL  67697  8192  85.58%",
+        "stderr": "",
+        "failures": [
+            "FAILED tests/test_alpha.py::test_one - AssertionError: boom",
+            "==== 1 failed, 8955 passed in 600.00s ====",
+        ],
+    }
+
+    def fake_run(argv, **_kwargs):
+        return _subprocess.CompletedProcess(argv, 0, stdout=_json.dumps(report), stderr="")
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", fake_run)
+    detail = executor_sandbox._sandbox_verification_report_detail("s", "/sandbox/task")
+
+    assert detail.startswith("failures=FAILED tests/test_alpha.py::test_one")
+    assert "1 failed, 8955 passed" in detail
+
+
+def test_the_sandbox_and_host_agree_on_what_a_failure_line_is():
+    from mac import executor_sandbox
+
+    source = executor_sandbox._sandbox_repository_verification_shell({})
+    assert 'r"%s"' % executor_sandbox._PYTEST_FAILURE_LINE.pattern in source
+
+
+def test_the_sandbox_reports_failing_tests_that_clipping_would_drop(tmp_path):
+    import os
+    import subprocess as _subprocess
+    import sys
+
+    from mac import executor_sandbox
+
+    workspace = tmp_path / "task"
+    worktree = workspace / "repo"
+    worktree.mkdir(parents=True)
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "test": {"command": "sh gate.sh"},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (worktree / "gate.sh").write_text(
+        "\n".join(
+            [
+                'i=0; while [ $i -lt 200 ]; do echo "src/mac/head_$i.py 100 5 95%"; i=$((i+1)); done',
+                "echo 'FAILED tests/test_alpha.py::test_one - AssertionError: boom'",
+                "echo '==== 1 failed, 10 passed in 1.00s ===='",
+                'i=0; while [ $i -lt 400 ]; do echo "src/mac/tail_$i.py 100 5 95%"; i=$((i+1)); done',
+                "exit 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _subprocess.run(
+        ["bash", "-lc", executor_sandbox._sandbox_repository_verification_shell()],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_TASK_REPO_WORKTREE": str(worktree),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    manifest = json.loads((workspace / "mac-sandbox-verification.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "fail"
+    assert "test_alpha.py" not in manifest["stdout"]  # clipped away
+    assert manifest["failures"] == [
+        "FAILED tests/test_alpha.py::test_one - AssertionError: boom",
+        "==== 1 failed, 10 passed in 1.00s ====",
+    ]
 
 
 def test_an_unreadable_report_leaves_the_original_failure_intact(monkeypatch):
