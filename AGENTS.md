@@ -113,9 +113,9 @@ mac task close <task_id> --reason="..."
 mac dispatch tick --limit 10                 # ask dispatcher to assign ready work now
 
 # Memories (cross-session knowledge)
-mac memory remember <key> "<content>" --project=mac
-mac memory list --project=mac
-mac memory forget <key> --project=mac
+mac admin memory remember <key> "<content>" --project=mac
+mac admin memory list --project=mac
+mac admin memory forget <key> --project=mac
 
 # Inspect or migrate other repos that still have legacy beads state
 mac task detect-beads <repo>

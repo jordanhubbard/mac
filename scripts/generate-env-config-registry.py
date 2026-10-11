@@ -25,6 +25,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 from mac.fleet_env import FLEET_SCOPED_VARS, scoped_var  # noqa: E402
+from mac.credential_aliases import CANONICAL_CREDENTIALS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "src/mac/data/env_config_registry.json"
@@ -346,6 +347,32 @@ def fleet_scoped_precedence_lines() -> list[str]:
     return lines
 
 
+def canonical_credential_lines() -> list[str]:
+    lines = [
+        "## Canonical host credential variables",
+        "",
+        "Host services read only these canonical names after `python -m "
+        "mac.credential_aliases --convert` rewrites `~/.mac/mac.env`. The converter "
+        "backs up changed files, refuses conflicting values, and is idempotent.",
+        "",
+        "| Canonical variable | Credential |",
+        "| --- | --- |",
+    ]
+    for name, purpose in CANONICAL_CREDENTIALS.items():
+        lines.append("| `%s` | %s |" % (name, purpose))
+    lines.extend(
+        [
+            "",
+            "Fleet selection is separate: operator clients may select `--fleet` or "
+            "`MAC_FLEET` and use `MAC_API_TOKEN__<FLEET>` alongside the corresponding "
+            "entry in `~/.mac/fleets.yaml`. That multi-fleet client feature is not a "
+            "host credential alias and is intentionally retained.",
+            "",
+        ]
+    )
+    return lines
+
+
 def render_reference(records: list[dict[str, object]]) -> str:
     lines = [
         "# MAC environment configuration reference",
@@ -381,6 +408,7 @@ def render_reference(records: list[dict[str, object]]) -> str:
         ]
     )
     lines.extend(fleet_scoped_precedence_lines())
+    lines.extend(canonical_credential_lines())
     lines.extend(
         [
             "## Precedence and retirement",

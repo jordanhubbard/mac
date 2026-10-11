@@ -367,6 +367,7 @@
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
       "src/mac/coding_agent.py",
+      "src/mac/credential_aliases.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -376,8 +377,7 @@
       "src/mac/ide_launcher.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/router_service.py",
-      "src/mac/worker.py"
+      "src/mac/router_service.py"
     ],
     "type": "str"
   },
@@ -390,6 +390,7 @@
     "sources": [
       "deploy/systemd/mac.service",
       "src/mac/api.py",
+      "src/mac/credential_aliases.py",
       "src/mac/dispatch.py",
       "src/mac/fleet_env.py",
       "src/mac/worker_credentials.py"
@@ -1114,6 +1115,7 @@
     "name": "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",
     "retired": false,
     "sources": [
+      "src/mac/credential_aliases.py",
       "src/mac/fleet_env.py"
     ],
     "type": "str"
@@ -1125,6 +1127,7 @@
     "name": "MAC_DEPLOY_HUB_TOKEN",
     "retired": false,
     "sources": [
+      "src/mac/credential_aliases.py",
       "src/mac/fleet_env.py",
       "src/mac/ide_launcher.py"
     ],
@@ -1176,6 +1179,7 @@
     "retired": false,
     "sources": [
       "deploy/install-tailscale.sh",
+      "src/mac/credential_aliases.py",
       "src/mac/fleet_env.py"
     ],
     "type": "str"
@@ -1221,6 +1225,7 @@
     "retired": false,
     "sources": [
       "scripts/purge-dead-tokenhub-keys.sh",
+      "src/mac/credential_aliases.py",
       "src/mac/fleet_env.py"
     ],
     "type": "str"
@@ -1482,6 +1487,7 @@
     "retired": false,
     "sources": [
       "src/mac/cli.py",
+      "src/mac/credential_aliases.py",
       "src/mac/dispatch.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
@@ -1518,6 +1524,7 @@
     "sources": [
       "deploy/hermes/install-hermes-gateway.sh",
       "src/mac/api.py",
+      "src/mac/credential_aliases.py",
       "src/mac/fleet_env.py",
       "src/mac/worker.py"
     ],
@@ -6030,11 +6037,11 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
+      "src/mac/credential_aliases.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/fleet_env.py",
-      "src/mac/hermes_adapter.py",
-      "src/mac/worker.py"
+      "src/mac/hermes_adapter.py"
     ],
     "type": "str"
   },
@@ -6622,6 +6629,7 @@
       "deploy/mac-crash-observer.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
+      "src/mac/credential_aliases.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",

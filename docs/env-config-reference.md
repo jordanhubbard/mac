@@ -608,6 +608,22 @@ When a fleet-scoped variable is read via its legacy flat name, `resolve` emits a
 | `MAC_TOKEN` | `MAC_TOKEN__EXAMPLE_FLEET` |
 | `MAC_WORKER_TOKEN` | `MAC_WORKER_TOKEN__EXAMPLE_FLEET` |
 
+## Canonical host credential variables
+
+Host services read only these canonical names after `python -m mac.credential_aliases --convert` rewrites `~/.mac/mac.env`. The converter backs up changed files, refuses conflicting values, and is idempotent.
+
+| Canonical variable | Credential |
+| --- | --- |
+| `MAC_API_TOKEN` | hub API administrator token |
+| `MAC_API_TOKENS` | hub API principal map |
+| `MAC_WORKER_TOKEN` | worker bearer token |
+| `MAC_DEPLOY_HUB_TOKEN` | deployment hub token |
+| `MAC_DEPLOY_TOKENHUB_API_KEY` | legacy TokenHub deployment key |
+| `MAC_DEPLOY_TAILSCALE_AUTH_KEY` | Tailscale enrollment key |
+| `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | GitHub review key |
+
+Fleet selection is separate: operator clients may select `--fleet` or `MAC_FLEET` and use `MAC_API_TOKEN__<FLEET>` alongside the corresponding entry in `~/.mac/fleets.yaml`. That multi-fleet client feature is not a host credential alias and is intentionally retained.
+
 ## Precedence and retirement
 
 Fallback precedence is left-to-right in `resolve_env_chain`. Fleet-scoped credential keys are resolved before legacy flat keys by their owning subsystem. `MAC_BEADS_BRIDGE_HUB_AGENT` is retained only as a documented retired name and is never consulted by `resolve_hub_agent`.
