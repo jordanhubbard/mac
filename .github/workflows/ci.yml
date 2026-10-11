@@ -856,6 +856,7 @@ jobs:
             --build-arg PNPM_VERSION=11.13.1 \
             --build-arg OPENCODE_VERSION=1.18.18 \
             --build-arg CLAUDE_CODE_VERSION=2.1.292 \
+            --build-arg MAKE_VERSION=4.4.1 \
             --output openshell-runtime-publication/plan.json \
             --github-output "$GITHUB_OUTPUT"
       - id: image-reuse
@@ -928,6 +929,7 @@ jobs:
             PNPM_VERSION=11.13.1
             OPENCODE_VERSION=1.18.18
             CLAUDE_CODE_VERSION=2.1.292
+            MAKE_VERSION=4.4.1
           labels: |
             org.opencontainers.image.source=https://github.com/jordanhubbard/mac
             org.opencontainers.image.revision=${{ github.sha }}
