@@ -54,6 +54,7 @@ def _run_api_retirement_function(
     *,
     hang_list: bool = False,
     retirement_timeout_seconds: int = 1,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     assert post_delete_inventories
     mac_home = tmp_path / "mac-home"
@@ -150,6 +151,7 @@ esac
             "RETIREMENT_TIMEOUT_SECONDS": str(retirement_timeout_seconds),
             "RESPONSES": str(responses),
             "TMPDIR": str(tmp_path),
+            **(extra_env or {}),
         },
         capture_output=True,
         text=True,
@@ -1051,6 +1053,38 @@ def test_api_retirement_kills_a_hung_inventory_call_at_the_deadline(tmp_path):
         raise AssertionError(f"hung OpenShell inventory process {hung_pid} survived")
 
 
+def test_api_retirement_stops_a_hung_inventory_call_when_group_kill_is_denied(tmp_path):
+    # OpenShell 0.1 sandboxes return EPERM for kill() on a process group but
+    # allow it on a single pid; the deadline must still stop the hung call.
+    site = tmp_path / "deny-killpg"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import errno, os\n"
+        "def _denied(pgid, sig):\n"
+        "    raise PermissionError(errno.EPERM, 'Operation not permitted')\n"
+        "os.killpg = _denied\n",
+        encoding="utf-8",
+    )
+    result, operations = _run_api_retirement_function(
+        tmp_path,
+        ["[]"],
+        hang_list=True,
+        extra_env={"PYTHONPATH": str(site)},
+    )
+
+    assert result.returncode != 0
+    assert "inventory call exceeded its bounded wait" in result.stderr
+    assert "could not execute the OpenShell inventory call" not in result.stderr
+    assert operations[-1] == "list"
+    hung_pid = int((tmp_path / "hang-pid").read_text(encoding="utf-8"))
+    try:
+        os.kill(hung_pid, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise AssertionError(f"hung OpenShell inventory process {hung_pid} survived")
+
+
 @pytest.mark.parametrize("status", ["exited", "running"])
 @pytest.mark.parametrize("owned_name", [True, False])
 def test_schema_recovery_consumes_real_probe_name_only_when_stopped(tmp_path, status, owned_name):
@@ -1146,7 +1180,8 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     assert '[cli, "sandbox", "list", "--limit", "1000", "--output", "json"]' in (api_wait)
     assert "time.monotonic()" in api_wait
     assert "start_new_session=True" in api_wait
-    assert "os.killpg(process.pid, signal.SIGTERM)" in api_wait
+    assert "os.killpg(process.pid, signum)" in api_wait
+    assert "process.send_signal(signum)" in api_wait
     assert "process.wait(timeout=min(5.0, remaining))" in api_wait
     assert "wait_for_empty_openshell_api_inventory" in api
     assert 'str(item.get("phase") or "").strip().lower() != "ready"' in api
