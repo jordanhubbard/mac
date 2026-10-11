@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Dict
 import signal
 import subprocess
 import stat
@@ -391,7 +392,28 @@ def test_launchd_bootstrap_requires_absence_and_proves_new_job_loaded(
 
 
 @pytest.mark.process_e2e
+def _group_kill_permitted() -> bool:
+    """Whether this environment lets a process signal a process group. An
+    OpenShell 0.1 sandbox (where the repository gate runs) denies it with EPERM
+    while allowing single-pid kills, so whole-group cleanup cannot be observed
+    there; the hosts that run launchd allow it."""
+    probe = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        os.killpg(probe.pid, signal.SIGKILL)
+        return True
+    except PermissionError:
+        return False
+    finally:
+        try:
+            probe.kill()
+        except OSError:
+            pass
+        probe.wait()
+
+
 def test_bounded_runner_kills_entire_process_group(tmp_path: Path) -> None:
+    if not _group_kill_permitted():
+        pytest.skip("this environment denies kill() on a process group (OpenShell 0.1 sandbox)")
     worker = tmp_path / "ignore-term"
     child_pid = tmp_path / "child-pid"
     worker.write_text(
@@ -488,6 +510,68 @@ def test_retry_does_not_accept_timeout_handler_exit_zero(tmp_path: Path) -> None
 
     assert result.returncode == 124, result.stderr
     assert "bounded retry deadline expired" in result.stderr
+
+
+def _deny_group_kill(tmp_path: Path) -> Dict[str, str]:
+    """Environment whose Python children get EPERM from os.killpg, as inside an
+    OpenShell 0.1 sandbox, while a single-pid kill still works."""
+    site = tmp_path / "deny-killpg"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import errno, os\n"
+        "def _denied(pgid, sig):\n"
+        "    raise PermissionError(errno.EPERM, 'Operation not permitted')\n"
+        "os.killpg = _denied\n",
+        encoding="utf-8",
+    )
+    return {**os.environ, "PYTHONPATH": str(site)}
+
+
+@pytest.mark.parametrize(
+    "runner",
+    (
+        'mac_run_bounded 0.2 "$2"',
+        'mac_retry_bounded 0.4 0.1 0.01 "$2"',
+    ),
+)
+def test_bounded_helpers_stop_the_child_when_group_kill_is_denied(
+    tmp_path: Path, runner: str
+) -> None:
+    """2026-10-11: on OpenShell 0.1.2 the group kill failed silently, the child
+    kept the output pipe open, and the gate's pytest worker hung for good."""
+    command = tmp_path / "records-its-pid"
+    pid_file = tmp_path / "child.pid"
+    command.write_text(
+        '#!/bin/sh\necho $$ > "$CHILD_PID_FILE"\nwhile :; do sleep 5; done\n', encoding="utf-8"
+    )
+    command.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'set -euo pipefail; . "$1"; {runner}',
+            "bash",
+            str(LAUNCHD_LIFECYCLE),
+            str(command),
+        ],
+        env={**_deny_group_kill(tmp_path), "CHILD_PID_FILE": str(pid_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 124, result.stderr
+    child = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        for _ in range(100):
+            os.kill(child, 0)
+            time.sleep(0.02)
+    except ProcessLookupError:
+        return
+    os.kill(child, signal.SIGKILL)
+    raise AssertionError(f"bounded command {child} outlived its deadline")
 
 
 def _write_escaped_pipe_holder(path: Path) -> None:
