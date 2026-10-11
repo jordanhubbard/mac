@@ -115,10 +115,18 @@ argv = sys.argv[3:]
 
 
 def signal_group(process, signum):
+    # A sandbox can deny kill() on a process group (OpenShell 0.1: EPERM)
+    # while allowing it on one pid. Signal the direct child then, or nothing
+    # stops it and the caller waits on its pipes for ever.
     try:
         os.killpg(process.pid, signum)
-    except OSError:
+    except ProcessLookupError:
         pass
+    except OSError:
+        try:
+            process.send_signal(signum)
+        except OSError:
+            pass
 
 
 def run_capped():
@@ -332,10 +340,18 @@ last_stderr = b""
 
 
 def signal_group(process, signum):
+    # A sandbox can deny kill() on a process group (OpenShell 0.1: EPERM)
+    # while allowing it on one pid. Signal the direct child then, or nothing
+    # stops it and the caller waits on its pipes for ever.
     try:
         os.killpg(process.pid, signum)
-    except OSError:
+    except ProcessLookupError:
         pass
+    except OSError:
+        try:
+            process.send_signal(signum)
+        except OSError:
+            pass
 
 
 def run_capped(timeout):
@@ -592,10 +608,18 @@ control_argv = ["launchctl"] if mode == "user" else ["sudo", "-n", "launchctl"]
 
 
 def signal_group(process, signum):
+    # A sandbox can deny kill() on a process group (OpenShell 0.1: EPERM)
+    # while allowing it on one pid. Signal the direct child then, or nothing
+    # stops it and the caller waits on its pipes for ever.
     try:
         os.killpg(process.pid, signum)
-    except OSError:
+    except ProcessLookupError:
         pass
+    except OSError:
+        try:
+            process.send_signal(signum)
+        except OSError:
+            pass
 
 
 def run_print(timeout):
