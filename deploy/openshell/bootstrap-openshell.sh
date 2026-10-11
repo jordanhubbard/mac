@@ -652,20 +652,29 @@ timeout_seconds = int(sys.argv[3])
 deadline = time.monotonic() + timeout_seconds
 
 
-def stop_process_group(process):
+def signal_process_group(process, signum):
+    # OpenShell 0.1 sandboxes deny kill() on a process group (EPERM) while
+    # still allowing it on a single pid. Fall back to the direct child so a
+    # hung call is still stopped rather than escaping as a wrapped OSError.
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(process.pid, signum)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        try:
+            process.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+
+def stop_process_group(process):
+    signal_process_group(process, signal.SIGTERM)
     try:
         process.wait(timeout=0.25)
         return
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_process_group(process, signal.SIGKILL)
     try:
         process.wait(timeout=0.25)
     except subprocess.TimeoutExpired:
