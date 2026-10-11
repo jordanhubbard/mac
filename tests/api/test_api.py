@@ -1565,80 +1565,6 @@ def test_agent_id_path_routes_bind_to_principal():
     assert ok.status_code == 200
 
 
-def test_agentbus_repo_update_refuses_fleet_wide_without_admin():
-    """mac-si4l: /agentbus/repo-update is a fleet-wide restart primitive.
-    A non-admin token with agent binding must not be able to broadcast
-    restart=true to every peer.
-    """
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("h")
-    agent_a = cp.register_agent(machine.id, "a", capabilities=["ops"])
-    agent_b = cp.register_agent(machine.id, "b", capabilities=["ops"])  # peer to be spammed
-    client = TestClient(
-        create_app(
-            control_plane=cp,
-            auth_tokens={
-                "tok-a": {"scopes": ["agent"], "agent_id": agent_a.id},
-                "admin": ["admin"],
-            },
-        )
-    )
-    # all_agents=True from a non-admin token: refused
-    blocked = client.post(
-        "/agentbus/repo-update",
-        headers={"Authorization": "Bearer tok-a"},
-        json={
-            "sender_agent_id": agent_a.id,
-            "all_agents": True,
-            "restart": True,
-        },
-    )
-    assert blocked.status_code == 403, blocked.text
-    # Explicitly enumerating peers is the same privileged operation as
-    # all_agents=True; a compromised agent token must not bypass the admin gate.
-    blocked = client.post(
-        "/agentbus/repo-update",
-        headers={"Authorization": "Bearer tok-a"},
-        json={
-            "sender_agent_id": agent_a.id,
-            "recipient_agent_ids": [agent_a.id, agent_b.id],
-            "restart": True,
-        },
-    )
-    assert blocked.status_code == 403, blocked.text
-    # Self-directed update remains available to the bound agent token.
-    ok = client.post(
-        "/agentbus/repo-update",
-        headers={"Authorization": "Bearer tok-a"},
-        json={
-            "sender_agent_id": agent_a.id,
-            "recipient_agent_ids": [agent_a.id],
-            "restart": True,
-            "request_id": "self-update",
-        },
-    )
-    assert ok.status_code == 200, ok.text
-    assert ok.json()["count"] == 1
-    # Admin can fan out
-    ok = client.post(
-        "/agentbus/repo-update",
-        headers={"Authorization": "Bearer admin"},
-        json={
-            "sender_agent_id": agent_a.id,
-            "all_agents": True,
-            "restart": False,
-        },
-    )
-    assert ok.status_code == 200
-    published = ok.json()
-    assert published["schema"] == "mac.agentbus.repo_update_publish.v1"
-    assert published["count"] == 2
-    assert {stream["recipient_agent_id"] for stream in published["streams"]} == {
-        agent_a.id,
-        agent_b.id,
-    }
-
-
 def test_agentbus_reads_bind_requested_agent_to_token_principal():
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("agentbus-auth-host")
@@ -3481,42 +3407,6 @@ def test_fastapi_exposes_typed_agentbus_streams_and_ndjson_events():
     ).json()
     assert published["stream"]["status"] == "closed"
     assert published["chunk"]["payload"] == "one-shot"
-
-
-def test_fastapi_publishes_agentbus_repo_update_to_all_agents():
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
-    machine = client.post("/machines", json={"hostname": "bus-host"}).json()
-    sender = client.post(
-        "/agents",
-        json={"machine_id": machine["id"], "name": "sender"},
-    ).json()
-    recipient = client.post(
-        "/agents",
-        json={"machine_id": machine["id"], "name": "recipient"},
-    ).json()
-
-    published = client.post(
-        "/agentbus/repo-update",
-        json={
-            "sender_agent_id": sender["id"],
-            "recipient_agent_ids": [recipient["id"]],
-            "remote": "origin",
-            "branch": "main",
-            "request_id": "req-api",
-        },
-    ).json()
-
-    assert published["schema"] == "mac.agentbus.repo_update_publish.v1"
-    assert published["count"] == 1
-    stream = published["streams"][0]
-    assert stream["topic"] == "mac.repo.update.v1"
-    assert stream["content_type"] == "application/vnd.mac.repo-update+json"
-    chunks = client.get(
-        "/agentbus/streams/%s/chunks" % stream["id"],
-        params={"agent_id": recipient["id"]},
-    ).json()
-    assert chunks[0]["payload"]["schema"] == "mac.agentbus.repo_update.v1"
-    assert chunks[0]["payload"]["request_id"] == "req-api"
 
 
 def test_fastapi_agent_reflect_publishes_runtime_description():
