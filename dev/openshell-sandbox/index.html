@@ -3142,6 +3142,11 @@ sandbox</strong>:</p>
    design.</li>
 </ol>
 <h3 id="environment-knobs_1">Environment knobs<a class="headerlink" href="#environment-knobs_1" title="Permanent link">&para;</a></h3>
+<p>The independent judge is advisory: if its completion fails, the executor posts
+the reason on the task board and continues the task unjudged. HTTP failures name
+the status and a short provider message. The executor also files an act-then-tell
+human report, deduplicated by judge model and failure class, so a broken judge
+route produces one Slack notification rather than one notification per task.</p>
 <table>
 <thead>
 <tr>
