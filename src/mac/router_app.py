@@ -124,6 +124,12 @@ def _is_provider_failure(status: Optional[int]) -> bool:
 #: An upstream refusal of the hub's own provider key: fail over, don't return it.
 _PROVIDER_AUTH_CODES = frozenset({401, 403})
 
+#: The provider's account cannot pay for the request (OpenRouter: "This
+#: request requires more credits"). Fail over, and keep the provider out of
+#: rotation for a while rather than re-proving the empty account per request.
+_PROVIDER_ACCOUNT_CODES = frozenset({402})
+_ACCOUNT_FAILURE_COOLDOWN_SECONDS = 600.0
+
 #: Ride-out pacing when no provider answers (see ProviderProxy._route). The
 #: breaker cooldown (MAC_ROUTER_COOLDOWN_SECONDS, 30 s) bounds how soon an
 #: opened provider is probed again, so pauses beyond it gain nothing.
@@ -138,8 +144,9 @@ OUTAGE_RETRY_AFTER_SECONDS = 30
 def _waitable(failures: List[Dict[str, Any]]) -> bool:
     """Whether an all-unavailable round may clear by itself: some provider was
     unreachable, overloaded or rate-limited, or none could be selected (open
-    breakers). Rounds refused only by upstream auth are not."""
-    return not failures or any(f.get("status") not in _PROVIDER_AUTH_CODES for f in failures)
+    breakers). Rounds refused only by upstream auth or empty accounts are not."""
+    final = _PROVIDER_AUTH_CODES | _PROVIDER_ACCOUNT_CODES
+    return not failures or any(f.get("status") not in final for f in failures)
 
 
 def outage_headers(status: int, body: Any) -> Dict[str, str]:
@@ -586,7 +593,13 @@ class ProviderProxy:
             # An auth refusal is about this provider's key, not its health
             # for other requests: only a 401 that survived its retry (a bad
             # key) feeds the breaker; a 403 may be one model's access list.
-            if status != 403:
+            if status in _PROVIDER_ACCOUNT_CODES:
+                self._router.record_failure(
+                    provider_name,
+                    immediate=True,
+                    cooldown_seconds=_ACCOUNT_FAILURE_COOLDOWN_SECONDS,
+                )
+            elif status != 403:
                 self._router.record_failure(provider_name)
             failed_providers.add(provider_name)
             failure = {"provider": provider_name, "model": model, "status": status}
@@ -651,6 +664,10 @@ class ProviderProxy:
                 # failed every request with 401 while the other provider was fine.
                 if int(status) in _PROVIDER_AUTH_CODES:
                     fail(provider.name, model, int(status), "provider_auth_refused", attempts)
+                    refused = (int(status), obj, model, provider.name)
+                    continue
+                if int(status) in _PROVIDER_ACCOUNT_CODES:
+                    fail(provider.name, model, int(status), "provider_account_exhausted", attempts)
                     refused = (int(status), obj, model, provider.name)
                     continue
                 # The provider answered (healthy), so close its breaker.

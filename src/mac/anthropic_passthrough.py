@@ -10,10 +10,13 @@ The body is passed through unchanged apart from the model id, which goes
 through the provider's aliases (``azure/anthropic/claude-opus-4-8`` ->
 ``claude-opus-4-8``). Streaming responses are relayed byte for byte.
 
-The provider is the one named by ``MAC_ROUTER_ANTHROPIC_PROVIDER``, or else the
-first configured provider whose base URL is on ``api.anthropic.com``. With
-neither, the routes are not mounted, so a hub without an Anthropic key answers
-404 rather than pretending.
+The providers are the ones named, in order, by ``MAC_ROUTER_ANTHROPIC_PROVIDER``
+(comma-separated, e.g. ``nvidia,openrouter``), or else every configured provider
+whose base URL is on ``api.anthropic.com``, by priority. A request that one
+provider cannot serve (unreachable, 401/402/403, 429, 5xx) goes to the next, so
+one account running out of credit does not stop the route. With no provider,
+the routes are not mounted, so a hub without an Anthropic key answers 404
+rather than pretending.
 """
 
 from __future__ import annotations
@@ -42,20 +45,42 @@ PATHS = ("/messages", "/messages/count_tokens")
 SecretResolver = Callable[[str], Optional[str]]
 
 
+#: Statuses that say "this provider cannot serve the request", not "the
+#: request is wrong": try the next provider. 402 is an account out of credit.
+FAILOVER_STATUSES = frozenset({401, 402, 403, 429})
+
+
+def _fails_over(status: int) -> bool:
+    return status in FAILOVER_STATUSES or status >= 500
+
+
+def select_anthropic_providers(providers: List[Provider], env: Mapping[str, str]) -> List[Provider]:
+    """The providers that serve /v1/messages, in failover order."""
+    wanted = [
+        name.strip()
+        for name in str(env.get("MAC_ROUTER_ANTHROPIC_PROVIDER") or "").split(",")
+        if name.strip()
+    ]
+    if wanted:
+        by_name = {p.name: p for p in providers if p.enabled}
+        return [by_name[name] for name in dict.fromkeys(wanted) if name in by_name]
+    return [
+        provider
+        for provider in sorted(providers, key=lambda p: (p.priority, p.name))
+        if provider.enabled and (urlparse(provider.base_url).hostname or "") == ANTHROPIC_HOST
+    ]
+
+
 def select_anthropic_provider(
     providers: List[Provider], env: Mapping[str, str]
 ) -> Optional[Provider]:
-    """The provider that serves /v1/messages, or None."""
-    wanted = str(env.get("MAC_ROUTER_ANTHROPIC_PROVIDER") or "").strip()
-    if wanted:
-        for provider in providers:
-            if provider.name == wanted and provider.enabled:
-                return provider
-        return None
-    for provider in sorted(providers, key=lambda p: (p.priority, p.name)):
-        if provider.enabled and (urlparse(provider.base_url).hostname or "") == ANTHROPIC_HOST:
-            return provider
-    return None
+    """The first provider that serves /v1/messages, or None."""
+    selected = select_anthropic_providers(providers, env)
+    return selected[0] if selected else None
+
+
+def _serves(provider: Provider, model: str) -> bool:
+    return not model or "*" in provider.models or model in provider.models
 
 
 def _upstream_headers(provider: Provider, key: str, incoming: Mapping[str, str]) -> Dict[str, str]:
@@ -159,8 +184,8 @@ def mount_anthropic_messages(
     from mac.router_app import resolve_provider_key
 
     env = os.environ if env is None else env
-    provider = select_anthropic_provider(providers_from_env(dict(env)), env)
-    if provider is None:
+    chain = select_anthropic_providers(providers_from_env(dict(env)), env)
+    if not chain:
         return False
     try:
         timeout = float(env.get("MAC_ROUTER_ANTHROPIC_TIMEOUT_SECONDS") or 600)
@@ -170,26 +195,35 @@ def mount_anthropic_messages(
     def _handle(path: str, request: Request, payload: Dict[str, Any]) -> Any:
         principal = getattr(request.state, "principal", None)
         stream = bool(payload.get("stream")) and path == "/messages"
-        started = time.monotonic()
-        status, body, media_type = forward(
-            provider,
-            path,
-            payload,
-            request.headers,
-            key=resolve_provider_key(provider, secret_resolver),
-            stream=stream,
-            timeout=timeout,
-            opener=opener,
-        )
-        logger.info(
-            "router: route path=/v1%s provider=%s model=%s status=%s agent=%s",
-            path,
-            provider.name,
-            payload.get("model") or "",
-            status,
-            getattr(principal, "agent_id", None) or "",
-        )
-        _observe(path, payload, request, principal, status, body, started)
+        model = str(payload.get("model") or "").strip()
+        candidates = [p for p in chain if _serves(p, model)] or chain
+        for index, provider in enumerate(candidates):
+            started = time.monotonic()
+            # Only a 2xx reply streams, so a failed attempt never sends the
+            # client a byte and the next provider can still answer cleanly.
+            status, body, media_type = forward(
+                provider,
+                path,
+                payload,
+                request.headers,
+                key=resolve_provider_key(provider, secret_resolver),
+                stream=stream,
+                timeout=timeout,
+                opener=opener,
+            )
+            more = index + 1 < len(candidates)
+            logger.info(
+                "router: route path=/v1%s provider=%s model=%s status=%s agent=%s%s",
+                path,
+                provider.name,
+                model,
+                status,
+                getattr(principal, "agent_id", None) or "",
+                " failover" if more and _fails_over(int(status)) else "",
+            )
+            _observe(path, payload, request, principal, provider, status, body, started)
+            if not (more and _fails_over(int(status))):
+                break
         if media_type == "text/event-stream" and 200 <= status < 300:
             return StreamingResponse(body, media_type=media_type)
         return JSONResponse(body if isinstance(body, dict) else {}, status_code=status)
@@ -199,6 +233,7 @@ def mount_anthropic_messages(
         payload: Dict[str, Any],
         request: Request,
         principal: Any,
+        provider: Provider,
         status: int,
         body: Any,
         started: float,

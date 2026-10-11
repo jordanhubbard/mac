@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import urllib.error
+import urllib.parse
 from typing import Any, Dict, List
 
 import pytest
@@ -304,6 +305,74 @@ def test_messages_route_serves_an_inference_token_through_the_hub_key(monkeypatc
     assert reply.status_code == 200, reply.text
     assert reply.json()["content"][0]["text"] == "hi"
     assert {k.lower(): v for k, v in calls[0].header_items()}["x-api-key"] == "sk-hub"
+
+
+def test_the_provider_list_is_an_ordered_failover_chain():
+    other = Provider(name="openrouter", base_url="https://openrouter.ai/api/v1")
+    nvidia = Provider(name="nvidia", base_url="https://inference-api.nvidia.com/v1")
+    chain = anthropic_passthrough.select_anthropic_providers(
+        [other, _anthropic(), nvidia], {"MAC_ROUTER_ANTHROPIC_PROVIDER": "nvidia, openrouter,missing"}
+    )
+    assert [p.name for p in chain] == ["nvidia", "openrouter"]
+
+
+def test_messages_route_fails_over_when_an_account_is_out_of_credit(monkeypatch):
+    """2026-10-10: OpenRouter answered 402 and the claude CLI stopped, although
+    nvidia could serve the same model."""
+    cp = _plane()
+    task = cp.create_task("router")
+    token = InferenceTokenLifecycle(cp.store).mint("agent_alpha", task_id=task.id).token
+    monkeypatch.setenv("OR_KEY", "sk-or")
+    monkeypatch.setenv("NV_KEY", "sk-nv")
+    hosts: List[str] = []
+
+    def opener(request, timeout):
+        hosts.append(urllib.parse.urlparse(request.full_url).hostname)
+        if hosts[-1] == "openrouter.ai":
+            raise urllib.error.HTTPError(
+                request.full_url,
+                402,
+                "Payment Required",
+                {},
+                io.BytesIO(b'{"error":{"message":"This request requires more credits"}}'),
+            )
+        assert json.loads(request.data)["model"] == "azure/anthropic/claude-opus-5-5"
+        return _Resp(json.dumps({"type": "message", "content": [{"type": "text", "text": "hi"}]}).encode())
+
+    app = _app(cp)
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_PROVIDERS": (
+            "openrouter=https://openrouter.ai/api/v1,0,models=anthropic/claude-opus-5.5,key=OR_KEY;"
+            "nvidia=https://inference-api.nvidia.com/v1,1,"
+            "models=anthropic/claude-opus-5.5=azure/anthropic/claude-opus-5-5,key=NV_KEY"
+        ),
+        "MAC_ROUTER_ANTHROPIC_PROVIDER": "openrouter,nvidia",
+    }
+    assert anthropic_passthrough.mount_anthropic_messages(app, env=env, opener=opener)
+    reply = TestClient(app).post(
+        "/v1/messages",
+        headers=_bearer(token),
+        json={"model": "anthropic/claude-opus-5.5", "max_tokens": 8, "messages": []},
+    )
+    assert reply.status_code == 200, reply.text
+    assert hosts == ["openrouter.ai", "inference-api.nvidia.com"]
+
+    # A request error is the caller's, not the provider's: no failover.
+    hosts.clear()
+
+    def bad_request(request, timeout):
+        hosts.append(urllib.parse.urlparse(request.full_url).hostname)
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"error":{}}'))
+
+    app = _app(cp)
+    assert anthropic_passthrough.mount_anthropic_messages(app, env=env, opener=bad_request)
+    reply = TestClient(app).post(
+        "/v1/messages",
+        headers=_bearer(token),
+        json={"model": "anthropic/claude-opus-5.5", "max_tokens": 8, "messages": []},
+    )
+    assert reply.status_code == 400 and hosts == ["openrouter.ai"]
 
 
 def test_no_anthropic_provider_means_no_messages_route():
