@@ -1426,6 +1426,10 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert "gh-arm64.tgz" in preparer
     assert "raw.githubusercontent.com/technomancy/leiningen/${LEIN_COMMIT}/bin/lein" in preparer
     assert "SHA-256 mismatch" in preparer
+    # bookworm's make 4.3 spawns with POSIX_SPAWN_RESETIDS, which OpenShell
+    # 0.1's seccomp filter denies; the image builds 4.4.1 instead.
+    assert 'MAKE_VERSION="4.4.1"' in preparer
+    assert "ftp.gnu.org/gnu/make/make-${MAKE_VERSION}.tar.gz" in preparer
     assert "trap cleanup EXIT" in script
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
     assert '--build-arg "NODE_VERSION=$NODE_VERSION"' in script

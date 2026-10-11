@@ -16,6 +16,7 @@ PNPM_VERSION="${PNPM_VERSION:-11.13.1}"
 BUILDX_VERSION="${BUILDX_VERSION:-0.30.1}"
 RUST_VERSION="${RUST_VERSION:-1.95.0}"
 LEIN_COMMIT="40227328d4a9c8945362d6d626d19c2449175df6"
+MAKE_VERSION="4.4.1"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -95,8 +96,13 @@ fetch rust-arm64.tar.xz \
 fetch lein \
   f8e1266c0c78c08bd4af6e111889ecc316c9dd56d1e8645bbee6c1703d351bc3 \
   "https://raw.githubusercontent.com/technomancy/leiningen/${LEIN_COMMIT}/bin/lein"
+# GNU make source, signed by its maintainer Paul D. Smith (RSA key
+# B2508A90102F8AE3B12A0090DEACCAAEDB78137A); the hash is of the verified tarball.
+fetch make.tar.gz \
+  dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3 \
+  "https://ftp.gnu.org/gnu/make/make-${MAKE_VERSION}.tar.gz"
 chmod 0755 "$TEMP/lein" "$TEMP/buildx-amd64" "$TEMP/buildx-arm64"
-chmod 0644 "$TEMP/SHA256SUMS" "$TEMP"/*.tgz "$TEMP"/*.tar.xz
+chmod 0644 "$TEMP/SHA256SUMS" "$TEMP"/*.tgz "$TEMP"/*.tar.xz "$TEMP"/*.tar.gz
 
 rm -rf "$OUTPUT"
 mv -f "$TEMP" "$OUTPUT"

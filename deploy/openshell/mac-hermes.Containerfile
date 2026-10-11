@@ -61,6 +61,12 @@ ARG DEBIAN_FRONTEND=noninteractive \
 # make/node/npm/java/pnpm/lein: common repository contracts. The executor can
 # still provision missing tools into a task-local .mac-toolchain, but the base
 # image should cover ordinary polyglot repos without mutating the host fleet.
+# GNU make 4.4.1 from source, ahead of bookworm's 4.3: make 4.3 spawns recipes
+#   with POSIX_SPAWN_RESETIDS, so the child calls setresuid(-1, uid, -1) before
+#   exec. OpenShell 0.1's workload seccomp filter denies the whole setuid
+#   family, no-ops included, so every recipe failed with "make: /bin/sh:
+#   Operation not permitted" and no make-based repository could build. 4.4
+#   dropped that flag. /usr/bin/make is diverted to it so absolute paths agree.
 # build-essential: a C/C++ toolchain (cc/gcc/g++) for repos that compile native
 #   code (e.g. nanolang's 3-stage `make build`); Debian-slim ships none.
 # cmake/ninja-build: isaacsim7-poc@feat/ros-sim's contract requires them. This
@@ -125,6 +131,7 @@ ARG OPENCODE_VERSION="1.18.18"
 ARG CLAUDE_CODE_VERSION="2.1.292"
 ARG BUILDX_VERSION="0.30.1"
 ARG RUST_VERSION="1.95.0"
+ARG MAKE_VERSION="4.4.1"
 ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
@@ -168,6 +175,16 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && for device in virtio-gpu-device virtio-keyboard-device virtio-mouse-device virtio-sound-device virtio-blk-device virtio-net-device; do grep -F "$device" /tmp/mac-qemu-devices >/dev/null || exit 1; done \
     && rm -f /tmp/mac-riscv-probe.c /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin /tmp/mac-qemu-devices \
     && (cd /tmp/mac-openshell-build-assets && sha256sum -c SHA256SUMS) \
+    && tar -xzf /tmp/mac-openshell-build-assets/make.tar.gz -C /tmp \
+    && (cd "/tmp/make-${MAKE_VERSION}" \
+        && ./configure --prefix=/usr/local --disable-nls --disable-dependency-tracking --without-guile >/dev/null \
+        && ./build.sh >/dev/null \
+        && install -m0755 make /usr/local/bin/make) \
+    && rm -rf "/tmp/make-${MAKE_VERSION}" \
+    && dpkg-divert --local --rename --add /usr/bin/make \
+    && ln -s /usr/local/bin/make /usr/bin/make \
+    && make --version | grep -F "GNU Make ${MAKE_VERSION}" \
+    && /usr/bin/make --version | grep -F "GNU Make ${MAKE_VERSION}" \
     && case "$TARGETARCH" in \
          amd64) asset_arch=amd64; gh_arch=amd64; rust_target=x86_64-unknown-linux-gnu ;; \
          arm64) asset_arch=arm64; gh_arch=arm64; rust_target=aarch64-unknown-linux-gnu ;; \
