@@ -134,7 +134,8 @@ probe_sandbox_toolchain() {
   command -v timeout >/dev/null 2>&1 && bound=(timeout 300)
   # MAC_OPENSHELL_CREATE_ARGS is a flag list ("--from IMAGE"), split on purpose.
   # shellcheck disable=SC2086
-  ${bound[@]+"${bound[@]}"} "$MAC_OPENSHELL_BIN" sandbox create \
+  local output rc=0
+  output="$(${bound[@]+"${bound[@]}"} "$MAC_OPENSHELL_BIN" sandbox create \
       --no-auto-providers \
       --policy "$policy" \
       --name "$name" \
@@ -147,7 +148,12 @@ probe_sandbox_toolchain() {
 printf "int main(void) { return 0; }\n" > mac-probe.c && cc mac-probe.c -o mac-probe && ./mac-probe && echo MAC_PROBE_OK:c
 printf "all:\n\t@true\n" > mac-probe.mk && make -f mac-probe.mk && echo MAC_PROBE_OK:make
 python3 -c "pass" && echo MAC_PROBE_OK:python3
-exit 0' </dev/null 2>/dev/null | sed -n 's/^.*MAC_PROBE_OK:\([a-z0-9]*\).*$/\1/p' || true
+exit 0' </dev/null 2>&1)" || rc=$?
+  printf '%s\n' "$output" | sed -n 's/^.*MAC_PROBE_OK:\([a-z0-9]*\).*$/\1/p'
+  if [ "$rc" -ne 0 ]; then
+    MAC_PROBE_OUTPUT="$output" "$HOME/.mac/venv/bin/python" -c \
+      'import os, sys; from mac.executor_sandbox import redacted_probe_output_tail; sys.stderr.write("mac-agent: sandbox toolchain probe failed; output_tail=" + redacted_probe_output_tail(os.environ.get("MAC_PROBE_OUTPUT", "")) + "\n")'
+  fi
   "$MAC_OPENSHELL_BIN" sandbox delete "$name" </dev/null >/dev/null 2>&1 || true
 }
 

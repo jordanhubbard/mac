@@ -36,6 +36,8 @@ _binary_status = executor_sandbox._coding_agent_binary_status
         (1, '{"error": {"message": "nope", "status": 401}}', "authentication_failed"),
         (0, "some other text without the sentinel", "sentinel_missing"),
         (1, "totally opaque failure", "probe_failed"),
+        (1, "sandbox entered error phase while provisioning", "sandbox_provision_failed"),
+        (1, "ControlSupervisorStartFailed: No such image", "sandbox_provision_failed"),
     ],
 )
 def test_classifies_on_exit_status_and_structured_errors(returncode, output, expected) -> None:
@@ -61,6 +63,16 @@ def test_free_text_is_never_searched(output) -> None:
 
 def test_a_json_line_without_an_error_member_is_not_an_error() -> None:
     assert _classify(1, '{"status": 429, "note": "quoted from a test"}') == "probe_failed"
+
+
+def test_probe_tail_is_bounded_and_redacts_host_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-secret")
+    output = "x" * 900 + " MAC_WORKER_TOKEN=worker-secret mac_inference_abc123"
+    tail = executor_sandbox.redacted_probe_output_tail(output)
+    assert len(tail) <= 800
+    assert "worker-secret" not in tail
+    assert "mac_inference_abc123" not in tail
+    assert tail.count("<redacted>") >= 2
 
 
 @pytest.mark.parametrize(

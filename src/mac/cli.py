@@ -4023,6 +4023,24 @@ def cmd_agent_show(args: argparse.Namespace) -> None:
     pending = _pending_inbox_summary(cp, str(row.get("id") or args.agent_id))
     if pending is not None:
         row["pending_inbox"] = pending
+    resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+    coding = resources.get("coding_clis") if isinstance(resources, dict) else {}
+    clis = coding.get("clis") if isinstance(coding, dict) else {}
+    failures = []
+    if isinstance(clis, dict):
+        for name, status in clis.items():
+            if not isinstance(status, dict) or status.get("verified") is True:
+                continue
+            verification = status.get("verification")
+            failure_class = (
+                str(verification.get("failure_class") or "")
+                if isinstance(verification, dict)
+                else ""
+            )
+            if failure_class:
+                failures.append({"agent": name, "failure_class": failure_class})
+    if failures:
+        row["coding_agent_route_unverified"] = {"reasons": failures}
     _print(row)
 
 

@@ -131,6 +131,7 @@ problems: list[str] = []
 checks: dict[str, object] = {
     "identity_env": False,
     "openshell_executor_config": False,
+    "openshell_images": False,
     "report_repository_executor_attestation": False,
     "qdrant_shared_memory": False,
     "firecrawl_web_search": False,
@@ -154,13 +155,21 @@ if openshell_enabled and openshell_create_args:
 # runtime-image-ref means a repin reached one and not the other.
 if openshell_enabled:
     try:
-        from mac.executor_sandbox import RuntimeImagePinConflict, verifier_runtime_image
+        from mac.executor_sandbox import (
+            RuntimeImagePinConflict,
+            ensure_pinned_openshell_images,
+            verifier_runtime_image,
+        )
 
         verifier_runtime_image()
+        image_availability = ensure_pinned_openshell_images()
+        checks["openshell_images"] = image_availability
     except RuntimeImagePinConflict as exc:
         problems.append(f"MAC_OPENSHELL_CREATE_ARGS {safe_error(exc)}")
-    except Exception:  # noqa: BLE001 - an unmanaged image is not a pin conflict
-        pass
+    except Exception as exc:
+        problems.append(f"OpenShell pinned image availability failed: {safe_error(exc)}")
+else:
+    checks["openshell_images"] = True
 openshell_bin = str(os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
 if openshell_enabled and shutil.which(openshell_bin) is None:
     problems.append(
@@ -176,6 +185,7 @@ checks["openshell_executor_config"] = not any(
         (
             "MAC_OPENSHELL_CREATE_ARGS",
             "OpenShell sandbox is enabled",
+            "OpenShell pinned image availability failed",
             "worker cannot execute",
         )
     )
