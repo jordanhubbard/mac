@@ -98,9 +98,13 @@ exit 99
 GH_STUB = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
+if os.environ.get("GH_TOKEN") != os.environ.get("FAKE_EXPECT_GH_TOKEN"):
+    raise SystemExit("gh received the wrong credential")
 with open(os.environ["FAKE_CALLS"], "a") as calls:
     calls.write("gh " + " ".join(args) + "\n")
 if args[:2] == ["run", "list"]:
+    if os.environ.get("FAKE_GH_API_ERROR"):
+        raise SystemExit(1)
     if os.environ.get("FAKE_CI_RED"):
         print("[]")
     elif "--commit" in args:
@@ -141,6 +145,14 @@ elif args[:2] == ["run", "download"]:
         }))
 else:
     raise SystemExit("unexpected gh call: %r" % args)
+"""
+
+PYTHON_STUB = r"""#!/usr/bin/env python3
+import os, sys
+if "forge_token" in " ".join(sys.argv):
+    print(os.environ.get("FAKE_HUB_TOKEN", ""), end="")
+else:
+    os.execv(os.environ["REAL_PY"], [os.environ["REAL_PY"], *sys.argv[1:]])
 """
 
 CURL_STUB = r"""#!/usr/bin/env bash
@@ -213,6 +225,8 @@ def fleet(tmp_path: Path):
     bindir.mkdir()
     for name, body in {"mac": MAC_STUB, "ssh": SSH_STUB, "gh": GH_STUB, "curl": CURL_STUB}.items():
         (bindir / name).write_text(body)
+    token_python = bindir / "token-python"
+    token_python.write_text(PYTHON_STUB)
     for name in ("launchctl", "systemctl", "sudo", "pgrep"):
         (bindir / name).write_text(FORBIDDEN_STUB)
     for stub in bindir.iterdir():
@@ -235,6 +249,8 @@ def fleet(tmp_path: Path):
         "FAKE_CALLS": str(calls),
         "FAKE_REMOTE_HEAD": shas["a"],
         "FAKE_DEFAULT_PROMOTED": shas["c"],
+        "GH_TOKEN": "ghp_" + "e" * 36,
+        "FAKE_EXPECT_GH_TOKEN": "ghp_" + "e" * 36,
         # The inventory is read with this checkout's src and a Python that
         # has pyyaml; the hub tests stub the venv's python.
         "FLEET_UPDATE_PYTHON": sys.executable,
@@ -353,6 +369,41 @@ def test_default_target_is_newest_promoted_main_commit(fleet) -> None:
     result = fleet.run("--dry-run", "hub")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "target: %s" % fleet.shas["c"] in result.stdout
+
+
+def test_promotion_uses_github_token_resolved_from_environment(fleet) -> None:
+    token = "ghp_" + "a" * 36
+    result = fleet.run("--dry-run", "hub", fleet.shas["c"], GH_TOKEN=token, FAKE_EXPECT_GH_TOKEN=token)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert token not in result.stdout + result.stderr
+
+
+def test_promotion_uses_github_token_resolved_from_hub(fleet) -> None:
+    token = "ghp_" + "b" * 36
+    result = fleet.run(
+        "--dry-run", "hub", fleet.shas["c"],
+        GH_TOKEN="", FAKE_HUB_TOKEN=token, FAKE_EXPECT_GH_TOKEN=token,
+        FLEET_UPDATE_PYTHON=str(fleet.tmp / "bin" / "token-python"),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert token not in result.stdout + result.stderr
+
+
+def test_promotion_refuses_when_no_github_credential_resolves(fleet) -> None:
+    result = fleet.run(
+        "--dry-run", "hub", fleet.shas["c"], GH_TOKEN="", FAKE_EXPECT_GH_TOKEN="",
+        FLEET_UPDATE_PYTHON=str(fleet.tmp / "bin" / "token-python"),
+    )
+    assert result.returncode != 0
+    assert "no GitHub credential (GH_TOKEN or hub secret github.token)" in result.stdout
+    assert not any(call.startswith("gh ") for call in _calls(fleet))
+
+
+def test_promotion_reports_github_api_errors_as_auth_transport_failures(fleet) -> None:
+    result = fleet.run("--dry-run", "hub", fleet.shas["c"], FAKE_GH_API_ERROR="1")
+    assert result.returncode != 0
+    assert "GitHub API error while listing CI runs" in result.stdout
+    assert "CI not green" not in result.stdout
 
 
 def test_reused_runtime_image_built_by_an_ancestor_is_promoted(fleet) -> None:
