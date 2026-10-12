@@ -4,24 +4,25 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all>  (HOST: a managed host in ~/.mac/fleets.yaml) <sha>" >&2
+  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] [--allow-unpromoted] [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all>  (HOST: a managed host in ~/.mac/fleets.yaml) [sha]" >&2
   exit 2
 }
-DRY=0 HERMES=0 YES=0 NO_DRAIN=0 RIMG="" RINPUT=""
+DRY=0 HERMES=0 YES=0 NO_DRAIN=0 ALLOW_UNPROMOTED=0 RIMG="" RINPUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;; --hermes) HERMES=1 ;; --yes) YES=1 ;; --no-drain) NO_DRAIN=1 ;;
+    --allow-unpromoted) ALLOW_UNPROMOTED=1 ;;
     --runtime-image) [ $# -ge 2 ] || usage; RIMG=$2; shift ;;
     --runtime-input-sha256) [ $# -ge 2 ] || usage; RINPUT=$2; shift ;;
     -*) usage ;; *) break ;;
   esac
   shift
 done
-[ $# -eq 2 ] || usage
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
 # The worker sandbox image is pinned once, in ~/.mac/openshell/runtime-image-ref
 # (see mac.openshell_image_pin); repinning needs the image and its CI identity.
 { [ -n "$RIMG" ] && [ -n "$RINPUT" ]; } || { [ -z "$RIMG" ] && [ -z "$RINPUT" ]; } || usage
-TARGET=$1 REQ=$2
+TARGET=$1 REQ=${2:-}
 ALL_MODE=0
 SKIPPED_WORKERS=()
 [ "$TARGET" = all ] && ALL_MODE=1
@@ -34,6 +35,7 @@ VENV="$MAC_HOME/venv"
 # hosts are the ones being run, not whatever the venv last installed.
 INVENTORY="${FLEET_UPDATE_INVENTORY:-$MAC_HOME/fleets.yaml}"
 INVENTORY_PY="${FLEET_UPDATE_PYTHON:-$VENV/bin/python}"
+GH_REPOSITORY="${FLEET_UPDATE_GH_REPOSITORY:-jordanhubbard/mac}"
 SCRIPT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src"
 HUB_URL="${FLEET_UPDATE_HUB_URL:-http://127.0.0.1:8789}"
 MAC_CLI="${FLEET_UPDATE_MAC_CLI:-mac}"
@@ -70,6 +72,78 @@ v = json.load(sys.stdin)
 for k in sys.argv[1].split("."):
     v = v.get(k) if isinstance(v, dict) else None
 print(v if isinstance(v, str) else ("" if v is None else json.dumps(v)))' "$1"
+}
+promotion_check() {  # sets PROMOTION_REASON; prints nothing on failure
+  local sha=$1 run_json run_id dir receipt manifest frozen digest build_revision disposition token got
+  PROMOTION_REASON=""
+  if ! git -C "$SRC" merge-base --is-ancestor "$sha" origin/main 2>/dev/null; then
+    PROMOTION_REASON="commit not on main"
+    return 1
+  fi
+  run_json=$(gh run list --repo "$GH_REPOSITORY" --workflow ci.yml --branch main --event push \
+    --commit "$sha" --status completed --limit 20 --json databaseId,conclusion 2>/dev/null) || run_json='[]'
+  run_id=$(python3 -c 'import json,sys
+for run in json.load(sys.stdin):
+    if run.get("conclusion") == "success": print(run["databaseId"]); break' <<< "$run_json")
+  if [ -z "$run_id" ]; then PROMOTION_REASON="CI not green"; return 1; fi
+  dir=$(mktemp -d)
+  if ! gh run download "$run_id" --repo "$GH_REPOSITORY" --name openshell-runtime-image-publication --dir "$dir/runtime" >/dev/null 2>&1 \
+    || ! gh run download "$run_id" --repo "$GH_REPOSITORY" --name mac-release-manifest --dir "$dir/manifest" >/dev/null 2>&1; then
+    rm -rf "$dir"; PROMOTION_REASON="no release manifest or runtime image publication receipt"; return 1
+  fi
+  receipt="$dir/runtime/openshell-runtime-publication/publication-receipt.json"
+  manifest="$dir/manifest/mac-release-manifest.json"
+  if ! read -r frozen digest build_revision disposition < <(python3 - "$sha" "$receipt" "$manifest" <<'PY'
+import json, re, sys
+sha, receipt_path, manifest_path = sys.argv[1:]
+try:
+    receipt = json.load(open(receipt_path))
+    manifest = json.load(open(manifest_path))
+    digest = receipt["image_digest"]
+    frozen = receipt["frozen_inputs_sha256"]
+    assert receipt["schema"] == "mac.image_publication_identity.v1"
+    assert receipt["status"] == "passed"
+    assert receipt["kind"] == "openshell-runtime"
+    assert receipt["repository"] == "ghcr.io/jordanhubbard/mac-openshell-runtime"
+    assert receipt["requested_revision"] == sha
+    disposition = receipt["disposition"]
+    build_revision = receipt["build_revision"]
+    assert disposition in {"built", "reused"}
+    assert re.fullmatch(r"[0-9a-f]{40}", build_revision)
+    assert disposition != "built" or build_revision == sha
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", frozen)
+    assert manifest["complete"] is True and manifest["mac"]["commit"] == sha
+    assert manifest["images"]["coding"].endswith("@" + digest)
+except (AssertionError, KeyError, OSError, ValueError, TypeError):
+    raise SystemExit(1)
+print(frozen, digest, build_revision, disposition)
+PY
+  ); then rm -rf "$dir"; PROMOTION_REASON="no valid release manifest or runtime image publication receipt"; return 1; fi
+  if [ "$disposition" = reused ] \
+    && ! git -C "$SRC" merge-base --is-ancestor "$build_revision" "$sha" 2>/dev/null; then
+    rm -rf "$dir"; PROMOTION_REASON="reused runtime image build commit is not an ancestor on main"; return 1
+  fi
+  token=$(curl -fsS "https://ghcr.io/token?scope=repository:jordanhubbard/mac-openshell-runtime:pull" 2>/dev/null | jget token) || token=""
+  got=$(curl -fsSI -H "Authorization: Bearer $token" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json' \
+    "https://ghcr.io/v2/jordanhubbard/mac-openshell-runtime/manifests/tested-${frozen#sha256:}" 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | tail -1) || got=""
+  rm -rf "$dir"
+  if [ "$got" != "$digest" ]; then PROMOTION_REASON="runtime image is not tested-tagged"; return 1; fi
+}
+newest_promoted() {
+  local runs candidate
+  runs=$(gh run list --repo "$GH_REPOSITORY" --workflow ci.yml --branch main --event push \
+    --status completed --limit 100 --json headSha,conclusion,createdAt 2>/dev/null) || die "cannot list completed main CI runs"
+  while read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if promotion_check "$candidate"; then printf '%s\n' "$candidate"; return 0; fi
+  done < <(python3 -c 'import json,sys
+runs=json.load(sys.stdin)
+for run in sorted(runs, key=lambda r:r.get("createdAt", ""), reverse=True):
+    if run.get("conclusion") == "success": print(run.get("headSha", ""))' <<< "$runs")
+  die "no promoted commit found on main"
 }
 wait_for() {  # wait_for SECONDS cmd...   (always checks at least once)
   local end=$((SECONDS + $1)); shift
@@ -441,12 +515,21 @@ update_worker() {
 
 # ---- main ---------------------------------------------------------------------
 log "log: $LOG$([ "$DRY" = 1 ] && echo ' (dry run: nothing will be changed)')"
+[ "$ALLOW_UNPROMOTED" = 0 ] || log "WARNING: --allow-unpromoted emergency override requested"
 INV_CHECK=$(inventory workers 2>&1) || die "$INV_CHECK"
 case "$TARGET" in hub | all) ;; *) host_entry "$TARGET" ;; esac
 git -C "$SRC" fetch -q origin || die "git fetch origin failed in $SRC"
+if [ -z "$REQ" ]; then
+  [ "$ALLOW_UNPROMOTED" = 0 ] || die "--allow-unpromoted requires an explicit sha"
+  REQ=$(newest_promoted)
+fi
 SHA=$(git -C "$SRC" rev-parse --verify -q "$REQ^{commit}") || die "'$REQ' is not a known commit after fetching origin"
-[ -n "$(git -C "$SRC" branch -r --contains "$SHA" 2> /dev/null)" ] || die "$SHA is not on any origin branch"
 SHA12=${SHA:0:12}
+if [ "$ALLOW_UNPROMOTED" = 0 ]; then
+  promotion_check "$SHA" || die "target $SHA is not promoted: $PROMOTION_REASON"
+else
+  log "WARNING: deploying UNPROMOTED target $SHA under emergency override"
+fi
 log "target: $SHA ($(git -C "$SRC" log -1 --format=%s "$SHA"))"
 case "$TARGET" in
   hub) update_hub ;;
@@ -462,4 +545,4 @@ if [ "${#SKIPPED_WORKERS[@]}" -gt 0 ]; then
   log "INCOMPLETE: skipped workers: $reruns"
   exit 3
 fi
-log "done"
+if [ "$ALLOW_UNPROMOTED" = 1 ]; then log "done (WARNING: UNPROMOTED emergency override)"; else log "done"; fi
