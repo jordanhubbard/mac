@@ -232,6 +232,9 @@ soul_install() {
   log "hub: soul graph: $("$VENV/bin/python" -m mac.soul_install --hermes-home "${hh:-$HOME/.hermes}" 2>&1 | tail -1)" || true
   log "hub: question gate: $("$VENV/bin/python" -m mac.hermes_question_gate --hermes-home "${hh:-$HOME/.hermes}" 2>&1 | tail -1)" || true
   log "hub: fleet context: $("$VENV/bin/python" -m mac.fleet_context_service --source "$SRC" 2>&1 | tail -1)" || true
+  # The hub runs no task agent, so its Slack relay for agent reports and
+  # questions is its own LaunchAgent (mac.slack_relay); restarted on new code.
+  log "hub: slack relay: $("$VENV/bin/python" -m mac.slack_relay install 2>&1 | tail -1)" || true
 }
 
 # The hub's managed files (mac.node_files, role hub): only the control plane's
@@ -313,7 +316,7 @@ update_hub() {
     plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
     plan "hub: mac-schema-migrate --status/--applied-by; bootstrap; poll /health"
     plan "hub: resume the workers this run held, once healthy"
-    plan "hub: mac.node_files (role hub, no worker) -> ~/.mac/bin; bootout gui/$(id -u)/com.mac.agent and disable its plist; decommission the inventory hub agent and drop its MAC_WORKER_TOKEN; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service$([ "$HERMES" = 1 ] && echo '; kickstart ai.hermes.gateway')"
+    plan "hub: mac.node_files (role hub, no worker) -> ~/.mac/bin; bootout gui/$(id -u)/com.mac.agent and disable its plist; decommission the inventory hub agent and drop its MAC_WORKER_TOKEN; mac.soul_install (Hermes soul graph); mac.hermes_question_gate; mac.fleet_context_service; mac.slack_relay install$([ "$HERMES" = 1 ] && echo '; kickstart ai.hermes.gateway')"
     return 0
   fi
   confirm "update the hub to $SHA12"

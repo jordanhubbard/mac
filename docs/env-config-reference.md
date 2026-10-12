@@ -435,6 +435,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SERVICE_ROLE_OPS` | str | consumer-defined | core | Core setting: service role ops. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | core | Core setting: shared services manager agent. |
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
+| `MAC_SLACK_RELAY_POLL_SECONDS` | int | consumer-defined | core | Core setting: slack relay poll seconds. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |
 | `MAC_SOURCE_COMMIT` | str | consumer-defined | core | Core setting: source commit. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |

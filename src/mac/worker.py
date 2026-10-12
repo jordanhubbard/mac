@@ -1170,7 +1170,425 @@ def register_worker(
 # for a redeploy. Add fleet-wide runtime deps here; keep them pinned.
 
 
+class SlackChatRelayMixin:
+    """Forward hub notifier messages to Slack and relay people's answers back.
+
+    The notifier queues ``agent.report`` and ``task.question`` notifications as
+    ``status_update`` messages in one agent's mailbox; this drains that mailbox,
+    posts each to the Hermes Slack home channels, and turns thread replies into
+    answers. A worker runs it beside its task loop; ``mac.slack_relay`` runs it
+    alone on the hub, which executes no tasks.
+
+    Needs ``client``, ``agent_id``, ``chat_questions_path``, ``chat_poll_seconds``,
+    ``status_update_sink``, ``_chat_lock``, ``_chat_thread``, ``_slack_user_names``,
+    ``_stop`` and ``_observe_log`` from the class it is mixed into.
+    """
+
+    def _process_control_messages(self) -> None:
+        """Drain the agent mailbox and forward hub status updates.
+
+        The only message this worker acts on is a ``status_update`` carrying a
+        task-progress notification; anything else is acknowledged by delivery
+        and ignored. The chat thread calls this too, so a question reaches
+        people while this worker is busy with a long task; whichever caller
+        holds the lock drains, the other skips.
+        """
+        if not self._chat_lock.acquire(blocking=False):
+            return
+        try:
+            self._drain_control_messages()
+        finally:
+            self._chat_lock.release()
+
+    def _drain_control_messages(self) -> None:
+        try:
+            messages = self.client.post(
+                "/agents/%s/messages/deliver?%s"
+                % (quote(self.agent_id, safe=""), urlencode({"limit": 20})),
+                {},
+            )
+        except Exception as exc:  # noqa: BLE001 - message polling must not break task polling.
+            self._observe_log(
+                "worker.control_messages.poll_failed",
+                level="warning",
+                detail={"agent_id": self.agent_id, "error": str(exc)},
+            )
+            return
+
+        if not isinstance(messages, list):
+            return
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("message_type") or "") == "status_update":
+                self._handle_status_update_message(message)
+
+    def _handle_status_update_message(self, message: JsonDict) -> None:
+        payload = message.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if str(payload.get("schema") or "") != "mac.notifier.task_progress.v1":
+            return
+        try:
+            result = self.status_update_sink(payload)
+            self._observe_log(
+                "worker.notifier.status_forwarded",
+                level="info",
+                detail={
+                    "message_id": message.get("id"),
+                    "status": result.get("status"),
+                    "sent": result.get("sent", 0),
+                    "skipped": result.get("skipped", 0),
+                    "failed": result.get("failed", 0),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - notification forwarding is best effort.
+            self._observe_log(
+                "worker.notifier.status_forward_failed",
+                level="warning",
+                detail={"message_id": message.get("id"), "error": str(exc)},
+            )
+
+    def _send_status_update_to_home_channels(self, payload: JsonDict) -> JsonDict:
+        channel_type = str(payload.get("channel_type") or "").strip().lower()
+        target = ensure_json_object(payload.get("target"))
+        target_type = str(target.get("channel_type") or "").strip().lower()
+        # Hermes is the only human interface; its home channels are Slack, so
+        # only blank/``slack`` targets route here.
+        if channel_type not in {"", "slack"} and target_type != "slack":
+            return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
+
+        hermes_home = mac_paths.gateway_home()
+        accounts = _load_slack_accounts(hermes_home)
+        home_channels = _load_slack_home_channels(hermes_home)
+        if not accounts or not home_channels:
+            return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
+
+        try:
+            from slack_sdk import WebClient  # type: ignore
+        except Exception as exc:  # noqa: BLE001 - optional Hermes messaging dependency.
+            return {
+                "status": "failed",
+                "sent": 0,
+                "skipped": 0,
+                "failed": 1,
+                "error": "slack_sdk unavailable: %s" % exc,
+            }
+
+        notification = ensure_json_object(payload.get("notification"))
+        is_question = str(notification.get("event_type") or "") == "task.question"
+        code = self._next_question_code() if is_question else ""
+        text = (
+            _question_slack_text(notification, code)
+            if is_question
+            else _status_update_slack_text(notification)
+        )
+        posted: List[JsonDict] = []
+        account_by_name = {
+            str(account.get("name") or ""): account
+            for account in accounts
+            if str(account.get("name") or "")
+        }
+        target_team, target_channel = _target_slack_route(target)
+        sent = 0
+        failed = 0
+        skipped = 0
+        for channel in home_channels:
+            channel_id = str(channel.get("channel_id") or "").strip()
+            team_id = str(channel.get("team_id") or "").strip()
+            if not channel_id:
+                skipped += 1
+                continue
+            if target_channel and channel_id != target_channel:
+                skipped += 1
+                continue
+            if target_team and team_id and team_id != target_team:
+                skipped += 1
+                continue
+            account_name = str(channel.get("name") or channel.get("account") or "")
+            account = account_by_name.get(account_name)
+            if account is None:
+                skipped += 1
+                continue
+            token = str(
+                account.get("bot_token")
+                or account.get("token")
+                or account.get("slack_bot_token")
+                or ""
+            ).strip()
+            if not token:
+                skipped += 1
+                continue
+            try:
+                response = WebClient(token=token).chat_postMessage(
+                    channel=channel_id,
+                    text=text,
+                )
+                if bool(response.get("ok", True)):
+                    sent += 1
+                    if is_question and response.get("ts"):
+                        posted.append(
+                            {
+                                "notification_id": str(notification.get("id") or ""),
+                                "code": code,
+                                "account": account_name,
+                                "team_id": team_id,
+                                "channel_id": channel_id,
+                                "ts": str(response.get("ts")),
+                                "posted_at": time.time(),
+                                "seen": [],
+                            }
+                        )
+                else:
+                    failed += 1
+            except Exception as exc:  # noqa: BLE001 - continue across workspaces.
+                failed += 1
+                self._observe_log(
+                    "worker.notifier.slack_send_failed",
+                    level="warning",
+                    detail={
+                        "channel_id": channel_id,
+                        "team_id": team_id,
+                        "account": account_name,
+                        "error": str(exc),
+                    },
+                )
+        if posted:
+            self._save_chat_questions(self._load_chat_questions() + posted)
+        status = "sent" if sent else ("failed" if failed else "skipped")
+        return {"status": status, "sent": sent, "skipped": skipped, "failed": failed}
+
+    # -- Chat replies to questions ----------------------------------------------
+
+    def _start_chat_thread(self) -> None:
+        if self._chat_thread is not None:
+            return
+        thread = threading.Thread(
+            target=self._chat_loop, name="mac-chat-%s" % self.agent_id, daemon=True
+        )
+        self._chat_thread = thread
+        thread.start()
+
+    def _chat_loop(self) -> None:
+        while not self._stop:
+            try:
+                self._process_control_messages()
+                self._relay_chat_question_replies()
+            except Exception as exc:  # noqa: BLE001 - the chat thread must outlive any one error.
+                self._observe_log(
+                    "worker.chat.loop_failed", level="warning", detail={"error": str(exc)}
+                )
+            deadline = time.monotonic() + self.chat_poll_seconds
+            while not self._stop and time.monotonic() < deadline:
+                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+    def _load_chat_state(self) -> JsonDict:
+        try:
+            loaded = json.loads(self.chat_questions_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+
+    def _load_chat_questions(self) -> List[JsonDict]:
+        entries = self._load_chat_state().get("questions")
+        return [dict(e) for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+
+    def _save_chat_questions(self, entries: List[JsonDict]) -> None:
+        self._save_chat_state({**self._load_chat_state(), "questions": entries})
+
+    def _next_question_code(self) -> str:
+        """A short code people can answer by in the channel: Q1, Q2, ..."""
+        state = self._load_chat_state()
+        try:
+            number = max(1, int(state.get("next_code") or 1))
+        except (TypeError, ValueError):
+            number = 1
+        self._save_chat_state({**state, "next_code": number + 1})
+        return "Q%d" % number
+
+    def _save_chat_state(self, state: JsonDict) -> None:
+        try:
+            self.chat_questions_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.chat_questions_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(tmp, self.chat_questions_path)
+        except OSError as exc:
+            self._observe_log(
+                "worker.chat.state_write_failed", level="warning", detail={"error": str(exc)}
+            )
+
+    def _relay_chat_question_replies(self) -> None:
+        """Relay people's Slack answers to questions this worker posted.
+
+        An answer is a reply in the question's thread, or a channel message
+        that starts with the question's code ("Q7 blue"). Each goes to the hub
+        as that question's answer (which resumes a task parked on it) and gets
+        a one-line receipt. A question stops being watched once the hub says
+        it no longer wants an answer, or after CHAT_QUESTION_WATCH_SECONDS.
+        """
+        if not self._chat_lock.acquire(blocking=False):
+            return
+        try:
+            entries = self._load_chat_questions()
+            if not entries:
+                return
+            kept = self._relay_chat_replies_for(entries)
+            if kept != entries:
+                self._save_chat_questions(kept)
+        finally:
+            self._chat_lock.release()
+
+    def _relay_chat_replies_for(self, entries: List[JsonDict]) -> List[JsonDict]:
+        accounts = {
+            str(a.get("name") or ""): a for a in _load_slack_accounts(mac_paths.gateway_home())
+        }
+        try:
+            from slack_sdk import WebClient  # type: ignore
+        except Exception:  # noqa: BLE001 - optional Hermes messaging dependency.
+            return entries
+        now = time.time()
+        open_by_note: Dict[str, bool] = {}
+        watched: List[JsonDict] = []
+        for entry in entries:
+            note_id = str(entry.get("notification_id") or "")
+            if not note_id or now - float(entry.get("posted_at") or 0) > CHAT_QUESTION_WATCH_SECONDS:
+                continue
+            if note_id not in open_by_note:
+                open_by_note[note_id] = self._chat_question_open(note_id)
+            if open_by_note[note_id]:
+                watched.append(dict(entry))
+        channels: Dict[tuple, List[JsonDict]] = {}
+        for entry in watched:
+            key = (str(entry.get("account") or ""), str(entry.get("channel_id") or ""))
+            channels.setdefault(key, []).append(entry)
+        for (account_name, channel_id), group in channels.items():
+            account = accounts.get(account_name) or {}
+            token = str(
+                account.get("bot_token") or account.get("token") or account.get("slack_bot_token") or ""
+            ).strip()
+            if not token:
+                continue
+            try:
+                self._relay_slack_channel(WebClient(token=token), channel_id, group, open_by_note)
+            except Exception as exc:  # noqa: BLE001 - retried on the next poll.
+                self._observe_log(
+                    "worker.chat.slack_poll_failed",
+                    level="warning",
+                    detail={"account": account_name, "channel_id": channel_id, "error": str(exc)},
+                )
+        # A question answered through one workspace closes its copies in the others.
+        return [e for e in watched if open_by_note.get(str(e.get("notification_id") or ""), True)]
+
+    def _chat_question_open(self, notification_id: str) -> bool:
+        try:
+            status = self.client.get("/notifications/%s/question" % quote(notification_id, safe=""))
+        except MacApiError as exc:
+            # A notification the hub no longer has, or this agent may not
+            # answer, is not worth watching; a hub outage is.
+            return exc.status_code not in {400, 403, 404, 422}
+        except Exception:  # noqa: BLE001
+            return True
+        return bool(ensure_json_object(status).get("question_open", True))
+
+    def _relay_slack_channel(
+        self, slack: Any, channel_id: str, group: List[JsonDict], open_by_note: Dict[str, bool]
+    ) -> None:
+        """Relay new answers to this channel's open questions, oldest first."""
+        answers: List[tuple] = []  # (ts, entry, message, body, receipt thread ts)
+        for entry in group:
+            parent_ts = str(entry.get("ts") or "")
+            response = slack.conversations_replies(channel=channel_id, ts=parent_ts, limit=100)
+            for reply in response.get("messages") or []:
+                if str(reply.get("ts") or "") != parent_ts and _human_slack_message(reply):
+                    body = str(reply.get("text") or "").strip()
+                    # "Q7 blue" in Q7's own thread answers "blue".
+                    match = _QUESTION_CODE_ANSWER.match(body)
+                    if match and "Q%s" % match.group(1) == str(entry.get("code") or "").upper():
+                        body = match.group(2).strip()
+                    answers.append((str(reply["ts"]), entry, reply, body, parent_ts))
+        by_code = {str(e.get("code") or "").upper(): e for e in group if e.get("code")}
+        if by_code:
+            oldest = min(str(e.get("ts") or "0") for e in group)
+            history = slack.conversations_history(channel=channel_id, oldest=oldest, limit=200)
+            for message in history.get("messages") or []:
+                if not _human_slack_message(message):
+                    continue
+                if message.get("thread_ts") and message.get("thread_ts") != message.get("ts"):
+                    continue  # a thread reply, handled above
+                match = _QUESTION_CODE_ANSWER.match(str(message.get("text") or ""))
+                entry = by_code.get("Q%s" % match.group(1)) if match else None
+                if entry is not None:
+                    answers.append((str(message["ts"]), entry, message, match.group(2).strip(), str(message["ts"])))
+        for ts, entry, message, body, receipt_ts in sorted(answers, key=lambda item: float(item[0])):
+            note_id = str(entry.get("notification_id") or "")
+            if not body or ts in (entry.get("seen") or []) or not open_by_note.get(note_id, True):
+                continue
+            result = self._relay_slack_answer(slack, entry, channel_id, ts, message, body)
+            entry["seen"] = [*(entry.get("seen") or []), ts]
+            if result is None:
+                continue
+            receipt = _chat_reply_receipt(result)
+            if receipt:
+                try:
+                    slack.chat_postMessage(channel=channel_id, thread_ts=receipt_ts, text=receipt)
+                except Exception:  # noqa: BLE001 - the answer is recorded either way.
+                    pass
+            if not result.get("question_open", True):
+                open_by_note[note_id] = False
+
+    def _relay_slack_answer(
+        self, slack: Any, entry: JsonDict, channel_id: str, ts: str, message: JsonDict, body: str
+    ) -> Optional[JsonDict]:
+        """Send one answer to the hub; None if the hub refused it for good."""
+        note_id = str(entry["notification_id"])
+        ref = "slack:%s/%s/%s" % (entry.get("team_id") or "", channel_id, ts)
+        try:
+            result = ensure_json_object(
+                self.client.post(
+                    "/notifications/%s/replies" % quote(note_id, safe=""),
+                    {
+                        "body": body,
+                        "ref": ref,
+                        "author": self._slack_user_name(slack, str(message["user"])),
+                        "source": "slack",
+                    },
+                )
+            )
+        except MacApiError as exc:
+            if exc.status_code is None or exc.status_code >= 500:
+                raise  # the hub is down: try this answer again next poll
+            self._observe_log(
+                "worker.chat.reply_refused",
+                level="warning",
+                detail={"notification_id": note_id, "ref": ref, "error": str(exc)},
+            )
+            return None
+        self._observe_log(
+            "worker.chat.reply_relayed",
+            level="info",
+            subject_type="task",
+            subject_id=str(result.get("task_id") or ""),
+            detail={"notification_id": note_id, "ref": ref, "status": result.get("status")},
+        )
+        return result
+
+    def _slack_user_name(self, slack: Any, user_id: str) -> str:
+        if user_id not in self._slack_user_names:
+            name = ""
+            try:
+                user = ensure_json_object(slack.users_info(user=user_id).get("user"))
+                profile = ensure_json_object(user.get("profile"))
+                name = str(
+                    profile.get("display_name") or profile.get("real_name") or user.get("name") or ""
+                ).strip()
+            except Exception:  # noqa: BLE001 - fall back to the user id.
+                pass
+            self._slack_user_names[user_id] = "%s (slack:%s)" % (name, user_id) if name else "slack:%s" % user_id
+        return self._slack_user_names[user_id]
+
+
 class MacWorker(
+    SlackChatRelayMixin,
     DebugTerminalMixin,
     ReflectMixin,
     DirectableMixin,
@@ -2512,408 +2930,6 @@ class MacWorker(
             },
         )
         return assignment
-
-    def _process_control_messages(self) -> None:
-        """Drain the agent mailbox and forward hub status updates.
-
-        The only message this worker acts on is a ``status_update`` carrying a
-        task-progress notification; anything else is acknowledged by delivery
-        and ignored. The chat thread calls this too, so a question reaches
-        people while this worker is busy with a long task; whichever caller
-        holds the lock drains, the other skips.
-        """
-        if not self._chat_lock.acquire(blocking=False):
-            return
-        try:
-            self._drain_control_messages()
-        finally:
-            self._chat_lock.release()
-
-    def _drain_control_messages(self) -> None:
-        try:
-            messages = self.client.post(
-                "/agents/%s/messages/deliver?%s"
-                % (quote(self.agent_id, safe=""), urlencode({"limit": 20})),
-                {},
-            )
-        except Exception as exc:  # noqa: BLE001 - message polling must not break task polling.
-            self._observe_log(
-                "worker.control_messages.poll_failed",
-                level="warning",
-                detail={"agent_id": self.agent_id, "error": str(exc)},
-            )
-            return
-
-        if not isinstance(messages, list):
-            return
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            if str(message.get("message_type") or "") == "status_update":
-                self._handle_status_update_message(message)
-
-    def _handle_status_update_message(self, message: JsonDict) -> None:
-        payload = message.get("payload")
-        if not isinstance(payload, dict):
-            return
-        if str(payload.get("schema") or "") != "mac.notifier.task_progress.v1":
-            return
-        try:
-            result = self.status_update_sink(payload)
-            self._observe_log(
-                "worker.notifier.status_forwarded",
-                level="info",
-                detail={
-                    "message_id": message.get("id"),
-                    "status": result.get("status"),
-                    "sent": result.get("sent", 0),
-                    "skipped": result.get("skipped", 0),
-                    "failed": result.get("failed", 0),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001 - notification forwarding is best effort.
-            self._observe_log(
-                "worker.notifier.status_forward_failed",
-                level="warning",
-                detail={"message_id": message.get("id"), "error": str(exc)},
-            )
-
-    def _send_status_update_to_home_channels(self, payload: JsonDict) -> JsonDict:
-        channel_type = str(payload.get("channel_type") or "").strip().lower()
-        target = ensure_json_object(payload.get("target"))
-        target_type = str(target.get("channel_type") or "").strip().lower()
-        # Hermes is the only human interface; its home channels are Slack, so
-        # only blank/``slack`` targets route here.
-        if channel_type not in {"", "slack"} and target_type != "slack":
-            return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
-
-        hermes_home = mac_paths.gateway_home()
-        accounts = _load_slack_accounts(hermes_home)
-        home_channels = _load_slack_home_channels(hermes_home)
-        if not accounts or not home_channels:
-            return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
-
-        try:
-            from slack_sdk import WebClient  # type: ignore
-        except Exception as exc:  # noqa: BLE001 - optional Hermes messaging dependency.
-            return {
-                "status": "failed",
-                "sent": 0,
-                "skipped": 0,
-                "failed": 1,
-                "error": "slack_sdk unavailable: %s" % exc,
-            }
-
-        notification = ensure_json_object(payload.get("notification"))
-        is_question = str(notification.get("event_type") or "") == "task.question"
-        code = self._next_question_code() if is_question else ""
-        text = (
-            _question_slack_text(notification, code)
-            if is_question
-            else _status_update_slack_text(notification)
-        )
-        posted: List[JsonDict] = []
-        account_by_name = {
-            str(account.get("name") or ""): account
-            for account in accounts
-            if str(account.get("name") or "")
-        }
-        target_team, target_channel = _target_slack_route(target)
-        sent = 0
-        failed = 0
-        skipped = 0
-        for channel in home_channels:
-            channel_id = str(channel.get("channel_id") or "").strip()
-            team_id = str(channel.get("team_id") or "").strip()
-            if not channel_id:
-                skipped += 1
-                continue
-            if target_channel and channel_id != target_channel:
-                skipped += 1
-                continue
-            if target_team and team_id and team_id != target_team:
-                skipped += 1
-                continue
-            account_name = str(channel.get("name") or channel.get("account") or "")
-            account = account_by_name.get(account_name)
-            if account is None:
-                skipped += 1
-                continue
-            token = str(
-                account.get("bot_token")
-                or account.get("token")
-                or account.get("slack_bot_token")
-                or ""
-            ).strip()
-            if not token:
-                skipped += 1
-                continue
-            try:
-                response = WebClient(token=token).chat_postMessage(
-                    channel=channel_id,
-                    text=text,
-                )
-                if bool(response.get("ok", True)):
-                    sent += 1
-                    if is_question and response.get("ts"):
-                        posted.append(
-                            {
-                                "notification_id": str(notification.get("id") or ""),
-                                "code": code,
-                                "account": account_name,
-                                "team_id": team_id,
-                                "channel_id": channel_id,
-                                "ts": str(response.get("ts")),
-                                "posted_at": time.time(),
-                                "seen": [],
-                            }
-                        )
-                else:
-                    failed += 1
-            except Exception as exc:  # noqa: BLE001 - continue across workspaces.
-                failed += 1
-                self._observe_log(
-                    "worker.notifier.slack_send_failed",
-                    level="warning",
-                    detail={
-                        "channel_id": channel_id,
-                        "team_id": team_id,
-                        "account": account_name,
-                        "error": str(exc),
-                    },
-                )
-        if posted:
-            self._save_chat_questions(self._load_chat_questions() + posted)
-        status = "sent" if sent else ("failed" if failed else "skipped")
-        return {"status": status, "sent": sent, "skipped": skipped, "failed": failed}
-
-    # -- Chat replies to questions ----------------------------------------------
-
-    def _start_chat_thread(self) -> None:
-        if self._chat_thread is not None:
-            return
-        thread = threading.Thread(
-            target=self._chat_loop, name="mac-chat-%s" % self.agent_id, daemon=True
-        )
-        self._chat_thread = thread
-        thread.start()
-
-    def _chat_loop(self) -> None:
-        while not self._stop:
-            try:
-                self._process_control_messages()
-                self._relay_chat_question_replies()
-            except Exception as exc:  # noqa: BLE001 - the chat thread must outlive any one error.
-                self._observe_log(
-                    "worker.chat.loop_failed", level="warning", detail={"error": str(exc)}
-                )
-            deadline = time.monotonic() + self.chat_poll_seconds
-            while not self._stop and time.monotonic() < deadline:
-                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
-
-    def _load_chat_state(self) -> JsonDict:
-        try:
-            loaded = json.loads(self.chat_questions_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-        return loaded if isinstance(loaded, dict) else {}
-
-    def _load_chat_questions(self) -> List[JsonDict]:
-        entries = self._load_chat_state().get("questions")
-        return [dict(e) for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
-
-    def _save_chat_questions(self, entries: List[JsonDict]) -> None:
-        self._save_chat_state({**self._load_chat_state(), "questions": entries})
-
-    def _next_question_code(self) -> str:
-        """A short code people can answer by in the channel: Q1, Q2, ..."""
-        state = self._load_chat_state()
-        try:
-            number = max(1, int(state.get("next_code") or 1))
-        except (TypeError, ValueError):
-            number = 1
-        self._save_chat_state({**state, "next_code": number + 1})
-        return "Q%d" % number
-
-    def _save_chat_state(self, state: JsonDict) -> None:
-        try:
-            self.chat_questions_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.chat_questions_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            os.replace(tmp, self.chat_questions_path)
-        except OSError as exc:
-            self._observe_log(
-                "worker.chat.state_write_failed", level="warning", detail={"error": str(exc)}
-            )
-
-    def _relay_chat_question_replies(self) -> None:
-        """Relay people's Slack answers to questions this worker posted.
-
-        An answer is a reply in the question's thread, or a channel message
-        that starts with the question's code ("Q7 blue"). Each goes to the hub
-        as that question's answer (which resumes a task parked on it) and gets
-        a one-line receipt. A question stops being watched once the hub says
-        it no longer wants an answer, or after CHAT_QUESTION_WATCH_SECONDS.
-        """
-        if not self._chat_lock.acquire(blocking=False):
-            return
-        try:
-            entries = self._load_chat_questions()
-            if not entries:
-                return
-            kept = self._relay_chat_replies_for(entries)
-            if kept != entries:
-                self._save_chat_questions(kept)
-        finally:
-            self._chat_lock.release()
-
-    def _relay_chat_replies_for(self, entries: List[JsonDict]) -> List[JsonDict]:
-        accounts = {
-            str(a.get("name") or ""): a for a in _load_slack_accounts(mac_paths.gateway_home())
-        }
-        try:
-            from slack_sdk import WebClient  # type: ignore
-        except Exception:  # noqa: BLE001 - optional Hermes messaging dependency.
-            return entries
-        now = time.time()
-        open_by_note: Dict[str, bool] = {}
-        watched: List[JsonDict] = []
-        for entry in entries:
-            note_id = str(entry.get("notification_id") or "")
-            if not note_id or now - float(entry.get("posted_at") or 0) > CHAT_QUESTION_WATCH_SECONDS:
-                continue
-            if note_id not in open_by_note:
-                open_by_note[note_id] = self._chat_question_open(note_id)
-            if open_by_note[note_id]:
-                watched.append(dict(entry))
-        channels: Dict[tuple, List[JsonDict]] = {}
-        for entry in watched:
-            key = (str(entry.get("account") or ""), str(entry.get("channel_id") or ""))
-            channels.setdefault(key, []).append(entry)
-        for (account_name, channel_id), group in channels.items():
-            account = accounts.get(account_name) or {}
-            token = str(
-                account.get("bot_token") or account.get("token") or account.get("slack_bot_token") or ""
-            ).strip()
-            if not token:
-                continue
-            try:
-                self._relay_slack_channel(WebClient(token=token), channel_id, group, open_by_note)
-            except Exception as exc:  # noqa: BLE001 - retried on the next poll.
-                self._observe_log(
-                    "worker.chat.slack_poll_failed",
-                    level="warning",
-                    detail={"account": account_name, "channel_id": channel_id, "error": str(exc)},
-                )
-        # A question answered through one workspace closes its copies in the others.
-        return [e for e in watched if open_by_note.get(str(e.get("notification_id") or ""), True)]
-
-    def _chat_question_open(self, notification_id: str) -> bool:
-        try:
-            status = self.client.get("/notifications/%s/question" % quote(notification_id, safe=""))
-        except MacApiError as exc:
-            # A notification the hub no longer has, or this agent may not
-            # answer, is not worth watching; a hub outage is.
-            return exc.status_code not in {400, 403, 404, 422}
-        except Exception:  # noqa: BLE001
-            return True
-        return bool(ensure_json_object(status).get("question_open", True))
-
-    def _relay_slack_channel(
-        self, slack: Any, channel_id: str, group: List[JsonDict], open_by_note: Dict[str, bool]
-    ) -> None:
-        """Relay new answers to this channel's open questions, oldest first."""
-        answers: List[tuple] = []  # (ts, entry, message, body, receipt thread ts)
-        for entry in group:
-            parent_ts = str(entry.get("ts") or "")
-            response = slack.conversations_replies(channel=channel_id, ts=parent_ts, limit=100)
-            for reply in response.get("messages") or []:
-                if str(reply.get("ts") or "") != parent_ts and _human_slack_message(reply):
-                    body = str(reply.get("text") or "").strip()
-                    # "Q7 blue" in Q7's own thread answers "blue".
-                    match = _QUESTION_CODE_ANSWER.match(body)
-                    if match and "Q%s" % match.group(1) == str(entry.get("code") or "").upper():
-                        body = match.group(2).strip()
-                    answers.append((str(reply["ts"]), entry, reply, body, parent_ts))
-        by_code = {str(e.get("code") or "").upper(): e for e in group if e.get("code")}
-        if by_code:
-            oldest = min(str(e.get("ts") or "0") for e in group)
-            history = slack.conversations_history(channel=channel_id, oldest=oldest, limit=200)
-            for message in history.get("messages") or []:
-                if not _human_slack_message(message):
-                    continue
-                if message.get("thread_ts") and message.get("thread_ts") != message.get("ts"):
-                    continue  # a thread reply, handled above
-                match = _QUESTION_CODE_ANSWER.match(str(message.get("text") or ""))
-                entry = by_code.get("Q%s" % match.group(1)) if match else None
-                if entry is not None:
-                    answers.append((str(message["ts"]), entry, message, match.group(2).strip(), str(message["ts"])))
-        for ts, entry, message, body, receipt_ts in sorted(answers, key=lambda item: float(item[0])):
-            note_id = str(entry.get("notification_id") or "")
-            if not body or ts in (entry.get("seen") or []) or not open_by_note.get(note_id, True):
-                continue
-            result = self._relay_slack_answer(slack, entry, channel_id, ts, message, body)
-            entry["seen"] = [*(entry.get("seen") or []), ts]
-            if result is None:
-                continue
-            receipt = _chat_reply_receipt(result)
-            if receipt:
-                try:
-                    slack.chat_postMessage(channel=channel_id, thread_ts=receipt_ts, text=receipt)
-                except Exception:  # noqa: BLE001 - the answer is recorded either way.
-                    pass
-            if not result.get("question_open", True):
-                open_by_note[note_id] = False
-
-    def _relay_slack_answer(
-        self, slack: Any, entry: JsonDict, channel_id: str, ts: str, message: JsonDict, body: str
-    ) -> Optional[JsonDict]:
-        """Send one answer to the hub; None if the hub refused it for good."""
-        note_id = str(entry["notification_id"])
-        ref = "slack:%s/%s/%s" % (entry.get("team_id") or "", channel_id, ts)
-        try:
-            result = ensure_json_object(
-                self.client.post(
-                    "/notifications/%s/replies" % quote(note_id, safe=""),
-                    {
-                        "body": body,
-                        "ref": ref,
-                        "author": self._slack_user_name(slack, str(message["user"])),
-                        "source": "slack",
-                    },
-                )
-            )
-        except MacApiError as exc:
-            if exc.status_code is None or exc.status_code >= 500:
-                raise  # the hub is down: try this answer again next poll
-            self._observe_log(
-                "worker.chat.reply_refused",
-                level="warning",
-                detail={"notification_id": note_id, "ref": ref, "error": str(exc)},
-            )
-            return None
-        self._observe_log(
-            "worker.chat.reply_relayed",
-            level="info",
-            subject_type="task",
-            subject_id=str(result.get("task_id") or ""),
-            detail={"notification_id": note_id, "ref": ref, "status": result.get("status")},
-        )
-        return result
-
-    def _slack_user_name(self, slack: Any, user_id: str) -> str:
-        if user_id not in self._slack_user_names:
-            name = ""
-            try:
-                user = ensure_json_object(slack.users_info(user=user_id).get("user"))
-                profile = ensure_json_object(user.get("profile"))
-                name = str(
-                    profile.get("display_name") or profile.get("real_name") or user.get("name") or ""
-                ).strip()
-            except Exception:  # noqa: BLE001 - fall back to the user id.
-                pass
-            self._slack_user_names[user_id] = "%s (slack:%s)" % (name, user_id) if name else "slack:%s" % user_id
-        return self._slack_user_names[user_id]
 
     def _process_agentbus_control(self) -> Optional[JsonDict]:
         if not self.agentbus_control_enabled:
