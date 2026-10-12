@@ -73,6 +73,11 @@ for k in sys.argv[1].split("."):
     v = v.get(k) if isinstance(v, dict) else None
 print(v if isinstance(v, str) else ("" if v is None else json.dumps(v)))' "$1"
 }
+resolve_github_credential() {
+  PYTHONPATH="$SCRIPT_SRC" "$INVENTORY_PY" -c \
+    'from mac.gitops import forge_token; print(forge_token("github"), end="")' 2>/dev/null
+}
+gh_api() { GH_TOKEN="$GITHUB_TOKEN" gh "$@"; }
 promotion_check() {  # sets PROMOTION_REASON; prints nothing on failure
   local sha=$1 run_json run_id dir receipt manifest frozen digest build_revision disposition token got
   PROMOTION_REASON=""
@@ -80,15 +85,18 @@ promotion_check() {  # sets PROMOTION_REASON; prints nothing on failure
     PROMOTION_REASON="commit not on main"
     return 1
   fi
-  run_json=$(gh run list --repo "$GH_REPOSITORY" --workflow ci.yml --branch main --event push \
-    --commit "$sha" --status completed --limit 20 --json databaseId,conclusion 2>/dev/null) || run_json='[]'
+  if ! run_json=$(gh_api run list --repo "$GH_REPOSITORY" --workflow ci.yml --branch main --event push \
+    --commit "$sha" --status completed --limit 20 --json databaseId,conclusion 2>/dev/null); then
+    PROMOTION_REASON="GitHub API error while listing CI runs"
+    return 1
+  fi
   run_id=$(python3 -c 'import json,sys
 for run in json.load(sys.stdin):
     if run.get("conclusion") == "success": print(run["databaseId"]); break' <<< "$run_json")
   if [ -z "$run_id" ]; then PROMOTION_REASON="CI not green"; return 1; fi
   dir=$(mktemp -d)
-  if ! gh run download "$run_id" --repo "$GH_REPOSITORY" --name openshell-runtime-image-publication --dir "$dir/runtime" >/dev/null 2>&1 \
-    || ! gh run download "$run_id" --repo "$GH_REPOSITORY" --name mac-release-manifest --dir "$dir/manifest" >/dev/null 2>&1; then
+  if ! gh_api run download "$run_id" --repo "$GH_REPOSITORY" --name openshell-runtime-image-publication --dir "$dir/runtime" >/dev/null 2>&1 \
+    || ! gh_api run download "$run_id" --repo "$GH_REPOSITORY" --name mac-release-manifest --dir "$dir/manifest" >/dev/null 2>&1; then
     rm -rf "$dir"; PROMOTION_REASON="no release manifest or runtime image publication receipt"; return 1
   fi
   receipt="$dir/runtime/openshell-runtime-publication/publication-receipt.json"
@@ -134,8 +142,9 @@ PY
 }
 newest_promoted() {
   local runs candidate
-  runs=$(gh run list --repo "$GH_REPOSITORY" --workflow ci.yml --branch main --event push \
-    --status completed --limit 100 --json headSha,conclusion,createdAt 2>/dev/null) || die "cannot list completed main CI runs"
+  runs=$(gh_api run list --repo "$GH_REPOSITORY" --workflow ci.yml --branch main --event push \
+    --status completed --limit 100 --json headSha,conclusion,createdAt 2>/dev/null) \
+    || die "GitHub API error while listing completed main CI runs"
   while read -r candidate; do
     [ -n "$candidate" ] || continue
     if promotion_check "$candidate"; then printf '%s\n' "$candidate"; return 0; fi
@@ -519,6 +528,11 @@ log "log: $LOG$([ "$DRY" = 1 ] && echo ' (dry run: nothing will be changed)')"
 INV_CHECK=$(inventory workers 2>&1) || die "$INV_CHECK"
 case "$TARGET" in hub | all) ;; *) host_entry "$TARGET" ;; esac
 git -C "$SRC" fetch -q origin || die "git fetch origin failed in $SRC"
+if [ "$ALLOW_UNPROMOTED" = 0 ]; then
+  GITHUB_TOKEN=$(resolve_github_credential) || GITHUB_TOKEN=""
+  unset GH_TOKEN
+  [ -n "$GITHUB_TOKEN" ] || die "no GitHub credential (GH_TOKEN or hub secret github.token)"
+fi
 if [ -z "$REQ" ]; then
   [ "$ALLOW_UNPROMOTED" = 0 ] || die "--allow-unpromoted requires an explicit sha"
   REQ=$(newest_promoted)
