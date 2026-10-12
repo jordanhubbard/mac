@@ -2106,7 +2106,8 @@ have been deleted: in the 90 days before it was written, release epochs aborted
 exact release, so a host's state can be compared with more than its Git HEAD.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] \</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">    [--runtime-image REF --runtime-input-sha256 SHA] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">    [--allow-unpromoted] [--runtime-image REF --runtime-input-sha256 SHA] \</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">    &lt;hub|HOST|all&gt; [sha]</span>
 </code></pre></div>
 <table>
 <thead>
@@ -2129,8 +2130,8 @@ exact release, so a host's state can be compared with more than its Git HEAD.</p
 <td>The hub first, then each worker in turn. A worker still busy after the drain timeout is skipped, and the run ends with exit code 3 and a rerun command for each skipped worker. Any other failure stops the run.</td>
 </tr>
 <tr>
-<td><code>&lt;sha&gt;</code></td>
-<td>Any commit on an <code>origin</code> branch. A short sha is fine; it is resolved to the full one.</td>
+<td><code>[sha]</code></td>
+<td>A promoted commit on <code>main</code>. A short sha is fine. When omitted, the newest promoted commit on <code>main</code> is selected, rather than blindly using <code>origin/main</code>.</td>
 </tr>
 <tr>
 <td><code>--dry-run</code></td>
@@ -2147,6 +2148,10 @@ exact release, so a host's state can be compared with more than its Git HEAD.</p
 <tr>
 <td><code>--no-drain</code></td>
 <td>Restart the hub without first draining the workers (see step 0 under <a href="#hub-macos">Hub</a>). Tasks in flight lose the hub and its model router for the length of the restart, and usually fail. Use it only when the hub must go down now.</td>
+</tr>
+<tr>
+<td><code>--allow-unpromoted</code></td>
+<td>Emergency-only override for an explicit SHA. It bypasses promotion checks and prints a prominent warning in both the log and final summary. It cannot be combined with automatic target selection.</td>
 </tr>
 <tr>
 <td><code>--runtime-image REF --runtime-input-sha256 SHA</code></td>
@@ -2215,8 +2220,14 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
 <h2 id="preflight-every-target">Preflight (every target)<a class="headerlink" href="#preflight-every-target" title="Permanent link">&para;</a></h2>
 <ol>
 <li><code>git fetch origin</code> in <code>~/.mac/src/mac</code> on the hub.</li>
-<li>Resolve <code>&lt;sha&gt;</code> to a full commit and refuse it unless some <code>origin/*</code>
-   branch contains it.</li>
+<li>Resolve <code>[sha]</code> to a full commit. A promoted commit must be on <code>origin/main</code>,
+   have a successful completed <code>ci.yml</code> push run, and have that run's complete
+   <code>mac-release-manifest</code> and passed OpenShell runtime publication receipt. The
+   runtime digest in those artifacts must carry the receipt's
+   <code>tested-&lt;frozen-inputs-sha256&gt;</code> GHCR tag. The script refuses before any hold
+   or drain and names the missing condition. This check also runs during dry
+   runs. With no SHA, completed main runs are searched newest-first and the
+   first release satisfying all these checks is selected.</li>
 <li>Read the commit the host currently runs. On the hub that is the checkout's
    <code>HEAD</code>; on a worker it is read over ssh.</li>
 <li>Compare <code>src/mac/data/postgres/migrations/*.sql</code> between the two commits:</li>
