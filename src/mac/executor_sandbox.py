@@ -62,6 +62,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.request
 import uuid
 from dataclasses import dataclass, replace
@@ -526,6 +527,27 @@ _HOST_ONLY_HUB_CREDENTIALS = frozenset(
         "MAC_HUB_TOKEN",
     }
 )
+_PROBE_OUTPUT_TAIL_CHARS = 800
+
+
+def redacted_probe_output_tail(output: str, limit: int = _PROBE_OUTPUT_TAIL_CHARS) -> str:
+    """Return a bounded diagnostic tail with worker and inference secrets removed."""
+
+    safe = str(output or "")
+    secret_names = {*_HOST_ONLY_HUB_CREDENTIALS, "MAC_INFERENCE_TOKEN"}
+    for name in secret_names:
+        value = os.environ.get(name)
+        if value:
+            safe = safe.replace(value, "<redacted>")
+        safe = _re.sub(
+            r"(?i)(%s\s*[=:]\s*)([^\s,;]+)" % _re.escape(name),
+            r"\1<redacted>",
+            safe,
+        )
+    safe = _re.sub(r"\b(?:mac_inference|mac_worker)_[A-Za-z0-9._~-]+", "<redacted>", safe)
+    return safe[-max(0, limit) :]
+
+
 _DEFAULT_OPENSHELL_ENV_NAMES = frozenset(
     item.strip() for item in _DEFAULT_OPENSHELL_ENV_PASSTHROUGH.split(",") if item.strip()
 )
@@ -2523,6 +2545,54 @@ def verifier_runtime_image() -> Tuple[str, str]:
             % (image_ref, path, pinned)
         )
     return image_ref, "managed_runtime_pin"
+
+
+def ensure_pinned_openshell_images(
+    *,
+    gateway_config: Optional[Path] = None,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> Dict[str, object]:
+    """Inspect and restore the gateway supervisor and task runtime image pins."""
+
+    config_path = gateway_config or mac_paths.mac_home() / "openshell" / "gateway.toml"
+    refs: List[Tuple[str, str]] = []
+    try:
+        gateway = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        supervisor = str(
+            gateway.get("openshell", {})
+            .get("drivers", {})
+            .get("docker", {})
+            .get("supervisor_image", "")
+        ).strip()
+    except (OSError, tomllib.TOMLDecodeError, AttributeError):
+        supervisor = ""
+    if supervisor:
+        refs.append(("supervisor", supervisor))
+    runtime, _source = verifier_runtime_image()
+    if runtime:
+        refs.append(("runtime", runtime))
+
+    pulled: List[str] = []
+    for kind, image in refs:
+        inspected = run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if inspected.returncode == 0:
+            continue
+        fetched = run(["docker", "pull", image], capture_output=True, text=True, check=False)
+        if fetched.returncode != 0:
+            detail = redacted_probe_output_tail((fetched.stdout or "") + (fetched.stderr or ""))
+            raise RuntimeError("failed to pull missing %s image %s: %s" % (kind, image, detail))
+        pulled.append(kind)
+    return {
+        "schema": "mac.openshell_image_availability.v1",
+        "checked": [kind for kind, _image in refs],
+        "pulled": pulled,
+        "messages": ["pulled missing %s image" % kind for kind in pulled],
+    }
 
 
 def _managed_openshell_runtime_image_ref() -> str:
@@ -5462,14 +5532,21 @@ def _structured_error_class(output: str) -> str:
 def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
     """Map a failed preflight probe onto a class, from exit status and structure.
 
-    Fixed exit statuses (timeout, command not found) come first, then the first
-    whole-line JSON error object. Free-text output is never searched: an exit
+    Fixed exit statuses (timeout, command not found) come first, followed by
+    explicit OpenShell provisioning failures, then a whole-line JSON error.
+    Other free text is never searched: an exit
     0 without the sentinel is ``sentinel_missing``, anything else
     ``probe_failed``.
     """
     by_returncode = _PREFLIGHT_RETURNCODE_CLASSES.get(returncode)
     if by_returncode:
         return by_returncode
+    lowered = (output or "").lower()
+    if (
+        "entered error phase while provisioning" in lowered
+        or "controlsupervisorstartfailed" in lowered
+    ):
+        return "sandbox_provision_failed"
     structured = _structured_error_class(output)
     if structured:
         return structured
@@ -5679,10 +5756,11 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
         "failure_class": failure_class,
     }
     sys.stderr.write(
-        "[executor] coding-agent sandbox preflight (%s): %s\n"
+        "[executor] coding-agent sandbox preflight (%s): %s%s\n"
         % (
             choice.agent,
             "OK" if ok else "FAILED (rc=%s, class=%s)" % (rc, result["failure_class"]),
+            "" if ok else "; output_tail=" + redacted_probe_output_tail(out),
         )
     )
     return result
