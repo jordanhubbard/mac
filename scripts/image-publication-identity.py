@@ -250,6 +250,33 @@ def frozen_entries(root: Path, kind: str) -> list[dict[str, Any]]:
     return entries
 
 
+def frozen_inputs_changed(root: Path, kind: str, base: str, head: str) -> bool:
+    """Decide change scope from the same spec that defines the image identity."""
+    try:
+        spec = IMAGE_SPECS[kind]
+    except KeyError as exc:
+        raise IdentityError("unsupported image kind") from exc
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--no-renames", base, head, "--"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise IdentityError("cannot compare frozen image inputs") from exc
+    files = set(spec["files"])
+    trees = tuple(f"{tree}/" for tree in spec["trees"])
+    for raw in result.stdout.splitlines():
+        path = Path(raw)
+        if raw in files or (
+            raw.startswith(trees) and not _ignored_copied_path(path)
+        ):
+            return True
+    return False
+
+
 def parse_build_args(values: Iterable[str]) -> dict[str, str]:
     result: dict[str, str] = {}
     for raw in values:
@@ -855,6 +882,12 @@ def main() -> int:
     plan.add_argument("--build-arg", action="append", default=[])
     plan.add_argument("--output", type=Path, required=True)
     plan.add_argument("--github-output")
+    changed = subparsers.add_parser("inputs-changed")
+    changed.add_argument("--kind", choices=sorted(IMAGE_SPECS), required=True)
+    changed.add_argument("--root", type=Path, default=Path.cwd())
+    changed.add_argument("--base", required=True)
+    changed.add_argument("--head", required=True)
+    changed.add_argument("--github-output")
     probe = subparsers.add_parser("probe")
     probe.add_argument("--plan", type=Path, required=True)
     probe.add_argument("--docker", default="docker")
@@ -886,7 +919,12 @@ def main() -> int:
     receipt.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        if args.action == "plan":
+        if args.action == "inputs-changed":
+            value = frozen_inputs_changed(
+                args.root.resolve(), args.kind, args.base, args.head
+            )
+            _github_outputs(args.github_output, {"changed": str(value).lower()})
+        elif args.action == "plan":
             value = build_plan(
                 args.root.resolve(), args.kind, args.requested_revision, args.build_arg
             )

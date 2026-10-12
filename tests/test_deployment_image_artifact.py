@@ -143,6 +143,31 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
         )
 
 
+def test_pr_runtime_build_uses_frozen_scope_without_publication_credentials() -> None:
+    workflow = _ci_workflow()
+    jobs = workflow["jobs"]
+    scope = jobs["publication-scope"]
+    pr_job = jobs["openshell-runtime-pr"]
+
+    scope_steps = {step.get("id"): step for step in scope["steps"]}
+    detector = scope_steps["openshell-runtime-scope"]
+    assert "image-publication-identity.py inputs-changed" in detector["run"]
+    assert "--kind openshell-runtime" in detector["run"]
+    assert scope["outputs"]["openshell_runtime_changed"] == (
+        "${{ steps.openshell-runtime-scope.outputs.changed }}"
+    )
+    assert "needs.publication-scope.outputs.openshell_runtime_changed == 'true'" in pr_job["if"]
+
+    assert pr_job["permissions"] == {"contents": "read"}
+    assert len(pr_job["needs"]) == 1 and pr_job["needs"][0] == "publication-scope"
+    serialized = repr(pr_job)
+    assert "docker/login-action" not in serialized
+    assert "secrets.GITHUB_TOKEN" not in serialized
+    build = next(step for step in pr_job["steps"] if "docker/build-push-action" in step.get("uses", ""))
+    assert build["with"]["platforms"] == "linux/amd64"
+    assert build["with"]["push"] is False
+
+
 def test_plan_build_args_match_the_reviewed_identity_contract() -> None:
     """The plan step's --build-arg set must equal IMAGE_SPECS, exactly.
 

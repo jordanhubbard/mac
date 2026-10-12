@@ -189,6 +189,31 @@ def test_plan_digest_changes_only_for_frozen_material(tmp_path: Path) -> None:
     assert second["content_tag"].endswith(second["frozen_inputs_sha256"].removeprefix("sha256:"))
 
 
+@pytest.mark.parametrize(
+    ("changed_path", "expected"),
+    [
+        ("deploy/openshell/mac-hermes.Containerfile", True),
+        ("src/mac/runtime.py", True),
+        ("src/mac/notes.md", False),
+        ("docs/openshell-sandbox.md", False),
+    ],
+)
+def test_pr_scope_uses_the_frozen_input_spec(
+    monkeypatch: pytest.MonkeyPatch, changed_path: str, expected: bool
+) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout=f"{changed_path}\n", stderr=""
+        ),
+    )
+
+    assert module.frozen_inputs_changed(ROOT, "openshell-runtime", "base", "head") is expected
+
+
 def test_plan_uses_the_validators_canonical_relative_path_order(tmp_path: Path) -> None:
     module = _load_module()
     root = _minimal_root(tmp_path, module, "mac")
