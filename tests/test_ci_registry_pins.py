@@ -87,8 +87,8 @@ def test_every_setup_buildx_step_pins_the_buildkit_mirror_by_digest() -> None:
                 assert DIGEST.search(image), (
                     f"{where}: buildkit image is not pinned by digest: {image}"
                 )
-    assert buildx_steps == 4, (
-        f"expected the 4 known setup-buildx steps, found {buildx_steps}; "
+    assert buildx_steps == 5, (
+        f"expected the 5 known setup-buildx steps, found {buildx_steps}; "
         "a new step must be pinned too"
     )
 
