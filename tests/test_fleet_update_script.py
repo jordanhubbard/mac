@@ -95,6 +95,64 @@ esac
 exit 99
 """
 
+GH_STUB = r"""#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_CALLS"], "a") as calls:
+    calls.write("gh " + " ".join(args) + "\n")
+if args[:2] == ["run", "list"]:
+    if os.environ.get("FAKE_CI_RED"):
+        print("[]")
+    elif "--commit" in args:
+        print(json.dumps([{"databaseId": 123, "conclusion": "success"}]))
+    else:
+        print(json.dumps([{
+            "headSha": os.environ["FAKE_DEFAULT_PROMOTED"],
+            "databaseId": 123,
+            "conclusion": "success",
+            "createdAt": "2026-01-01T00:00:00Z",
+        }]))
+elif args[:2] == ["run", "download"]:
+    if os.environ.get("FAKE_NO_RECEIPT"):
+        raise SystemExit(1)
+    out = pathlib.Path(args[args.index("--dir") + 1])
+    name = args[args.index("--name") + 1]
+    out.mkdir(parents=True, exist_ok=True)
+    sha = os.environ.get("FAKE_PROMOTION_SHA") or os.environ["FAKE_DEFAULT_PROMOTED"]
+    disposition = os.environ.get("FAKE_RECEIPT_DISPOSITION", "built")
+    build_revision = os.environ.get("FAKE_BUILD_REVISION", sha)
+    digest = "sha256:" + "d" * 64
+    frozen = "sha256:" + "f" * 64
+    if name == "openshell-runtime-image-publication":
+        path = out / "openshell-runtime-publication" / "publication-receipt.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps({
+            "schema": "mac.image_publication_identity.v1",
+            "status": "passed", "kind": "openshell-runtime",
+            "repository": "ghcr.io/jordanhubbard/mac-openshell-runtime",
+            "requested_revision": sha, "image_digest": digest,
+            "build_revision": build_revision, "disposition": disposition,
+            "frozen_inputs_sha256": frozen,
+        }))
+    else:
+        (out / "mac-release-manifest.json").write_text(json.dumps({
+            "complete": True, "mac": {"commit": sha},
+            "images": {"coding": "ghcr.io/jordanhubbard/mac-openshell-runtime@" + digest},
+        }))
+else:
+    raise SystemExit("unexpected gh call: %r" % args)
+"""
+
+CURL_STUB = r"""#!/usr/bin/env bash
+echo "curl $*" >> "$FAKE_CALLS"
+case "$*" in
+  *ghcr.io/token*) printf '{"token":"stub"}' ;;
+  *ghcr.io/v2/*)
+    [ -n "$FAKE_UNTESTED_IMAGE" ] || printf 'HTTP/2 200\r\nDocker-Content-Digest: sha256:%064d\r\n' 0 | tr 0 d ;;
+  *) echo "fleet-update test: unexpected curl $*" >&2; exit 97 ;;
+esac
+"""
+
 INVENTORY = """\
 version: 1
 fleets:
@@ -153,9 +211,9 @@ def fleet(tmp_path: Path):
 
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name, body in {"mac": MAC_STUB, "ssh": SSH_STUB}.items():
+    for name, body in {"mac": MAC_STUB, "ssh": SSH_STUB, "gh": GH_STUB, "curl": CURL_STUB}.items():
         (bindir / name).write_text(body)
-    for name in ("launchctl", "systemctl", "curl", "sudo", "pgrep"):
+    for name in ("launchctl", "systemctl", "sudo", "pgrep"):
         (bindir / name).write_text(FORBIDDEN_STUB)
     for stub in bindir.iterdir():
         stub.chmod(0o755)
@@ -176,6 +234,7 @@ def fleet(tmp_path: Path):
         "FAKE_AGENT_STATE": str(state),
         "FAKE_CALLS": str(calls),
         "FAKE_REMOTE_HEAD": shas["a"],
+        "FAKE_DEFAULT_PROMOTED": shas["c"],
         # The inventory is read with this checkout's src and a Python that
         # has pyyaml; the hub tests stub the venv's python.
         "FLEET_UPDATE_PYTHON": sys.executable,
@@ -211,9 +270,11 @@ def fleet(tmp_path: Path):
         )
 
     def run(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        requested = args[-1] if args and len(args[-1]) >= 7 and args[-1] not in {"hub", "all", "natasha"} else shas["c"]
+        requested = next((sha for sha in shas.values() if sha.startswith(requested)), requested)
         return subprocess.run(
             ["bash", str(SCRIPT), *args],
-            env={**env, **extra},
+            env={**env, "FAKE_PROMOTION_SHA": requested, **extra},
             capture_output=True,
             text=True,
             timeout=120,
@@ -235,7 +296,7 @@ def test_dry_run_resolves_short_sha_lists_new_migrations_and_changes_nothing(fle
     assert "0002_more.sql" in result.stdout
     assert "PLAN: hub:" in result.stdout
     assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["a"]
-    assert _calls(fleet) == []  # no launchctl/sudo/curl/ssh/mac at all
+    assert not any(call.startswith(("launchctl ", "sudo ", "ssh ", "mac ")) for call in _calls(fleet))
     logs = list((fleet.tmp / "home" / ".mac" / "logs").glob("fleet-update-*.log"))
     assert len(logs) == 1 and "0002_more.sql" in logs[0].read_text()
 
@@ -264,7 +325,57 @@ def test_rejects_unknown_and_unpushed_commits(fleet) -> None:
     unknown = fleet.run("--dry-run", "hub", "deadbeef")
     assert unknown.returncode != 0 and "not a known commit" in unknown.stdout
     unpushed = fleet.run("--dry-run", "hub", fleet.shas["local"])
-    assert unpushed.returncode != 0 and "not on any origin branch" in unpushed.stdout
+    assert unpushed.returncode != 0 and "commit not on main" in unpushed.stdout
+
+
+@pytest.mark.parametrize(
+    ("extra", "reason"),
+    [
+        ({"FAKE_CI_RED": "1"}, "CI not green"),
+        ({"FAKE_NO_RECEIPT": "1"}, "no release manifest or runtime image publication receipt"),
+        ({"FAKE_UNTESTED_IMAGE": "1"}, "runtime image is not tested-tagged"),
+    ],
+)
+def test_promotion_refuses_each_missing_release_piece_before_holds(fleet, extra, reason) -> None:
+    result = fleet.run("--dry-run", "natasha", fleet.shas["b"], **extra)
+    assert result.returncode != 0 and reason in result.stdout
+    assert not any(call.startswith("mac agent hold") for call in _calls(fleet))
+
+
+def test_allow_unpromoted_is_prominent_and_bypasses_promotion(fleet) -> None:
+    result = fleet.run("--dry-run", "--allow-unpromoted", "hub", fleet.shas["local"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARNING: deploying UNPROMOTED target" in result.stdout
+    assert "done (WARNING: UNPROMOTED emergency override)" in result.stdout
+
+
+def test_default_target_is_newest_promoted_main_commit(fleet) -> None:
+    result = fleet.run("--dry-run", "hub")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "target: %s" % fleet.shas["c"] in result.stdout
+
+
+def test_reused_runtime_image_built_by_an_ancestor_is_promoted(fleet) -> None:
+    result = fleet.run(
+        "--dry-run",
+        "hub",
+        fleet.shas["c"],
+        FAKE_RECEIPT_DISPOSITION="reused",
+        FAKE_BUILD_REVISION=fleet.shas["a"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_reused_runtime_image_built_by_a_non_ancestor_is_refused(fleet) -> None:
+    result = fleet.run(
+        "--dry-run",
+        "hub",
+        fleet.shas["b"],
+        FAKE_RECEIPT_DISPOSITION="reused",
+        FAKE_BUILD_REVISION=fleet.shas["c"],
+    )
+    assert result.returncode != 0
+    assert "reused runtime image build commit is not an ancestor on main" in result.stdout
 
 
 def test_worker_backwards_migration_uses_the_workers_deployed_commit(fleet) -> None:
@@ -329,7 +440,7 @@ def test_worker_dry_run_neither_holds_nor_updates(fleet) -> None:
     result = fleet.run("--dry-run", "natasha", fleet.shas["b"])
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PLAN: natasha: mac agent hold agent_natasha --reason 'fleet-update" in result.stdout
-    calls = _calls(fleet)
+    calls = [call for call in _calls(fleet) if not call.startswith(("gh ", "curl "))]
     assert calls == [
         "ssh -o BatchMode=yes -o ConnectTimeout=10 100.87.229.125 "
         'git -C "$HOME/.mac/src/mac" rev-parse HEAD',
@@ -678,6 +789,8 @@ def hub(fleet):
         # exactly as mac-service derives MAC_SOURCE_COMMIT.
         fleet.tmp / "bin" / "curl": (
             '#!/bin/sh\ncase "$*" in\n'
+            '  *ghcr.io/token*) echo "curl $*" >> "$FAKE_CALLS"; printf \'{"token":"stub"}\' ;;\n'
+            '  *ghcr.io/v2/*) echo "curl $*" >> "$FAKE_CALLS"; printf \'HTTP/2 200\\r\\nDocker-Content-Digest: sha256:%064d\\r\\n\' 0 | tr 0 d ;;\n'
             '  */health) [ "${FAKE_HEALTH:-1}" = 1 ] ;;\n'
             '  */startup-attestation) [ -n "$FAKE_NO_SOURCE" ] && { printf \'{"source_commit": ""}\'; exit 0; }\n'
             '    printf \'{"source_commit": "%s"}\' '

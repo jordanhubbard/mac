@@ -17,7 +17,8 @@ exact release, so a host's state can be compared with more than its Git HEAD.
 
 ```console
 scripts/fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] \
-    [--runtime-image REF --runtime-input-sha256 SHA] <hub|HOST|all> <sha>
+    [--allow-unpromoted] [--runtime-image REF --runtime-input-sha256 SHA] \
+    <hub|HOST|all> [sha]
 ```
 
 | Argument | Meaning |
@@ -25,11 +26,12 @@ scripts/fleet-update [--dry-run] [--hermes] [--yes] [--no-drain] \
 | `hub` | Update the hub's control plane, then restart the hub's own worker. |
 | `HOST` | Update one managed host, named as in the fleet inventory (`~/.mac/fleets.yaml`). The hub's own name updates the hub. |
 | `all` | The hub first, then each worker in turn. A worker still busy after the drain timeout is skipped, and the run ends with exit code 3 and a rerun command for each skipped worker. Any other failure stops the run. |
-| `<sha>` | Any commit on an `origin` branch. A short sha is fine; it is resolved to the full one. |
+| `[sha]` | A promoted commit on `main`. A short sha is fine. When omitted, the newest promoted commit on `main` is selected, rather than blindly using `origin/main`. |
 | `--dry-run` | Print the plan, including any migrations, and change nothing. The only write is `git fetch`, which updates remote-tracking refs. |
 | `--hermes` | Also restart the Hermes gateway (`ai.hermes.gateway` on the hub, `hermes-gateway` user unit on Linux). |
 | `--yes` | Don't ask for confirmation before each host. |
 | `--no-drain` | Restart the hub without first draining the workers (see step 0 under [Hub](#hub-macos)). Tasks in flight lose the hub and its model router for the length of the restart, and usually fail. Use it only when the hub must go down now. |
+| `--allow-unpromoted` | Emergency-only override for an explicit SHA. It bypasses promotion checks and prints a prominent warning in both the log and final summary. It cannot be combined with automatic target selection. |
 | `--runtime-image REF --runtime-input-sha256 SHA` | Repin each worker's sandbox image to a published `ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:...` digest and its CI frozen-input identity, both from the image's CI publication. Give both or neither. This changes only the image, never the OpenShell version. |
 
 Every line of output also goes to `~/.mac/logs/fleet-update-<timestamp>.log`.
@@ -83,8 +85,14 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
 ## Preflight (every target)
 
 1. `git fetch origin` in `~/.mac/src/mac` on the hub.
-2. Resolve `<sha>` to a full commit and refuse it unless some `origin/*`
-   branch contains it.
+2. Resolve `[sha]` to a full commit. A promoted commit must be on `origin/main`,
+   have a successful completed `ci.yml` push run, and have that run's complete
+   `mac-release-manifest` and passed OpenShell runtime publication receipt. The
+   runtime digest in those artifacts must carry the receipt's
+   `tested-<frozen-inputs-sha256>` GHCR tag. The script refuses before any hold
+   or drain and names the missing condition. This check also runs during dry
+   runs. With no SHA, completed main runs are searched newest-first and the
+   first release satisfying all these checks is selected.
 3. Read the commit the host currently runs. On the hub that is the checkout's
    `HEAD`; on a worker it is read over ssh.
 4. Compare `src/mac/data/postgres/migrations/*.sql` between the two commits:
