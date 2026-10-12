@@ -318,10 +318,7 @@ DEPLOYMENT_HOLD_REASON_PREFIXES = (
     "mac admin fleet deployment ",
     "mac:fleet-release:",
 )
-BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 BREAK_GLASS_EXECUTION_BOUNDARY = "host"
-BREAK_GLASS_MIN_TTL_SECONDS = 60
-BREAK_GLASS_MAX_TTL_SECONDS = 3600
 
 
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -8716,161 +8713,11 @@ class ControlPlane:
         authorized_by: str,
         ttl_seconds: int = 900,
     ) -> BreakGlassAuthorization:
-        """Authorize one OPEN task to run directly on one trusted agent host.
-
-        This record is the authority.  Task metadata is intentionally ignored,
-        so a prompt, imported ticket, or ordinary task author cannot opt itself
-        out of sandbox confinement.  The authorization is short-lived until
-        claimed and single-use once bound to a lease.
-        """
-
-        task = self.get_task(task_id)
-        agent = self.get_agent(agent_id)
-        reason = str(reason or "").strip()
-        authorized_by = str(authorized_by or "").strip()
-        if task.state != TaskState.OPEN.value:
-            raise ValidationError("break-glass authorization requires an open task")
-        if metadata_declares_read_only_report_repository(task.metadata):
-            raise ValidationError(
-                "read-only repository reports cannot use host break-glass execution"
-            )
-        if isinstance(ensure_json_object(task.metadata).get("review_context"), dict):
-            raise ValidationError("review tasks cannot use host break-glass execution")
-        if not reason:
-            raise ValidationError("break-glass reason is required")
-        if not authorized_by:
-            raise ValidationError("break-glass authorizer is required")
-        ttl = int(ttl_seconds)
-        if ttl < BREAK_GLASS_MIN_TTL_SECONDS or ttl > BREAK_GLASS_MAX_TTL_SECONDS:
-            raise ValidationError(
-                "break-glass ttl_seconds must be between %d and %d"
-                % (BREAK_GLASS_MIN_TTL_SECONDS, BREAK_GLASS_MAX_TTL_SECONDS)
-            )
-        machine = self.get_machine(agent.machine_id)
-        if not machine.trusted:
-            raise AuthorizationError("break-glass host execution requires a trusted machine")
-        if agent.health_status != HealthStatus.HEALTHY.value:
-            raise ValidationError("break-glass target agent must be healthy")
-        authorization_id = new_id("breakglass")
-        metadata = {
-            "schema": BREAK_GLASS_AUTHORIZATION_SCHEMA,
-            "single_use": True,
-            "bypasses": [
-                "agent_dispatch_hold",
-                "task_dispatch_hold",
-                "project_dispatch_pause",
-                "worker_claim_policy",
-                "task_agent_compatibility",
-                "openshell",
-            ],
-        }
-        with self.store.transaction() as conn:
-            # Serialize authorization creation with claim_task on the task row.
-            # Without this lock an authorization for B could be inserted after
-            # A's dispatch preflight while A was concurrently claiming, leaving
-            # an active authorization stranded on B after A owned the task.
-            task_lock = conn.execute(
-                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
-                (task.id,),
-            )
-            if task_lock.rowcount != 1:
-                raise NotFoundError("task not found: %s" % task.id)
-            current_task = conn.execute(
-                "SELECT state, lease_id FROM tasks WHERE id = ?", (task.id,)
-            ).fetchone()
-            if (
-                current_task is None
-                or current_task["state"] != TaskState.OPEN.value
-                or current_task["lease_id"] is not None
-            ):
-                raise ValidationError("break-glass authorization requires an open unleased task")
-            existing = conn.execute(
-                """
-                SELECT * FROM task_break_glass_authorizations
-                WHERE task_id = ? AND status = 'active'
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                (task.id,),
-            ).fetchone()
-            if existing is not None:
-                conn.execute(
-                    "UPDATE task_break_glass_authorizations SET status = status WHERE id = ?",
-                    (existing["id"],),
-                )
-                existing = conn.execute(
-                    "SELECT * FROM task_break_glass_authorizations WHERE id = ?",
-                    (existing["id"],),
-                ).fetchone()
-            now = self._lease_authority_now_in_transaction(conn)
-            expires_at = (parse_time(now) + timedelta(seconds=ttl)).isoformat(
-                timespec="microseconds"
-            )
-            if (
-                existing is not None
-                and existing["status"] == "active"
-                and self._timestamp_is_after(existing["expires_at"], now)
-            ):
-                raise ValidationError(
-                    "task %s already has an active break-glass authorization" % task.id
-                )
-            if existing is not None and existing["status"] == "active":
-                conn.execute(
-                    "UPDATE task_break_glass_authorizations SET status = 'expired' "
-                    "WHERE id = ? AND status = 'active'",
-                    (existing["id"],),
-                )
-            conn.execute(
-                """
-                INSERT INTO task_break_glass_authorizations (
-                    id, task_id, agent_id, execution_boundary, reason,
-                    authorized_by, status, metadata, created_at, expires_at,
-                    claimed_at, lease_id, consumed_at, revoked_at, revoked_by,
-                    revoke_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)
-                """,
-                (
-                    authorization_id,
-                    task.id,
-                    agent.id,
-                    BREAK_GLASS_EXECUTION_BOUNDARY,
-                    reason,
-                    authorized_by,
-                    json_dumps(metadata),
-                    now,
-                    expires_at,
-                ),
-            )
-            self._record_history(
-                task.id,
-                "task.break_glass_authorized",
-                authorized_by,
-                task.state,
-                task.state,
-                {
-                    "authorization_id": authorization_id,
-                    "agent_id": agent.id,
-                    "execution_boundary": BREAK_GLASS_EXECUTION_BOUNDARY,
-                    "expires_at": expires_at,
-                    "reason": reason,
-                },
-                conn=conn,
-            )
-        self.record_log(
-            "task.break_glass.authorized",
-            layer="control_plane",
-            source=authorized_by,
-            level="warning",
-            subject_type="task",
-            subject_id=task.id,
-            detail={
-                "authorization_id": authorization_id,
-                "agent_id": agent.id,
-                "execution_boundary": BREAK_GLASS_EXECUTION_BOUNDARY,
-                "expires_at": expires_at,
-                "reason": reason,
-            },
+        """Refuse the retired direct-host recovery path."""
+        raise ValidationError(
+            "host break-glass execution is no longer available; "
+            "task execution is sandbox-only"
         )
-        return self.get_task_break_glass_authorization(authorization_id)
 
     def get_task_break_glass_authorization(self, authorization_id: str) -> BreakGlassAuthorization:
         row = self.store.query_one(

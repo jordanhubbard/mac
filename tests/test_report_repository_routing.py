@@ -250,7 +250,7 @@ def test_report_claim_requires_marker_and_break_glass_cannot_bypass():
     )
     with pytest.raises(ValidationError, match="report_repository_executor_missing"):
         cp.claim_task(task.id, legacy.id)
-    with pytest.raises(ValidationError, match="cannot use host break-glass"):
+    with pytest.raises(ValidationError, match="sandbox-only"):
         cp.authorize_task_break_glass(
             task.id,
             legacy.id,

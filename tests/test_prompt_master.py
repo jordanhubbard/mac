@@ -38,12 +38,6 @@ def test_executor_compiles_after_route_selection_before_private_file(monkeypatch
     monkeypatch.setattr(executor_sandbox, "_openshell_enabled", lambda: False)
     monkeypatch.setattr(executor_sandbox, "_openshell_required_for_local_agent", lambda: False)
     monkeypatch.setattr(
-        executor_sandbox, "_validated_host_break_glass_authorization", lambda task: {"id": "bg"}
-    )
-    monkeypatch.setattr(
-        executor_sandbox, "_prepare_host_break_glass_environment", lambda auth: None
-    )
-    monkeypatch.setattr(
         executor_sandbox,
         "_agent_argv",
         lambda *a, **kw: (

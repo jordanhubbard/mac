@@ -28,8 +28,9 @@ import io
 import json
 import sys
 
-from mac.test_support import dsn_for
+from mac.test_support import dsn_for, store_on
 from mac.cli import main
+from mac.models import utcnow
 
 
 # ---------------------------------------------------------------------------
@@ -407,11 +408,11 @@ def test_task_claim_prevents_double_claim(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_task_break_glass_authorize_list_and_revoke(tmp_path):
+def test_task_break_glass_refuses_retired_host_execution(tmp_path, capsys):
     agent = _register_agent(tmp_path, name="recovery-worker")
     task = _create_task(tmp_path, title="repair sandbox runtime")
 
-    rc, authorization = _run(
+    rc, _ = _run(
         tmp_path,
         "task",
         "break-glass",
@@ -424,22 +425,46 @@ def test_task_break_glass_authorize_list_and_revoke(tmp_path):
         "--actor",
         "cli-test",
     )
-    assert rc == 0
-    assert authorization["task_id"] == task["id"]
-    assert authorization["agent_id"] == agent["id"]
-    assert authorization["status"] == "active"
+    assert rc != 0
+    error = capsys.readouterr().err
+    assert "host break-glass execution is no longer available" in error
+    assert "sandbox-only" in error
+
+
+def test_task_break_glass_list_and_revoke_preserve_legacy_records(tmp_path):
+    agent = _register_agent(tmp_path, name="legacy-recovery-worker")
+    task = _create_task(tmp_path, title="legacy recovery authorization")
+    authorization_id = "breakglass_cli_legacy"
+    now = utcnow()
+    store_on(dsn_for(tmp_path)).execute(
+        """
+        INSERT INTO task_break_glass_authorizations (
+            id, task_id, agent_id, execution_boundary, reason,
+            authorized_by, status, metadata, created_at, expires_at
+        ) VALUES (?, ?, ?, 'host', ?, ?, 'active', '{}', ?, ?)
+        """,
+        (
+            authorization_id,
+            task["id"],
+            agent["id"],
+            "legacy recovery authorization",
+            "cli-test",
+            now,
+            "2999-01-01T00:00:00+00:00",
+        ),
+    )
 
     rc, authorizations = _run(tmp_path, "task", "break-glass-list", task["id"])
     assert rc == 0
-    assert [item["id"] for item in authorizations] == [authorization["id"]]
+    assert [item["id"] for item in authorizations] == [authorization_id]
 
     rc, revoked = _run(
         tmp_path,
         "task",
         "break-glass-revoke",
-        authorization["id"],
+        authorization_id,
         "--reason",
-        "recovery was cancelled before claim",
+        "legacy recovery was cancelled",
         "--actor",
         "cli-test",
     )
