@@ -342,7 +342,8 @@
       "src/mac/ide_launcher.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/router_service.py"
+      "src/mac/router_service.py",
+      "src/mac/slack_relay.py"
     ],
     "type": "str"
   },
@@ -385,7 +386,8 @@
       "src/mac/gitops.py",
       "src/mac/ide_launcher.py",
       "src/mac/local_console.py",
-      "src/mac/mesh_bind.py"
+      "src/mac/mesh_bind.py",
+      "src/mac/slack_relay.py"
     ],
     "type": "str"
   },
@@ -2137,6 +2139,7 @@
       "src/mac/mesh_bind.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
+      "src/mac/slack_relay.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -5089,6 +5092,17 @@
       "scripts/mac-fetch-slack-secrets.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: slack relay poll seconds.",
+    "family": "core",
+    "name": "MAC_SLACK_RELAY_POLL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/slack_relay.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,

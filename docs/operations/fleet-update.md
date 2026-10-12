@@ -143,6 +143,11 @@ default `~/.mac/src/mac`), `FLEET_UPDATE_HUB_URL` (default
     installs or repairs the LaunchAgent `com.mac.fleet-context`, which refreshes
     the live fleet block in this agent's runtime context every 3 minutes, and
     runs one refresh. Its JSON result is logged; a failure never fails the update.
+    Then run `python -m mac.slack_relay install`, which installs the kept-alive
+    LaunchAgent `com.mac.slack-relay` and restarts it on the new code. The hub
+    runs no task agent, so this is what posts agent reports (`mac agent report`)
+    and questions to the Slack home channels and relays thread replies back as
+    answers. Its log is `~/.mac/logs/slack-relay.log`.
 11. Run `launchctl bootout gui/<uid>/com.mac.agent`; an already absent service
     is a successful no-op. Rename `~/Library/LaunchAgents/com.mac.agent.plist`
     to `.plist.disabled` so login does not start it again, and remove
