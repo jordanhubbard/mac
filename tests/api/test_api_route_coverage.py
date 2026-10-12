@@ -650,13 +650,25 @@ network_policies:
     ctx["runtime_task_id"] = task("route runtime task")["id"]
     ctx["break_glass_task_id"] = task("route break-glass authorize task")["id"]
     revoke_break_glass_task = task("route break-glass revoke task")
-    ctx["break_glass_authorization_id"] = cp.authorize_task_break_glass(
-        revoke_break_glass_task["id"],
-        ctx["agent_id"],
-        reason="route coverage host recovery",
-        authorized_by="route-coverage",
-        ttl_seconds=300,
-    ).id
+    ctx["break_glass_authorization_id"] = "breakglass_route_coverage"
+    now = utcnow()
+    cp.store.execute(
+        """
+        INSERT INTO task_break_glass_authorizations (
+            id, task_id, agent_id, execution_boundary, reason,
+            authorized_by, status, metadata, created_at, expires_at
+        ) VALUES (?, ?, ?, 'host', ?, ?, 'active', '{}', ?, ?)
+        """,
+        (
+            ctx["break_glass_authorization_id"],
+            revoke_break_glass_task["id"],
+            ctx["agent_id"],
+            "legacy route coverage authorization",
+            "route-coverage",
+            now,
+            "2999-01-01T00:00:00+00:00",
+        ),
+    )
 
     lease_task = task("route lease task")
     _, lease = cp.claim_task(lease_task["id"], ctx["lease_agent_id"], sync_beads=False)
@@ -1373,6 +1385,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         # schema-valid requests to explicit missing product identities and
         # treats the fail-closed domain guard as successful route coverage.
         expected = (200, 400, 404, 409)
+    if (method, path_template) == ("POST", "/tasks/{task_id}/break-glass-authorizations"):
+        expected = (400,)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False

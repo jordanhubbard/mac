@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
-from mac.models import AuthorizationError, TaskState, TransitionError, ValidationError
+from mac.models import AuthorizationError, TaskState, TransitionError, ValidationError, utcnow
 from mac.services import ControlPlane
 
 
@@ -822,11 +822,24 @@ def test_claim_rechecks_break_glass_reservation_after_preflight(
     thread = threading.Thread(target=claim)
     thread.start()
     assert preflight_complete.wait(timeout=5)
-    authorization = cp.authorize_task_break_glass(
-        task.id,
-        reserved.id,
-        reason="repair the worker runtime",
-        authorized_by="operator",
+    now = utcnow()
+    authorization_id = "breakglass_scheduler_race"
+    cp.store.execute(
+        """
+        INSERT INTO task_break_glass_authorizations (
+            id, task_id, agent_id, execution_boundary, reason,
+            authorized_by, status, metadata, created_at, expires_at
+        ) VALUES (?, ?, ?, 'host', ?, ?, 'active', '{}', ?, ?)
+        """,
+        (
+            authorization_id,
+            task.id,
+            reserved.id,
+            "legacy recovery authorization",
+            "test-fixture",
+            now,
+            "2999-01-01T00:00:00+00:00",
+        ),
     )
     resume.set()
     thread.join(timeout=10)
@@ -834,7 +847,7 @@ def test_claim_rechecks_break_glass_reservation_after_preflight(
 
     assert "reserved by break-glass authorization" in outcome[0]
     assert cp.get_task(task.id).lease_id is None
-    assert cp.list_task_break_glass_authorizations(task_id=task.id)[0].id == authorization.id
+    assert cp.list_task_break_glass_authorizations(task_id=task.id)[0].id == authorization_id
     assert cp.list_task_break_glass_authorizations(task_id=task.id)[0].status == "active"
 
 

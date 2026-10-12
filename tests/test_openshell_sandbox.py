@@ -1537,14 +1537,8 @@ def test_controller_approved_macos_host_report_still_requires_openshell(
     assert runner.calls == []
 
 
-def test_read_only_report_ignores_host_break_glass_and_uses_openshell(monkeypatch, tmp_path):
+def test_read_only_report_uses_openshell(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(
-        te,
-        "_validated_host_break_glass_authorization",
-        lambda _task: {"id": "auth_x"},
-    )
-    monkeypatch.setattr(te, "_prepare_host_break_glass_environment", lambda _auth: None)
     sentinel = object()
     monkeypatch.setattr(te, "_run_sandboxed", lambda *_args, **_kwargs: sentinel)
     result = te._invoke_agent(

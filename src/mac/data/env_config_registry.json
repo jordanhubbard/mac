@@ -495,17 +495,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: break glass host path.",
-    "family": "core",
-    "name": "MAC_BREAK_GLASS_HOST_PATH",
-    "retired": false,
-    "sources": [
-      "src/mac/executor_sandbox.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: bus task context events.",
     "family": "core",
     "name": "MAC_BUS_TASK_CONTEXT_EVENTS",

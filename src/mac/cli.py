@@ -2294,16 +2294,13 @@ def cmd_task_claim(args: argparse.Namespace) -> None:
 
 
 def cmd_task_break_glass_authorize(args: argparse.Namespace) -> None:
-    """Authorize one exact task/agent pair for direct host recovery execution."""
-
-    _print(
-        _plane(args).authorize_task_break_glass(
-            args.task_id,
-            args.agent_id,
-            reason=args.reason,
-            authorized_by=args.actor,
-            ttl_seconds=args.ttl_seconds,
-        )
+    """Refuse the retired direct-host recovery path."""
+    _plane(args).authorize_task_break_glass(
+        args.task_id,
+        args.agent_id,
+        reason=args.reason,
+        authorized_by=args.actor,
+        ttl_seconds=args.ttl_seconds,
     )
 
 

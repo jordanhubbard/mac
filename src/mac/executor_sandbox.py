@@ -227,7 +227,6 @@ from mac.executor_prompt import (  # noqa: E402,F401 - compatibility re-exports
     task_is_repo_coupled,
 )
 from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-exports
-    BREAK_GLASS_AUTHORIZATION_SCHEMA,
     PRESERVED_EXECUTOR_EVIDENCE_FILENAME,
     PRESERVED_EXECUTOR_WORKTREE_FILENAME,
     REPOSITORY_WIP_BUNDLE_SCHEMA,
@@ -5295,108 +5294,6 @@ def _force_child_yolo_env() -> None:
     the config-side lever that covers the gateway too.
     """
     os.environ["HERMES_YOLO_MODE"] = "1"
-
-
-def _validated_host_break_glass_authorization(task: Any) -> Optional[Dict[str, Any]]:
-    """Validate the lease-bound control-plane projection for host execution.
-
-    The task description and durable task metadata are untrusted.  The worker
-    receives this projection only in a claimed assignment and strips any
-    caller-supplied lookalikes.  We still validate every binding here so a
-    malformed or replayed task file fails closed before bypassing OpenShell.
-    """
-
-    if not isinstance(task, dict):
-        return None
-    metadata = task.get("metadata")
-    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
-    raw = runtime.get("break_glass_authorization") if isinstance(runtime, dict) else None
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise RuntimeError("invalid break-glass authorization projection")
-    checks = {
-        "schema": raw.get("metadata", {}).get("schema")
-        if isinstance(raw.get("metadata"), dict)
-        else None,
-        "status": raw.get("status"),
-        "execution_boundary": raw.get("execution_boundary"),
-        "task_id": raw.get("task_id"),
-        "agent_id": raw.get("agent_id"),
-        "lease_id": raw.get("lease_id"),
-    }
-    expected = {
-        "schema": BREAK_GLASS_AUTHORIZATION_SCHEMA,
-        "status": "claimed",
-        "execution_boundary": "host",
-        "task_id": str(task.get("id") or ""),
-        "agent_id": env_str("MAC_AGENT_ID"),
-        "lease_id": env_str("MAC_LEASE_ID"),
-    }
-    mismatches = [
-        key for key, value in expected.items() if not value or str(checks.get(key) or "") != value
-    ]
-    if mismatches:
-        raise RuntimeError(
-            "break-glass authorization binding mismatch: %s" % ", ".join(sorted(mismatches))
-        )
-    if not str(raw.get("id") or "").startswith("breakglass_"):
-        raise RuntimeError("break-glass authorization id is invalid")
-    return dict(raw)
-
-
-def _break_glass_prompt(authorization: Mapping[str, Any]) -> str:
-    return """
-
-HOST BREAK-GLASS RECOVERY BOUNDARY (EXPLICITLY AUTHORIZED)
-
-This exact task and lease are running directly on the trusted worker host because
-the work may need to repair the sandbox, worker, router, deployment, or other
-execution infrastructure that a sandbox cannot modify. This is not general
-permission to broaden scope. Make only the host changes necessary for the task,
-preserve secrets, record every material host mutation in evidence, keep rollback
-possible, and leave the host in a verified state. Authorization: %s. Reason: %s.
-""" % (
-        str(authorization.get("id") or "unknown"),
-        str(authorization.get("reason") or "operator-authorized recovery"),
-    )
-
-
-def _prepare_host_break_glass_environment(
-    authorization: Mapping[str, Any],
-) -> None:
-    """Replace sandbox-only process settings with trusted host equivalents.
-
-    launchd workers have a deliberately narrow PATH.  Once an exact lease is
-    authorized to run on the host, expand it to the trusted host tool locations
-    the recovery task may need.  This is process-local (the task executor is
-    one-shot) and does not mutate host config.
-    """
-
-    configured = env_str("MAC_BREAK_GLASS_HOST_PATH")
-    candidates = [
-        *(configured.split(os.pathsep) if configured else []),
-        str(mac_paths.mac_home() / "bin"),
-        str(Path.home() / ".local" / "bin"),
-        "/opt/homebrew/bin",
-        "/opt/local/bin",
-        "/usr/local/bin",
-        *str(os.environ.get("PATH") or "").split(os.pathsep),
-    ]
-    host_path: List[str] = []
-    for raw in candidates:
-        path = str(Path(raw).expanduser()) if raw else ""
-        if path and path not in host_path and Path(path).is_dir():
-            host_path.append(path)
-    if host_path:
-        os.environ["PATH"] = os.pathsep.join(host_path)
-
-    emit_telemetry(
-        "break_glass_host_environment_prepared",
-        level="warning",
-        authorization_id=authorization.get("id"),
-        path_entries=len(host_path),
-    )
 
 
 def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
