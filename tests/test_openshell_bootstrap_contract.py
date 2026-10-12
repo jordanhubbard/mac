@@ -585,8 +585,8 @@ def test_runtime_image_preserves_the_pnpm_limits_without_wrappers() -> None:
         "pnpm_config_pm_on_fail=ignore",
     ):
         assert setting in containerfile
-    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs /usr/local/bin/pnpm" in containerfile
-    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.cjs /usr/local/bin/pnpx" in containerfile
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm" in containerfile
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx" in containerfile
     assert 'runuser -u sandbox -- env HOME="$smoke_home" pnpm config get network-concurrency' in containerfile
     assert 'runuser -u sandbox -- env HOME="$smoke_home" pnpm config get minimum-release-age' in containerfile
     assert 'env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get' not in containerfile

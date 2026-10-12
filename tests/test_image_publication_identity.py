@@ -162,8 +162,8 @@ def test_runtime_image_uses_environment_defaults_with_unmodified_pnpm() -> None:
     assert "ENV pnpm_config_network_concurrency=2" in text
     assert "pnpm_config_minimum_release_age=0" in text
     assert "pnpm_config_pm_on_fail=ignore" in text
-    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs /usr/local/bin/pnpm" in text
-    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.cjs /usr/local/bin/pnpx" in text
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm" in text
+    assert "ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx" in text
     assert 'runuser -u sandbox -- env HOME="$smoke_home" pnpm config get' in text
     assert 'env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$smoke_home" pnpm config get' not in text
     assert ': "${pnpm_config_network_concurrency:=2}"' not in text

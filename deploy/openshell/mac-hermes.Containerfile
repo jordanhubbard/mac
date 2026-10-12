@@ -277,8 +277,13 @@ ENV pnpm_config_network_concurrency=2 \
     pnpm_config_fetch_timeout=300000 \
     pnpm_config_minimum_release_age=0 \
     pnpm_config_pm_on_fail=ignore
-RUN ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs /usr/local/bin/pnpm \
-    && ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.cjs /usr/local/bin/pnpx \
+# pnpm 11's executables are bin/pnpm.mjs and bin/pnpx.mjs (its package.json
+# "bin"). The .cjs files beside them are mode-0644 shims, and linking those made
+# every runtime image build fail with "env: 'pnpm': Permission denied".
+RUN test -x /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs \
+    && test -x /usr/local/lib/node_modules/pnpm/bin/pnpx.mjs \
+    && ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm \
+    && ln -sfn /usr/local/lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx \
     && smoke_home=$(mktemp -d -p /tmp) \
     && chown sandbox:sandbox "$smoke_home" \
     && test "$(runuser -u sandbox -- env HOME="$smoke_home" pnpm config get network-concurrency)" = 2 \
