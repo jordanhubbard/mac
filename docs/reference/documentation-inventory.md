@@ -166,6 +166,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`integration-authority-contract.md`](../integration-authority-contract.md) | Integration Authority Contract |
 | supplemental reference | [`investigations/2026-09-16-live-trust-acceptance.md`](../investigations/2026-09-16-live-trust-acceptance.md) | Live request and recovery acceptance, 2026-09-16 |
 | runbook | [`investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md`](../investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md) | Ovswarm deployment liveness death spiral RCCA, 2026-09-21 |
+| supplemental reference | [`investigations/2026-11-03-hierarchical-memory-access-tiers.md`](../investigations/2026-11-03-hierarchical-memory-access-tiers.md) | Hierarchical memory access tiers |
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | supplemental reference | [`investigations/dream-cycle-output-quality.md`](../investigations/dream-cycle-output-quality.md) | Dream-cycle output quality |
 | runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
