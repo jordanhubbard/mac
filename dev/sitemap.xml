@@ -105,6 +105,10 @@
          <lastmod>2026-11-03</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/memory-fisheye-convention/</loc>
+         <lastmod>2026-11-03</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/notifier-configuration-guide/</loc>
          <lastmod>2026-11-03</lastmod>
     </url>
@@ -174,6 +178,10 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/task-dependency-semantics/</loc>
+         <lastmod>2026-11-03</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/task-handoff-convention/</loc>
          <lastmod>2026-11-03</lastmod>
     </url>
     <url>
@@ -702,6 +710,10 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral/</loc>
+         <lastmod>2026-11-03</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/investigations/2026-11-03-hierarchical-memory-access-tiers/</loc>
          <lastmod>2026-11-03</lastmod>
     </url>
     <url>
