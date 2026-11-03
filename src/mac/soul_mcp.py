@@ -15,7 +15,8 @@ Tools
 soul_prime      startup: the splay root plus one context-guided discovery hop
 soul_related    search hits plus their DAG parents and children (best recall
                 of older experience on the task-ledger replay, see
-                scripts/soul-graph-eval.py)
+                 scripts/soul-graph-eval.py)
+soul_fisheye    focused hits, hop-expanded context, and boundary counts
 soul_query      keyword search, optionally merged with a second ``hint`` query
 soul_hot        top-N splay nodes: who this agent is right now
 soul_discover   walk the DAG from a seed node
@@ -91,6 +92,26 @@ class SoulTools:
         """Search hits, each followed by its DAG parents and children."""
         nodes = self._g.related(query, top_k=top_k, recency_weight=recency_weight, touch=True)
         return _text([dict(_brief(n), parents=n.parents) for n in nodes])
+
+    def soul_fisheye(
+        self, query: str, top_k: int = 5, expand_hops: int = 1, boundary_hop: int = 2
+    ) -> JsonDict:
+        result = self._g.fisheye(
+            query,
+            top_k=top_k,
+            expand_hops=expand_hops,
+            boundary_hop=boundary_hop,
+            touch=True,
+        )
+        return _text(
+            {
+                "query": query,
+                "expanded": [dict(_brief(node), hop=hop) for node, hop in result["expanded"]],
+                "boundary_counts": {
+                    str(hop): count for hop, count in result["boundary_counts"].items()
+                },
+            }
+        )
 
     def soul_hot(self, n: int = 7) -> JsonDict:
         return _text([dict(_brief(nd), score=_score(nd)) for nd in self._g.hot(n)])
@@ -252,6 +273,23 @@ class SoulTools:
                     "n_hot": {"type": "integer", "default": 5},
                     "discovery_hops": {"type": "integer", "default": 1},
                 },
+            },
+        },
+        {
+            "name": "soul_fisheye",
+            "description": (
+                "Retrieve semantic focal nodes and their near graph context; return only counts "
+                "for the 2-hop boundary so callers can request more deliberately."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "top_k": {"type": "integer", "default": 5},
+                    "expand_hops": {"type": "integer", "default": 1},
+                    "boundary_hop": {"type": "integer", "default": 2},
+                },
+                "required": ["query"],
             },
         },
         {

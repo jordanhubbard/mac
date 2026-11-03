@@ -17,6 +17,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -414,6 +415,47 @@ def _skill_records() -> List[Dict[str, Any]]:
     return sorted(
         records, key=lambda item: (str(item.get("category") or ""), str(item.get("name") or ""))
     )
+
+
+def search_skill_records(
+    query: str, skills: Optional[Iterable[Mapping[str, Any]]] = None, *, limit: int = 5
+) -> List[Dict[str, Any]]:
+    """Rank skills by descriptions, triggers, and tags instead of labels."""
+
+    def terms(text: str) -> set[str]:
+        return {
+            word[:-2]
+            if word.endswith("es") and len(word) > 4
+            else word[:-1]
+            if word.endswith("s") and len(word) > 3
+            else word
+            for word in re.findall(r"[a-z0-9][a-z0-9_-]*", text.lower())
+        }
+
+    words = terms(query or "")
+    if not words:
+        return []
+    records = [dict(item) for item in (skills if skills is not None else _skill_records())]
+    documents = []
+    for record in records:
+        semantic = " ".join(
+            [
+                str(record.get("description") or ""),
+                " ".join(str(value) for value in record.get("triggers") or []),
+                " ".join(str(value) for value in record.get("tags") or []),
+            ]
+        ).lower()
+        documents.append(terms(semantic))
+    ranked = []
+    for index, (record, document) in enumerate(zip(records, documents)):
+        score = 0.0
+        for word in words & document:
+            frequency = sum(word in candidate for candidate in documents)
+            score += math.log(1 + len(documents) / max(1, frequency))
+        if score:
+            ranked.append((score, index, record))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [dict(record, semantic_score=round(score, 6)) for score, _, record in ranked[:limit]]
 
 
 def _declared_env_specs(

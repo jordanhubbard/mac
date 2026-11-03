@@ -40,6 +40,15 @@ def test_related_walks_from_hits_to_their_parents():
     assert [d["id"] for d in data] == ["i2", "i1"]
 
 
+def test_fisheye_exposes_near_context_and_boundary_count():
+    data = _payload(SoulTools(_graph()).soul_fisheye("RAG retrieval", top_k=1))
+    assert [(item["id"], item["hop"]) for item in data["expanded"]] == [
+        ("i2", 0),
+        ("i1", 1),
+    ]
+    assert data["boundary_counts"] == {"2": 1}
+
+
 def test_discover_walks_children_from_an_id_or_text():
     tools = SoulTools(_graph())
     by_id = _payload(tools.soul_discover("a1", hops=2))

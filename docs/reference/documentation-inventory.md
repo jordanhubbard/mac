@@ -171,6 +171,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
 | supplemental reference | [`investigations/read-only-verifier-process-ownership.md`](../investigations/read-only-verifier-process-ownership.md) | Read-only verifier process ownership |
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
+| supplemental reference | [`memory-fisheye-convention.md`](../memory-fisheye-convention.md) | Memory fisheye convention |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
 | supplemental reference | [`oneshot-isolation-gate-verification.md`](../oneshot-isolation-gate-verification.md) | Oneshot isolation — contract gate verification |
 | supplemental reference | [`openshell-nemo-relay-e2e.md`](../openshell-nemo-relay-e2e.md) | OpenShell + NeMo Relay: container-contract verification |

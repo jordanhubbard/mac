@@ -400,6 +400,23 @@ def test_related_returns_hits_then_their_parents_and_children():
     assert ids == ["sib", "root", "child"]
 
 
+def test_fisheye_expands_one_hop_and_counts_the_two_hop_boundary():
+    g = SoulGraph()
+    g.add("foundation decision", node_id="root")
+    g.add("sandbox implementation", parents=["root"], node_id="focus")
+    g.add("follow-up", parents=["focus"], node_id="child")
+    g.add("deeper detail", parents=["child"], node_id="deep")
+
+    result = g.fisheye("sandbox", top_k=1)
+
+    assert [(node.id, hop) for node, hop in result["expanded"]] == [
+        ("focus", 0),
+        ("root", 1),
+        ("child", 1),
+    ]
+    assert result["boundary_counts"] == {2: 1}
+
+
 def test_link_refuses_cycles_and_missing_nodes():
     g = SoulGraph()
     g.add("a", node_id="a")

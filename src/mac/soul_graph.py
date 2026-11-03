@@ -561,6 +561,49 @@ class SoulGraph:
                 self.touch(node.id, propagate_parents=False)
         return out
 
+    def fisheye(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        expand_hops: int = 1,
+        boundary_hop: int = 2,
+        recency_weight: float = 1.0,
+        touch: bool = False,
+    ) -> dict[str, Any]:
+        """Return focused hits, expanded neighbours, and a counted boundary."""
+        expand_hops = max(0, int(expand_hops))
+        boundary_hop = max(expand_hops + 1, int(boundary_hop))
+        hits = [
+            node
+            for node, _ in self.semantic_search(
+                query, top_k=max(1, int(top_k)), recency_weight=recency_weight
+            )
+        ]
+        visited = {node.id for node in hits}
+        frontier = list(hits)
+        expanded: list[tuple[SoulNode, int]] = [(node, 0) for node in hits]
+        boundary_counts: dict[int, int] = {}
+        for hop in range(1, boundary_hop + 1):
+            next_frontier: list[SoulNode] = []
+            for node in frontier:
+                for nid in list(node.parents) + list(node.children):
+                    if nid in visited or nid not in self.nodes:
+                        continue
+                    visited.add(nid)
+                    next_frontier.append(self.nodes[nid])
+            if hop <= expand_hops:
+                expanded.extend((node, hop) for node in next_frontier)
+            else:
+                boundary_counts[hop] = len(next_frontier)
+            frontier = next_frontier
+            if not frontier:
+                break
+        if touch:
+            for node, _ in expanded:
+                self.touch(node.id, propagate_parents=False)
+        return {"query": query, "expanded": expanded, "boundary_counts": boundary_counts}
+
     def discover(
         self, query: str, top_k: int = 5, touch: bool = True
     ) -> list[tuple[SoulNode, list[str]]]:
