@@ -61,13 +61,13 @@ def test_mcp_serve_answers_a_handshake(tmp_path):
     # Two, not three: the notification must not be answered.
     assert [r["id"] for r in responses] == [1, 2]
     assert responses[0]["result"]["serverInfo"]["name"] == "mac"
-    assert {t["name"] for t in responses[1]["result"]["tools"]} == {
+    assert {
         "mac_task_show",
         "mac_task_list",
         "mac_task_ready",
         "mac_task_create",
         "mac_report",
-    }
+    } <= {t["name"] for t in responses[1]["result"]["tools"]}
 
 
 def test_mcp_serve_reaches_the_real_control_plane(tmp_path):

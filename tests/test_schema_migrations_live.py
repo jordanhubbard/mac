@@ -113,6 +113,11 @@ def _probe_id(name: str) -> str:
     return "%04d_%s" % (len(MIGRATIONS) + 1, name)
 
 
+def _migration_ids(start: int = 0, stop: int | None = None) -> list[str]:
+    """Return expected ids from the authoritative migration chain."""
+    return [migration.migration_id for migration in MIGRATIONS[start:stop]]
+
+
 def _relation_exists(store, relation: str) -> bool:
     return store.query_one("SELECT to_regclass(?) AS relation", (relation,))["relation"] is not None
 
@@ -455,19 +460,7 @@ def test_upgrade_drops_leftover_work_package_task_triggers(pg_dsn: str) -> None:
 
         result = store.apply_migrations(applied_by="pytest:drop-leftovers")
 
-        assert result["applied"] == [
-            "0003_drop_leftover_work_package_triggers",
-            "0004_drop_removed_feature_tables",
-            "0005_drop_native_merge_queue_tables",
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert result["applied"] == _migration_ids(2)
         assert not _function_exists(store, "trg_work_package_task_claim_authority")
         assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
         assert store.verify_schema()["status"] == "verified"
@@ -583,41 +576,19 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
             assert store.query_one('SELECT COUNT(*) AS n FROM "%s"' % table)["n"] >= 1, table
 
         status = store.migration_status()
-        assert status["pending"] == [
-            "0004_drop_removed_feature_tables",
-            "0005_drop_native_merge_queue_tables",
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert status["pending"] == _migration_ids(3)
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:drop-removed-features")
 
-        assert result["applied"] == [
-            "0004_drop_removed_feature_tables",
-            "0005_drop_native_merge_queue_tables",
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert result["applied"] == _migration_ids(3)
         assert not [table for table in _REMOVED_FEATURE_TABLES if _relation_exists(store, table)]
         # Rows outside the dropped tables survive, and 0002's re-proved
         # postcondition still holds now that its tables are gone.
         assert store.query_one("SELECT COUNT(*) AS n FROM agents")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 1
         verified = store.verify_schema()
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
         assert "0002_dream_candidate_store" in verified["proof"]["postconditions"]
 
 
@@ -665,39 +636,19 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             assert store.query_one('SELECT COUNT(*) AS n FROM "%s"' % table)["n"] == 1, table
 
         status = store.migration_status()
-        assert status["pending"] == [
-            "0005_drop_native_merge_queue_tables",
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert status["pending"] == _migration_ids(4)
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:drop-native-merge-queue")
 
-        assert result["applied"] == [
-            "0005_drop_native_merge_queue_tables",
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert result["applied"] == _migration_ids(4)
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         # The task the queue entry pointed at is untouched: it is still
         # REVIEWING and the land loop picks it up on the next tick.
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "reviewing"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None:
@@ -706,7 +657,7 @@ def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 _ROLLOUT_AND_DEPLOY_TABLES = (
@@ -774,16 +725,7 @@ def test_upgrade_from_0005_drops_rollout_and_deploy_tables_with_rows(pg_dsn: str
         assert {"rollout", "environment"} <= {row["subject_type"] for row in subjects}
 
         status = store.migration_status()
-        assert status["pending"] == [
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert status["pending"] == _migration_ids(5)
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(
@@ -802,21 +744,13 @@ def test_upgrade_from_0005_drops_rollout_and_deploy_tables_with_rows(pg_dsn: str
 
         result = store.apply_migrations(applied_by="pytest:through-head")
 
-        assert result["applied"] == [
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert result["applied"] == _migration_ids(6)
         # 0008 drops environments once nothing references it.
         assert not _relation_exists(store, "environments")
         assert store.query_one("SELECT COUNT(*) AS n FROM artifacts")["n"] == 1
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
@@ -827,7 +761,7 @@ def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
         assert _relation_exists(store, "artifacts")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 def _populate_agent_provisioning_requests(conn) -> None:
@@ -864,34 +798,18 @@ def test_upgrade_from_0006_drops_agent_provisioning_requests_with_rows(pg_dsn: s
         assert store.query_one("SELECT COUNT(*) AS n FROM agent_provisioning_requests")["n"] == 2
 
         status = store.migration_status()
-        assert status["pending"] == [
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert status["pending"] == _migration_ids(6)
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:drop-provisioning-requests")
 
-        assert result["applied"] == [
-            "0007_drop_agent_provisioning_requests",
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert result["applied"] == _migration_ids(6)
         assert not _relation_exists(store, "agent_provisioning_requests")
         # The task a request pointed at is untouched and still dispatchable.
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "open"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str) -> None:
@@ -900,7 +818,7 @@ def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str
         assert not _relation_exists(store, "agent_provisioning_requests")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 # Children before parents: the order 0008 drops them in.
@@ -1052,14 +970,7 @@ def test_upgrade_from_0007_drops_self_upgrade_and_release_epoch_tables_with_rows
             assert _function_exists(store, function), function
 
         status = store.migration_status()
-        assert status["pending"] == [
-            "0008_drop_self_upgrade_and_release_epoch_tables",
-            "0009_slim_worker_credentials",
-            "0010_inference_tokens",
-            "0011_task_messages",
-            "0012_drop_conversation_execution_ledger",
-            "0013_release_selection",
-        ]
+        assert status["pending"] == _migration_ids(7)
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(
@@ -1077,11 +988,11 @@ def test_upgrade_from_0007_drops_self_upgrade_and_release_epoch_tables_with_rows
 
         result = store.apply_migrations(applied_by="pytest:through-head")
 
-        assert result["applied"] == ["0009_slim_worker_credentials", "0010_inference_tokens", "0011_task_messages", "0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert result["applied"] == _migration_ids(8)
         assert store.query_one("SELECT COUNT(*) AS n FROM worker_credentials")["n"] == 1
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 def test_fresh_bootstrap_leaves_no_self_upgrade_or_release_epoch_table(pg_dsn: str) -> None:
@@ -1091,7 +1002,7 @@ def test_fresh_bootstrap_leaves_no_self_upgrade_or_release_epoch_table(pg_dsn: s
         assert not [f for f in _SELF_UPGRADE_TRIGGER_FUNCTIONS if _function_exists(store, f)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
 
 _SLIMMED_WORKER_CREDENTIAL_TABLES = ("worker_credential_events", "worker_credential_policy_state")
@@ -1198,12 +1109,12 @@ def test_upgrade_from_0008_keeps_every_active_worker_token_authenticating(
         assert set(_SLIMMED_WORKER_CREDENTIAL_COLUMNS) <= _worker_credential_columns(store)
 
         status = store.migration_status()
-        assert status["pending"] == ["0009_slim_worker_credentials", "0010_inference_tokens", "0011_task_messages", "0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert status["pending"] == _migration_ids(8)
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:slim-worker-credentials")
 
-        assert result["applied"] == ["0009_slim_worker_credentials", "0010_inference_tokens", "0011_task_messages", "0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert result["applied"] == _migration_ids(8)
         assert not [t for t in _SLIMMED_WORKER_CREDENTIAL_TABLES if _relation_exists(store, t)]
         assert not set(_SLIMMED_WORKER_CREDENTIAL_COLUMNS) & _worker_credential_columns(store)
         assert store.query_one("SELECT COUNT(*) AS n FROM worker_credentials")["n"] == 14
@@ -1217,7 +1128,7 @@ def test_upgrade_from_0008_keeps_every_active_worker_token_authenticating(
             assert "write" in principal["scopes"]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
         assert "0009_slim_worker_credentials" in verified["proof"]["postconditions"]
 
 
@@ -1235,7 +1146,7 @@ def test_fresh_bootstrap_has_slim_worker_credentials(pg_dsn: str) -> None:
         assert not set(_SLIMMED_WORKER_CREDENTIAL_COLUMNS) & _worker_credential_columns(store)
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
 
         cp = ControlPlane(store, secret_key="fresh-bootstrap-test-key-with-32-bytes")
         machine = cp.register_machine("fresh-host")
@@ -1261,11 +1172,11 @@ def test_upgrade_from_0009_adds_inference_tokens_and_keeps_worker_tokens(pg_dsn:
         assert not _relation_exists(store, "inference_tokens")
 
         status = store.migration_status()
-        assert status["pending"] == ["0010_inference_tokens", "0011_task_messages", "0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert status["pending"] == _migration_ids(9)
 
         result = store.apply_migrations(applied_by="pytest:inference-tokens")
 
-        assert result["applied"] == ["0010_inference_tokens", "0011_task_messages", "0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert result["applied"] == _migration_ids(9)
         assert _relation_exists(store, "inference_tokens")
         resolved = WorkerCredentialPrincipalProvider(store).tokens()
         assert set(resolved) == {_token_hash(token) for token in tokens}
@@ -1275,7 +1186,7 @@ def test_upgrade_from_0009_adds_inference_tokens_and_keeps_worker_tokens(pg_dsn:
         assert principal["scopes"] == ["inference"]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
         assert "0010_inference_tokens" in verified["proof"]["postconditions"]
 
 
@@ -1289,7 +1200,7 @@ def test_fresh_bootstrap_has_inference_tokens(pg_dsn: str) -> None:
     with _fresh_store(pg_dsn) as store:
         store.initialize()
         assert _relation_exists(store, "inference_tokens")
-        assert store.verify_schema()["current_version"] == "0013_release_selection"
+        assert store.verify_schema()["current_version"] == MIGRATIONS[-1].migration_id
 
         cp = ControlPlane(store, secret_key="fresh-bootstrap-test-key-with-32-bytes")
         machine = cp.register_machine("fresh-host")
@@ -1343,16 +1254,16 @@ def test_upgrade_from_0011_drops_the_direct_execution_ledger_with_rows(pg_dsn: s
         )
 
         status = store.migration_status()
-        assert status["pending"] == ["0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert status["pending"] == _migration_ids(11)
 
         result = store.apply_migrations(applied_by="pytest:drop-direct-execution-ledger")
 
-        assert result["applied"] == ["0012_drop_conversation_execution_ledger", "0013_release_selection"]
+        assert result["applied"] == _migration_ids(11)
         assert not _relation_exists(store, _DIRECT_EXECUTION_LEDGER)
         assert _relation_exists(store, "tasks")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0013_release_selection"
+        assert verified["current_version"] == MIGRATIONS[-1].migration_id
         assert "0012_drop_conversation_execution_ledger" in verified["proof"]["postconditions"]
 
 
@@ -1360,4 +1271,4 @@ def test_fresh_bootstrap_has_no_direct_execution_ledger(pg_dsn: str) -> None:
     with _fresh_store(pg_dsn) as store:
         store.initialize()
         assert not _relation_exists(store, _DIRECT_EXECUTION_LEDGER)
-        assert store.verify_schema()["current_version"] == "0013_release_selection"
+        assert store.verify_schema()["current_version"] == MIGRATIONS[-1].migration_id
