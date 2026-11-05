@@ -6,9 +6,11 @@ SQLite-backed graph memory library for fleet agents. Stdlib only — no pip depe
 
 ```python
 import sys
-sys.path.insert(0, '/path/to/mac/lib/memory_graph')
+
+sys.path.insert(0, "/path/to/mac/lib/memory_graph")
 import memory_graph as mg
-mg.init_db('/path/to/your/AgentFS/<name>-memory-graph/memory_graph.db')
+
+mg.init_db("~/.mac/data/<name>-memory-graph/memory_graph.db")
 ```
 
 ## API
@@ -33,14 +35,14 @@ mg.init_db('/path/to/your/AgentFS/<name>-memory-graph/memory_graph.db')
 
 Each agent creates their own DB:
 ```bash
-mkdir -p ~/AgentFS/<name>-memory-graph
+mkdir -p ~/.mac/data/<name>-memory-graph
 ```
 
 Then set MEMORY.md to:
 ```
 Your memory lives in a graph. First tool call every session:
   import sys; sys.path.insert(0, '/path/to/lib/memory_graph')
-  import memory_graph as mg; mg.init_db('~/AgentFS/<name>-memory-graph/memory_graph.db')
+  import memory_graph as mg; mg.init_db('~/.mac/data/<name>-memory-graph/memory_graph.db')
   for n in mg.top(8): print(f"[{n['kind']}] {n['summary']}")
 Never write to this file again. The graph is the store.
 ```
@@ -48,7 +50,7 @@ Never write to this file again. The graph is the store.
 ## Gardener (daily maintenance)
 
 ```bash
-python3 lib/memory_graph/gardener.py --db ~/AgentFS/<name>-memory-graph/memory_graph.db
+python3 lib/memory_graph/gardener.py --db ~/.mac/data/<name>-memory-graph/memory_graph.db
 ```
 
 Runs: decay, archive low-score, flag isolated nodes, detect near-dupes, surface promotion candidates, check skill-ref health.
