@@ -43,6 +43,24 @@ the order was inverted.
   hypothesis that testing disproved. The next reader will otherwise repeat it.
 - Never let chat memory be the only place a decision exists.
 
+## Use specific memory relations
+
+Memory writes must describe what a record or edge means. Do not use catch-all
+types such as `related`, `note`, `context`, or `other` when a narrower type is
+known. Generic relations silently flatten the retrieval signal, so relevant
+records rank as if every connection meant the same thing.
+
+- Choose the narrowest truthful record type, such as `decision`, `observation`,
+  `failed_hypothesis`, `handoff_quality`, or `verification_result`.
+- For graph edges, state the causal or structural relation, such as
+  `implements`, `depends_on`, `contradicts`, `supersedes`, or `evidenced_by`.
+- If no specific type is accurate, define a short domain-specific type rather
+  than falling back to a generic bucket. Do not invent specificity unsupported
+  by the evidence.
+- Apply this rule when using either MAC memory records or `soul_add` /
+  `soul_link`; the storage API's permissiveness is not permission to erase the
+  relation's meaning.
+
 ## Fleet-affecting work has an ordering rule
 
 Deploy the fix before releasing work that depends on it. Reopening tasks into

@@ -78,6 +78,40 @@ requested, but it is not context and must not override the referenced records.
 If retrieval fails, ask for a corrected reference or access; do not infer a
 summary from the envelope.
 
+## Validate the next three handoffs
+
+The first three cross-agent handoffs made after adopting this convention form
+an explicit before/after validation cohort. This is a write obligation, not a
+retrospective to reconstruct from chat later.
+
+Before sending each handoff, add a task-scoped memory record with record type
+`handoff_quality` and these fields in its JSON content:
+
+```json
+{
+  "cohort_position": 1,
+  "task_ref": "task_0123456789abcdef",
+  "artifact_ref": null,
+  "before": {"method": "narrative_only", "clarification_count": null},
+  "after": {"method": "durable_ref", "clarification_count": null},
+  "status": "awaiting_receiver_outcome"
+}
+```
+
+Use cohort positions `1`, `2`, and `3` exactly once. `task_ref` is required;
+`artifact_ref` is optional and must identify a durable artifact when present.
+The `before` value records the old narrative-only convention as the baseline.
+After the receiver acts, update or append the outcome with the number of
+clarifying questions needed, set `status` to `complete`, and note whether the
+receiver successfully retrieved the referenced context. Questions caused by a
+bad or inaccessible reference count; unrelated implementation questions do
+not. A zero is data and must be recorded explicitly.
+
+After position 3, compare the three `after.clarification_count` values with the
+baseline and file a retrospective note linked to all three task references.
+Do not claim the convention is validated while any cohort record remains
+`awaiting_receiver_outcome`.
+
 ## Relation to Qdrant and fisheye retrieval
 
 Qdrant is already the fleet's shared semantic-memory infrastructure, but the

@@ -87,6 +87,14 @@ editing src/mac/api.py". Nobody can act on a status update, and every message
 is durable and audited. Heartbeat is liveness, not progress: a session that
 only heartbeats still looks stuck.
 
+**Hand off by durable reference, not remembered prose.** Every cross-agent
+handoff must include a MAC task ID or artifact reference that the receiver can
+retrieve directly. A brief intent is allowed, but a narrative summary is not a
+substitute for the reference and must not become the receiver's source of
+truth. Follow `docs/task-handoff-convention.md`, including its three-handoff
+quality loop, so this convention produces measured evidence rather than more
+discourse.
+
 **Broadcast the work; do not nudge a silent peer.** Claim, worktree, push, PR,
 and merge are how others learn you are in the tree. If you are stuck, address
 the hub. Do not broadcast a plea, and do not inbox a peer who has gone quiet —

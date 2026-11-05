@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from mac.test_support import control_plane_on, dsn_for
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_receiver_retrieves_handoff_context_from_task_reference(tmp_path):
@@ -65,3 +70,22 @@ def test_receiver_retrieves_handoff_context_from_task_reference(tmp_path):
         "Graph expansion is not available in MAC today.",
     }
     assert "summary" not in message
+
+
+def test_convention_defines_three_handoff_before_after_validation():
+    text = (ROOT / "docs" / "task-handoff-convention.md").read_text(encoding="utf-8")
+    assert "first three cross-agent handoffs" in text
+    assert '"cohort_position": 1' in text
+    assert '"before":' in text and '"after":' in text
+    assert "clarifying questions" in text
+    assert "awaiting_receiver_outcome" in text
+
+
+def test_memory_write_skill_rejects_generic_relation_types():
+    text = (ROOT / "skills" / "record-user-directed-work" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Use specific memory relations" in text
+    assert "Do not use catch-all" in text
+    for relation in ("implements", "depends_on", "contradicts", "supersedes", "evidenced_by"):
+        assert relation in text

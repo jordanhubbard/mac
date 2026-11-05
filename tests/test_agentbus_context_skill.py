@@ -70,3 +70,8 @@ def test_the_executor_policy_carries_the_same_instruction_for_every_project():
     )
     assert "AgentBus context" in policy
     assert "do not open a second pull request" in policy
+
+
+def test_skill_requires_reference_handoffs_and_quality_measurement(text):
+    assert "MAC task ID or artifact reference" in text
+    assert "three-handoff" in text
