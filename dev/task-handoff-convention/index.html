@@ -1361,6 +1361,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#validate-the-next-three-handoffs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate the next three handoffs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#relation-to-qdrant-and-fisheye-retrieval" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1873,6 +1884,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#validate-the-next-three-handoffs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate the next three handoffs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#relation-to-qdrant-and-fisheye-retrieval" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1983,6 +2005,33 @@ join key for those records too.</p>
 requested, but it is not context and must not override the referenced records.
 If retrieval fails, ask for a corrected reference or access; do not infer a
 summary from the envelope.</p>
+<h2 id="validate-the-next-three-handoffs">Validate the next three handoffs<a class="headerlink" href="#validate-the-next-three-handoffs" title="Permanent link">&para;</a></h2>
+<p>The first three cross-agent handoffs made after adopting this convention form
+an explicit before/after validation cohort. This is a write obligation, not a
+retrospective to reconstruct from chat later.</p>
+<p>Before sending each handoff, add a task-scoped memory record with record type
+<code>handoff_quality</code> and these fields in its JSON content:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;cohort_position&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;task_ref&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;task_0123456789abcdef&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;artifact_ref&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;before&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;narrative_only&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;clarification_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">&quot;after&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;durable_ref&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;clarification_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;awaiting_receiver_outcome&quot;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">}</span>
+</code></pre></div>
+<p>Use cohort positions <code>1</code>, <code>2</code>, and <code>3</code> exactly once. <code>task_ref</code> is required;
+<code>artifact_ref</code> is optional and must identify a durable artifact when present.
+The <code>before</code> value records the old narrative-only convention as the baseline.
+After the receiver acts, update or append the outcome with the number of
+clarifying questions needed, set <code>status</code> to <code>complete</code>, and note whether the
+receiver successfully retrieved the referenced context. Questions caused by a
+bad or inaccessible reference count; unrelated implementation questions do
+not. A zero is data and must be recorded explicitly.</p>
+<p>After position 3, compare the three <code>after.clarification_count</code> values with the
+baseline and file a retrospective note linked to all three task references.
+Do not claim the convention is validated while any cohort record remains
+<code>awaiting_receiver_outcome</code>.</p>
 <h2 id="relation-to-qdrant-and-fisheye-retrieval">Relation to Qdrant and fisheye retrieval<a class="headerlink" href="#relation-to-qdrant-and-fisheye-retrieval" title="Permanent link">&para;</a></h2>
 <p>Qdrant is already the fleet's shared semantic-memory infrastructure, but the
 MAC CLI does not currently expose a stable task-ref semantic-neighborhood
