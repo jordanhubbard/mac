@@ -472,7 +472,7 @@ class TestPgToJson:
 @pytest.mark.integration
 @pytest.mark.skipif(
     True,
-    reason="Integration test: requires live fleet_brain Postgres with peer auth. Run with: pytest -m integration --no-skip"
+    reason="Integration test: requires live fleet_brain Postgres with peer auth. Run with: pytest -m integration --no-skip",
 )
 def test_live_roundtrip(tmp_path):
     """Live test: import bullwinkle soul.json to fleet_brain, verify counts, export back."""
