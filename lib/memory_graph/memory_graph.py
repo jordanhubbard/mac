@@ -15,7 +15,14 @@ from pathlib import Path
 # ── Default DB path ────────────────────────────────────────────────────────────
 _DEFAULT_DB = Path(__file__).parent / "memory_graph.db"
 
-VALID_RELATIONS  = {"related-to", "cites", "refines", "corroborates", "derived-from", "contradicts"}
+# Core knowledge-graph relations
+VALID_RELATIONS  = {
+    "related-to", "cites", "refines", "corroborates", "derived-from", "contradicts",
+    # Soul-graph vocabulary (soul_graph.py uses a separate splay-DAG engine but agents
+    # may store soul-graph-flavoured edges here when migrating or cross-referencing).
+    # NOTE: soul_graph.py enforces these independently; memory_graph is a separate store.
+    "depends_on", "explains", "instance_of", "learned_from", "applies_to", "implements",
+}
 VALID_KINDS      = {"memory", "axiom", "skill-ref", "task-ref"}
 VALID_VISIBILITY = {"private", "fleet", "personal"}   # private=Rocky-only, fleet=shareable, personal=jkh-scoped
 DECAY_FACTOR     = 0.95   # multiplied per decay_all() call
