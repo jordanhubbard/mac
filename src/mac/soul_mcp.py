@@ -429,11 +429,9 @@ class SoulTools:
             return _error("%s failed: %s" % (name, exc))
 
 
-def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
-    """Run the soul MCP server over stdio (or the given streams)."""
-    inp = inp or sys.stdin
-    out = out or sys.stdout
-    graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
+def _run_server(graph: SoulGraph, soul_path: Optional[Path],
+                inp: Any, out: Any) -> None:
+    """Inner dispatch loop shared by file-backed and PG-backed serve paths."""
     tools = SoulTools(graph)
 
     def send(obj: JsonDict) -> None:
@@ -464,12 +462,36 @@ def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
             name = params.get("name", "")
             result = tools.dispatch(name, params.get("arguments") or {})
             if name not in READ_ONLY_TOOLS and not result.get("isError"):
-                soul_path.parent.mkdir(parents=True, exist_ok=True)
-                graph.save(soul_path)
+                if soul_path is not None:
+                    soul_path.parent.mkdir(parents=True, exist_ok=True)
+                graph.save(soul_path)  # type: ignore[arg-type]
             send({"jsonrpc": "2.0", "id": rid, "result": result})
         elif rid is not None:
             send({"jsonrpc": "2.0", "id": rid, "error": {
                 "code": -32601, "message": "Method not found: %s" % method}})
+
+
+def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
+    """Run the soul MCP server over stdio with a JSON file backend."""
+    inp = inp or sys.stdin
+    out = out or sys.stdout
+    graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
+    _run_server(graph, soul_path, inp, out)
+
+
+def serve_pg(pg_url: str, agent: str, soul_path: Optional[Path] = None,
+             inp: Any = None, out: Any = None) -> None:
+    """Run the soul MCP server with a Postgres backend.
+
+    Loads all nodes for `agent` from Postgres on startup; flushes dirty nodes
+    after every mutating tool call. If soul_path is also provided, a JSON
+    backup is written alongside (best-effort; Postgres is authoritative).
+    """
+    from mac.soul_graph_pg import SoulGraphPG  # type: ignore[import]
+    inp = inp or sys.stdin
+    out = out or sys.stdout
+    graph = SoulGraphPG.from_pg(pg_url, agent)
+    _run_server(graph, soul_path, inp, out)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -480,8 +502,31 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--soul-file", type=Path, default=None,
         help="soul JSON file (default: soul.json in the agent home); created on first write",
     )
+    parser.add_argument(
+        "--pg-url", default=None,
+        help="Postgres connection URL for fleet-shared soul graph "
+             "(e.g. postgresql://fleet_agent:pw@host:5432/agent_brain). "
+             "When set, --soul-file is used only as a JSON backup.",
+    )
+    parser.add_argument(
+        "--agent", default=None,
+        help="Agent name for PG backend (required with --pg-url; "
+             "defaults to MAC_AGENT_ID env var).",
+    )
     args = parser.parse_args(argv)
-    serve(args.soul_file or default_soul_path())
+
+    if args.pg_url:
+        import os
+        agent = args.agent or os.environ.get("MAC_AGENT_ID") or "unknown"
+        # Strip agent_ prefix for the graph's agent column if present
+        agent_name = agent.removeprefix("agent_")
+        serve_pg(
+            pg_url=args.pg_url,
+            agent=agent_name,
+            soul_path=args.soul_file,
+        )
+    else:
+        serve(args.soul_file or default_soul_path())
 
 
 if __name__ == "__main__":
