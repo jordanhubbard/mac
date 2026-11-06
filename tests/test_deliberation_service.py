@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from mac.deliberation_service import DeliberationService
-from mac.models import AuthorizationError, NotFoundError, ValidationError
+from mac.models import AuthorizationError, JsonDict, NotFoundError, ValidationError
 
 # ---------------------------------------------------------------------------
 # Minimal in-memory store adapter for testing
@@ -285,3 +285,51 @@ def test_list_by_task_id(svc: DeliberationService) -> None:
 def test_get_not_found(svc: DeliberationService) -> None:
     with pytest.raises(NotFoundError):
         svc.get_deliberation("deliberation_nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# Tests: on_resolve hook
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_calls_on_resolve_hook(store: "_SqliteStore") -> None:
+    """on_resolve callback receives the resolved deliberation dict."""
+    received: list[JsonDict] = []
+    svc = DeliberationService(store, on_resolve=received.append)
+    d = svc.create_deliberation(
+        topic="Hook test",
+        created_by="agent_natasha",
+        authorized_resolvers=["agent_natasha"],
+    )
+    result = svc.resolve_deliberation(d["id"], conclusion="Done", actor="agent_natasha")
+    assert len(received) == 1
+    assert received[0]["id"] == result["id"]
+    assert received[0]["status"] == "resolved"
+
+
+def test_resolve_hook_failure_does_not_abort_resolution(store: "_SqliteStore") -> None:
+    """A crashing on_resolve hook must not propagate; resolution must succeed."""
+
+    def boom(_d: JsonDict) -> None:
+        raise RuntimeError("simulated embedding failure")
+
+    svc = DeliberationService(store, on_resolve=boom)
+    d = svc.create_deliberation(
+        topic="Hook error test",
+        created_by="agent_natasha",
+        authorized_resolvers=["agent_natasha"],
+    )
+    # Must not raise:
+    result = svc.resolve_deliberation(d["id"], conclusion="Done", actor="agent_natasha")
+    assert result["status"] == "resolved"
+
+
+def test_resolve_no_hook_is_default(svc: DeliberationService) -> None:
+    """Default DeliberationService has no hook; resolve works normally."""
+    d = svc.create_deliberation(
+        topic="No hook",
+        created_by="agent_natasha",
+        authorized_resolvers=["agent_natasha"],
+    )
+    result = svc.resolve_deliberation(d["id"], conclusion="Fine", actor="agent_natasha")
+    assert result["status"] == "resolved"

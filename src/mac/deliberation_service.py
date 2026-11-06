@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from mac.models import (
     AuthorizationError,
@@ -35,8 +35,14 @@ from mac.models import (
 class DeliberationService:
     """Manage fleet deliberation records stored in the control plane DB."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        on_resolve: Optional[Callable[[JsonDict], None]] = None,
+    ) -> None:
         self.store = store
+        self._on_resolve = on_resolve
 
     # ------------------------------------------------------------------
     # Write operations
@@ -282,7 +288,14 @@ class DeliberationService:
                 "id": deliberation_id,
             },
         )
-        return self._get(deliberation_id)
+        resolved = self._get(deliberation_id)
+        if self._on_resolve is not None:
+            try:
+                self._on_resolve(resolved)
+            except Exception:  # noqa: BLE001
+                # Non-blocking: embedding failures must never abort a resolution.
+                pass
+        return resolved
 
     def withdraw_deliberation(self, deliberation_id: str, *, actor: str) -> JsonDict:
         """Withdraw (cancel) an open deliberation."""
