@@ -285,3 +285,86 @@ def test_list_by_task_id(svc: DeliberationService) -> None:
 def test_get_not_found(svc: DeliberationService) -> None:
     with pytest.raises(NotFoundError):
         svc.get_deliberation("deliberation_nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# Tests: ArgumentEmbeddingService integration
+# ---------------------------------------------------------------------------
+
+
+class _FakeEmbeddingService:
+    """Captures calls without hitting real network."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def index_resolved_deliberation(
+        self,
+        *,
+        deliberation_id: str,
+        resolution_path: str,
+        arguments: list,
+    ) -> int:
+        self.calls.append(
+            {
+                "deliberation_id": deliberation_id,
+                "resolution_path": resolution_path,
+                "arguments": arguments,
+            }
+        )
+        return len([a for a in arguments if a.get("claim", "").strip()])
+
+
+def test_embedding_service_called_on_resolve(store: _SqliteStore) -> None:
+    """ArgumentEmbeddingService.index_resolved_deliberation fires after resolution."""
+    fake_embed = _FakeEmbeddingService()
+    svc = DeliberationService(store, embedding_service=fake_embed)
+
+    d = svc.create_deliberation(
+        topic="Architecture choice",
+        created_by="agent_natasha",
+        authorized_resolvers=["agent_natasha"],
+    )
+    svc.add_argument(
+        d["id"],
+        agent_id="agent_natasha",
+        argument_type="empirical",
+        claim="Postgres outperforms SQLite at >1k concurrent reads.",
+    )
+    svc.resolve_deliberation(d["id"], conclusion="Use Postgres", actor="agent_natasha")
+
+    assert len(fake_embed.calls) == 1
+    call = fake_embed.calls[0]
+    assert call["deliberation_id"] == d["id"]
+    assert call["resolution_path"] == "authority"
+    assert len(call["arguments"]) == 1
+    assert call["arguments"][0]["claim"] == "Postgres outperforms SQLite at >1k concurrent reads."
+
+
+def test_embedding_service_not_called_without_injection(svc: DeliberationService) -> None:
+    """No embedding service injected → resolution succeeds cleanly without error."""
+    d = svc.create_deliberation(
+        topic="Test topic",
+        created_by="agent_natasha",
+        authorized_resolvers=["agent_natasha"],
+    )
+    result = svc.resolve_deliberation(d["id"], conclusion="Done", actor="agent_natasha")
+    assert result["status"] == "resolved"
+
+
+def test_embedding_failure_does_not_block_resolution(store: _SqliteStore) -> None:
+    """If embedding raises, the resolution is still committed and returned."""
+
+    class _BrokenEmbeddingService:
+        def index_resolved_deliberation(self, **_: object) -> int:
+            raise RuntimeError("Qdrant is down")
+
+    svc = DeliberationService(store, embedding_service=_BrokenEmbeddingService())
+    d = svc.create_deliberation(
+        topic="Failure test",
+        created_by="agent_natasha",
+        authorized_resolvers=["agent_natasha"],
+    )
+    result = svc.resolve_deliberation(d["id"], conclusion="Done anyway", actor="agent_natasha")
+    assert result["status"] == "resolved"
+    assert result["conclusion"] == "Done anyway"

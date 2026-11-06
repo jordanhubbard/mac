@@ -31,12 +31,19 @@ from mac.models import (
     utcnow,
 )
 
+import logging
+
+from mac.argument_embedding_service import ArgumentEmbeddingService
+
+_log = logging.getLogger(__name__)
+
 
 class DeliberationService:
     """Manage fleet deliberation records stored in the control plane DB."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, *, embedding_service: ArgumentEmbeddingService | None = None) -> None:
         self.store = store
+        self._embedding_service = embedding_service
 
     # ------------------------------------------------------------------
     # Write operations
@@ -282,7 +289,23 @@ class DeliberationService:
                 "id": deliberation_id,
             },
         )
-        return self._get(deliberation_id)
+        resolved = self._get(deliberation_id)
+
+        # Fire-and-forget: index arguments in Qdrant for fleet learning (v2 layer).
+        # Embedding must NOT block or raise -- resolution is already committed.
+        if self._embedding_service is not None:
+            try:
+                arguments = json_loads(resolved.get("arguments", "[]"))
+                n = self._embedding_service.index_resolved_deliberation(
+                    deliberation_id=deliberation_id,
+                    resolution_path=resolution_path,
+                    arguments=arguments,
+                )
+                _log.debug("indexed %d arguments for deliberation %s", n, deliberation_id)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("argument embedding failed for %s: %s", deliberation_id, exc)
+
+        return resolved
 
     def withdraw_deliberation(self, deliberation_id: str, *, actor: str) -> JsonDict:
         """Withdraw (cancel) an open deliberation."""
