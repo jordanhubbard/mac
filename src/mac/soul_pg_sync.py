@@ -57,8 +57,8 @@ def _get_conn(conn_or_dsn=None):
     # Resolve argument / env
     if conn_or_dsn is None:
         conn_or_dsn = os.environ.get(
-            "FLEET_BRAIN_DSN", "dbname=fleet_brain host=100.72.16.110 user=postgres"
-        )
+            "FLEET_BRAIN_DSN", "dbname=fleet_brain user=postgres"
+        )  # default: local Unix socket (pg_hba peer auth); set FLEET_BRAIN_DSN for remote
 
     # Already a connection object — pass through
     if not isinstance(conn_or_dsn, str):
@@ -69,8 +69,17 @@ def _get_conn(conn_or_dsn=None):
         import psycopg2
 
         return psycopg2.connect(conn_or_dsn)
-    except ImportError:
-        pass
+    except (ImportError, Exception) as first_err:
+        if isinstance(first_err, ImportError):
+            pass
+        else:
+            # Driver loaded but connection failed — try psycopg v3 before giving up
+            try:
+                import psycopg
+
+                return psycopg.connect(conn_or_dsn)
+            except Exception:
+                raise first_err  # surface the original error
 
     try:
         import psycopg
