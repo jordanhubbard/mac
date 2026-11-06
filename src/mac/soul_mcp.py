@@ -429,11 +429,18 @@ class SoulTools:
             return _error("%s failed: %s" % (name, exc))
 
 
-def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
-    """Run the soul MCP server over stdio (or the given streams)."""
+def _run_loop(
+    graph: SoulGraph,
+    save_fn: Any,
+    inp: Any = None,
+    out: Any = None,
+) -> None:
+    """Inner serve loop — works for both JSON-file and Postgres backends.
+
+    ``save_fn(graph)`` is called after every mutating tool call.
+    """
     inp = inp or sys.stdin
     out = out or sys.stdout
-    graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
     tools = SoulTools(graph)
 
     def send(obj: JsonDict) -> None:
@@ -464,12 +471,31 @@ def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
             name = params.get("name", "")
             result = tools.dispatch(name, params.get("arguments") or {})
             if name not in READ_ONLY_TOOLS and not result.get("isError"):
-                soul_path.parent.mkdir(parents=True, exist_ok=True)
-                graph.save(soul_path)
+                save_fn(graph)
             send({"jsonrpc": "2.0", "id": rid, "result": result})
         elif rid is not None:
             send({"jsonrpc": "2.0", "id": rid, "error": {
                 "code": -32601, "message": "Method not found: %s" % method}})
+
+
+def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
+    """Run the soul MCP server over stdio using a JSON file as storage."""
+    graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
+
+    def save_fn(g: SoulGraph) -> None:
+        soul_path.parent.mkdir(parents=True, exist_ok=True)
+        g.save(soul_path)
+
+    _run_loop(graph, save_fn, inp, out)
+
+
+def serve_pg(agent_id: str, db_url: str, inp: Any = None, out: Any = None) -> None:
+    """Run the soul MCP server over stdio using fleet_brain Postgres as primary storage."""
+    from mac.soul_pg_sync import PgSoulBackend  # noqa: PLC0415
+
+    backend = PgSoulBackend(agent_id=agent_id, db_url=db_url)
+    graph = backend.load(name="soul")
+    _run_loop(graph, backend.save, inp, out)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -480,8 +506,26 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--soul-file", type=Path, default=None,
         help="soul JSON file (default: soul.json in the agent home); created on first write",
     )
+    parser.add_argument(
+        "--db-url", default=None,
+        help="Postgres URL for fleet_brain primary storage (e.g. postgresql:///fleet_brain). "
+             "When set, --soul-file is ignored and Postgres is used as primary.",
+    )
+    parser.add_argument(
+        "--agent", default=None,
+        help="Agent ID for Postgres mode (e.g. bullwinkle). "
+             "Required when --db-url is set. Defaults to MAC_WORKER_AGENT_NAME env var.",
+    )
     args = parser.parse_args(argv)
-    serve(args.soul_file or default_soul_path())
+
+    if args.db_url:
+        import os  # noqa: PLC0415
+        agent_id = args.agent or os.environ.get("MAC_WORKER_AGENT_NAME")
+        if not agent_id:
+            parser.error("--agent (or MAC_WORKER_AGENT_NAME) is required when using --db-url")
+        serve_pg(agent_id=agent_id, db_url=args.db_url)
+    else:
+        serve(args.soul_file or default_soul_path())
 
 
 if __name__ == "__main__":
