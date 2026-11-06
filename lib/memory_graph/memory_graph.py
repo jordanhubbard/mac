@@ -15,15 +15,53 @@ from pathlib import Path
 # ── Default DB path ────────────────────────────────────────────────────────────
 _DEFAULT_DB = Path(__file__).parent / "memory_graph.db"
 
-VALID_RELATIONS  = {"related-to", "cites", "refines", "corroborates", "derived-from", "contradicts"}
-VALID_KINDS      = {"memory", "axiom", "skill-ref", "task-ref"}
-VALID_VISIBILITY = {"private", "fleet", "personal"}   # private=Rocky-only, fleet=shareable, personal=jkh-scoped
-DECAY_FACTOR     = 0.95   # multiplied per decay_all() call
+VALID_RELATIONS = {"related-to", "cites", "refines", "corroborates", "derived-from", "contradicts"}
+VALID_KINDS = {"memory", "axiom", "skill-ref", "task-ref"}
+VALID_VISIBILITY = {
+    "private",
+    "fleet",
+    "personal",
+}  # private=Rocky-only, fleet=shareable, personal=jkh-scoped
+DECAY_FACTOR = 0.95  # multiplied per decay_all() call
 
 # Stopwords excluded from auto-link token overlap
-_STOPWORDS = {"the","a","an","is","are","was","were","be","been","to","of","and","or",
-              "in","on","at","for","with","by","from","use","not","do","it","this",
-              "that","as","if","so","but","all","any","no","via","per"}
+_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "to",
+    "of",
+    "and",
+    "or",
+    "in",
+    "on",
+    "at",
+    "for",
+    "with",
+    "by",
+    "from",
+    "use",
+    "not",
+    "do",
+    "it",
+    "this",
+    "that",
+    "as",
+    "if",
+    "so",
+    "but",
+    "all",
+    "any",
+    "no",
+    "via",
+    "per",
+}
 
 
 def _now_iso() -> str:
@@ -83,9 +121,16 @@ def _node_id(content: str) -> str:
 
 # ── Core API ───────────────────────────────────────────────────────────────────
 
-def add_node(content: str, kind: str = "memory", tags: list = None,
-             pinned: bool = False, visibility: str = "personal",
-             auto_link: bool = True, db_path=None) -> str:
+
+def add_node(
+    content: str,
+    kind: str = "memory",
+    tags: list = None,
+    pinned: bool = False,
+    visibility: str = "personal",
+    auto_link: bool = True,
+    db_path=None,
+) -> str:
     """
     Insert or update a node. Returns node_id.
     Axiom kind is always pinned.
@@ -109,41 +154,53 @@ def add_node(content: str, kind: str = "memory", tags: list = None,
     node_id = _node_id(content)
     con = _connect(db_path)
     try:
-        con.execute("""
+        con.execute(
+            """
             INSERT INTO nodes (id, content, kind, tags, score, access_count, created_at, pinned)
             VALUES (?, ?, ?, ?, 1.0, 0, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 kind    = excluded.kind,
                 tags    = excluded.tags,
                 pinned  = excluded.pinned
-        """, (node_id, content.strip(), kind, json.dumps(tags), _now_iso(), int(pinned)))
+        """,
+            (node_id, content.strip(), kind, json.dumps(tags), _now_iso(), int(pinned)),
+        )
         con.commit()
 
         # Auto-link: find nodes sharing >=2 significant tokens
         if auto_link:
-            tokens = {t for t in re.findall(r'\w+', content.lower())
-                      if len(t) >= 4 and t not in _STOPWORDS}
+            tokens = {
+                t
+                for t in re.findall(r"\w+", content.lower())
+                if len(t) >= 4 and t not in _STOPWORDS
+            }
             if tokens:
-                cur = con.execute(
-                    "SELECT id, content FROM nodes WHERE id != ?", (node_id,))
+                cur = con.execute("SELECT id, content FROM nodes WHERE id != ?", (node_id,))
                 for row in cur.fetchall():
-                    other_tokens = {t for t in re.findall(r'\w+', row["content"].lower())
-                                    if len(t) >= 4 and t not in _STOPWORDS}
+                    other_tokens = {
+                        t
+                        for t in re.findall(r"\w+", row["content"].lower())
+                        if len(t) >= 4 and t not in _STOPWORDS
+                    }
                     overlap = tokens & other_tokens
                     if len(overlap) >= 2:
-                        con.execute("""
+                        con.execute(
+                            """
                             INSERT OR IGNORE INTO edges
                             (from_id, to_id, relation_type, weight, created_at)
                             VALUES (?, ?, 'related-to', 0.5, ?)
-                        """, (node_id, row["id"], _now_iso()))
+                        """,
+                            (node_id, row["id"], _now_iso()),
+                        )
                 con.commit()
     finally:
         con.close()
     return node_id
 
 
-def add_edge(from_id: str, to_id: str, relation: str = "related-to",
-             weight: float = 1.0, db_path=None):
+def add_edge(
+    from_id: str, to_id: str, relation: str = "related-to", weight: float = 1.0, db_path=None
+):
     """
     Add a directed edge between two existing nodes.
     Silently skips if either node doesn't exist.
@@ -152,10 +209,13 @@ def add_edge(from_id: str, to_id: str, relation: str = "related-to",
         raise ValueError(f"relation must be one of {VALID_RELATIONS}")
     con = _connect(db_path)
     try:
-        con.execute("""
+        con.execute(
+            """
             INSERT OR REPLACE INTO edges (from_id, to_id, relation_type, weight, created_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (from_id, to_id, relation, weight, _now_iso()))
+        """,
+            (from_id, to_id, relation, weight, _now_iso()),
+        )
         con.commit()
     finally:
         con.close()
@@ -177,11 +237,14 @@ def access(node_id: str, db_path=None) -> bool:
         # Logarithmic reinforcement: score += 0.1 * log(1 + access_count)
         boost = 0.1 * math.log1p(new_count)
         new_score = min(row["score"] + boost, 100.0)
-        con.execute("""
+        con.execute(
+            """
             UPDATE nodes
             SET score=?, access_count=?, last_accessed=?
             WHERE id=?
-        """, (new_score, new_count, _now_iso(), node_id))
+        """,
+            (new_score, new_count, _now_iso(), node_id),
+        )
         con.commit()
         return True
     finally:
@@ -211,7 +274,8 @@ def fisheye(node_id: str, hops: int = 1, db_path=None) -> dict:
         focal["tags"] = json.loads(focal["tags"])
 
         # 1-hop: direct neighbours (both directions)
-        cur = con.execute("""
+        cur = con.execute(
+            """
             SELECT n.id, n.content, n.kind, n.score,
                    e.relation_type, e.weight, 'outbound' AS direction
             FROM edges e JOIN nodes n ON n.id = e.to_id
@@ -221,36 +285,44 @@ def fisheye(node_id: str, hops: int = 1, db_path=None) -> dict:
                    e.relation_type, e.weight, 'inbound' AS direction
             FROM edges e JOIN nodes n ON n.id = e.from_id
             WHERE e.to_id = ?
-        """, (node_id, node_id))
+        """,
+            (node_id, node_id),
+        )
         hop1_rows = cur.fetchall()
         hop1_ids = set()
         hop1 = []
         for r in hop1_rows:
             hop1_ids.add(r["id"])
-            hop1.append({
-                "id":        r["id"],
-                "summary":   r["content"][:80] + ("…" if len(r["content"]) > 80 else ""),
-                "kind":      r["kind"],
-                "score":     round(r["score"], 4),
-                "relation":  r["relation_type"],
-                "direction": r["direction"],
-            })
+            hop1.append(
+                {
+                    "id": r["id"],
+                    "summary": r["content"][:80] + ("…" if len(r["content"]) > 80 else ""),
+                    "kind": r["kind"],
+                    "score": round(r["score"], 4),
+                    "relation": r["relation_type"],
+                    "direction": r["direction"],
+                }
+            )
 
         # 2-hop: nodes reachable in 2 steps from hop1, excluding focal + hop1
         hop2_counts: dict[str, int] = {}
         if hop1_ids:
             seen = hop1_ids | {node_id}
             for h1_id in hop1_ids:
-                cur2 = con.execute("""
+                cur2 = con.execute(
+                    """
                     SELECT e.relation_type, COUNT(*) as cnt
                     FROM edges e
                     WHERE (e.from_id = ? AND e.to_id NOT IN ({excl}))
                        OR (e.to_id   = ? AND e.from_id NOT IN ({excl}))
                     GROUP BY e.relation_type
                 """.format(excl=",".join("?" * len(seen))),
-                    [h1_id] + list(seen) + [h1_id] + list(seen))
+                    [h1_id] + list(seen) + [h1_id] + list(seen),
+                )
                 for r in cur2.fetchall():
-                    hop2_counts[r["relation_type"]] = hop2_counts.get(r["relation_type"], 0) + r["cnt"]
+                    hop2_counts[r["relation_type"]] = (
+                        hop2_counts.get(r["relation_type"], 0) + r["cnt"]
+                    )
 
         return {"focal": focal, "hop1": hop1, "hop2": hop2_counts}
     finally:
@@ -263,7 +335,7 @@ def search(query: str, limit: int = 10, db_path=None) -> list:
     Returns list of matching nodes sorted by score desc.
     """
     # Tokenise query into words, build LIKE clauses
-    tokens = re.findall(r'\w+', query.lower())
+    tokens = re.findall(r"\w+", query.lower())
     if not tokens:
         return []
 
@@ -271,10 +343,9 @@ def search(query: str, limit: int = 10, db_path=None) -> list:
     try:
         # Build WHERE with AND between tokens (all must appear)
         conditions = " AND ".join(["LOWER(content) LIKE ?" for _ in tokens])
-        params     = [f"%{t}%" for t in tokens] + [limit]
+        params = [f"%{t}%" for t in tokens] + [limit]
         cur = con.execute(
-            f"SELECT * FROM nodes WHERE {conditions} ORDER BY score DESC LIMIT ?",
-            params
+            f"SELECT * FROM nodes WHERE {conditions} ORDER BY score DESC LIMIT ?", params
         )
         rows = cur.fetchall()
         results = []
@@ -294,22 +365,27 @@ def top(n: int = 10, db_path=None) -> list:
     """
     con = _connect(db_path)
     try:
-        cur = con.execute("""
+        cur = con.execute(
+            """
             SELECT id, content, kind, score, pinned, tags
             FROM nodes
             ORDER BY score DESC
             LIMIT ?
-        """, (n,))
+        """,
+            (n,),
+        )
         results = []
         for r in cur.fetchall():
-            results.append({
-                "id":      r["id"],
-                "summary": r["content"][:100] + ("…" if len(r["content"]) > 100 else ""),
-                "kind":    r["kind"],
-                "score":   round(r["score"], 4),
-                "pinned":  bool(r["pinned"]),
-                "tags":    json.loads(r["tags"]),
-            })
+            results.append(
+                {
+                    "id": r["id"],
+                    "summary": r["content"][:100] + ("…" if len(r["content"]) > 100 else ""),
+                    "kind": r["kind"],
+                    "score": round(r["score"], 4),
+                    "pinned": bool(r["pinned"]),
+                    "tags": json.loads(r["tags"]),
+                }
+            )
         return results
     finally:
         con.close()
@@ -324,11 +400,14 @@ def decay_all(factor: float = DECAY_FACTOR, db_path=None) -> dict:
     """
     con = _connect(db_path)
     try:
-        cur = con.execute("""
+        cur = con.execute(
+            """
             UPDATE nodes
             SET score = MAX(0.001, score * ?)
             WHERE pinned = 0 AND kind != 'axiom'
-        """, (factor,))
+        """,
+            (factor,),
+        )
         decayed = cur.rowcount
         cur2 = con.execute("SELECT COUNT(*) FROM nodes WHERE pinned=1 OR kind='axiom'")
         skipped = cur2.fetchone()[0]
@@ -349,7 +428,9 @@ def node_count(db_path=None) -> int:
 def pinned_count(db_path=None) -> int:
     con = _connect(db_path)
     try:
-        return con.execute("SELECT COUNT(*) FROM nodes WHERE pinned=1 OR kind='axiom'").fetchone()[0]
+        return con.execute("SELECT COUNT(*) FROM nodes WHERE pinned=1 OR kind='axiom'").fetchone()[
+            0
+        ]
     finally:
         con.close()
 
@@ -365,16 +446,21 @@ def axiom_count(db_path=None) -> int:
 # ── CLI convenience ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
+
     db_path = Path(__file__).parent / "memory_graph.db"
     init_db(db_path)
     cmd = sys.argv[1] if len(sys.argv) > 1 else "top"
     if cmd == "top":
         n = int(sys.argv[2]) if len(sys.argv) > 2 else 10
         for node in top(n, db_path):
-            print(f"[{node['score']:.2f}] ({node['kind']}) {'📌' if node['pinned'] else '  '} {node['summary'][:80]}")
+            print(
+                f"[{node['score']:.2f}] ({node['kind']}) {'📌' if node['pinned'] else '  '} {node['summary'][:80]}"
+            )
     elif cmd == "search":
         q = " ".join(sys.argv[2:])
         for node in search(q, db_path=db_path):
             print(f"[{node['score']:.2f}] {node['id']} — {node['content'][:100]}")
     elif cmd == "stats":
-        print(f"Nodes: {node_count(db_path)}  Pinned: {pinned_count(db_path)}  Axioms: {axiom_count(db_path)}")
+        print(
+            f"Nodes: {node_count(db_path)}  Pinned: {pinned_count(db_path)}  Axioms: {axiom_count(db_path)}"
+        )

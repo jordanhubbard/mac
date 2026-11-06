@@ -6,9 +6,11 @@ SQLite-backed graph memory library for fleet agents. Stdlib only — no pip depe
 
 ```python
 import sys
-sys.path.insert(0, '/path/to/mac/lib/memory_graph')
+
+sys.path.insert(0, "/path/to/mac/lib/memory_graph")
 import memory_graph as mg
-mg.init_db('/path/to/your/AgentFS/<name>-memory-graph/memory_graph.db')
+
+mg.init_db(os.path.expanduser("~/.mac/data/<name>-memory-graph/memory_graph.db"))
 ```
 
 ## API
@@ -29,26 +31,52 @@ mg.init_db('/path/to/your/AgentFS/<name>-memory-graph/memory_graph.db')
 - `visibility:personal` — default
 - `visibility:fleet` — shareable to other agents via Qdrant (future)
 
+## Edge relation types
+
+`VALID_RELATIONS` in `memory_graph.py` defines the allowed typed edges:
+
+| Relation | Meaning |
+|---|---|
+| `related-to` | generic fallback — prefer a specific type |
+| `cites` | this node references/quotes the target |
+| `refines` | more precise version of a broader node |
+| `corroborates` | supports/confirms the target |
+| `derived-from` | built on the target |
+| `contradicts` | in tension with; known exception |
+
+**Gap vs. soul graph vocabulary:** The soul-graph MCP layer (soul_prime, soul_add, etc.) also uses `depends_on`, `explains`, `instance_of`, `learned_from`, `applies_to`, and `implements`. These are not in `VALID_RELATIONS`. When migrating a soul graph to SQLite, map them as follows until the library is extended:
+- `depends_on` → `derived-from`
+- `explains` → `related-to` (or add a note in content)
+- `instance_of` → `derived-from`
+- `learned_from` → `corroborates`
+- `applies_to` → `related-to`
+- `implements` → `derived-from`
+
+Tracking issue: extend `VALID_RELATIONS` to match the soul-graph vocabulary.
+
 ## Per-agent setup
 
-Each agent creates their own DB:
+Each agent creates their own DB under `~/.mac/data/`:
+
 ```bash
-mkdir -p ~/AgentFS/<name>-memory-graph
+mkdir -p ~/.mac/data/<name>-memory-graph
 ```
 
 Then set MEMORY.md to:
 ```
 Your memory lives in a graph. First tool call every session:
   import sys; sys.path.insert(0, '/path/to/lib/memory_graph')
-  import memory_graph as mg; mg.init_db('~/AgentFS/<name>-memory-graph/memory_graph.db')
+  import memory_graph as mg; mg.init_db(os.path.expanduser('~/.mac/data/<name>-memory-graph/memory_graph.db'))
   for n in mg.top(8): print(f"[{n['kind']}] {n['summary']}")
 Never write to this file again. The graph is the store.
 ```
 
+> **AgentFS is deprecated.** Do not use `~/AgentFS/` paths. All agent data lives under `~/.mac/data/`. Paths under `~/AgentFS/` are invisible to other fleet agents and ignored by fleet tooling.
+
 ## Gardener (daily maintenance)
 
 ```bash
-python3 lib/memory_graph/gardener.py --db ~/AgentFS/<name>-memory-graph/memory_graph.db
+python3 lib/memory_graph/gardener.py --db ~/.mac/data/<name>-memory-graph/memory_graph.db
 ```
 
 Runs: decay, archive low-score, flag isolated nodes, detect near-dupes, surface promotion candidates, check skill-ref health.
