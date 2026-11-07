@@ -33,6 +33,7 @@ import sys
 import traceback
 
 from mac import world as W
+from mac import world_presence as WP
 
 # ---------------------------------------------------------------------------
 # MCP wire protocol helpers
@@ -170,6 +171,39 @@ TOOLS = [
             "properties": {"handle": {"type": "string"}},
         },
     },
+    {
+        "name": "world_checkin",
+        "description": "Upsert this agent's presence object in the shared world. Call at session start.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status":        {"type": "string", "enum": ["idle","working","reviewing","offline"]},
+                "current_task":  {"type": "string"},
+                "hermes":        {"type": "string"},
+                "note":          {"type": "string"},
+                "capabilities":  {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    {
+        "name": "world_presence_all",
+        "description": "Return presence objects for all checked-in fleet agents.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "world_presence_get",
+        "description": "Return one agent's presence object.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["agent_id"],
+            "properties": {"agent_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "world_checkout",
+        "description": "Mark this agent as offline (call on clean shutdown).",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -223,7 +257,29 @@ def _dispatch(method: str, params: dict, agent: str, dsn: str | None) -> object:
         return W.world_despawn(handle=p["handle"], agent=agent, **kw)
 
     if method == "world_get":
-        return W.world_get(handle=p["handle"], **kw)
+        return W.world_get(handle=p["handle"], **kw).to_dict()
+
+    if method == "world_checkin":
+        obj = WP.presence_checkin(
+            agent_id=agent,
+            status=p.get("status", "idle"),
+            current_task=p.get("current_task", ""),
+            hermes_instance=p.get("hermes", ""),
+            note=p.get("note", ""),
+            capabilities=p.get("capabilities"),
+            dsn=dsn,
+        )
+        return obj.to_dict()
+
+    if method == "world_presence_all":
+        return [o.to_dict() for o in WP.presence_all(dsn=dsn)]
+
+    if method == "world_presence_get":
+        obj = WP.presence_get(p["agent_id"], dsn=dsn)
+        return obj.to_dict() if obj else None
+
+    if method == "world_checkout":
+        return WP.presence_checkout(agent_id=agent, dsn=dsn)
 
     raise ValueError(f"Unknown tool: {method}")
 
