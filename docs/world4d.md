@@ -8,7 +8,7 @@ Every fleet agent can connect simultaneously and see each other's objects and fi
 ```python
 from mac.world4d import World4D, Vec4, Shape, ShapeKind, FieldKind
 
-world = World4D.connect(agent="natasha")  # reads WORLD4D_PG_URL or ~/.pgpass
+world = World4D.connect(agent="<agent>")  # reads WORLD4D_PG_URL or ~/.pgpass
 
 # Objects
 h = world.spawn("comet", pos=Vec4(1, 2, 3, 0), shape=Shape(ShapeKind.sphere, {"radius": 1.5}))
@@ -41,8 +41,8 @@ Add to `~/.hermes/config.yaml` under `mcp_servers:`:
 ```yaml
 mcp_servers:
   world4d:
-    command: /home/jkh/.mac/venv/bin/python
-    args: [-m, mac.world4d_mcp, --agent, natasha]
+    command: /path/to/venv/bin/python
+    args: [-m, mac.world4d_mcp, --agent, <agent>]
     env:
       WORLD4D_PG_URL: "postgresql://fleet_agent@100.72.16.110:5432/agent_brain"
     timeout: 30
