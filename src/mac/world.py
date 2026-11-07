@@ -142,10 +142,15 @@ def world_spawn(
     shape: dict | None = None,
     fields: dict | None = None,
     tags: list[str] | None = None,
+    id: str | None = None,
     dsn: str | None = None,
 ) -> WorldObject:
-    """Spawn a new object in the world.  Returns the object with its handle."""
-    handle = "wobj_" + uuid.uuid4().hex
+    """Spawn a new object in the world.  Returns the object with its handle.
+
+    Pass ``id`` to use a deterministic handle (e.g. for agent presence objects).
+    If omitted a random ``wobj_<uuid>`` is generated.
+    """
+    handle = id if id is not None else ("wobj_" + uuid.uuid4().hex)
     world_t = t if t is not None else _current_world_t(dsn=dsn)
     _shape = shape or {"type": "point"}
     _fields = fields or {}
