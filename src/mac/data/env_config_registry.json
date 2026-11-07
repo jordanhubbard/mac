@@ -184,6 +184,7 @@
       "src/mac/openshell_supervisor.py",
       "src/mac/prompt_master.py",
       "src/mac/router_app.py",
+      "src/mac/soul_mcp.py",
       "src/mac/worker.py",
       "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py",
@@ -6212,8 +6213,7 @@
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_question_gate.py",
       "src/mac/hermes_runtime.py",
-      "src/mac/openshell_runtime.py",
-      "src/mac/soul_mcp.py"
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },

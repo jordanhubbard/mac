@@ -140,9 +140,7 @@ class SoulTools:
                 g.touch(nid)
                 next_frontier.extend(node.children)
             frontier = next_frontier
-        return _text(
-            {"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]}
-        )
+        return _text({"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]})
 
     def soul_by_tag(self, tag: str) -> JsonDict:
         nodes = self._g.by_tag(tag)
@@ -186,9 +184,7 @@ class SoulTools:
             node_id=exp_id,
         )
         refused = [pid for pid in (parent_ids or []) if not self._g.link(pid, exp_id)]
-        return _text(
-            {"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused}
-        )
+        return _text({"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused})
 
     def soul_add(
         self,
@@ -324,14 +320,20 @@ class SoulTools:
         {
             "name": "soul_hot",
             "description": "Top-N splay nodes: who this agent is right now.",
-            "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "default": 7}}},
+            "inputSchema": {
+                "type": "object",
+                "properties": {"n": {"type": "integer", "default": 7}},
+            },
         },
         {
             "name": "soul_discover",
             "description": "Walk the DAG's children from a seed node id (or text matching one).",
             "inputSchema": {
                 "type": "object",
-                "properties": {"seed_id": {"type": "string"}, "hops": {"type": "integer", "default": 2}},
+                "properties": {
+                    "seed_id": {"type": "string"},
+                    "hops": {"type": "integer", "default": 2},
+                },
                 "required": ["seed_id"],
             },
         },
@@ -429,18 +431,8 @@ class SoulTools:
             return _error("%s failed: %s" % (name, exc))
 
 
-def _run_loop(
-    graph: SoulGraph,
-    save_fn: Any,
-    inp: Any = None,
-    out: Any = None,
-) -> None:
-    """Inner serve loop — works for both JSON-file and Postgres backends.
-
-    ``save_fn(graph)`` is called after every mutating tool call.
-    """
-    inp = inp or sys.stdin
-    out = out or sys.stdout
+def _run_server(graph: SoulGraph, soul_path: Optional[Path], inp: Any, out: Any) -> None:
+    """Inner dispatch loop shared by file-backed and PG-backed serve paths."""
     tools = SoulTools(graph)
 
     def send(obj: JsonDict) -> None:
@@ -454,48 +446,76 @@ def _run_loop(
         try:
             req = json.loads(raw)
         except json.JSONDecodeError:
-            send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+            send(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+            )
             continue
         rid = req.get("id")
         method = req.get("method", "")
         params = req.get("params") or {}
         if method == "initialize":
-            send({"jsonrpc": "2.0", "id": rid, "result": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "serverInfo": {"name": SERVER_NAME, "version": "0.2.0"},
-                "capabilities": {"tools": {}},
-            }})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "result": {
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "serverInfo": {"name": SERVER_NAME, "version": "0.2.0"},
+                        "capabilities": {"tools": {}},
+                    },
+                }
+            )
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": rid, "result": {"tools": SoulTools.TOOL_SPECS}})
         elif method == "tools/call":
             name = params.get("name", "")
             result = tools.dispatch(name, params.get("arguments") or {})
             if name not in READ_ONLY_TOOLS and not result.get("isError"):
-                save_fn(graph)
+                if soul_path is not None:
+                    soul_path.parent.mkdir(parents=True, exist_ok=True)
+                graph.save(soul_path)  # type: ignore[arg-type]
             send({"jsonrpc": "2.0", "id": rid, "result": result})
         elif rid is not None:
-            send({"jsonrpc": "2.0", "id": rid, "error": {
-                "code": -32601, "message": "Method not found: %s" % method}})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "error": {"code": -32601, "message": "Method not found: %s" % method},
+                }
+            )
 
 
 def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
-    """Run the soul MCP server over stdio using a JSON file as storage."""
+    """Run the soul MCP server over stdio with a JSON file backend."""
+    inp = inp or sys.stdin
+    out = out or sys.stdout
     graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
-
-    def save_fn(g: SoulGraph) -> None:
-        soul_path.parent.mkdir(parents=True, exist_ok=True)
-        g.save(soul_path)
-
-    _run_loop(graph, save_fn, inp, out)
+    _run_server(graph, soul_path, inp, out)
 
 
-def serve_pg(agent_id: str, db_url: str, inp: Any = None, out: Any = None) -> None:
-    """Run the soul MCP server over stdio using fleet_brain Postgres as primary storage."""
-    from mac.soul_pg_sync import PgSoulBackend  # noqa: PLC0415
+def serve_pg(
+    pg_url: str,
+    agent: str,
+    soul_path: Optional[Path] = None,
+    cross_agent: bool = False,
+    inp: Any = None,
+    out: Any = None,
+) -> None:
+    """Run the soul MCP server with a Postgres backend.
 
-    backend = PgSoulBackend(agent_id=agent_id, db_url=db_url)
-    graph = backend.load(name="soul")
-    _run_loop(graph, backend.save, inp, out)
+    Loads all nodes for `agent` from Postgres on startup; flushes dirty nodes
+    after every mutating tool call. If soul_path is also provided, a JSON
+    backup is written alongside (best-effort; Postgres is authoritative).
+
+    If cross_agent=True, nodes from all agents are loaded for queries;
+    writes still tag new nodes with `agent`.
+    """
+    from mac.soul_graph_pg import SoulGraphPG  # type: ignore[import]
+
+    inp = inp or sys.stdin
+    out = out or sys.stdout
+    graph = SoulGraphPG.from_pg(pg_url, agent, cross_agent=cross_agent)
+    _run_server(graph, soul_path, inp, out)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -503,27 +523,45 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     parser = argparse.ArgumentParser(description="Soul graph MCP server (JSON-RPC 2.0 over stdio)")
     parser.add_argument(
-        "--soul-file", type=Path, default=None,
+        "--soul-file",
+        type=Path,
+        default=None,
         help="soul JSON file (default: soul.json in the agent home); created on first write",
     )
     parser.add_argument(
-        "--db-url", default=None,
-        help="Postgres URL for fleet_brain primary storage (e.g. postgresql:///fleet_brain). "
-             "When set, --soul-file is ignored and Postgres is used as primary.",
+        "--pg-url",
+        default=None,
+        help="Postgres connection URL for fleet-shared soul graph "
+        "(e.g. postgresql://fleet_agent:pw@host:5432/agent_brain). "
+        "When set, --soul-file is used only as a JSON backup.",
     )
     parser.add_argument(
-        "--agent", default=None,
-        help="Agent ID for Postgres mode (e.g. bullwinkle). "
-             "Required when --db-url is set. Defaults to MAC_WORKER_AGENT_NAME env var.",
+        "--agent",
+        default=None,
+        help="Agent name for PG backend (required with --pg-url; "
+        "defaults to MAC_AGENT_ID env var).",
+    )
+    parser.add_argument(
+        "--cross-agent",
+        action="store_true",
+        default=False,
+        help="Load nodes from ALL agents (read-only peers visible in queries). "
+        "Writes still tag new nodes with --agent. Requires --pg-url.",
     )
     args = parser.parse_args(argv)
 
-    if args.db_url:
-        import os  # noqa: PLC0415
-        agent_id = args.agent or os.environ.get("MAC_WORKER_AGENT_NAME")
-        if not agent_id:
-            parser.error("--agent (or MAC_WORKER_AGENT_NAME) is required when using --db-url")
-        serve_pg(agent_id=agent_id, db_url=args.db_url)
+    if args.pg_url:
+        import os
+
+        agent = args.agent or os.environ.get("MAC_AGENT_ID") or "unknown"
+        # Strip agent_ prefix for the graph's agent column if present
+        agent_name = agent.removeprefix("agent_")
+        serve_pg(
+            pg_url=args.pg_url,
+            agent=agent_name,
+            soul_path=args.soul_file,
+            cross_agent=args.cross_agent,
+        )
     else:
         serve(args.soul_file or default_soul_path())
 

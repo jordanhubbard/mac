@@ -226,36 +226,29 @@ def test_pg_to_json_writes_soul_file(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_serve_pg_initializes_and_summarises():
-    """serve_pg should load from PgSoulBackend and respond to soul_summary."""
+    """serve_pg should load from SoulGraphPG and respond to soul_summary."""
     import io
     from mac.soul_mcp import serve_pg
     from unittest.mock import patch, MagicMock
     from mac.soul_graph import SoulGraph
 
-    # Build a tiny graph to return from backend.load
+    # Build a tiny graph to return from SoulGraphPG.from_pg
     g = SoulGraph(name="soul")
     g.add("I am a test node", tags={"identity"}, pinned=True)
 
-    mock_backend_cls = MagicMock()
-    mock_backend = MagicMock()
-    mock_backend_cls.return_value = mock_backend
-    mock_backend.load.return_value = g
-    mock_backend.save = MagicMock()
+    mock_pg_cls = MagicMock()
+    mock_pg_cls.from_pg.return_value = g
 
-    with patch("mac.soul_mcp.PgSoulBackend", mock_backend_cls, create=True):
-        # Monkey-patch the import inside serve_pg
-        import mac.soul_mcp as mcp_module
-        orig = getattr(mcp_module, "serve_pg")
+    inp = io.StringIO(
+        '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"soul_summary","arguments":{}}}\n'
+    )
+    out = io.StringIO()
 
-        inp = io.StringIO(
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'
-            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"soul_summary","arguments":{}}}\n'
-        )
-        out = io.StringIO()
-
-        # Call directly with mocked backend via patch on the import path
-        with patch("mac.soul_pg_sync.PgSoulBackend", mock_backend_cls):
-            serve_pg("test_agent", "postgresql:///fake", inp=inp, out=out)
+    # serve_pg does a lazy `from mac.soul_graph_pg import SoulGraphPG` so we
+    # must patch the class on its home module, not on soul_mcp's namespace.
+    with patch("mac.soul_graph_pg.SoulGraphPG", mock_pg_cls):
+        serve_pg("postgresql:///fake", "test_agent", inp=inp, out=out)
 
     lines = [l for l in out.getvalue().strip().split("\n") if l]
     assert len(lines) == 2
