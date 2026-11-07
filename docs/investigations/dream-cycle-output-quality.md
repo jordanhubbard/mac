@@ -36,8 +36,8 @@ owner's configuration and contract, not as an unused MAC setting.
 
 ## Evidence limits
 
-The task sandbox contains the canonical repository snapshot but not the Rocky
-host's `~/.hermes/dream_logs/` directory or scheduler definitions. Therefore
+The task sandbox contains the canonical repository snapshot but not the
+gpu-worker host's `~/.hermes/dream_logs/` directory or scheduler definitions. Therefore
 this assessment establishes from source why the named schedules cannot promote
 MAC candidates; it does not claim to have sampled inaccessible host-local log
 files or disabled the external schedules.
