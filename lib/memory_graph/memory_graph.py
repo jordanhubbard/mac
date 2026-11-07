@@ -410,6 +410,24 @@ def decay_all(factor: float = DECAY_FACTOR, db_path=None) -> dict:
         con.close()
 
 
+def gripe(complaint: str, tags: list = None, db_path=None) -> str:
+    """
+    Lightweight complaint/feedback shortcut.
+    Files a 'memory' node tagged ['gripe', 'feedback'] plus any extra tags.
+    Returns the node_id.
+
+    Usage (Python):
+        import memory_graph as mg
+        mg.gripe("The FTS rebuild takes 3s on a cold start — annoying")
+
+    Usage (shell):
+        python -m memory_graph gripe "some complaint here"
+    """
+    extra_tags = list(tags or [])
+    combined_tags = ["gripe", "feedback"] + [t for t in extra_tags if t not in ("gripe", "feedback")]
+    return add_node(complaint.strip(), kind="memory", tags=combined_tags, db_path=db_path)
+
+
 def node_count(db_path=None) -> int:
     con = _connect(db_path)
     try:
@@ -448,5 +466,12 @@ if __name__ == "__main__":
         q = " ".join(sys.argv[2:])
         for node in search(q, db_path=db_path):
             print(f"[{node['score']:.2f}] {node['id']} — {node['content'][:100]}")
+    elif cmd == "gripe":
+        complaint = " ".join(sys.argv[2:])
+        if not complaint:
+            print("Usage: python -m memory_graph gripe 'your complaint here'", file=sys.stderr)
+            sys.exit(1)
+        nid = gripe(complaint, db_path=db_path)
+        print(f"Filed gripe {nid}: {complaint[:80]}")
     elif cmd == "stats":
         print(f"Nodes: {node_count(db_path)}  Pinned: {pinned_count(db_path)}  Axioms: {axiom_count(db_path)}")
