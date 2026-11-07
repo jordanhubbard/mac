@@ -128,3 +128,79 @@ def test_stdio_server_speaks_mcp_and_saves_only_after_writes(tmp_path):
 def test_the_default_soul_file_lives_in_the_agent_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     assert default_soul_path() == tmp_path / "soul.json"
+
+
+# ---------------------------------------------------------------------------
+# Cross-agent dedup: same concept from two agents → one node, no duplicate
+# ---------------------------------------------------------------------------
+
+def _cross_agent_graph() -> SoulGraph:
+    """Simulate a graph loaded with --cross-agent: nodes from two agents."""
+    g = SoulGraph(name="fleet")
+    # Agent Rocky already wrote this axiom
+    g.add(
+        "AXIOM — hyperlinked memory: every addressable thing gets its canonical ID cited inline on every mention.",
+        tags={"axiom", "visibility:fleet-canonical"},
+        pinned=True,
+        node_id="rocky_ax1",
+    )
+    # Some unrelated node so search has background noise
+    g.add("Rocky is the fleet hub agent running on puck.", tags={"crew"}, node_id="rocky_i1")
+    return g
+
+
+def test_soul_add_dedupes_on_similar_content():
+    """When agent Natasha calls soul_add with near-identical axiom content,
+    dedup fires and returns the existing node instead of minting a new one."""
+    g = _cross_agent_graph()
+    tools = SoulTools(g)
+    # Natasha tries to add the same axiom in different words
+    result = _payload(
+        tools.soul_add(
+            "AXIOM — hyperlinked memory: every addressable thing gets its canonical ID on every mention.",
+            pinned=True,
+        )
+    )
+    assert result.get("deduped") is True, "Expected dedup to fire"
+    assert result["existing_node"] == "rocky_ax1"
+    assert result["similarity"] >= SoulTools._DEDUP_THRESHOLD
+    # Node count must not have grown
+    assert len(g.nodes) == 2
+
+
+def test_soul_add_mints_when_no_match():
+    """Distinct content below threshold → normal mint."""
+    g = _cross_agent_graph()
+    tools = SoulTools(g)
+    result = _payload(
+        tools.soul_add("Bullwinkle handles Qdrant RAG embeddings for the fleet.", id="b1")
+    )
+    assert "deduped" not in result
+    assert result["id"] == "b1"
+    assert len(g.nodes) == 3
+
+
+def test_soul_add_pinned_gets_fleet_canonical_tag_when_no_visibility():
+    """Pinned node without a visibility: tag → auto-tagged visibility:fleet-canonical."""
+    g = SoulGraph(name="t")
+    tools = SoulTools(g)
+    result = _payload(tools.soul_add("Agents must file all work as MAC tasks.", pinned=True, id="p1"))
+    assert "deduped" not in result
+    assert "visibility:fleet-canonical" in result["tags"]
+
+
+def test_soul_add_pinned_respects_explicit_visibility_tag():
+    """Pinned node with explicit visibility:private → not overridden."""
+    g = SoulGraph(name="t")
+    tools = SoulTools(g)
+    result = _payload(
+        tools.soul_add(
+            "Private axiom for natasha only.",
+            pinned=True,
+            tags=["visibility:private"],
+            id="p2",
+        )
+    )
+    assert "visibility:fleet-canonical" not in result["tags"]
+    assert "visibility:private" in result["tags"]
+
