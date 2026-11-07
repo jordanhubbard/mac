@@ -6911,18 +6911,46 @@ class ControlPlane:
         tenant_id: Optional[str] = None,
         limit: int = 50,
     ) -> List[Task]:
-        """Keyword search across title/description (parity with bd search)."""
-        like = "%" + (query or "") + "%"
-        where = ["(title LIKE ? OR description LIKE ?)"]
-        params: list = [like, like]
-        if project is not None:
-            where.append("project = ?")
-            params.append(project)
-        rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at DESC LIMIT ?"
-            % " AND ".join(where),
-            tuple(params + [int(limit)]),
-        )
+        """Keyword search across title and description.
+
+        On PostgreSQL: uses ``websearch_to_tsquery`` with a ``tsvector`` built
+        from title and description for fast, ranked, stemmed full-text search.
+        Underscore-tokenization and partial-word matches are handled by PG's
+        ``english`` text-search configuration.
+
+        On SQLite (dev/test): falls back to case-insensitive LIKE across both
+        columns, preserving the original behaviour.
+        """
+        if not query:
+            return []
+
+        is_pg = self.store.backend_identity().get("backend") == "postgres"
+        project_filter_sql = " AND project = ?" if project is not None else ""
+        project_param = [project] if project is not None else []
+
+        if is_pg:
+            # Replace underscores with spaces so "reasoning_atoms" matches
+            # the same nodes as "reasoning atoms".
+            normalized = query.replace("_", " ")
+            sql = (
+                "SELECT * FROM tasks"
+                " WHERE to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,''))"
+                "       @@ websearch_to_tsquery('english', ?)"
+                + project_filter_sql
+                + " ORDER BY priority DESC, created_at DESC LIMIT ?"
+            )
+            params: tuple = tuple([normalized] + project_param + [int(limit)])
+        else:
+            like = "%" + query + "%"
+            sql = (
+                "SELECT * FROM tasks"
+                " WHERE (title LIKE ? OR description LIKE ?)"
+                + project_filter_sql
+                + " ORDER BY priority DESC, created_at DESC LIMIT ?"
+            )
+            params = tuple([like, like] + project_param + [int(limit)])
+
+        rows = self.store.query_all(sql, params)
         tasks = [self._task_from_row(row) for row in rows]
         if tenant_id is not None:
             tasks = [t for t in tasks if self._task_tenant_id(t) == tenant_id]
