@@ -564,6 +564,39 @@ class SoulGraph:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
+    def _cluster_root(self, node_id: str, max_hops: int = 10, hub_threshold: int = 5) -> str:
+        """Walk the DAG upward from node_id to find the nearest dominant ancestor.
+
+        Returns the first ancestor (walking toward the root) that has
+        ``hub_threshold`` or more children -- a "gravity well" node such as
+        exploration_process.  Stopping at the FIRST hub rather than climbing
+        to the global root keeps distinct sub-clusters separated: a 10-child
+        mid-tier node and its parent 60-child root node produce different cluster
+        keys so each sub-cluster gets its own cap rather than being lumped.
+
+        Without this fix, a 60-child hub produces 60 sub-clusters each admitting
+        up to saturation_cap hits -- effectively bypassing the cap.
+        hub_threshold=5 catches real gravity-well nodes (exploration_process=62,
+        sensing_platform_design=10) while letting small sub-trees (1-3 children)
+        keep independent cluster keys.
+        """
+        visited: set[str] = set()
+        current = node_id
+        for _ in range(max_hops):
+            if current in visited:
+                break
+            visited.add(current)
+            node = self.nodes.get(current)
+            if node is None:
+                break
+            # Return the first hub we encounter walking toward the root
+            if len(node.children) >= hub_threshold:
+                return current
+            if not node.parents:
+                break
+            current = next(iter(node.parents))
+        return node_id  # no hub found -- node is its own cluster
+
     def related(
         self,
         query: str,
@@ -605,7 +638,7 @@ class SoulGraph:
             penalised: list[tuple[SoulNode, float]] = []
             for node, score in candidates:
                 # cluster key: first parent if it exists, else the node itself
-                cluster_key = list(node.parents)[0] if node.parents else node.id
+                cluster_key = self._cluster_root(node.id)
                 n = cluster_seen.get(cluster_key, 0)
                 penalised.append((node, score / (1.0 + n)))
                 cluster_seen[cluster_key] = n + 1
@@ -626,7 +659,7 @@ class SoulGraph:
                     continue
                 n_node = self.nodes[nid]
                 if saturation_penalty:
-                    n_cluster = list(n_node.parents)[0] if n_node.parents else n_node.id
+                    n_cluster = self._cluster_root(n_node.id)
                     n_count = out_cluster_seen.get(n_cluster, 0)
                     if n_count >= saturation_cap:
                         # Cluster is saturated; skip but don't mark seen so a
