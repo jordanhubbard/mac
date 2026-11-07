@@ -158,25 +158,50 @@ def _infer_kind(title: str, files: List[Dict[str, Any]]) -> str:
     return "feature"
 
 
+def _extract_body_signal(body: str) -> str:
+    """Extract the most informative lines from a PR body.
+
+    Skips markdown headings, checklist items, and boilerplate.
+    Returns up to 400 chars of signal text.
+    """
+    if not body:
+        return ""
+    signal_lines: List[str] = []
+    total = 0
+    for raw in body.strip().splitlines():
+        line = raw.strip()
+        # Skip headings, HR, empty, checklist boxes, and HTML comments
+        if not line:
+            continue
+        if line.startswith(("#", "---", "===", "<!--", "- [ ]", "- [x]", "- [X]")):
+            continue
+        # Skip lines that look like boilerplate footers
+        if re.search(r"^(closes|fixes|resolves|related)\s+#", line, re.IGNORECASE):
+            continue
+        # Capture bullet points (strip the bullet marker)
+        if line.startswith(("- ", "* ", "+ ")):
+            line = line[2:].strip()
+        if len(line) < 8:
+            continue
+        signal_lines.append(line)
+        total += len(line)
+        if total >= 400:
+            break
+    return " | ".join(signal_lines)[:400] if signal_lines else ""
+
+
 def _impact_summary(title: str, files: List[Dict[str, Any]], body: str) -> str:
     """Generate a concise impact statement for the soul node."""
     cats = _categorize_files(files)
     kind = _infer_kind(title, files)
     n_files = len(files)
 
-    # Pull first non-empty line of body as context, if present
-    body_lead = ""
-    if body:
-        for line in body.strip().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and len(line) > 10:
-                body_lead = line[:200]
-                break
+    body_signal = _extract_body_signal(body)
 
     cat_summary = ", ".join(f"{v} {k}" for k, v in sorted(cats.items()))
     impact = f"Kind: {kind}. Changed {n_files} file(s) ({cat_summary or 'misc'}). "
-    if body_lead:
-        impact += f"Author note: {body_lead}"
+    if body_signal:
+        impact += f"Context: {body_signal}"
     return impact.strip()
 
 

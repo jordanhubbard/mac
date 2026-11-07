@@ -37,6 +37,7 @@ from mac.consequence_engine import (  # noqa: E402
     _categorize_files,
     _infer_kind,
     _impact_summary,
+    _extract_body_signal,
     _get_watermark,
     _upsert_watermark,
     _insert_node,
@@ -45,6 +46,51 @@ from mac.consequence_engine import (  # noqa: E402
     WATERMARK_NODE_ID,
     SCHEMA_VERSION,
 )
+
+
+# ---------------------------------------------------------------------------
+# _extract_body_signal
+# ---------------------------------------------------------------------------
+
+
+class TestExtractBodySignal:
+    def test_empty(self):
+        assert _extract_body_signal("") == ""
+
+    def test_none_equivalent(self):
+        assert _extract_body_signal(None) == ""  # type: ignore[arg-type]
+
+    def test_skips_headings(self):
+        body = "## Summary\nActual content here."
+        assert "Summary" not in _extract_body_signal(body)
+        assert "Actual content here" in _extract_body_signal(body)
+
+    def test_skips_boilerplate_closes(self):
+        body = "Fixes the bug.\nCloses #42"
+        result = _extract_body_signal(body)
+        assert "Fixes the bug" in result
+        assert "#42" not in result
+
+    def test_strips_bullet_markers(self):
+        body = "- First point\n- Second point"
+        result = _extract_body_signal(body)
+        assert "First point" in result
+        assert "- " not in result
+
+    def test_joins_lines_with_pipe(self):
+        body = "Line one.\nLine two."
+        result = _extract_body_signal(body)
+        assert " | " in result
+
+    def test_truncates_at_400(self):
+        body = "word " * 200  # ~1000 chars
+        result = _extract_body_signal(body)
+        assert len(result) <= 400
+
+    def test_impact_summary_uses_context_prefix(self):
+        result = _impact_summary("feat: add thing", [], "This adds the thing.")
+        assert "Context:" in result
+        assert "Author note:" not in result
 
 
 # ---------------------------------------------------------------------------
