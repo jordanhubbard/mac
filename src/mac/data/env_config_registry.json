@@ -5118,6 +5118,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: soul pg url.",
+    "family": "core",
+    "name": "MAC_SOUL_PG_URL",
+    "retired": false,
+    "sources": [
+      "src/mac/consequence_engine.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: source commit.",
     "family": "core",
     "name": "MAC_SOURCE_COMMIT",

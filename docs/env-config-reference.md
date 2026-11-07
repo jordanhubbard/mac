@@ -437,6 +437,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
 | `MAC_SLACK_RELAY_POLL_SECONDS` | int | consumer-defined | core | Core setting: slack relay poll seconds. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |
+| `MAC_SOUL_PG_URL` | str | consumer-defined | core | Core setting: soul pg url. |
 | `MAC_SOURCE_COMMIT` | str | consumer-defined | core | Core setting: source commit. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |
 | `MAC_STARTUP_CLEAR_HOLD` | str | consumer-defined | core | Core setting: startup clear hold. |
