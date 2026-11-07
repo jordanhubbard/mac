@@ -4,6 +4,7 @@ Tests for mac.soul_graph — the splay-DAG-tag soul engine.
 Covers: node creation, pinning, splay promotion, DAG edges, tag index,
 semantic search, discovery traversal, exploration branch, merge, persistence.
 """
+
 from __future__ import annotations
 import json, math, time, tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from mac.soul_graph import SoulGraph, SoulNode
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_soul() -> SoulGraph:
     g = SoulGraph(name="test")
     g.add("Be genuinely helpful.", tags={"axiom"}, pinned=True, node_id="a1")
@@ -23,7 +25,12 @@ def make_soul() -> SoulGraph:
     g.add("Rocky is the fleet hub.", tags={"identity", "crew"}, parents=["a1"], node_id="i1")
     g.add("Bullwinkle handles RAG.", tags={"crew", "rag"}, parents=["i1"], node_id="i2")
     g.add("Natasha runs on the GPU host.", tags={"crew", "gpu"}, parents=["i1"], node_id="i3")
-    g.add("Lessons: curl is blocked, use urllib.", tags={"lesson", "tooling"}, parents=["a1"], node_id="l1")
+    g.add(
+        "Lessons: curl is blocked, use urllib.",
+        tags={"lesson", "tooling"},
+        parents=["a1"],
+        node_id="l1",
+    )
     g.add("git is the filesystem.", tags={"lesson", "git"}, parents=["a1"], node_id="l2")
     return g
 
@@ -31,6 +38,7 @@ def make_soul() -> SoulGraph:
 # ---------------------------------------------------------------------------
 # Basic creation
 # ---------------------------------------------------------------------------
+
 
 def test_add_node():
     g = SoulGraph(name="t")
@@ -55,6 +63,7 @@ def test_unpinned_node_finite_score():
 # Splay / access promotion
 # ---------------------------------------------------------------------------
 
+
 def test_touch_promotes():
     g = make_soul()
     # Touch i2 several times — should rise above i3
@@ -76,6 +85,7 @@ def test_hot_returns_pinned_first():
 # ---------------------------------------------------------------------------
 # DAG edges
 # ---------------------------------------------------------------------------
+
 
 def test_parent_child_wired():
     g = make_soul()
@@ -116,6 +126,7 @@ def test_ancestors():
 # Tag index
 # ---------------------------------------------------------------------------
 
+
 def test_by_tag_returns_nodes():
     g = make_soul()
     crew = g.by_tag("crew")
@@ -144,6 +155,7 @@ def test_tag_method():
 # Semantic search (keyword stub)
 # ---------------------------------------------------------------------------
 
+
 def test_semantic_search_finds_match():
     g = make_soul()
     results = g.semantic_search("curl blocked urllib", top_k=3)
@@ -162,6 +174,7 @@ def test_semantic_search_empty_query():
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
+
 
 def test_discover_returns_path():
     g = make_soul()
@@ -182,6 +195,7 @@ def test_discover_touches_nodes():
 # ---------------------------------------------------------------------------
 # Exploration branch
 # ---------------------------------------------------------------------------
+
 
 def test_branch_is_independent():
     g = make_soul()
@@ -212,6 +226,7 @@ def test_merge_does_not_overwrite_existing():
 # ---------------------------------------------------------------------------
 # Persistence (save / load round-trip)
 # ---------------------------------------------------------------------------
+
 
 def test_save_load_roundtrip():
     g = make_soul()
@@ -253,6 +268,7 @@ def test_save_load_tag_index():
 # Summary
 # ---------------------------------------------------------------------------
 
+
 def test_summary_runs():
     g = make_soul()
     s = g.summary()
@@ -263,6 +279,7 @@ def test_summary_runs():
 # ---------------------------------------------------------------------------
 # Regression tests for bugs observed via live agent session (2026-09-12)
 # ---------------------------------------------------------------------------
+
 
 def test_bug4_new_node_scores_higher_than_old():
     """BUG 4 fixed: exponential decay — new zero-access node >> week-old zero-access."""
@@ -357,9 +374,7 @@ def test_hot_matches_recency_order_at_every_time_without_reranking():
     g.pin("n5")
     for later in (0, 3600, 5 * 86400, 60 * 86400):
         clock.now += later
-        expected = sorted(
-            g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True
-        )
+        expected = sorted(g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True)
         hot = g.hot(15)
         assert hot[0].id == "n5"
         scores = [n.recency_score(clock.now) for n in hot]
@@ -465,9 +480,14 @@ def test_a_real_reasoning_dag_imports_and_is_traversable():
     assert len(g.nodes) == len(data["nodes"])
     assert g.dropped_edges == []
     assert {n.id for n in g.nodes.values() if n.pinned} == {
-        "unpredictable", "target-human", "human-control"
+        "unpredictable",
+        "target-human",
+        "human-control",
     }
-    assert g.nodes["vivaldi"].metadata["parent_rels"] == {"ark1": "component", "autodrone": "precursor"}
+    assert g.nodes["vivaldi"].metadata["parent_rels"] == {
+        "ark1": "component",
+        "autodrone": "precursor",
+    }
     assert g.tagged("event") == {"vivaldi", "ark1", "autodrone"}
     related = [n.id for n in g.related("Operation Vivaldi", top_k=6)]
     assert related[0] == "vivaldi"
@@ -480,8 +500,82 @@ def test_from_dag_drops_edges_that_would_close_a_cycle():
     g = SoulGraph.from_dag(
         {
             "nodes": [{"id": "a", "label": "a"}, {"id": "b", "label": "b"}],
-            "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}, {"from": "a", "to": "zz"}],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "a"},
+                {"from": "a", "to": "zz"},
+            ],
         }
     )
     assert g.nodes["b"].parents == ["a"]
     assert len(g.dropped_edges) == 2
+
+
+def test_related_saturation_penalty_limits_cluster_monopoly():
+    """Cluster saturation penalty caps results from one dominant cluster.
+
+    Sets up a 'dominant cluster' (8 nodes from one parent) and 2 precision
+    nodes from a separate parent.  Without penalty the dominant cluster would
+    absorb all 10 slots; with penalty (default) precision nodes surface.
+    """
+    g = SoulGraph()
+    g.add("dominant root node: judgment recognition trust ambiguity", node_id="dom_root")
+    for i in range(8):
+        g.add(
+            f"cluster member {i}: judgment recognition trust ambiguity variation",
+            parents=["dom_root"],
+            node_id=f"dom_{i}",
+        )
+
+    g.add("precision root: unrelated topic", node_id="prec_root")
+    g.add(
+        "precision detail: judgment recognition trust ambiguity specifics",
+        parents=["prec_root"],
+        node_id="prec_1",
+    )
+    g.add(
+        "precision context: judgment recognition trust ambiguity context",
+        parents=["prec_root"],
+        node_id="prec_2",
+    )
+
+    # With penalty (default): dominant cluster should not take all 10 slots
+    results_with = [n.id for n in g.related("judgment recognition trust ambiguity", top_k=10)]
+    dominated_count = sum(1 for nid in results_with if nid.startswith("dom_"))
+    assert dominated_count <= 3, (
+        f"Cluster saturation penalty failed: dominant cluster took {dominated_count}/10 slots "
+        f"(expected ≤3). Results: {results_with}"
+    )
+    # Precision nodes must appear
+    assert "prec_1" in results_with or "prec_2" in results_with, (
+        f"Precision nodes eclipsed even with saturation penalty. Results: {results_with}"
+    )
+
+    # Without penalty: dominant cluster dominates (expected pre-fix behaviour)
+    results_without = [
+        n.id
+        for n in g.related(
+            "judgment recognition trust ambiguity", top_k=10, saturation_penalty=False
+        )
+    ]
+    dominated_no_penalty = sum(1 for nid in results_without if nid.startswith("dom_"))
+    assert dominated_no_penalty > dominated_count, (
+        "saturation_penalty=False should let the dominant cluster take more slots than penalty=True"
+    )
+
+
+def test_related_saturation_penalty_preserves_top_hit():
+    """The top result from a query must still be the highest-scoring node.
+
+    Saturation penalises subsequent nodes from the same cluster, not the first.
+    """
+    g = SoulGraph()
+    g.add("foundation: shared persistent space fleet agents invariants", node_id="found")
+    g.add("detail A: fleet agents persistent", parents=["found"], node_id="dA")
+    g.add("detail B: fleet agents persistent", parents=["found"], node_id="dB")
+    g.add("unrelated node: something completely different", node_id="unrel")
+
+    results = g.related("fleet agents persistent", top_k=5)
+    assert results[0].id in {"found", "dA", "dB"}, (
+        f"Top hit should be from the target cluster, got: {results[0].id}"
+    )

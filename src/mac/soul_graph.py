@@ -37,13 +37,42 @@ def default_soul_path(name: str = "soul") -> Path:
 
     return mac_paths.hermes_home() / f"{name}.json"
 
+
 # Words too common to say anything about what a node is about. Search and the
 # inverted index both skip them, so a query is matched on what it is about.
-_STOPWORDS = frozenset({
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into",
-    "is", "it", "its", "no", "not", "of", "on", "or", "so", "that", "the", "this",
-    "to", "was", "when", "with", "without",
-})
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "so",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "when",
+        "with",
+        "without",
+    }
+)
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_]*")
 
 
@@ -56,15 +85,17 @@ def tokens(text: str) -> set[str]:
 # Node
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SoulNode:
     """A single experience, memory, axiom, or belief in the soul graph."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     content: str = ""
     tags: set[str] = field(default_factory=set)
-    parents: list[str] = field(default_factory=list)   # DAG edges (causal/semantic)
+    parents: list[str] = field(default_factory=list)  # DAG edges (causal/semantic)
     children: list[str] = field(default_factory=list)
-    pinned: bool = False                                # axioms — never decay
+    pinned: bool = False  # axioms — never decay
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
     access_count: int = 0
@@ -137,8 +168,10 @@ class SoulNode:
 # SplayTree (lightweight, keyed on recency_score)
 # ---------------------------------------------------------------------------
 
+
 class _SplayNode:
     __slots__ = ("soul_id", "key", "left", "right", "parent")
+
     def __init__(self, soul_id: str, key: float):
         self.soul_id = soul_id
         self.key = key
@@ -296,6 +329,7 @@ class SplayTree:
 # SoulGraph
 # ---------------------------------------------------------------------------
 
+
 class SoulGraph:
     """
     The soul. DAG + Splay + Tags + Pins + Exploration branch.
@@ -303,7 +337,7 @@ class SoulGraph:
 
     def __init__(self, name: str = "soul", exploration: bool = False, clock: Clock | None = None):
         self.name = name
-        self.exploration = exploration          # True = sandbox branch
+        self.exploration = exploration  # True = sandbox branch
         self.nodes: dict[str, SoulNode] = {}
         self.splay = SplayTree()
         self._tag_index: dict[str, set[str]] = {}  # tag → set of node ids
@@ -536,6 +570,8 @@ class SoulGraph:
         top_k: int = 10,
         recency_weight: float = 1.0,
         touch: bool = False,
+        saturation_penalty: bool = True,
+        saturation_cap: int = 3,
     ) -> list[SoulNode]:
         """Search hits, each followed by its DAG parents and then its children.
 
@@ -544,15 +580,62 @@ class SoulGraph:
         task builds on, this found 0.60 of the dependencies older than six
         hours in its top five, against 0.20 for keyword search alone: the hit
         is usually a recent sibling, and the old foundation is its parent.
+
+        ``saturation_penalty`` (default True) applies a two-layer cluster
+        saturation mechanism that prevents a highly-connected, high-access
+        cluster from monopolising all retrieval slots (the exploration_process
+        gravity well problem filed by Bullwinkle in task_912a89f8cfa649c5b):
+
+        Layer 1 — scoring: candidates from the same cluster are penalised by
+        1/(1+n) so the second hit from a cluster scores at half the first,
+        the third at a third, etc.  This diversifies the initial candidate
+        ranking.
+
+        Layer 2 — output cap: at most ``saturation_cap`` (default 3) nodes
+        from any one cluster key are admitted to the final ``out`` list.  A
+        cluster is identified by the node's first parent (or itself if it has
+        no parents).  This caps the flood that occurs when a dominant cluster
+        member is expanded: its parent's other children would otherwise each
+        arrive as separate candidates and fill the remaining slots.
         """
+        # Layer 1: score candidates with cluster saturation penalty
+        candidates = self.semantic_search(query, top_k * 3, recency_weight=recency_weight)
+        if saturation_penalty:
+            cluster_seen: dict[str, int] = {}
+            penalised: list[tuple[SoulNode, float]] = []
+            for node, score in candidates:
+                # cluster key: first parent if it exists, else the node itself
+                cluster_key = list(node.parents)[0] if node.parents else node.id
+                n = cluster_seen.get(cluster_key, 0)
+                penalised.append((node, score / (1.0 + n)))
+                cluster_seen[cluster_key] = n + 1
+            # re-sort after penalty
+            penalised.sort(key=lambda x: x[1], reverse=True)
+            candidates = penalised[:top_k]
+        else:
+            candidates = candidates[:top_k]
+
+        # Layer 2: expand hits to include their DAG parents and children,
+        # but apply a per-cluster output cap to prevent flooding.
         out: list[SoulNode] = []
         seen: set[str] = set()
-        for node, _ in self.semantic_search(query, top_k, recency_weight=recency_weight):
+        out_cluster_seen: dict[str, int] = {}
+        for node, _ in candidates:
             for nid in [node.id] + list(node.parents) + list(node.children):
                 if nid in seen or nid not in self.nodes:
                     continue
+                n_node = self.nodes[nid]
+                if saturation_penalty:
+                    n_cluster = list(n_node.parents)[0] if n_node.parents else n_node.id
+                    n_count = out_cluster_seen.get(n_cluster, 0)
+                    if n_count >= saturation_cap:
+                        # Cluster is saturated; skip but don't mark seen so a
+                        # future candidate with a different expansion path may
+                        # still try (and also be blocked if still saturated).
+                        continue
+                    out_cluster_seen[n_cluster] = n_count + 1
                 seen.add(nid)
-                out.append(self.nodes[nid])
+                out.append(n_node)
             if len(out) >= top_k:
                 break
         out = out[:top_k]
@@ -765,5 +848,7 @@ class SoulGraph:
         lines.append(f"  Hot nodes (top 5):")
         for n in self.hot(5):
             pin_mark = " 📌" if n.pinned else ""
-            lines.append(f"    [{n.id}]{pin_mark} {n.content[:60]!r} (score={n.recency_score():.2f})")
+            lines.append(
+                f"    [{n.id}]{pin_mark} {n.content[:60]!r} (score={n.recency_score():.2f})"
+            )
         return "\n".join(lines)
