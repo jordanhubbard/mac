@@ -16,6 +16,10 @@ from pathlib import Path
 _DEFAULT_DB = Path(__file__).parent / "memory_graph.db"
 
 VALID_RELATIONS  = {"related-to", "cites", "refines", "corroborates", "derived-from", "contradicts"}
+# NOTE: the soul graph MCP layer uses a separate vocabulary (depends_on, explains, instance_of,
+# learned_from, applies_to, implements) that does NOT overlap with VALID_RELATIONS.  Passing those
+# relation types here raises ValueError.  Bridge code must map or omit the edge type.  A future
+# release may unify the two vocabularies — see lib/memory_graph/README.md for the full gap note.
 VALID_KINDS      = {"memory", "axiom", "skill-ref", "task-ref"}
 VALID_VISIBILITY = {"private", "fleet", "personal"}   # private=Rocky-only, fleet=shareable, personal=jkh-scoped
 DECAY_FACTOR     = 0.95   # multiplied per decay_all() call
