@@ -258,3 +258,86 @@ class TestWorldMeta:
         assert obj.name == "v2"
         assert pytest.approx(obj.pos.x) == 2.0
         world.despawn(h)
+
+
+# ------------------------------------------------------------------
+# World4D — presence
+# ------------------------------------------------------------------
+
+class TestPresence:
+    def _make_world(self) -> "World4D":
+        """Each presence test gets a fresh agent-tagged connection."""
+        from mac.world4d import World4D
+        return World4D.connect(
+            pg_url=PG_URL,
+            agent="test_presence_agent",
+            apply_schema=False,
+        )
+
+    def test_announce_creates_handle(self):
+        w = self._make_world()
+        h = w.announce(meta={"role": "tester"})
+        assert h == "agent:test_presence_agent"
+        obj = w.get(h)
+        assert obj is not None
+        assert obj.meta.get("presence") is True
+        assert obj.meta.get("role") == "tester"
+        w.depart()
+        w.close()
+
+    def test_announce_is_idempotent(self):
+        w = self._make_world()
+        h1 = w.announce()
+        h2 = w.announce()
+        assert h1 == h2
+        # Only one object with that handle
+        objs = w.list_objects(agent="test_presence_agent")
+        presence_objs = [o for o in objs if o.handle == h1]
+        assert len(presence_objs) == 1
+        w.depart()
+        w.close()
+
+    def test_heartbeat_updates_timestamp(self):
+        import time
+        w = self._make_world()
+        w.announce()
+        time.sleep(0.05)
+        t_before = time.time()
+        w.heartbeat(meta_patch={"state": "working"})
+        obj = w.get("agent:test_presence_agent")
+        assert obj is not None
+        # w-coord should be >= t_before
+        assert obj.pos.w >= t_before - 1.0
+        assert obj.meta.get("state") == "working"
+        w.depart()
+        w.close()
+
+    def test_presence_returns_online_agents(self):
+        w = self._make_world()
+        w.announce(meta={"role": "tester"})
+        online = w.presence(ttl=60.0)
+        handles = [o.handle for o in online]
+        assert "agent:test_presence_agent" in handles
+        w.depart()
+        w.close()
+
+    def test_presence_excludes_expired(self):
+        import time
+        w = self._make_world()
+        # Announce with a very old timestamp (ttl=0.001 will expire it)
+        import time as _t
+        old_ts = _t.time() - 300  # 5 minutes ago
+        w.announce(pos=Vec4(0, 0, 0, old_ts))
+        online = w.presence(ttl=1.0)   # only within 1 second
+        handles = [o.handle for o in online]
+        assert "agent:test_presence_agent" not in handles
+        w.depart()
+        w.close()
+
+    def test_depart_removes_object(self):
+        w = self._make_world()
+        w.announce()
+        w.depart()
+        obj = w.get("agent:test_presence_agent")
+        assert obj is None
+        w.close()

@@ -141,7 +141,9 @@ class Shape:
     @classmethod
     def from_json(cls, s: str) -> "Shape":
         d = json.loads(s)
-        return cls(kind=ShapeKind(d["kind"]), params=d.get("params", {}))
+        # Accept both "kind" (canonical) and "type" (legacy/external)
+        kind_val = d.get("kind") or d.get("type") or "point"
+        return cls(kind=ShapeKind(kind_val), params=d.get("params", {}))
 
     def contains(self, pos: Vec4, test_pt: Vec4) -> bool:
         """Rough containment test (pos = object anchor, test_pt = point to test)."""
@@ -752,6 +754,95 @@ class World4D:
             "objects": [obj_to_dict(o) for o in objs],
             "fields": [field_to_dict(f) for f in fields],
         }
+
+    # ------------------------------------------------------------------
+    # Presence — agent identity in the shared world
+    # ------------------------------------------------------------------
+
+    def announce(
+        self,
+        meta: Optional[dict] = None,
+        pos: Optional[Vec4] = None,
+    ) -> str:
+        """
+        Announce this agent's presence in the world.
+
+        Creates or upserts a point object with handle ``agent:<agent_id>``.
+        The w-coordinate is set to the current Unix timestamp (the temporal axis).
+        Returns the handle.
+
+        Call once at session start; call heartbeat() periodically to stay "online".
+        """
+        import time as _time
+        if not self._agent:
+            raise ValueError("announce() requires agent to be set at connect time")
+        now = _time.time()
+        p = pos if pos is not None else Vec4(0.0, 0.0, 0.0, now)
+        m = dict(meta or {})
+        m.setdefault("presence", True)
+        m["last_seen"] = now
+        h = f"agent:{self._agent}"
+        self.spawn(
+            name=self._agent,
+            pos=p,
+            shape=Shape(kind=ShapeKind.point),
+            meta=m,
+            handle=h,
+        )
+        return h
+
+    def heartbeat(self, meta_patch: Optional[dict] = None) -> None:
+        """
+        Update this agent's presence timestamp (w = now).
+
+        Agents that have not heartbeated within ``ttl`` seconds are
+        considered offline by ``presence()``.
+        """
+        import time as _time
+        if not self._agent:
+            raise ValueError("heartbeat() requires agent to be set at connect time")
+        h = f"agent:{self._agent}"
+        now = _time.time()
+        # Update w to current time
+        obj = self.get(h)
+        if obj is None:
+            self.announce()
+            return
+        new_pos = Vec4(obj.pos.x, obj.pos.y, obj.pos.z, now)
+        self.move(h, new_pos)
+        patch: dict = {"last_seen": now}
+        if meta_patch:
+            patch.update(meta_patch)
+        self.patch_meta(h, patch)
+
+    def presence(self, ttl: float = 120.0) -> list["WorldObject"]:
+        """
+        Return agents that have heartbeated within ``ttl`` seconds.
+
+        Filters world objects tagged with ``presence=True`` in meta
+        whose w-coordinate (last-seen timestamp) is within ttl of now.
+        """
+        import time as _time
+        now = _time.time()
+        cutoff = now - ttl
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM world4d_objects
+                WHERE (meta->>'presence')::boolean = true
+                  AND (pos->3)::float8 >= %s
+                ORDER BY (pos->3)::float8 DESC
+                """,
+                (cutoff,),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_obj(r) for r in rows]
+
+    def depart(self) -> None:
+        """Remove this agent's presence object from the world."""
+        if not self._agent:
+            return
+        self.despawn(f"agent:{self._agent}")
 
     # ------------------------------------------------------------------
     # Schema provisioning (standalone)

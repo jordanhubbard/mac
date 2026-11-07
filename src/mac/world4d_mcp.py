@@ -30,6 +30,10 @@ Tools exposed:
   world_fields_at    — fields whose bounding box contains a point
   world_stats        — object + field counts
   world_snapshot     — full serialisable world state
+  world_announce     — announce agent presence (auto-called on initialize)
+  world_heartbeat    — update presence timestamp
+  world_presence     — list online agents (within ttl seconds)
+  world_depart       — remove agent presence object
 """
 
 from __future__ import annotations
@@ -269,6 +273,42 @@ TOOLS = [
         "description": "Full serialisable snapshot of all world objects and fields.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "world_announce",
+        "description": "Announce this agent's presence in the shared world. Creates/upserts a presence point object at handle agent:<agent>. The w-coordinate is the current Unix timestamp. Call at session start.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "meta": {"type": "object", "description": "Extra metadata (role, state, task, etc.)"},
+                "pos":  {"description": "Optional [x,y,z,w] spatial position (w defaults to current time)"},
+            },
+        },
+    },
+    {
+        "name": "world_heartbeat",
+        "description": "Update this agent's presence timestamp so it stays 'online'. Optionally patch metadata.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "meta": {"type": "object", "description": "Key/value pairs to merge into presence metadata"},
+            },
+        },
+    },
+    {
+        "name": "world_presence",
+        "description": "List agents currently online (heartbeated within ttl seconds, default 120).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ttl": {"type": "number", "description": "Max seconds since last heartbeat to be considered online (default 120)"},
+            },
+        },
+    },
+    {
+        "name": "world_depart",
+        "description": "Remove this agent's presence object from the world (clean departure).",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -312,6 +352,12 @@ def handle_request(world: World4D, req: dict) -> dict:
 
     # MCP protocol handshake
     if method == "initialize":
+        # Auto-announce presence when an agent connects
+        if world._agent:
+            try:
+                world.announce(meta={"mcp": True})
+            except Exception:
+                pass  # Non-fatal
         return _ok(req_id, {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
@@ -423,6 +469,26 @@ def dispatch_tool(world: World4D, name: str, args: dict) -> Any:
 
     elif name == "world_snapshot":
         return world.snapshot()
+
+    elif name == "world_announce":
+        pos = _vec4(args["pos"]) if "pos" in args else None
+        meta = args.get("meta", {})
+        h = world.announce(meta=meta, pos=pos)
+        return {"handle": h}
+
+    elif name == "world_heartbeat":
+        meta = args.get("meta")
+        world.heartbeat(meta_patch=meta)
+        return {"ok": True}
+
+    elif name == "world_presence":
+        ttl = float(args.get("ttl", 120.0))
+        agents = world.presence(ttl=ttl)
+        return {"agents": [_obj_dict(a) for a in agents]}
+
+    elif name == "world_depart":
+        world.depart()
+        return {"ok": True}
 
     else:
         raise ValueError(f"Unknown tool: {name}")
