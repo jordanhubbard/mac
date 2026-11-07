@@ -79,8 +79,8 @@ class SoulGraphPG(SoulGraph):
                     self._dirty_ids.add(pid)
         return node
 
-    def link(self, parent_id: str, child_id: str) -> bool:
-        result = super().link(parent_id, child_id)
+    def link(self, parent_id: str, child_id: str, rel: str | None = None) -> bool:
+        result = super().link(parent_id, child_id, rel=rel)
         if result:
             self._dirty_ids.add(parent_id)
             self._dirty_ids.add(child_id)
