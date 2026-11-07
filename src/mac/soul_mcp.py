@@ -140,9 +140,7 @@ class SoulTools:
                 g.touch(nid)
                 next_frontier.extend(node.children)
             frontier = next_frontier
-        return _text(
-            {"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]}
-        )
+        return _text({"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]})
 
     def soul_by_tag(self, tag: str) -> JsonDict:
         nodes = self._g.by_tag(tag)
@@ -186,9 +184,7 @@ class SoulTools:
             node_id=exp_id,
         )
         refused = [pid for pid in (parent_ids or []) if not self._g.link(pid, exp_id)]
-        return _text(
-            {"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused}
-        )
+        return _text({"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused})
 
     def soul_add(
         self,
@@ -208,13 +204,44 @@ class SoulTools:
         )
         return _text(dict(_brief(node), parents=node.parents, pinned=node.pinned))
 
-    def soul_link(self, parent_id: str, child_id: str) -> JsonDict:
-        if not self._g.link(parent_id, child_id):
+    #: Recognised relation types (matches soul_graph.SoulGraph.link).
+    _VALID_RELATIONS = frozenset(
+        {
+            "contradicts",
+            "refines",
+            "depends_on",
+            "explains",
+            "instance_of",
+            "learned_from",
+            "applies_to",
+            "implements",
+        }
+    )
+
+    def soul_link(
+        self,
+        parent_id: str,
+        child_id: str,
+        relation: Optional[str] = None,
+    ) -> JsonDict:
+        """Add a DAG edge from *parent_id* to *child_id*.
+
+        *relation* is an optional semantic label for the edge.  Recognised
+        values: contradicts (repulsion in retrieval), refines,
+        depends_on, explains, instance_of, learned_from,
+        applies_to, implements.  Unknown values are silently stored
+        without retrieval effects.
+        """
+        rel = relation or None
+        if not self._g.link(parent_id, child_id, rel=rel):
             return _error(
                 "Could not link %r -> %r: a node is missing or the edge would make a cycle."
                 % (parent_id, child_id)
             )
-        return _text({"linked": "%s -> %s" % (parent_id, child_id)})
+        result: JsonDict = {"linked": "%s -> %s" % (parent_id, child_id)}
+        if rel:
+            result["relation"] = rel
+        return _text(result)
 
     def soul_summary(self) -> JsonDict:
         return _text(self._g.summary())
@@ -324,14 +351,20 @@ class SoulTools:
         {
             "name": "soul_hot",
             "description": "Top-N splay nodes: who this agent is right now.",
-            "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "default": 7}}},
+            "inputSchema": {
+                "type": "object",
+                "properties": {"n": {"type": "integer", "default": 7}},
+            },
         },
         {
             "name": "soul_discover",
             "description": "Walk the DAG's children from a seed node id (or text matching one).",
             "inputSchema": {
                 "type": "object",
-                "properties": {"seed_id": {"type": "string"}, "hops": {"type": "integer", "default": 2}},
+                "properties": {
+                    "seed_id": {"type": "string"},
+                    "hops": {"type": "integer", "default": 2},
+                },
                 "required": ["seed_id"],
             },
         },
@@ -407,7 +440,20 @@ class SoulTools:
             "description": "Add a DAG edge between two existing nodes.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"parent_id": {"type": "string"}, "child_id": {"type": "string"}},
+                "properties": {
+                    "parent_id": {"type": "string"},
+                    "child_id": {"type": "string"},
+                    "relation": {
+                        "type": "string",
+                        "description": (
+                            "Optional edge relation type. Recognised: contradicts, refines, "
+                            "depends_on, explains, instance_of, learned_from, applies_to, "
+                            "implements. 'contradicts' pushes the node to the end of "
+                            "soul_related results (repulsion); others give a mild retrieval "
+                            "boost."
+                        ),
+                    },
+                },
                 "required": ["parent_id", "child_id"],
             },
         },
@@ -447,17 +493,25 @@ def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
         try:
             req = json.loads(raw)
         except json.JSONDecodeError:
-            send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+            send(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+            )
             continue
         rid = req.get("id")
         method = req.get("method", "")
         params = req.get("params") or {}
         if method == "initialize":
-            send({"jsonrpc": "2.0", "id": rid, "result": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "serverInfo": {"name": SERVER_NAME, "version": "0.2.0"},
-                "capabilities": {"tools": {}},
-            }})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "result": {
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "serverInfo": {"name": SERVER_NAME, "version": "0.2.0"},
+                        "capabilities": {"tools": {}},
+                    },
+                }
+            )
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": rid, "result": {"tools": SoulTools.TOOL_SPECS}})
         elif method == "tools/call":
@@ -468,8 +522,13 @@ def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
                 graph.save(soul_path)
             send({"jsonrpc": "2.0", "id": rid, "result": result})
         elif rid is not None:
-            send({"jsonrpc": "2.0", "id": rid, "error": {
-                "code": -32601, "message": "Method not found: %s" % method}})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "error": {"code": -32601, "message": "Method not found: %s" % method},
+                }
+            )
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -477,7 +536,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     parser = argparse.ArgumentParser(description="Soul graph MCP server (JSON-RPC 2.0 over stdio)")
     parser.add_argument(
-        "--soul-file", type=Path, default=None,
+        "--soul-file",
+        type=Path,
+        default=None,
         help="soul JSON file (default: soul.json in the agent home); created on first write",
     )
     args = parser.parse_args(argv)

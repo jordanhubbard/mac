@@ -4,6 +4,7 @@ Tests for mac.soul_graph — the splay-DAG-tag soul engine.
 Covers: node creation, pinning, splay promotion, DAG edges, tag index,
 semantic search, discovery traversal, exploration branch, merge, persistence.
 """
+
 from __future__ import annotations
 import json, math, time, tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from mac.soul_graph import SoulGraph, SoulNode
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_soul() -> SoulGraph:
     g = SoulGraph(name="test")
     g.add("Be genuinely helpful.", tags={"axiom"}, pinned=True, node_id="a1")
@@ -23,7 +25,12 @@ def make_soul() -> SoulGraph:
     g.add("Rocky is the fleet hub.", tags={"identity", "crew"}, parents=["a1"], node_id="i1")
     g.add("Bullwinkle handles RAG.", tags={"crew", "rag"}, parents=["i1"], node_id="i2")
     g.add("Natasha runs on the GPU host.", tags={"crew", "gpu"}, parents=["i1"], node_id="i3")
-    g.add("Lessons: curl is blocked, use urllib.", tags={"lesson", "tooling"}, parents=["a1"], node_id="l1")
+    g.add(
+        "Lessons: curl is blocked, use urllib.",
+        tags={"lesson", "tooling"},
+        parents=["a1"],
+        node_id="l1",
+    )
     g.add("git is the filesystem.", tags={"lesson", "git"}, parents=["a1"], node_id="l2")
     return g
 
@@ -31,6 +38,7 @@ def make_soul() -> SoulGraph:
 # ---------------------------------------------------------------------------
 # Basic creation
 # ---------------------------------------------------------------------------
+
 
 def test_add_node():
     g = SoulGraph(name="t")
@@ -55,6 +63,7 @@ def test_unpinned_node_finite_score():
 # Splay / access promotion
 # ---------------------------------------------------------------------------
 
+
 def test_touch_promotes():
     g = make_soul()
     # Touch i2 several times — should rise above i3
@@ -76,6 +85,7 @@ def test_hot_returns_pinned_first():
 # ---------------------------------------------------------------------------
 # DAG edges
 # ---------------------------------------------------------------------------
+
 
 def test_parent_child_wired():
     g = make_soul()
@@ -116,6 +126,7 @@ def test_ancestors():
 # Tag index
 # ---------------------------------------------------------------------------
 
+
 def test_by_tag_returns_nodes():
     g = make_soul()
     crew = g.by_tag("crew")
@@ -144,6 +155,7 @@ def test_tag_method():
 # Semantic search (keyword stub)
 # ---------------------------------------------------------------------------
 
+
 def test_semantic_search_finds_match():
     g = make_soul()
     results = g.semantic_search("curl blocked urllib", top_k=3)
@@ -162,6 +174,7 @@ def test_semantic_search_empty_query():
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
+
 
 def test_discover_returns_path():
     g = make_soul()
@@ -182,6 +195,7 @@ def test_discover_touches_nodes():
 # ---------------------------------------------------------------------------
 # Exploration branch
 # ---------------------------------------------------------------------------
+
 
 def test_branch_is_independent():
     g = make_soul()
@@ -212,6 +226,7 @@ def test_merge_does_not_overwrite_existing():
 # ---------------------------------------------------------------------------
 # Persistence (save / load round-trip)
 # ---------------------------------------------------------------------------
+
 
 def test_save_load_roundtrip():
     g = make_soul()
@@ -253,6 +268,7 @@ def test_save_load_tag_index():
 # Summary
 # ---------------------------------------------------------------------------
 
+
 def test_summary_runs():
     g = make_soul()
     s = g.summary()
@@ -263,6 +279,7 @@ def test_summary_runs():
 # ---------------------------------------------------------------------------
 # Regression tests for bugs observed via live agent session (2026-09-12)
 # ---------------------------------------------------------------------------
+
 
 def test_bug4_new_node_scores_higher_than_old():
     """BUG 4 fixed: exponential decay — new zero-access node >> week-old zero-access."""
@@ -357,9 +374,7 @@ def test_hot_matches_recency_order_at_every_time_without_reranking():
     g.pin("n5")
     for later in (0, 3600, 5 * 86400, 60 * 86400):
         clock.now += later
-        expected = sorted(
-            g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True
-        )
+        expected = sorted(g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True)
         hot = g.hot(15)
         assert hot[0].id == "n5"
         scores = [n.recency_score(clock.now) for n in hot]
@@ -465,9 +480,14 @@ def test_a_real_reasoning_dag_imports_and_is_traversable():
     assert len(g.nodes) == len(data["nodes"])
     assert g.dropped_edges == []
     assert {n.id for n in g.nodes.values() if n.pinned} == {
-        "unpredictable", "target-human", "human-control"
+        "unpredictable",
+        "target-human",
+        "human-control",
     }
-    assert g.nodes["vivaldi"].metadata["parent_rels"] == {"ark1": "component", "autodrone": "precursor"}
+    assert g.nodes["vivaldi"].metadata["parent_rels"] == {
+        "ark1": "component",
+        "autodrone": "precursor",
+    }
     assert g.tagged("event") == {"vivaldi", "ark1", "autodrone"}
     related = [n.id for n in g.related("Operation Vivaldi", top_k=6)]
     assert related[0] == "vivaldi"
@@ -480,8 +500,83 @@ def test_from_dag_drops_edges_that_would_close_a_cycle():
     g = SoulGraph.from_dag(
         {
             "nodes": [{"id": "a", "label": "a"}, {"id": "b", "label": "b"}],
-            "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}, {"from": "a", "to": "zz"}],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "a"},
+                {"from": "a", "to": "zz"},
+            ],
         }
     )
     assert g.nodes["b"].parents == ["a"]
     assert len(g.dropped_edges) == 2
+
+
+# ---------------------------------------------------------------------------
+# Repulsion: contradicts-typed edge pushes neighbour to end of related()
+# ---------------------------------------------------------------------------
+
+
+def test_link_stores_rel_in_child_metadata():
+    """link(rel=...) stores the relation type in child.metadata['parent_rels']."""
+    g = SoulGraph()
+    g.add("parent content", node_id="parent")
+    g.add("child content", node_id="child")
+    g.link("parent", "child", rel="contradicts")
+    assert g.nodes["child"].metadata.get("parent_rels", {}).get("parent") == "contradicts"
+
+
+def test_link_backward_compatible_without_rel():
+    """link() with no rel argument still works and stores no parent_rels entry."""
+    g = SoulGraph()
+    g.add("parent content", node_id="parent")
+    g.add("child content", node_id="child")
+    result = g.link("parent", "child")
+    assert result is True
+    assert "parent" not in g.nodes["child"].metadata.get("parent_rels", {})
+
+
+def test_related_pushes_contradicts_parent_to_end():
+    """A parent linked with rel='contradicts' goes to end of related() results."""
+    g = SoulGraph()
+    g.add("main idea foundation", node_id="main")
+    g.add("known exception contradicts main", node_id="exception")
+    g.add("supporting detail main idea", node_id="support")
+    # exception is a parent of main, but typed as contradicts
+    # We set it up as: exception -> support (normal), exception -> main via contradicts
+    # Actually: link parent=exception, child=main, rel=contradicts
+    g.link("exception", "main", rel="contradicts")
+    g.link("support", "main")
+    ids = [n.id for n in g.related("main idea foundation", top_k=5)]
+    assert "main" in ids
+    assert "exception" in ids
+    assert "support" in ids
+    # exception must come after all non-contradicts nodes
+    assert ids.index("exception") > ids.index("main")
+    assert ids.index("exception") > ids.index("support")
+
+
+def test_related_pushes_contradicts_child_to_end():
+    """A child linked with rel='contradicts' goes to end of related() results."""
+    g = SoulGraph()
+    g.add("principle A is usually true", node_id="principle")
+    g.add("edge case where A fails contradicts principle", node_id="edge_case")
+    g.add("corollary of A follows from principle", node_id="corollary")
+    g.link("principle", "edge_case", rel="contradicts")
+    g.link("principle", "corollary")
+    ids = [n.id for n in g.related("principle A is usually true", top_k=5)]
+    assert "principle" in ids
+    assert "edge_case" in ids
+    assert "corollary" in ids
+    # edge_case must appear after corollary (normal child)
+    assert ids.index("edge_case") > ids.index("principle")
+    assert ids.index("edge_case") > ids.index("corollary")
+
+
+def test_contradicts_nodes_still_appear_in_results():
+    """Contradicts-typed nodes are demoted but NOT hidden — known exceptions must be surfaceable."""
+    g = SoulGraph()
+    g.add("main claim about ships", node_id="claim")
+    g.add("ship that sailed the wrong way contradicts claim", node_id="exception")
+    g.link("claim", "exception", rel="contradicts")
+    ids = [n.id for n in g.related("main claim about ships", top_k=5)]
+    assert "exception" in ids, "contradicts neighbour must remain visible (demoted, not hidden)"
