@@ -68,7 +68,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Default connection — same hub Postgres every fleet member uses
 # ---------------------------------------------------------------------------
-DEFAULT_PG_URL = "postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain"
+DEFAULT_PG_URL = "postgresql://fleet_agent@100.72.16.110:5432/agent_brain"
+# Full URL with credentials: set WORLD4D_PG_URL in the environment (or ~/.pgpass)
+# Fleet default resolves via ~/.pgpass for fleet_agent on the hub network.
 
 # ---------------------------------------------------------------------------
 # Value types
@@ -290,11 +292,20 @@ class World4D:
     @classmethod
     def connect(
         cls,
-        pg_url: str = DEFAULT_PG_URL,
+        pg_url: str = "",
         agent: str = "",
         apply_schema: bool = True,
     ) -> "World4D":
-        """Open a connection to the shared world on the fleet hub."""
+        """Open a connection to the shared world on the fleet hub.
+
+        pg_url priority:
+          1. Explicit argument
+          2. WORLD4D_PG_URL env var
+          3. DEFAULT_PG_URL (uses ~/.pgpass for auth)
+        """
+        import os as _os
+        if not pg_url:
+            pg_url = _os.environ.get("WORLD4D_PG_URL", DEFAULT_PG_URL)
         if psycopg is None:
             raise ImportError("psycopg (v3) or psycopg2 must be installed.")
         if _PSYCOPG_VERSION == 3:
@@ -747,8 +758,11 @@ class World4D:
     # ------------------------------------------------------------------
 
     @classmethod
-    def apply_schema(cls, pg_url: str = DEFAULT_PG_URL) -> None:
+    def apply_schema(cls, pg_url: str = "") -> None:
         """Create world4d tables in the target database (idempotent)."""
+        import os as _os
+        if not pg_url:
+            pg_url = _os.environ.get("WORLD4D_PG_URL", DEFAULT_PG_URL)
         w = cls.connect(pg_url=pg_url, apply_schema=True)
         w.close()
         print("world4d schema applied.")
