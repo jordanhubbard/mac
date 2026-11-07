@@ -485,6 +485,38 @@ def _agentbus_clamp_poll_interval(value: float) -> float:
     )
 
 
+class DeliberationCreate(BaseModel):
+    topic: str
+    scope: str = "design"
+    body: str = ""
+    created_by: str
+    task_id: Optional[str] = None
+    authorized_resolvers: Optional[List[str]] = None
+    expires_at: Optional[str] = None
+
+
+class DeliberationParticipantAdd(BaseModel):
+    agent_id: str
+    initial_position: str = "unknown"
+
+
+class DeliberationArgumentAdd(BaseModel):
+    agent_id: str
+    claim: str
+    argument_type: str = "principle"
+
+
+class DeliberationPositionUpdate(BaseModel):
+    agent_id: str
+    new_position: str
+    moved_by: Optional[str] = None
+
+
+class DeliberationResolve(BaseModel):
+    conclusion: str
+    actor: str
+
+
 class TaskCreate(BaseModel):
     title: str
     description: str = ""
@@ -5508,7 +5540,9 @@ def create_app(
         if principal.agent_id and not principal.is_admin:
             task = cp.get_task(task_id)
             if str(task.owner_agent_id or "") != str(principal.agent_id):
-                raise AuthorizationError("agent %s does not own task %s" % (principal.agent_id, task_id))
+                raise AuthorizationError(
+                    "agent %s does not own task %s" % (principal.agent_id, task_id)
+                )
             if requested_author_kind == "hub":
                 return "hub", "harness:%s" % principal.agent_id
             return "agent", str(principal.agent_id)
@@ -8793,6 +8827,131 @@ def create_app(
         target_id: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         return [run.to_dict() for run in cp.list_eval_runs(eval_set_id, target_id)]
+
+    # Deliberation routes — inline in create_app() per api.py convention
+    # Service + embedding bridge constructed lazily at first request (stdlib only;
+    # no extra deps). ArgumentEmbeddingService is non-blocking on import error.
+    from mac.deliberation_service import DeliberationService
+
+    try:
+        from mac.argument_embedding_service import ArgumentEmbeddingService as _AES
+
+        _embedding_service: Optional[Any] = _AES()
+    except Exception:
+        _embedding_service = None
+
+    def _make_on_resolve(aes: Any) -> Optional[Any]:
+        """Adapter: on_resolve receives a resolved deliberation dict."""
+        if aes is None:
+            return None
+
+        def _hook(resolved: Dict[str, Any]) -> None:
+            args = resolved.get("arguments") or []
+            if isinstance(args, str):
+                import json as _json
+
+                try:
+                    args = _json.loads(args)
+                except Exception:
+                    args = []
+            aes.index_resolved_deliberation(
+                deliberation_id=resolved.get("id", ""),
+                resolution_path=resolved.get("resolution_path", ""),
+                arguments=args,
+            )
+
+        return _hook
+
+    _delib_svc = DeliberationService(
+        cp.store,
+        on_resolve=_make_on_resolve(_embedding_service),
+    )
+
+    @app.post("/v1/deliberations")
+    def create_deliberation(
+        body: DeliberationCreate, principal: TokenPrincipal = Depends(_get_principal)
+    ) -> Dict[str, Any]:
+        """Open a new fleet deliberation."""
+        return _delib_svc.create_deliberation(
+            topic=body.topic,
+            scope=body.scope,
+            body=body.body,
+            created_by=body.created_by,
+            task_id=body.task_id,
+            authorized_resolvers=body.authorized_resolvers,
+            expires_at=body.expires_at,
+        )
+
+    @app.get("/v1/deliberations")
+    def list_deliberations(
+        status: Optional[str] = Query(default=None),
+        created_by: Optional[str] = Query(default=None),
+        limit: int = Query(default=50),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        """List deliberations, optionally filtered by status or creator."""
+        return _delib_svc.list_deliberations(status=status, created_by=created_by, limit=limit)
+
+    @app.get("/v1/deliberations/{deliberation_id}")
+    def get_deliberation(
+        deliberation_id: str, principal: TokenPrincipal = Depends(_get_principal)
+    ) -> Dict[str, Any]:
+        """Retrieve a single deliberation by ID."""
+        return _delib_svc.get_deliberation(deliberation_id)
+
+    @app.post("/v1/deliberations/{deliberation_id}/participants")
+    def add_participant(
+        deliberation_id: str,
+        body: DeliberationParticipantAdd,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Join a deliberation with an initial position."""
+        return _delib_svc.add_participant(
+            deliberation_id,
+            agent_id=body.agent_id,
+            initial_position=body.initial_position,
+        )
+
+    @app.post("/v1/deliberations/{deliberation_id}/arguments")
+    def add_argument(
+        deliberation_id: str,
+        body: DeliberationArgumentAdd,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Submit an argument to a deliberation."""
+        return _delib_svc.add_argument(
+            deliberation_id,
+            agent_id=body.agent_id,
+            claim=body.claim,
+            argument_type=body.argument_type,
+        )
+
+    @app.patch("/v1/deliberations/{deliberation_id}/position")
+    def update_position(
+        deliberation_id: str,
+        body: DeliberationPositionUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Update a participant's position, optionally citing an argument."""
+        return _delib_svc.update_position(
+            deliberation_id,
+            agent_id=body.agent_id,
+            new_position=body.new_position,
+            moved_by=body.moved_by,
+        )
+
+    @app.post("/v1/deliberations/{deliberation_id}/resolve")
+    def resolve_deliberation(
+        deliberation_id: str,
+        body: DeliberationResolve,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Resolve a deliberation. Calls on_resolve hook for embedding on success."""
+        return _delib_svc.resolve_deliberation(
+            deliberation_id,
+            conclusion=body.conclusion,
+            actor=body.actor,
+        )
 
     # th-merge-02: optional in-mac OpenAI front door (provider router + recovering
     # breaker). No-op unless MAC_ROUTER_BACKEND=inproc, so the standalone TokenHub
