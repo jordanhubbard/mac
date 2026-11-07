@@ -71,8 +71,41 @@ def init_db(db_path=None):
         CREATE INDEX IF NOT EXISTS idx_nodes_kind   ON nodes(kind);
         CREATE INDEX IF NOT EXISTS idx_edges_from   ON edges(from_id);
         CREATE INDEX IF NOT EXISTS idx_edges_to     ON edges(to_id);
+
+        -- FTS5 full-text search index
+        CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
+            id UNINDEXED,
+            content,
+            kind UNINDEXED,
+            content='nodes',
+            content_rowid='rowid'
+        );
+
+        -- Triggers to keep FTS in sync with nodes
+        CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
+            INSERT INTO nodes_fts(rowid, id, content, kind)
+            VALUES (new.rowid, new.id, new.content, new.kind);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
+            INSERT INTO nodes_fts(nodes_fts, rowid, id, content, kind)
+            VALUES ('delete', old.rowid, old.id, old.content, old.kind);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
+            INSERT INTO nodes_fts(nodes_fts, rowid, id, content, kind)
+            VALUES ('delete', old.rowid, old.id, old.content, old.kind);
+            INSERT INTO nodes_fts(rowid, id, content, kind)
+            VALUES (new.rowid, new.id, new.content, new.kind);
+        END;
     """)
     con.commit()
+
+    # Rebuild FTS index from nodes table (idempotent — fast on rebuild)
+    # With content='nodes', FTS5 reads from the nodes table; rebuild re-indexes tokens
+    con.execute("INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild')")
+    con.commit()
+
     con.close()
 
 
@@ -119,18 +152,21 @@ def add_node(content: str, kind: str = "memory", tags: list = None,
         """, (node_id, content.strip(), kind, json.dumps(tags), _now_iso(), int(pinned)))
         con.commit()
 
-        # Auto-link: find nodes sharing >=2 significant tokens
+        # Auto-link: find nodes with >= 40% Jaccard token overlap and min 5-token vocab
+        # Threshold raised from 2-token overlap (too low, produced near-clique hairballs).
         if auto_link:
             tokens = {t for t in re.findall(r'\w+', content.lower())
                       if len(t) >= 4 and t not in _STOPWORDS}
-            if tokens:
+            if len(tokens) >= 5:
                 cur = con.execute(
                     "SELECT id, content FROM nodes WHERE id != ?", (node_id,))
                 for row in cur.fetchall():
                     other_tokens = {t for t in re.findall(r'\w+', row["content"].lower())
                                     if len(t) >= 4 and t not in _STOPWORDS}
-                    overlap = tokens & other_tokens
-                    if len(overlap) >= 2:
+                    if not other_tokens:
+                        continue
+                    jaccard = len(tokens & other_tokens) / len(tokens | other_tokens)
+                    if jaccard >= 0.40:
                         con.execute("""
                             INSERT OR IGNORE INTO edges
                             (from_id, to_id, relation_type, weight, created_at)
@@ -259,24 +295,38 @@ def fisheye(node_id: str, hops: int = 1, db_path=None) -> dict:
 
 def search(query: str, limit: int = 10, db_path=None) -> list:
     """
-    Case-insensitive keyword search over node content.
-    Returns list of matching nodes sorted by score desc.
+    FTS5 full-text search with BM25 relevance ranking, blended with node score.
+    Falls back to LIKE search if FTS table is unavailable.
+    Returns list of matching nodes sorted by combined relevance.
     """
-    # Tokenise query into words, build LIKE clauses
-    tokens = re.findall(r'\w+', query.lower())
-    if not tokens:
+    if not query or not query.strip():
         return []
 
     con = _connect(db_path)
     try:
-        # Build WHERE with AND between tokens (all must appear)
-        conditions = " AND ".join(["LOWER(content) LIKE ?" for _ in tokens])
-        params     = [f"%{t}%" for t in tokens] + [limit]
-        cur = con.execute(
-            f"SELECT * FROM nodes WHERE {conditions} ORDER BY score DESC LIMIT ?",
-            params
-        )
-        rows = cur.fetchall()
+        # Try FTS5 first
+        try:
+            # BM25 returns negative values; more negative = more relevant
+            cur = con.execute("""
+                SELECT n.*, bm25(nodes_fts) AS bm25_score
+                FROM nodes_fts
+                JOIN nodes n ON n.id = nodes_fts.id
+                WHERE nodes_fts MATCH ?
+                ORDER BY (n.score - bm25(nodes_fts)) DESC
+                LIMIT ?
+            """, (query, limit))
+            rows = cur.fetchall()
+        except Exception:
+            # FTS table not ready — fall back to LIKE
+            tokens = re.findall(r'\w+', query.lower())
+            conditions = " AND ".join(["LOWER(content) LIKE ?" for _ in tokens])
+            params = [f"%{t}%" for t in tokens] + [limit]
+            cur = con.execute(
+                f"SELECT * FROM nodes WHERE {conditions} ORDER BY score DESC LIMIT ?",
+                params
+            )
+            rows = cur.fetchall()
+
         results = []
         for r in rows:
             d = dict(r)
@@ -287,29 +337,47 @@ def search(query: str, limit: int = 10, db_path=None) -> list:
         con.close()
 
 
-def top(n: int = 10, db_path=None) -> list:
+def top(n: int = 10, kind: str = None, exclude_tags: list = None,
+        require_tags: list = None, db_path=None) -> list:
     """
     Return top-n nodes by score (preamble view).
+    kind: filter to a specific node kind (e.g. 'axiom', 'memory', 'skill-ref')
+    exclude_tags: skip nodes that have ANY of these tags (e.g. ['research', 'archived'])
+    require_tags: only include nodes that have ALL of these tags
     Each entry: { id, summary, kind, score, pinned, tags }
     """
+    if exclude_tags is None:
+        exclude_tags = ["archived"]   # always exclude archived by default
     con = _connect(db_path)
     try:
-        cur = con.execute("""
-            SELECT id, content, kind, score, pinned, tags
-            FROM nodes
-            ORDER BY score DESC
-            LIMIT ?
-        """, (n,))
+        where = []
+        params = []
+        if kind:
+            where.append("kind = ?")
+            params.append(kind)
+        cur = con.execute(
+            "SELECT id, content, kind, score, pinned, tags FROM nodes"
+            + (" WHERE " + " AND ".join(where) if where else "")
+            + " ORDER BY score DESC LIMIT ?",
+            params + [n * 4]   # over-fetch to allow tag filtering
+        )
         results = []
         for r in cur.fetchall():
+            tags = json.loads(r["tags"])
+            if exclude_tags and any(t in tags for t in exclude_tags):
+                continue
+            if require_tags and not all(t in tags for t in require_tags):
+                continue
             results.append({
                 "id":      r["id"],
                 "summary": r["content"][:100] + ("…" if len(r["content"]) > 100 else ""),
                 "kind":    r["kind"],
                 "score":   round(r["score"], 4),
                 "pinned":  bool(r["pinned"]),
-                "tags":    json.loads(r["tags"]),
+                "tags":    tags,
             })
+            if len(results) >= n:
+                break
         return results
     finally:
         con.close()
