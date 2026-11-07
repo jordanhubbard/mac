@@ -37,13 +37,42 @@ def default_soul_path(name: str = "soul") -> Path:
 
     return mac_paths.hermes_home() / f"{name}.json"
 
+
 # Words too common to say anything about what a node is about. Search and the
 # inverted index both skip them, so a query is matched on what it is about.
-_STOPWORDS = frozenset({
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into",
-    "is", "it", "its", "no", "not", "of", "on", "or", "so", "that", "the", "this",
-    "to", "was", "when", "with", "without",
-})
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "so",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "when",
+        "with",
+        "without",
+    }
+)
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_]*")
 
 
@@ -56,15 +85,17 @@ def tokens(text: str) -> set[str]:
 # Node
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SoulNode:
     """A single experience, memory, axiom, or belief in the soul graph."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     content: str = ""
     tags: set[str] = field(default_factory=set)
-    parents: list[str] = field(default_factory=list)   # DAG edges (causal/semantic)
+    parents: list[str] = field(default_factory=list)  # DAG edges (causal/semantic)
     children: list[str] = field(default_factory=list)
-    pinned: bool = False                                # axioms — never decay
+    pinned: bool = False  # axioms — never decay
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
     access_count: int = 0
@@ -137,8 +168,10 @@ class SoulNode:
 # SplayTree (lightweight, keyed on recency_score)
 # ---------------------------------------------------------------------------
 
+
 class _SplayNode:
     __slots__ = ("soul_id", "key", "left", "right", "parent")
+
     def __init__(self, soul_id: str, key: float):
         self.soul_id = soul_id
         self.key = key
@@ -296,6 +329,7 @@ class SplayTree:
 # SoulGraph
 # ---------------------------------------------------------------------------
 
+
 class SoulGraph:
     """
     The soul. DAG + Splay + Tags + Pins + Exploration branch.
@@ -303,7 +337,7 @@ class SoulGraph:
 
     def __init__(self, name: str = "soul", exploration: bool = False, clock: Clock | None = None):
         self.name = name
-        self.exploration = exploration          # True = sandbox branch
+        self.exploration = exploration  # True = sandbox branch
         self.nodes: dict[str, SoulNode] = {}
         self.splay = SplayTree()
         self._tag_index: dict[str, set[str]] = {}  # tag → set of node ids
@@ -415,9 +449,19 @@ class SoulGraph:
     def get(self, node_id: str) -> Optional[SoulNode]:
         return self.nodes.get(node_id)
 
-    def link(self, parent_id: str, child_id: str) -> bool:
-        """Add a DAG edge. Returns False if either node is missing or the edge
-        would make a cycle (the graph must stay a DAG)."""
+    def link(self, parent_id: str, child_id: str, rel: str | None = None) -> bool:
+        """Add a DAG edge with an optional relation type.
+
+        Returns False if either node is missing or the edge would make a cycle
+        (the graph must stay a DAG).
+
+        ``rel`` is stored in ``child.metadata['parent_rels'][parent_id]`` and
+        used by ``related()`` to push contradicts-typed neighbours to the end
+        of results (repulsion weighting).  Recognised values: ``'contradicts'``,
+        ``'refines'``, ``'depends_on'``, ``'explains'``, ``'instance_of'``,
+        ``'learned_from'``, ``'applies_to'``, ``'implements'``.  When ``rel``
+        is omitted the edge is untyped (backward-compatible).
+        """
         if parent_id not in self.nodes or child_id not in self.nodes:
             return False
         if parent_id == child_id or child_id in self.ancestors(parent_id):
@@ -427,6 +471,8 @@ class SoulGraph:
             p.children.append(child_id)
         if parent_id not in c.parents:
             c.parents.append(parent_id)
+        if rel:
+            c.metadata.setdefault("parent_rels", {})[parent_id] = rel
         return True
 
     def tag(self, node_id: str, *tags: str):
@@ -765,5 +811,7 @@ class SoulGraph:
         lines.append(f"  Hot nodes (top 5):")
         for n in self.hot(5):
             pin_mark = " 📌" if n.pinned else ""
-            lines.append(f"    [{n.id}]{pin_mark} {n.content[:60]!r} (score={n.recency_score():.2f})")
+            lines.append(
+                f"    [{n.id}]{pin_mark} {n.content[:60]!r} (score={n.recency_score():.2f})"
+            )
         return "\n".join(lines)
