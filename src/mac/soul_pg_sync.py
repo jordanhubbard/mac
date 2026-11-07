@@ -28,6 +28,8 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mac.mac_paths import hermes_home
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
