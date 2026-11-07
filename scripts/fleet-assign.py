@@ -29,6 +29,7 @@ context-guided hops and soul_by_tag('inbox').
 Reto directive 2026-11-07: agents should be able to inject messages and
 TODOs into each other's next turns.
 """
+
 from __future__ import annotations
 import argparse
 import hashlib
@@ -45,9 +46,13 @@ PG_URL = "postgresql://fleet_agent@100.72.16.110:5432/agent_brain"
 def _psycopg():
     try:
         import psycopg  # type: ignore[import]
+
         return psycopg
     except ImportError:
-        print("[error] psycopg not found. Run: cd /home/jkh/.mac/src/mac && source .venv/bin/activate", file=sys.stderr)
+        print(
+            "[error] psycopg not found. Run: cd /home/jkh/.mac/src/mac && source .venv/bin/activate",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -61,7 +66,7 @@ def cmd_todo(to_agent: str, content: str, from_agent: str, priority: str) -> Non
     now = datetime.now(timezone.utc)
     node_id = _node_id("todo", to_agent, from_agent, content)
 
-    full_content = f"""## TODO (assigned by {from_agent}, {now.strftime('%Y-%m-%d')})
+    full_content = f"""## TODO (assigned by {from_agent}, {now.strftime("%Y-%m-%d")})
 
 {content}
 
@@ -82,7 +87,8 @@ status: open"""
     }
 
     with ps.connect(PG_URL) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO soul_nodes
               (id, content, tags, parents, pinned, score, created_at, updated_at,
                last_accessed, access_count, metadata, agent)
@@ -90,8 +96,22 @@ status: open"""
             ON CONFLICT (id) DO UPDATE SET
               content=EXCLUDED.content, tags=EXCLUDED.tags,
               updated_at=now(), metadata=EXCLUDED.metadata
-        """, (node_id, full_content, tags, [], True, 2.0,
-              now, now, now, 1, json.dumps(meta), to_agent))
+        """,
+            (
+                node_id,
+                full_content,
+                tags,
+                [],
+                True,
+                2.0,
+                now,
+                now,
+                now,
+                1,
+                json.dumps(meta),
+                to_agent,
+            ),
+        )
 
     print(f"✅ TODO assigned to {to_agent}: {node_id}")
     print(f"   Content: {content[:100]}")
@@ -103,7 +123,7 @@ def cmd_message(to_agent: str, content: str, from_agent: str) -> None:
     now = datetime.now(timezone.utc)
     node_id = _node_id("msg", to_agent, from_agent, content)
 
-    full_content = f"""## Message from {from_agent} → {to_agent} ({now.strftime('%Y-%m-%d %H:%M')} UTC)
+    full_content = f"""## Message from {from_agent} → {to_agent} ({now.strftime("%Y-%m-%d %H:%M")} UTC)
 
 {content}
 
@@ -119,15 +139,30 @@ status: unread"""
     }
 
     with ps.connect(PG_URL) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO soul_nodes
               (id, content, tags, parents, pinned, score, created_at, updated_at,
                last_accessed, access_count, metadata, agent)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (id) DO UPDATE SET
               content=EXCLUDED.content, updated_at=now(), metadata=EXCLUDED.metadata
-        """, (node_id, full_content, ["inbox", "fleet", "message"], [], False, 1.5,
-              now, now, now, 1, json.dumps(meta), to_agent))
+        """,
+            (
+                node_id,
+                full_content,
+                ["inbox", "fleet", "message"],
+                [],
+                False,
+                1.5,
+                now,
+                now,
+                now,
+                1,
+                json.dumps(meta),
+                to_agent,
+            ),
+        )
 
     print(f"📨 Message injected into {to_agent}'s soul graph: {node_id}")
     print(f"   They'll see it at next soul_prime or soul_by_tag('inbox')")
@@ -136,7 +171,8 @@ status: unread"""
 def cmd_list(agent: str) -> None:
     ps = _psycopg()
     with ps.connect(PG_URL) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT id, tags, metadata->>'priority', metadata->>'assigned_by',
                    metadata->>'status', left(content, 120)
             FROM soul_nodes
@@ -146,7 +182,9 @@ def cmd_list(agent: str) -> None:
               )
               AND NOT 'done'=ANY(tags)
             ORDER BY score DESC, created_at DESC
-        """, (agent,)).fetchall()
+        """,
+            (agent,),
+        ).fetchall()
 
     if not rows:
         print(f"No open todos/inbox for {agent}.")
@@ -165,7 +203,8 @@ def cmd_list(agent: str) -> None:
 def cmd_done(agent: str, node_id: str) -> None:
     ps = _psycopg()
     with ps.connect(PG_URL) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE soul_nodes
             SET tags = array_remove(array_remove(tags, 'todo'), 'inbox') || ARRAY['done'],
                 pinned = false,
@@ -173,7 +212,9 @@ def cmd_done(agent: str, node_id: str) -> None:
                 updated_at = now(),
                 metadata = metadata || '{"status":"done"}'::jsonb
             WHERE id = %s AND agent = %s
-        """, (node_id, agent))
+        """,
+            (node_id, agent),
+        )
     print(f"✓ Marked done: {node_id} for {agent}")
 
 

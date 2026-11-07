@@ -16,6 +16,7 @@ Stubs in memory look like:
 
 At session start, soul_prime surfaces inbox-tagged nodes. Full content via soul_splay('mes_abc12345').
 """
+
 from __future__ import annotations
 import argparse
 import hashlib
@@ -53,7 +54,9 @@ def _msg_id(chunk_id: str) -> str:
     return "mes_" + hashlib.sha256(chunk_id.encode()).hexdigest()[:8]
 
 
-def _stub_line(msg_id: str, sender: str, agent: str, created_at: str, topic: str, summary: str) -> str:
+def _stub_line(
+    msg_id: str, sender: str, agent: str, created_at: str, topic: str, summary: str
+) -> str:
     dt = created_at[:10] if created_at else "?"
     sender_short = sender.replace("agent_", "") if sender else "?"
     agent_short = agent.replace("agent_", "") if agent else "?"
@@ -68,8 +71,10 @@ def _soul_add(content: str, tags: list[str], parents: list[str], node_id: str) -
         return False
     try:
         import sys as _sys
+
         sys.path.insert(0, str(Path.home() / ".mac" / "src" / "mac" / "src"))
         from mac.soul_graph import SoulGraph  # type: ignore[import]
+
         g = SoulGraph.load(soul_path)
         # Only add if not already present
         if node_id in g.nodes:
@@ -149,7 +154,7 @@ chunk_id: {chunk_id}
 {json.dumps(payload, indent=2) if isinstance(payload, dict) else str(payload)}
 
 ### Status
-unread — indexed {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"""
+unread — indexed {datetime.now(timezone.utc).strftime("%Y-%m-%d")}"""
 
         added = _soul_add(
             content=content,
@@ -179,6 +184,7 @@ def cmd_reply(agent: str, msg_id: str, reply_text: str, env: dict) -> None:
     try:
         sys.path.insert(0, str(Path.home() / ".mac" / "src" / "mac" / "src"))
         from mac.soul_graph import SoulGraph  # type: ignore[import]
+
         g = SoulGraph.load(soul_path)
         node = g.nodes.get(msg_id)
         if node:
@@ -194,11 +200,19 @@ def cmd_reply(agent: str, msg_id: str, reply_text: str, env: dict) -> None:
 
     # Publish reply
     publish_cmd = [
-        "mac", "admin", "agentbus", "publish", agent,
-        "--topic", f"reply:{msg_id}",
-        "--content-type", "text/plain",
-        "--payload", reply_text,
-        "--payload-encoding", "text",
+        "mac",
+        "admin",
+        "agentbus",
+        "publish",
+        agent,
+        "--topic",
+        f"reply:{msg_id}",
+        "--content-type",
+        "text/plain",
+        "--payload",
+        reply_text,
+        "--payload-encoding",
+        "text",
     ]
     if sender_agent:
         publish_cmd += ["--recipient-agent-id", sender_agent]
@@ -213,6 +227,7 @@ def cmd_reply(agent: str, msg_id: str, reply_text: str, env: dict) -> None:
     soul_path = Path.home() / ".hermes" / "soul.json"
     try:
         from mac.soul_graph import SoulGraph  # type: ignore[import]
+
         g = SoulGraph.load(soul_path)
         node = g.nodes.get(msg_id)
         if node:
@@ -238,7 +253,9 @@ def cmd_list(agent: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Agent inbox: AgentBus → soul nodes + memory stubs")
+    parser = argparse.ArgumentParser(
+        description="Agent inbox: AgentBus → soul nodes + memory stubs"
+    )
     parser.add_argument("--agent", default="agent_bullwinkle")
     parser.add_argument("--limit", type=int, default=20)
     sub = parser.add_subparsers(dest="cmd")
