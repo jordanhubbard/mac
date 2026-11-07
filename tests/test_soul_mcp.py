@@ -71,6 +71,31 @@ def test_add_link_and_pin_use_the_real_engine():
     assert tools.soul_pin("missing").get("isError")
 
 
+def test_soul_link_accepts_relation_type():
+    g = _graph()
+    tools = SoulTools(g)
+    # Add a child node so we have something to link
+    _payload(tools.soul_add("Child thought.", id="child1", parents=["i1"]))
+    # Link with a typed relation
+    result = _payload(tools.soul_link("i1", "child1", relation="contradicts"))
+    assert "linked" in result
+    assert result.get("relation") == "contradicts"
+    # Verify stored in metadata
+    child = g.nodes["child1"]
+    assert child.metadata.get("parent_rels", {}).get("i1") == "contradicts"
+
+
+def test_soul_link_without_relation_is_backward_compatible():
+    g = _graph()
+    tools = SoulTools(g)
+    _payload(tools.soul_add("Another node.", id="node_b", parents=["i1"]))
+    result = _payload(tools.soul_link("i1", "node_b"))
+    assert "linked" in result
+    assert "relation" not in result  # no relation key when untyped
+    child = g.nodes["node_b"]
+    assert child.metadata.get("parent_rels", {}).get("i1") is None
+
+
 def test_promote_moves_only_the_named_hypothesis():
     g = _graph()
     tools = SoulTools(g)
@@ -109,7 +134,12 @@ def test_stdio_server_speaks_mcp_and_saves_only_after_writes(tmp_path):
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "soul_hot", "arguments": {}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "soul_hot", "arguments": {}},
+        },
     )
     assert [r["id"] for r in replies] == [1, 2, 3]
     assert {t["name"] for t in replies[1]["result"]["tools"]} >= {"soul_prime", "soul_related"}
@@ -117,8 +147,12 @@ def test_stdio_server_speaks_mcp_and_saves_only_after_writes(tmp_path):
 
     _rpc(
         path,
-        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-         "params": {"name": "soul_add", "arguments": {"content": "first memory", "id": "m1"}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "soul_add", "arguments": {"content": "first memory", "id": "m1"}},
+        },
     )
     assert "m1" in SoulGraph.load(path).nodes
     reply = _rpc(path, {"jsonrpc": "2.0", "id": 5, "method": "nope"})[0]
