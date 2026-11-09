@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # A supervisor can be SIGKILLed before its finally block. A dedicated pipe
 # makes its daemon process groups die with it rather than block the next boot.
 _CHILD_BOOTSTRAP = """
-import os, runpy, signal, sys, threading, time
+import os, runpy, signal, sys, threading
 reader = int(sys.argv[1])
 script = sys.argv[2]
 sys.argv = sys.argv[2:]
@@ -36,8 +36,8 @@ def watch_parent():
     try:
         os.read(reader, 1)
     finally:
-        os.killpg(os.getpgrp(), signal.SIGTERM)
-        time.sleep(2)
+        # The owner disappeared: terminate the entire group atomically,
+        # including descendants that ignore TERM. Normal stops use TERM first.
         os.killpg(os.getpgrp(), signal.SIGKILL)
 threading.Thread(target=watch_parent, daemon=True).start()
 runpy.run_path(script, run_name='__main__')
