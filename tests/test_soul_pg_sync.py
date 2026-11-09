@@ -1,4 +1,5 @@
 """Tests for soul_pg_sync: bidirectional soul.json ↔ fleet_brain Postgres sync."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def sample_soul_json(tmp_path: Path) -> Path:
@@ -55,6 +57,7 @@ def sample_soul_json(tmp_path: Path) -> Path:
 # _edges_from_nodes
 # ---------------------------------------------------------------------------
 
+
 def test_edges_from_nodes_extracts_parent_child():
     from mac.soul_pg_sync import _edges_from_nodes
 
@@ -83,9 +86,11 @@ def test_edges_from_nodes_no_parents():
 # PgSoulBackend.load — round-trip via mocked psycopg2
 # ---------------------------------------------------------------------------
 
+
 def _make_pg_rows(nodes, edges):
     """Build fake psycopg2 RealDictRow-like dicts."""
     from datetime import datetime, timezone
+
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     pg_nodes = [
@@ -99,10 +104,7 @@ def _make_pg_rows(nodes, edges):
         }
         for n in nodes
     ]
-    pg_edges = [
-        {"to_id": e["to_id"], "from_id": e["from_id"]}
-        for e in edges
-    ]
+    pg_edges = [{"to_id": e["to_id"], "from_id": e["from_id"]} for e in edges]
     return pg_nodes, pg_edges
 
 
@@ -171,6 +173,7 @@ def test_pg_backend_save_calls_upsert(sample_soul_json):
 # json_to_pg / pg_to_json
 # ---------------------------------------------------------------------------
 
+
 def test_json_to_pg_upserts_nodes_and_edges(sample_soul_json):
     from mac.soul_pg_sync import json_to_pg
 
@@ -186,7 +189,7 @@ def test_json_to_pg_upserts_nodes_and_edges(sample_soul_json):
         result = json_to_pg(sample_soul_json, "test_agent", db_url="postgresql:///fake")
 
     assert result["nodes"] == 2
-    assert result["edges"] == 1   # one parent edge: aaa00001 → bbb00002
+    assert result["edges"] == 1  # one parent edge: aaa00001 → bbb00002
     mock_conn.commit.assert_called_once()
 
 
@@ -196,7 +199,14 @@ def test_pg_to_json_writes_soul_file(tmp_path):
 
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
     pg_nodes = [
-        {"node_id": "n1", "content": "hello", "tags": ["identity"], "pinned": True, "score": 1.0, "created_at": ts},
+        {
+            "node_id": "n1",
+            "content": "hello",
+            "tags": ["identity"],
+            "pinned": True,
+            "score": 1.0,
+            "created_at": ts,
+        },
     ]
     pg_edges = [{"from_id": "n1", "to_id": "n2", "relation_type": "parent", "weight": 1.0}]
 
@@ -224,6 +234,7 @@ def test_pg_to_json_writes_soul_file(tmp_path):
 # ---------------------------------------------------------------------------
 # soul_mcp: serve_pg initializes and returns soul_summary
 # ---------------------------------------------------------------------------
+
 
 def test_serve_pg_initializes_and_summarises():
     """serve_pg should load from SoulGraphPG and respond to soul_summary."""
@@ -256,3 +267,15 @@ def test_serve_pg_initializes_and_summarises():
     summary_text = r2["result"]["content"][0]["text"]
     assert "SoulGraph" in summary_text
     assert "1 nodes" in summary_text
+
+
+def test_cli_default_soul_path_respects_configured_home(tmp_path, monkeypatch):
+    import sys
+    from mac import soul_pg_sync
+
+    home = tmp_path / "configured-hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setattr(sys, "argv", ["soul-pg-sync", "import", "--agent", "example"])
+    with patch.object(soul_pg_sync, "json_to_pg", return_value={"nodes": 0, "edges": 0}) as sync:
+        soul_pg_sync._cli()
+    assert sync.call_args.args[0] == home / "soul.json"

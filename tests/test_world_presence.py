@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 from mac.world_presence import (
-    presence_checkin, presence_update, presence_all, presence_get,
-    presence_checkout, _presence_id,
+    presence_checkin,
+    presence_update,
+    presence_all,
+    presence_get,
+    presence_checkout,
+    _presence_id,
 )
 from mac.world import world_despawn, _connect
 
@@ -13,7 +17,7 @@ AGENT = "bullwinkle-test-presence"
 
 
 @pytest.fixture(autouse=True)
-def cleanup():
+def cleanup(world_database):
     yield
     handle = _presence_id(AGENT)
     conn = _connect()
@@ -45,7 +49,7 @@ def test_checkin_idempotent():
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM world_objects WHERE id=%s", (_presence_id(AGENT),))
             row = cur.fetchone()
-            count = list(row.values())[0] if hasattr(row, 'values') else row[0]
+            count = list(row.values())[0] if hasattr(row, "values") else row[0]
     finally:
         conn.close()
     assert count == 1

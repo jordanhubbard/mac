@@ -16,6 +16,7 @@ Usage:
 Reto directive 2026-11-07: embed Slack messages in DB so agents can inspect
 the channel and get context at session start.
 """
+
 from __future__ import annotations
 import argparse
 import hashlib
@@ -50,7 +51,9 @@ def _load_sessions(limit: int, since: str | None) -> list[dict]:
         return []
 
     # Find session files (JSON), most recent first
-    session_files = sorted(sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    session_files = sorted(
+        sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
 
     for sf in session_files[:20]:  # scan up to 20 session files
         try:
@@ -71,13 +74,15 @@ def _load_sessions(limit: int, since: str | None) -> list[dict]:
                     continue
                 if since and ts and ts < since:
                     continue
-                messages.append({
-                    "channel": channel,
-                    "ts": str(ts),
-                    "user": str(user),
-                    "content": str(content),
-                    "session_file": str(sf),
-                })
+                messages.append(
+                    {
+                        "channel": channel,
+                        "ts": str(ts),
+                        "user": str(user),
+                        "content": str(content),
+                        "session_file": str(sf),
+                    }
+                )
         except Exception:
             continue
 
@@ -105,7 +110,10 @@ def embed_messages(messages: list[dict], agent: str = "bullwinkle", dry_run: boo
     try:
         import psycopg  # type: ignore[import]
     except ImportError:
-        print("[error] psycopg not available. Run from mac repo venv.", file=sys.stderr)
+        print(
+            "[error] psycopg not available. Run from the repository virtual environment.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     pg_url = _pg_url()
@@ -115,7 +123,8 @@ def embed_messages(messages: list[dict], agent: str = "bullwinkle", dry_run: boo
     with psycopg.connect(pg_url) as conn:
         # Check existing IDs to avoid dupes
         existing = set(
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT id FROM soul_nodes WHERE agent=%s AND 'slack'=ANY(tags)", (agent,)
             ).fetchall()
         )
@@ -159,18 +168,29 @@ def embed_messages(messages: list[dict], agent: str = "bullwinkle", dry_run: boo
                 written += 1
                 continue
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO soul_nodes
                   (id, content, tags, parents, pinned, score, created_at, updated_at,
                    last_accessed, access_count, metadata, agent)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (id) DO NOTHING
-            """, (
-                node_id, node_content, tags, [],
-                False, 1.0,
-                now, now, now, 1,
-                json.dumps(meta), agent,
-            ))
+            """,
+                (
+                    node_id,
+                    node_content,
+                    tags,
+                    [],
+                    False,
+                    1.0,
+                    now,
+                    now,
+                    now,
+                    1,
+                    json.dumps(meta),
+                    agent,
+                ),
+            )
             print(f"  wrote: {node_id} — {user} in #{channel}: {content[:60]}")
             written += 1
 
@@ -186,12 +206,14 @@ def embed_current_thread(messages_json: str, channel: str, agent: str) -> int:
         return 0
     normalized = []
     for m in msgs:
-        normalized.append({
-            "channel": channel,
-            "ts": m.get("ts") or m.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-            "user": m.get("user") or m.get("sender") or m.get("role", "user"),
-            "content": m.get("content") or m.get("text") or "",
-        })
+        normalized.append(
+            {
+                "channel": channel,
+                "ts": m.get("ts") or m.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                "user": m.get("user") or m.get("sender") or m.get("role", "user"),
+                "content": m.get("content") or m.get("text") or "",
+            }
+        )
     return embed_messages(normalized, agent=agent)
 
 
@@ -212,8 +234,12 @@ def main() -> None:
 
     messages = _load_sessions(limit=args.limit, since=args.since)
     if not messages:
-        print("No Slack messages found in session files. Try --messages-json to pass them directly.")
-        print("Example: python3 scripts/slack-embed.py --messages-json '[{\"user\":\"Reto\",\"ts\":\"...\",\"content\":\"...\"}]'")
+        print(
+            "No Slack messages found in session files. Try --messages-json to pass them directly."
+        )
+        print(
+            'Example: python3 scripts/slack-embed.py --messages-json \'[{"user":"Reto","ts":"...","content":"..."}]\''
+        )
         return
 
     n = embed_messages(messages, agent=args.agent, dry_run=args.dry_run)

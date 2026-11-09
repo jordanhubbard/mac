@@ -13,8 +13,16 @@ import uuid
 import pytest
 
 from mac.world import (
-    world_spawn, world_move, world_shape, world_field_set, world_field_get,
-    world_query_region, world_tick, world_snapshot, world_despawn, world_get,
+    world_spawn,
+    world_move,
+    world_shape,
+    world_field_set,
+    world_field_get,
+    world_query_region,
+    world_tick,
+    world_snapshot,
+    world_despawn,
+    world_get,
     _connect,
 )
 
@@ -26,8 +34,9 @@ TEST_TAG = f"pytest-world-{uuid.uuid4().hex[:8]}"
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
-def cleanup_test_objects():
+def cleanup_test_objects(world_database):
     """Remove all objects tagged with our unique test tag after each test."""
     yield
     conn = _connect()
@@ -56,6 +65,7 @@ def _spawn(**kw):
 # world_spawn
 # ---------------------------------------------------------------------------
 
+
 def test_spawn_returns_handle():
     obj = _spawn(name="test-point")
     assert obj.id.startswith("wobj_")
@@ -66,7 +76,9 @@ def test_spawn_returns_handle():
 def test_spawn_with_position_and_shape():
     obj = _spawn(
         name="sphere-test",
-        x=1.0, y=2.0, z=3.0,
+        x=1.0,
+        y=2.0,
+        z=3.0,
         shape={"type": "sphere", "radius": 2.5},
     )
     assert obj.x == 1.0
@@ -90,6 +102,7 @@ def test_spawn_handle_is_unique():
 # world_get
 # ---------------------------------------------------------------------------
 
+
 def test_get_roundtrip():
     orig = _spawn(name="get-test", x=5.0, y=6.0, z=7.0)
     fetched = world_get(orig.id)
@@ -105,6 +118,7 @@ def test_get_missing_raises():
 # ---------------------------------------------------------------------------
 # world_move
 # ---------------------------------------------------------------------------
+
 
 def test_move_partial():
     obj = _spawn(name="mover", x=0.0, y=0.0, z=0.0)
@@ -129,6 +143,7 @@ def test_move_missing_raises():
 # world_shape
 # ---------------------------------------------------------------------------
 
+
 def test_shape_replace():
     obj = _spawn(name="shaper", shape={"type": "point"})
     obj = world_shape(obj.id, agent=AGENT, shape={"type": "box", "dx": 1, "dy": 2, "dz": 3})
@@ -140,10 +155,11 @@ def test_shape_replace():
 # world_field_set / world_field_get
 # ---------------------------------------------------------------------------
 
+
 def test_field_set_merge():
     obj = _spawn(name="fielder", fields={"a": 1, "b": 2})
     obj = world_field_set(obj.id, agent=AGENT, updates={"b": 99, "c": "new"})
-    assert obj.fields["a"] == 1   # preserved
+    assert obj.fields["a"] == 1  # preserved
     assert obj.fields["b"] == 99  # updated
     assert obj.fields["c"] == "new"  # added
 
@@ -177,10 +193,16 @@ def test_field_get_missing_key_returns_none():
 # world_query_region
 # ---------------------------------------------------------------------------
 
+
 def test_query_region_finds_object():
     obj = _spawn(name="in-region", x=50.0, y=50.0, z=50.0)
     results = world_query_region(
-        x_min=0, x_max=100, y_min=0, y_max=100, z_min=0, z_max=100,
+        x_min=0,
+        x_max=100,
+        y_min=0,
+        y_max=100,
+        z_min=0,
+        z_max=100,
         tags=[TEST_TAG],
     )
     ids = [o.id for o in results]
@@ -190,7 +212,12 @@ def test_query_region_finds_object():
 def test_query_region_excludes_outside():
     _spawn(name="outside", x=200.0, y=200.0, z=200.0)
     results = world_query_region(
-        x_min=0, x_max=100, y_min=0, y_max=100, z_min=0, z_max=100,
+        x_min=0,
+        x_max=100,
+        y_min=0,
+        y_max=100,
+        z_min=0,
+        z_max=100,
         tags=[TEST_TAG],
     )
     for o in results:
@@ -200,8 +227,14 @@ def test_query_region_excludes_outside():
 def test_query_region_t_filter():
     obj = _spawn(name="old-obj", x=10.0, y=10.0, z=10.0, t=1.0)
     results = world_query_region(
-        x_min=0, x_max=50, y_min=0, y_max=50, z_min=0, z_max=50,
-        t_min=100.0, tags=[TEST_TAG],
+        x_min=0,
+        x_max=50,
+        y_min=0,
+        y_max=50,
+        z_min=0,
+        z_max=50,
+        t_min=100.0,
+        tags=[TEST_TAG],
     )
     assert obj.id not in [o.id for o in results]
 
@@ -209,6 +242,7 @@ def test_query_region_t_filter():
 # ---------------------------------------------------------------------------
 # world_tick
 # ---------------------------------------------------------------------------
+
 
 def test_tick_advances_clock():
     before = world_snapshot()
@@ -224,6 +258,7 @@ def test_tick_advances_clock():
 # world_snapshot
 # ---------------------------------------------------------------------------
 
+
 def test_snapshot_returns_clock_and_objects():
     _spawn(name="snap-obj")
     snap = world_snapshot(tags=[TEST_TAG])
@@ -236,6 +271,7 @@ def test_snapshot_returns_clock_and_objects():
 # ---------------------------------------------------------------------------
 # world_despawn
 # ---------------------------------------------------------------------------
+
 
 def test_despawn_removes_object():
     obj = _spawn(name="mortal")
@@ -253,20 +289,37 @@ def test_despawn_missing_raises():
 # MCP server: stdio protocol test
 # ---------------------------------------------------------------------------
 
-def test_mcp_initialize_and_snapshot():
+
+def test_mcp_initialize_and_snapshot(world_database):
     """MCP server must respond to initialize + tools/call over real pipes."""
-    messages = "\n".join([
-        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
-        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                    "params": {"name": "world_snapshot", "arguments": {"limit": 1}}}),
-    ]) + "\n"
+    messages = (
+        "\n".join(
+            [
+                json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {"name": "world_snapshot", "arguments": {"limit": 1}},
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
 
     result = subprocess.run(
-        [sys.executable, "-u", "-m", "mac.world_mcp", "--agent", AGENT],
-        input=messages, capture_output=True, text=True, timeout=15,
+        [sys.executable, "-u", "-m", "mac.world_mcp", "--agent", AGENT, "--db-url", world_database],
+        input=messages,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
-    assert len(lines) == 2, f"Expected 2 JSON lines, got: {result.stdout!r}\nstderr: {result.stderr}"
+    assert len(lines) == 2, (
+        f"Expected 2 JSON lines, got: {result.stdout!r}\nstderr: {result.stderr}"
+    )
 
     r1 = json.loads(lines[0])
     assert r1["id"] == 1
@@ -279,19 +332,40 @@ def test_mcp_initialize_and_snapshot():
     assert "objects" in content
 
 
-def test_mcp_spawn_and_get():
+def test_mcp_spawn_and_get(world_database):
     """MCP spawn → get round-trip."""
-    messages = "\n".join([
-        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
-        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                    "params": {"name": "world_spawn",
-                               "arguments": {"name": "mcp-test", "x": 7.0, "y": 8.0, "z": 9.0,
-                                             "tags": [TEST_TAG]}}}),
-    ]) + "\n"
+    messages = (
+        "\n".join(
+            [
+                json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "world_spawn",
+                            "arguments": {
+                                "name": "mcp-test",
+                                "x": 7.0,
+                                "y": 8.0,
+                                "z": 9.0,
+                                "tags": [TEST_TAG],
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
 
     result = subprocess.run(
-        [sys.executable, "-u", "-m", "mac.world_mcp", "--agent", AGENT],
-        input=messages, capture_output=True, text=True, timeout=15,
+        [sys.executable, "-u", "-m", "mac.world_mcp", "--agent", AGENT, "--db-url", world_database],
+        input=messages,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
     assert len(lines) == 2, f"stderr: {result.stderr}"

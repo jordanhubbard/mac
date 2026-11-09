@@ -452,3 +452,25 @@ def linux_repository_verifier(monkeypatch, tmp_path):
             )
 
     monkeypatch.setattr(services, "run_repository_contract_test_in_openshell", run)
+
+
+@pytest.fixture
+def world_database(monkeypatch):
+    """Qualify the standalone world API on a fresh test-only schema."""
+    from pathlib import Path
+
+    import psycopg
+    from mac import world
+    from mac.test_support import create_schema
+
+    _schema, scoped = create_schema()
+    migration = Path(world.__file__).parent / "data/postgres/migrations/0030_world_env.sql"
+    # Production grants name a fleet role; isolation needs only the table DDL.
+    ddl = "\n".join(
+        line for line in migration.read_text().splitlines() if not line.startswith("GRANT ")
+    )
+    with psycopg.connect(scoped) as connection:
+        connection.execute(ddl)
+    monkeypatch.setattr(world, "DEFAULT_DSN", scoped)
+    monkeypatch.setattr(world, "_LOCALHOST_DSN", scoped)
+    return scoped
