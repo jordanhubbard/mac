@@ -55,8 +55,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 
 
 # ---------------------------------------------------------------------------
@@ -66,14 +66,14 @@ DEFAULT_DSN = "host=100.72.16.110 port=5432 dbname=fleet_brain user=bullwinkle"
 _LOCALHOST_DSN = "dbname=fleet_brain user=jkh"
 
 
-def _connect(dsn: str | None = None) -> psycopg2.extensions.connection:
+def _connect(dsn: str | None = None) -> psycopg.Connection:
     """Open a connection; fall back to localhost peer-auth if remote fails."""
     for d in [dsn] if dsn is not None else [DEFAULT_DSN, _LOCALHOST_DSN]:
         try:
-            conn = psycopg2.connect(d, cursor_factory=psycopg2.extras.RealDictCursor)
+            conn = psycopg.connect(d, row_factory=dict_row)
             conn.autocommit = False
             return conn
-        except psycopg2.OperationalError:
+        except psycopg.OperationalError:
             continue
     raise RuntimeError("Cannot connect to fleet_brain via any known DSN")
 
