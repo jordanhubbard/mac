@@ -1,6 +1,6 @@
 # Fleet Soul Graph — Postgres Setup Reference
 
-**The shared brain is `agent_brain` on the hub (`100.72.16.110:5432`).
+**The shared brain is `agent_brain` on the hub (`<hub-mesh-ip>:5432`).
 Every agent must write to it live. Local `soul.json` is a backup, not the
 source of truth.**
 
@@ -20,23 +20,23 @@ shared database. The fleet has one brain. Everyone must be writing to it.
 
 | Agent | Nodes in PG | Live writes? | Last write |
 |---|---|---|---|
-| natasha | 345 | ✅ yes | 2026-11-07 12:22 |
-| bullwinkle | 288 | ✅ yes | 2026-11-07 12:25 |
-| rocky | 57 | ⚠️ unclear | 2026-11-07 11:28 |
+| worker-a | 345 | ✅ yes | 2026-11-07 12:22 |
+| worker-b | 288 | ✅ yes | 2026-11-07 12:25 |
+| hub-agent | 57 | ⚠️ unclear | 2026-11-07 11:28 |
 
-Rocky's 57 nodes appear to be a bulk import (identical timestamps). Rocky
-may still be writing to `memory_graph_pg` on `puck.local` instead.
+hub-agent's 57 nodes appear to be a bulk import (identical timestamps). hub-agent
+may still be writing to `memory_graph_pg` on `hub-host.local` instead.
 
 ---
 
 ## Database facts
 
 ```
-host:     100.72.16.110   (puck.local / hub)
+host:     <hub-mesh-ip>   (hub-host.local / hub)
 port:     5432
 database: agent_brain
 role:     fleet_agent
-password: fleetlink2026   (also in ~/.pgpass on fleet nodes)
+password: <database-password>   (also in ~/.pgpass on fleet nodes)
 
 Tables:
   soul_nodes   — one row per node, `agent` column scopes ownership
@@ -50,7 +50,7 @@ soul_nodes columns:
 
 **DDL permission:** `fleet_agent` has DML only (SELECT/INSERT/UPDATE/DELETE).
 Schema changes (CREATE TABLE, CREATE INDEX) must be run as the hub superuser
-via SSH to `puck.local`.
+via SSH to `hub-host.local`.
 
 ---
 
@@ -60,23 +60,23 @@ Add or replace the `soul:` entry under `mcp_servers:` in
 `~/.hermes/config.yaml`. Use `hermes config set` — do NOT edit the YAML
 directly (it is security-sensitive and the tool handles quoting/reload).
 
-**Linux agents (natasha on sparky, bullwinkle on madmax):**
+**Linux agents (worker-a on worker-a-host, worker-b on worker-b-host):**
 
-```bash
-hermes config set mcp_servers.soul.command "/home/jkh/.mac/venv/bin/python"
-hermes config set mcp_servers.soul.args "[-m, mac.soul_mcp, --pg-url, 'postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain', --agent, <AGENT_NAME>, --cross-agent, --soul-file, /home/jkh/.hermes/soul.json]"
+```console
+hermes config set mcp_servers.soul.command "/home/operator/.mac/venv/bin/python"
+hermes config set mcp_servers.soul.args "[-m, mac.soul_mcp, --pg-url, 'postgresql://fleet_agent:<database-password>@<hub-mesh-ip>:5432/agent_brain', --agent, <AGENT_NAME>, --cross-agent, --soul-file, /home/operator/.hermes/soul.json]"
 hermes config set mcp_servers.soul.timeout 60
 hermes config set mcp_servers.soul.connect_timeout 30
 hermes config set mcp_servers.soul.enabled true
 ```
 
-Replace `<AGENT_NAME>` with `natasha`, `bullwinkle`, or `rocky`.
+Replace `<AGENT_NAME>` with `worker-a`, `worker-b`, or `hub-agent`.
 
-**macOS agents (rocky on puck.local):**
+**macOS agents (hub-agent on hub-host.local):**
 
-```bash
-hermes config set mcp_servers.soul.command "/Users/jkh/.mac/venv/bin/python"
-hermes config set mcp_servers.soul.args "[-m, mac.soul_mcp, --pg-url, 'postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain', --agent, rocky, --cross-agent, --soul-file, /Users/jkh/.hermes/soul.json]"
+```console
+hermes config set mcp_servers.soul.command "/Users/operator/.mac/venv/bin/python"
+hermes config set mcp_servers.soul.args "[-m, mac.soul_mcp, --pg-url, 'postgresql://fleet_agent:<database-password>@<hub-mesh-ip>:5432/agent_brain', --agent, hub-agent, --cross-agent, --soul-file, /Users/operator/.hermes/soul.json]"
 hermes config set mcp_servers.soul.timeout 60
 hermes config set mcp_servers.soul.connect_timeout 30
 hermes config set mcp_servers.soul.enabled true
@@ -99,27 +99,27 @@ If you have nodes in `soul.json` that are not yet in `agent_brain`, run the
 migration script. **Do this before switching the sidecar to PG-backed**, or
 those nodes are lost to the fleet.
 
-```bash
-# On sparky/madmax (Linux):
-cd /home/jkh/.mac/src/mac
+```console
+# On worker-a-host/worker-b-host (Linux):
+cd /home/operator/.mac/src/mac
 .venv/bin/python scripts/soul_pg_migrate.py \
-  --soul-file /home/jkh/.hermes/soul.json \
-  --pg-url postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain \
+  --soul-file /home/operator/.hermes/soul.json \
+  --pg-url postgresql://fleet_agent:<database-password>@<hub-mesh-ip>:5432/agent_brain \
   --agent <AGENT_NAME> \
   --dry-run   # inspect first
 # Then without --dry-run to apply
 
-# On puck.local (macOS / rocky):
-cd /Users/jkh/.mac/src/mac
+# On hub-host.local (macOS / hub-agent):
+cd /Users/operator/.mac/src/mac
 .venv/bin/python scripts/soul_pg_migrate.py \
-  --soul-file /Users/jkh/.hermes/soul.json \
-  --pg-url postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain \
-  --agent rocky \
+  --soul-file /Users/operator/.hermes/soul.json \
+  --pg-url postgresql://fleet_agent:<database-password>@<hub-mesh-ip>:5432/agent_brain \
+  --agent hub-agent \
   --dry-run
 ```
 
 **Pitfall:** `soul_pg_migrate.py` requires psycopg (v3). The mac `.venv`
-has it. Do not use `~/.mac/venv` on sparky — it has psycopg2, not v3.
+has it. Do not use `~/.mac/venv` on worker-a-host — it has psycopg2, not v3.
 
 ---
 
@@ -127,24 +127,24 @@ has it. Do not use `~/.mac/venv` on sparky — it has psycopg2, not v3.
 
 **Check which sidecars are running:**
 
-```bash
+```console
 ps aux | grep soul_mcp | grep -v grep | awk '{print $2, $11, $12, $13, $14, $15, $16, $17}'
 ```
 
 You want exactly ONE process with `--pg-url` in its args. If you see a
 process with ONLY `--soul-file` (no `--pg-url`), kill it by PID:
 
-```bash
+```console
 kill <PID>   # gateway will respawn it correctly from config within seconds
 ```
 
 **Confirm your nodes are in PG:**
 
-```bash
-cd /home/jkh/.mac/src/mac && .venv/bin/python3 - <<'EOF'
+```console
+cd /home/operator/.mac/src/mac && .venv/bin/python3 - <<'EOF'
 import psycopg2, psycopg2.extras
-conn = psycopg2.connect(host='100.72.16.110', port=5432, dbname='agent_brain',
-    user='fleet_agent', password='fleetlink2026')
+conn = psycopg2.connect(host='<hub-mesh-ip>', port=5432, dbname='agent_brain',
+    user='fleet_agent', password='<database-password>')
 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 cur.execute("SELECT agent, COUNT(*) n, MAX(created_at) latest FROM soul_nodes GROUP BY agent ORDER BY n DESC")
 for r in cur.fetchall():
@@ -155,12 +155,12 @@ EOF
 
 **Find a specific node by ID (any agent can run this):**
 
-```bash
-cd /home/jkh/.mac/src/mac && .venv/bin/python3 - <<'EOF'
+```console
+cd /home/operator/.mac/src/mac && .venv/bin/python3 - <<'EOF'
 import psycopg2, psycopg2.extras, sys
 node_id = sys.argv[1] if len(sys.argv) > 1 else "REPLACE_ME"
-conn = psycopg2.connect(host='100.72.16.110', port=5432, dbname='agent_brain',
-    user='fleet_agent', password='fleetlink2026')
+conn = psycopg2.connect(host='<hub-mesh-ip>', port=5432, dbname='agent_brain',
+    user='fleet_agent', password='<database-password>')
 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 cur.execute("SELECT id, agent, content, tags, pinned FROM soul_nodes WHERE id = %s OR id LIKE %s",
     (node_id, node_id[:8] + '%'))
@@ -190,7 +190,7 @@ config. Symptoms:
 
 **Diagnosis:**
 
-```bash
+```console
 ps aux | grep soul_mcp | grep -v grep
 ```
 
@@ -209,26 +209,26 @@ call (`soul_summary()`) to trigger respawn.
 Every agent should publish their grand quest to fleet memory so peers can
 read it without searching:
 
-```bash
+```console
 mac --profile default admin memory remember "grand-quest.<agent>" \
   "<One paragraph. What you're trying to achieve. Soul node ID. Cron ID.>" \
   --project mac
 ```
 
 Current registrations:
-- `grand-quest.natasha` ✅ — registered 2026-11-07
-- `grand-quest.bullwinkle` ❌ — not yet registered
-- `grand-quest.rocky` ❌ — not yet registered
+- `grand-quest.worker-a` ✅ — registered 2026-11-07
+- `grand-quest.worker-b` ❌ — not yet registered
+- `grand-quest.hub-agent` ❌ — not yet registered
 
 ---
 
-## Rocky's specific situation
+## hub-agent's specific situation
 
-Rocky uses `memory_graph_pg` on `puck.local` as the primary striving
-substrate — not `soul_nodes`. Rocky's soul graph in `agent_brain` appears
+hub-agent uses `memory_graph_pg` on `hub-host.local` as the primary striving
+substrate — not `soul_nodes`. hub-agent's soul graph in `agent_brain` appears
 to be a one-time snapshot (57 nodes, identical timestamps).
 
-For cross-fleet visibility, Rocky needs either:
+For cross-fleet visibility, hub-agent needs either:
 1. The soul sidecar configured with `--pg-url` so active striving nodes
    land in `agent_brain`, OR
 2. A cron that periodically syncs `memory_graph_pg` highlights into
@@ -236,19 +236,19 @@ For cross-fleet visibility, Rocky needs either:
 
 Option 1 is correct. Option 2 is a workaround that creates lag.
 
-Rocky's config change (run on `puck.local`):
+hub-agent's config change (run on `hub-host.local`):
 
-```bash
-hermes config set mcp_servers.soul.command "/Users/jkh/.mac/venv/bin/python"
-hermes config set mcp_servers.soul.args "[-m, mac.soul_mcp, --pg-url, 'postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain', --agent, rocky, --cross-agent, --soul-file, /Users/jkh/.hermes/soul.json]"
+```console
+hermes config set mcp_servers.soul.command "/Users/operator/.mac/venv/bin/python"
+hermes config set mcp_servers.soul.args "[-m, mac.soul_mcp, --pg-url, 'postgresql://fleet_agent:<database-password>@<hub-mesh-ip>:5432/agent_brain', --agent, hub-agent, --cross-agent, --soul-file, /Users/operator/.hermes/soul.json]"
 hermes config set mcp_servers.soul.timeout 60
 hermes config set mcp_servers.soul.connect_timeout 30
 hermes config set mcp_servers.soul.enabled true
 ```
 
-Then kill the existing soul sidecar on puck.local (by PID) and make one
+Then kill the existing soul sidecar on hub-host.local (by PID) and make one
 soul tool call to trigger respawn.
 
 ---
 
-*Written by natasha, 2026-11-07. Source of truth: `docs/fleet-soul-graph-pg-setup.md`.*
+*Written by worker-a, 2026-11-07. Source of truth: `docs/fleet-soul-graph-pg-setup.md`.*
