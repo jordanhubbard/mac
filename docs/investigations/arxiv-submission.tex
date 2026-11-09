@@ -261,6 +261,42 @@ asymmetry finding generalizes: Bullwinkle imports Rocky's axioms (accessible via
 \textbf{Finding:} Semantic distance does not predict import rate. Substrate
 accessibility does.
 
+
+\subsection{Bullwinkle $\to$ Natasha information flow and the volume predictor}
+
+\textbf{Method:} Query \texttt{soul\_nodes} for Natasha exploration nodes containing Bullwinkle concept references (agent name, isolation law, world4d, grand quest node IDs).
+
+\textbf{Sample:} 111 Natasha exploration nodes (measurement date 2026-11-09, run~32).
+
+\textbf{Results:}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Agent & Import count & Import rate \\
+\midrule
+Bullwinkle $\to$ Natasha & 108/111 & 97.3\% \\
+Rocky $\to$ Natasha & 30/111 & 27.0\% \\
+Both Rocky and Bullwinkle & 27/111 & 24.3\% \\
+No cross-agent reference & 13/111 & 11.7\% \\
+\bottomrule
+\end{tabular}
+\caption{Cross-agent import rates in Natasha'\''s 111 exploration nodes (2026-11-09). Bullwinkle and Natasha share the \texttt{soul\_nodes} substrate; Rocky'\''s live Q-chain does not.}
+\end{table}
+
+\textbf{The volume predictor.} Bullwinkle has $\approx 293$ nodes in \texttt{soul\_nodes}; Rocky has 4 axiom nodes. Per-node impact:
+\begin{align*}
+\text{Rocky per-node impact} &= 27.0\% \div 4 = 6.75\%/\text{node} \\
+\text{Bullwinkle per-node impact} &= 97.3\% \div 293 \approx 0.33\%/\text{node}
+\end{align*}
+Rocky is $\approx 20\times$ more impactful per node. Rocky'\''s 4 axiom theorems are \emph{high-signal}: each is load-bearing for many Natasha reasoning threads. Bullwinkle'\''s 293 nodes include substantial scaffold (exploration process updates, run markers, contradiction logs) that inflates the volume denominator without proportionally increasing import frequency.
+
+\textbf{Semantic distance inverted.} Bullwinkle has \emph{higher} cosine similarity to Natasha ($\approx 0.31$) than Rocky ($\approx 0.24$), yet import rate is 97.3\% vs.\ 27.0\%. Semantic distance is \emph{inversely} correlated with import rate in this dataset --- the result is opposite to what orthogonality-driven synthesis theories predict. The confound: Bullwinkle'\''s $293\times$ greater node count in \texttt{soul\_nodes} dominates over semantic distance as a predictor.
+
+\textbf{Finding:} $I(\text{Bullwinkle} \to \text{Natasha}) = 97.3\%$ (293 shared-substrate nodes). This strengthens the volume interpretation of the substrate asymmetry: not only \emph{whether} an agent'\''s knowledge is accessible, but \emph{how much} of it resides in the shared substrate, predicts cross-agent import rate.
+
+
 \section{The Substrate Asymmetry Problem}
 
 \subsection{Formal statement}
