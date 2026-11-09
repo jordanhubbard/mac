@@ -55,14 +55,15 @@ import argparse, json, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 p=argparse.ArgumentParser()
 p.add_argument('--world'); p.add_argument('--port',type=int); p.add_argument('--hz')
-a=p.parse_args(); start=time.monotonic(); frozen=None
+a=p.parse_args(); start=time.monotonic(); frozen=None; danger=False
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def do_GET(self):
-        global frozen
+        global frozen, danger
         tick=int((time.monotonic()-start)*10) if frozen is None else frozen
         if self.path=='/freeze': frozen=tick
-        body=json.dumps({'tick':tick,'paused':False,'objects':[{'kind':'agent'}]}).encode()
+        if self.path=='/danger': danger=not danger
+        body=json.dumps({'tick':tick,'paused':False,'objects':[{'kind':'agent','fields':{'in_danger':danger}}]}).encode()
         self.send_response(200); self.end_headers(); self.wfile.write(body)
 HTTPServer(('127.0.0.1',a.port),Handler).serve_forever()
 """)
@@ -109,6 +110,13 @@ def test_runtime_restarts_failed_and_stalled_children_and_stops_cleanly(config):
         snapshot = get(port, "/snapshot")
         assert "test snapshot" in snapshot and "fleet snapshot" in snapshot
         assert "\n\n" in snapshot
+        cached = get(port, "/snapshot-on-change")
+        assert json.loads(cached)["snapshot"] == snapshot
+        time.sleep(0.2)
+        assert get(port, "/snapshot-on-change") == cached
+        get(config["worlds"][0]["port"], "/danger")
+        eventually(lambda: "danger=1" in get(port, "/monitor"))
+        assert get(port, "/snapshot-on-change") != cached
         first_pid = status["worlds"][0]["pid"]
         os.kill(first_pid, signal.SIGKILL)
 
@@ -144,7 +152,7 @@ def test_unready_worlds_fail_monitor_and_snapshot(config):
     thread = service.threading.Thread(target=server.serve_forever)
     thread.start()
     try:
-        for path in ("/health", "/monitor", "/snapshot"):
+        for path in ("/health", "/monitor", "/snapshot", "/snapshot-on-change"):
             with pytest.raises(urllib.error.HTTPError) as error:
                 get(server.server_port, path)
             assert error.value.code == 503
@@ -188,3 +196,33 @@ def test_install_refuses_ambiguous_ports_and_unsafe_log_names(config):
     config["worlds"][0]["name"] = "../other-service"
     with pytest.raises(ValueError, match="simple identifiers"):
         service.validate_config(config)
+
+
+def test_supervisor_crash_releases_world_ports_for_its_replacement(config):
+    proc = launch(config)
+    replacement = None
+    try:
+        status = eventually(lambda: json.loads(get(config["monitor_port"])))
+        old_pids = {world["pid"] for world in status["worlds"]}
+        proc.kill()
+        proc.wait(timeout=5)
+
+        def ports_released():
+            for world in config["worlds"]:
+                with socket.socket() as sock:
+                    if sock.connect_ex(("127.0.0.1", world["port"])) == 0:
+                        return False
+            return True
+
+        eventually(ports_released)
+        replacement = launch(config)
+        status = eventually(lambda: json.loads(get(config["monitor_port"])))
+        assert status["ready"]
+        assert old_pids.isdisjoint(world["pid"] for world in status["worlds"])
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=10)
+        if replacement is not None:
+            replacement.terminate()
+            assert replacement.wait(timeout=10) == 0

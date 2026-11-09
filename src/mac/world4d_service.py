@@ -25,6 +25,25 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+# A supervisor can be SIGKILLed before its finally block. A dedicated pipe
+# makes its daemon process groups die with it rather than block the next boot.
+_CHILD_BOOTSTRAP = """
+import os, runpy, signal, sys, threading, time
+reader = int(sys.argv[1])
+script = sys.argv[2]
+sys.argv = sys.argv[2:]
+def watch_parent():
+    try:
+        os.read(reader, 1)
+    finally:
+        os.killpg(os.getpgrp(), signal.SIGTERM)
+        time.sleep(2)
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+threading.Thread(target=watch_parent, daemon=True).start()
+runpy.run_path(script, run_name='__main__')
+"""
+
+
 def fetch_world(port: int) -> dict:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/world", timeout=3) as response:
         data = json.load(response)
@@ -74,17 +93,24 @@ class World:
         self.error = "not started"
         self.restarts = 0
         self.log = None
+        self.parent_writer = None
 
     def start(self) -> None:
         if self.proc is not None:
             stop_process(self.proc)
             self.log.close()
+            os.close(self.parent_writer)
+            self.proc = self.parent_writer = None
             self.restarts += 1
         name = self.settings["name"]
         self.log = open(Path(self.config["root"]) / f"{name}.log", "ab", buffering=0)
+        reader, writer = os.pipe()
         argv = [
             self.config["python"],
             "-u",
+            "-c",
+            _CHILD_BOOTSTRAP,
+            str(reader),
             str(Path(self.config["source"]) / "world4d_daemon.py"),
             "--world",
             name,
@@ -94,13 +120,22 @@ class World:
             str(self.settings.get("hz", 1)),
         ]
         argv.extend(self.settings.get("args", []))
-        self.proc = subprocess.Popen(
-            argv,
-            cwd=self.config["source"],
-            stdout=self.log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        try:
+            self.proc = subprocess.Popen(
+                argv,
+                cwd=self.config["source"],
+                stdout=self.log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                pass_fds=(reader,),
+            )
+            self.parent_writer = writer
+        except BaseException:
+            os.close(writer)
+            self.log.close()
+            raise
+        finally:
+            os.close(reader)
         self.started = self.progress = time.monotonic()
         self.last_tick = self.data = None
         self.error = "starting"
@@ -172,6 +207,9 @@ def render_snapshot(config: dict) -> str:
 
 
 def handler_for(worlds: list[World], config: dict):
+    cache = {"fingerprint": None, "body": None}
+    cache_lock = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
@@ -191,6 +229,27 @@ def handler_for(worlds: list[World], config: dict):
                     else f"{w.settings['name']}=unavailable"
                     for w in worlds
                 )
+            elif self.path == "/snapshot-on-change":
+                if ready:
+                    try:
+                        key = "|".join(fingerprint(w.settings["name"], w.data) for w in worlds)
+                        with cache_lock:
+                            if cache["fingerprint"] != key:
+                                snapshot = render_snapshot(config)
+                                # Hermes injects at most 8,000 monitor characters.
+                                candidate = json.dumps(
+                                    {"fingerprint": key, "snapshot": snapshot},
+                                    ensure_ascii=False,
+                                )
+                                if len(candidate) > 7800:
+                                    raise ValueError("snapshot exceeds cron monitor context limit")
+                                cache.update(fingerprint=key, body=candidate)
+                            body = cache["body"]
+                        content_type = "application/json"
+                    except Exception as exc:
+                        code, body = 503, str(exc)
+                else:
+                    body = "World4D is not ready"
             elif self.path == "/snapshot":
                 if ready:
                     try:
@@ -258,6 +317,7 @@ def run(config: dict) -> None:
                 if world.proc is not None:
                     stop_process(world.proc)
                     world.log.close()
+                    os.close(world.parent_writer)
             if thread.is_alive():
                 server.shutdown()
                 thread.join(timeout=5)

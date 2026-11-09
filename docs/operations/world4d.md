@@ -4,7 +4,9 @@ The external World4D prototype supplies the simulation SDK, daemon and renderer.
 `src/mac/world4d_service.py` supplies its missing process lifecycle: a macOS
 LaunchDaemon starts the worlds at boot, independently restarts an exited or
 stalled world, and shuts down each daemon's entire process group on service stop.
-PostgreSQL retains the existing world objects and tick counters.
+A parent-liveness pipe also terminates daemon groups if the supervisor is
+forcibly killed, so its replacement can reclaim the ports. PostgreSQL retains
+the existing world objects and tick counters.
 
 This is separate from `mac.world` and its MCP interface. Do not substitute those
 modules for the external prototype's database schema or restore a demo snapshot
@@ -82,6 +84,7 @@ The supervisor exposes three endpoints on **loopback only** at `monitor_port`:
 | `/health` | JSON readiness, child PIDs, ticks, errors and restart counts; HTTP 503 until every world is ready. |
 | `/monitor` | Stable agent/danger/hub/pause fingerprint, excluding ticking counters; HTTP 503 when any world is unhealthy. |
 | `/snapshot` | Text from the existing renderer for all configured worlds; never sends a Slack message. HTTP 503 on unready worlds or renderer failure. |
+| `/snapshot-on-change` | JSON fingerprint and snapshot, cached until a notable change. Stable across ticks, with no terminal tool needed by cron. |
 
 Readiness requires a valid world response and observed tick progress (or an
 explicitly paused world). The prototype can keep its HTTP thread alive after
@@ -97,13 +100,17 @@ interface. Its access policy is separate from the loopback observation service.
 
 Keep the job paused until both worlds advance, a killed child automatically
 recovers, and `/snapshot` renders successfully. Preserve its origin, schedule
-and monitor history. Configure `monitor_url` to the supervisor's `/monitor` and
-clear `monitor_script`; HTTP monitoring avoids launching a subprocess during
-parallel MCP startup. An unchanged fingerprint suppresses the agent turn.
+and monitor history. Configure `monitor_url` to `/snapshot-on-change` and clear
+`monitor_script`; HTTP monitoring avoids launching a subprocess during parallel
+MCP startup. An unchanged fingerprint returns the same cached snapshot and
+suppresses the agent turn. Cached snapshots remain observations of the last
+notable change, rather than continuous tick updates. The cache resets when the
+supervisor restarts, which can produce one fresh observation.
 
-Update the prompt to fetch `/snapshot` and return the text for cron's automatic
-delivery. It must not run the renderer's Slack-posting CLI or invoke another
-message-sending tool: cron owns delivery. Validate an isolated canary using the
+Update the prompt to return the `snapshot` JSON field from the monitor's current
+output for cron's automatic delivery. Set `enabled_toolsets` to `["no_mcp"]`;
+that sentinel explicitly resolves to no tools. It must not fetch again, run the
+renderer CLI or invoke another message-sending tool: cron owns delivery. Validate an isolated canary using the
 same job body with delivery disabled, then resume the original job with its
 normal delivery configuration. Do not reset the monitor baseline merely to
 force a test message. Unavailable worlds remain explicit monitor failures,
