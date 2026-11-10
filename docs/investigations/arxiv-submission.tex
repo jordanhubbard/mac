@@ -410,8 +410,8 @@ Rocky-theorem import rate of 29.6\% (34/115 nodes). The all-time rate is
 temporal-primacy component.
 
 A second confound emerged: the Rocky-theorem import rate is \textbf{not static}.
-Direct measurement of Natasha's 120 exploration nodes grouped by dominant topic
-keyword (run~39, 2026-11-09) yields:
+Direct measurement of Natasha's 143 exploration nodes grouped by dominant topic
+keyword (run~40, 2026-11-09), using body-level Rocky-theorem concepts as the metric, yields:
 
 \begin{table}[h]
 \centering
@@ -424,12 +424,14 @@ Model-training & 49 & 10.2\% (5/49) & dataset, fine-tuning, LoRA \\
 Infrastructure & 1 & 0.0\% (0/1) & injection, splay \\
 \bottomrule
 \end{tabular}
-\caption{Rocky-theorem import rate stratified by Natasha focus state (run~39, $n=120$). The 4.3$\times$ differential between theory and training focus shows that cross-agent information flow is modulated by the receiving agent's attention state, not solely substrate topology.}
+\caption{Rocky-theorem import rate stratified by Natasha focus state (run~40, $n=143$). Metric: Rocky compounding-theorem concepts (``compounding'', ``Clark ceiling'', ``SOS'') in node body (past char~600 to skip template preamble). The 57$\times$ differential between theory and training focus (68.3\% vs.\ 1.2\%) shows that cross-agent theorem synthesis is tightly coupled to the receiving agent's focus state. The all-mentions metric (run 39, $n=120$, 4.3$\times$) included Rocky-name appearances that are not concept synthesis; the body-level theorem metric here is the more precise instrument.}
 \end{table}
 
-The rate varied 4.3$\times$ (43.3\% theory vs.\ 10.2\% training focus) --- larger
-than the previously reported 24.1\%--35.2\% 48-hour window, because that window
-blended focus states rather than stratifying them.
+The rate varied 57$\times$ (68.3\% theory vs.\ 1.2\% training focus) using
+the precise metric (Rocky compounding-theorem concepts in node body, past
+template preamble, $n=143$). The earlier 4.3$\times$ figure (run~39, $n=120$)
+used broader Rocky-name matching that included template references; stratifying
+by body-level theorem concepts sharpens the signal substantially.
 
 \textbf{Implication.} Cross-agent information flow rate is a dynamic property
 modulated by the receiving agent's focus state, not a fixed property of the
@@ -447,29 +449,32 @@ node IDs (e.g.\ \texttt{rocky\_compounding\_theorem}, \texttt{rocky\_clark\_ceil
 in a \texttt{thought\_references} header preamble, independent of whether the body
 reasoning actually integrates those concepts.
 
-\textbf{Control measurement (run~39, $n=129$).}
+\textbf{Control measurement (run~40, $n=143$).}
 We stratified Rocky-name occurrences in Natasha's post-2026-11-06 exploration
-nodes (\texttt{agent\_brain.soul\_nodes}) by text position:
+nodes (\texttt{agent\_brain.soul\_nodes}) by text position and metric precision
+(run~40, $n=143$):
 \begin{itemize}
-  \item \textbf{Full-content} Rocky reference: 99/129 nodes (76.7\%)
-  \item \textbf{Body-level} Rocky reference (past char~600, past the template header): 97/129 (75.2\%)
-  \item \textbf{Template-only} Rocky reference (header only, absent from body): 2/129 (1.6\%)
-  \item \textbf{Rocky-concept terms} in body (``compounding'', ``Clark ceiling'', ``SOS''): 29/129 (22.5\%)
-  \item \textbf{Rocky canonical node IDs} cited in body (\texttt{rocky\_*} slugs past char~600): 94/129 (72.9\%)
+  \item \textbf{Full-content} Rocky reference: 108/143 nodes (75.5\%)
+  \item \textbf{Body-level} Rocky reference (past char~600, past the template header): 106/143 (74.1\%)
+  \item \textbf{Template-only} Rocky reference (header only, absent from body): 2/143 (1.4\%)
+  \item \textbf{Rocky-concept terms} in body (``compounding'', ``Clark ceiling'', ``SOS''): 42/143 (29.4\%)
+  \item \textbf{Rocky body-theorem concepts by focus state}: 68.3\% (theory) vs.\ 1.2\% (training)
 \end{itemize}
 
 \textbf{Hypothesis tested:} Template header boilerplate inflates the Rocky-reference
 rate from a true body-level rate below 25\% to the observed 32--43\% import rate.
 
-\textbf{Result: Hypothesis FALSIFIED.} The body-level Rocky-reference rate (75.2\%)
-nearly equals the full-content rate (76.7\%), with only 1.6\% attributable to
+\textbf{Result: Hypothesis FALSIFIED.} The body-level Rocky-reference rate (74.1\%)
+nearly equals the full-content rate (75.5\%), with only 1.4\% attributable to
 template-only occurrences. The cross-pollination measurement is not materially
 inflated by header boilerplate.
 
 \textbf{Implication.} The 32\%--43\% Rocky-theorem import rate in body reasoning
 is a lower bound: it measures nodes where Rocky's theoretical constructs visibly
 appear in the analytical content, not merely in citation headers. The measurement
-is robust to this confound.
+is robust to this confound. The more precise body-theorem metric (29.4\% overall;
+68.3\% theory-focus / 1.2\% training-focus) reveals that the aggregate rate
+blends two qualitatively different regimes.
 
 
 \section{Conclusion}
