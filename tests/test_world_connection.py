@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-import psycopg2
+import psycopg
 import pytest
 
 from mac import world
@@ -11,7 +11,7 @@ from mac import world
 def test_explicit_world_dsn_fails_closed():
     dsn = "dbname=unavailable_explicit_world"
     with patch.object(
-        psycopg2, "connect", side_effect=psycopg2.OperationalError("unavailable")
+        psycopg, "connect", side_effect=psycopg.OperationalError("unavailable")
     ) as connect:
         with pytest.raises(RuntimeError):
             world._connect(dsn)

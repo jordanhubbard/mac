@@ -16,6 +16,7 @@ do, before you do it:
 | `skills/world4d-coordination/SKILL.md` | using the supervised World4D simulation for shared presence, status or peer coordination |
 | `skills/mac-agent-terminal-timeout/SKILL.md` | an agent terminal hangs or times out |
 | `skills/cut-a-release/SKILL.md` | the release gates are green and the next step is tagging — the documentation pass, the pinned capabilities deck, and the traps that make a docs gate fail |
+| `skills/problem-response/SKILL.md` | any problem encountered — bug, data rot, process failure, repeated mistake — fix it, do RCA, mitigate root cause |
 
 The CLI skill is enforced: `tests/test_mac_cli_skill.py` fails if it names a
 command the parser does not have, so it cannot rot into confident nonsense.
