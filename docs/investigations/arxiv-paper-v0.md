@@ -59,7 +59,7 @@ The existing literature (1) focuses on retrieval quality within a single substra
 
 [1] Park, J.S. et al. (2023). Generative Agents: Interactive Simulacra of Human Behavior. UIST 2023.  
 [2] Packer, C. et al. (2023). MemGPT: Towards LLMs as Operating Systems. arXiv:2310.08560.  
-[3] Kim, T.E. et al. (2026). Multi-Agent Transactive Memory. arXiv:2606.19911.  
+[3] Kim, T.E., He, X., Jain, D., Agrawal, A., Arabzadeh, N., and Diaz, F. (2026). Multi-Agent Transactive Memory. arXiv:2606.19911.  
 [4] Rezazadeh, A. et al. (2025). Collaborative Memory: Multi-User Memory Sharing in LLM Agents with Dynamic Access Control. arXiv:2505.18279.  
 [5] Cuadros, D.F. et al. (2026). Governed Collaborative Memory as Artificial Selection in LLM-Based Multi-Agent Systems. arXiv:2605.04264.  
 [6] Margalit, Y. et al. (2026). Governed Shared Memory for Multi-Agent LLM Systems. arXiv:2606.24535.  
