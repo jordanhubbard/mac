@@ -181,3 +181,69 @@ world events during ordinary turns. Keep probe actors separate from fleet actors
 Advancing simulation ticks, gateway startup and old avatar `online` flags are not
 evidence of agent participation. The snapshot monitor still observes its documented
 count/pause fingerprint; a changed note or signal alone need not trigger a post.
+
+## Managed client binding and runtime presence
+
+A client rollout must migrate its reporting workflows as well as adding tools.
+Bullwinkle's old snapshot job continued querying `public.world4d_objects` while
+its new MCP server used `world4d.objects`. It therefore reported missing peers
+from a different simulation. Its avatar also depended on voluntary model
+check-ins. Tool installation and a successful read-only canary did not prove
+that either workflow had migrated.
+
+Use the standalone `src/mac/world4d_client.py` manager with a private JSON
+manifest. The manifest names `agent`, `realm_id`, `world` (`fleet`), `backend`
+(`prototype`), the canonical MCP `command` array, `hermes_home`, `hermes_runtime`,
+`manifest_path`, persistent `python`, installed `client_module`, `hook`,
+`refresh_launcher`, `work_jobs`, `report_jobs`, `retired_servers` and
+`monitor_url`. Keep module generations private and retain the prior generation.
+Install the coordination skill before invoking the manager. The service's
+`prepare` command creates a stable realm UUID, preserving it on later prepares.
+The private `mac/world4d_identity` RPC validates that the client targets this
+realm before any configuration or presence writes.
+
+Run the manager using the installed Hermes runtime Python, which supplies its
+native cron API:
+
+```console
+/path/to/hermes/.venv/bin/python /private/world4d_client.py install /private/world4d-client.json
+/path/to/hermes/.venv/bin/python /private/world4d_client.py audit /private/world4d-client.json
+```
+
+Install backs up the original private config and managed job records, updates
+only the declared MCP binding and cron jobs, disables declared competing world
+servers, preserves other configuration and existing work skills, and installs
+the optional executable `~/.mac/bin/mac-world4d-presence`. The existing
+fleet-context refresh runs that hook every three minutes on macOS and Linux;
+there is no additional timer. Install the current fleet-context launcher/unit
+before applying the manifest. Audit checks the realm, binding, retired servers,
+job skills, reporting source/delivery, installed skill, hook contents,
+fleet-context integration and a fresh successful presence receipt. Run audit
+after updates; a missing hook or stale receipt is a deployment failure.
+
+Presence requires a heartbeat under 60 seconds old, a matching gateway PID and
+process birth time, and a response from its event-loop tick socket. A live PID
+alone is insufficient. Offline/unknown checks never advance `last_seen`.
+Successful health checks publish `runtime_last_seen` with actor
+`mac_world4d_presence`, separate from model mutations and their
+`model_last_seen`/`model_status`. Runtime proofs expire after seven minutes and
+are projected as stale/offline by observations, the real viewer and SSE.
+Neither automatic presence nor operator probes count as model adoption.
+
+The existing world HTTP listener exposes only two additional read-only proxy
+routes: `/mac/world4d/identity` and `/mac/world4d/snapshot-on-change`. They
+forward to the loopback supervisor, which retains its original bind. A remote
+reporter can therefore use native `monitor_url` without launching an SSH child
+under Hermes. The stable response includes the realm UUID, fingerprint, full
+snapshot and brief summary. Timestamps and ticks do not change the fingerprint;
+actual runtime health transitions do. Existing world API access policy still
+applies; this adds no database credentials or new listener.
+
+For an explicitly managed legacy report, migration replaces its competing SQL
+prompt with the shared monitor and disables MCP tools. It changes `deliver`
+from a manually posting local job to `origin`, retaining its original Slack
+channel/thread and schedule so native cron owns delivery. Quietly seed the new
+source once with Hermes `cron.monitor.check_monitor` (not a delivered agent
+run), verify the next unchanged check suppresses execution, then resume the
+original schedule. Preserve legacy data and history. Do not reset an already
+correct monitor baseline merely to manufacture a notification.

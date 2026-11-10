@@ -22,8 +22,14 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+try:
+    from .world4d_presence import project_fields
+except ImportError:
+    from world4d_presence import project_fields
 
 
 def streaming_handler(base, state):
@@ -35,7 +41,24 @@ def streaming_handler(base, state):
             super().setup()
 
         def do_GET(self):
-            if urllib.parse.urlparse(self.path).path != "/events":
+            if self.path in {"/mac/world4d/identity", "/mac/world4d/snapshot-on-change"}:
+                path = self.path.removeprefix("/mac/world4d")
+                try:
+                    port = int(os.environ["MAC_WORLD4D_MONITOR_PORT"])
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}{path}", timeout=20
+                    ) as response:
+                        body = response.read(8001)
+                    self.send_response(200)
+                except Exception:
+                    body = b"World4D monitor unavailable"
+                    self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if urllib.parse.urlparse(self.path).path != "/events" or "_subscribers" not in state:
                 return super().do_GET()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -74,8 +97,21 @@ def run_child(reader: int, script: str) -> None:
     state = entry.__globals__
     # A long-lived SSE request must not monopolize the prototype's HTTPServer.
     state["HTTPServer"] = ThreadingHTTPServer
-    if {"Handler", "_subscribers", "_sub_lock", "_running"} <= state.keys():
+    if "Handler" in state:
         state["Handler"] = streaming_handler(state["Handler"], state)
+    if "build_snapshot" in state:
+        original = state["build_snapshot"]
+
+        def projected_snapshot():
+            data = original()
+            # The prototype truncates fields to eight; retain health and model
+            # timestamps so the real viewer and SSE cannot advertise stale life.
+            by_handle = {o.handle: o.fields for o in state["_world"].list(limit=500)}
+            for obj in data["objects"]:
+                obj["fields"] = project_fields(by_handle.get(obj["handle"], obj["fields"]))
+            return data
+
+        state["build_snapshot"] = projected_snapshot
     entry()
 
 
@@ -93,9 +129,14 @@ def fingerprint(name: str, data: dict) -> str:
     agents = sum(obj.get("kind") == "agent" for obj in objects)
     danger = sum(bool(obj.get("fields", {}).get("in_danger")) for obj in objects)
     hub = sum(bool(obj.get("fields", {}).get("at_hub")) for obj in objects)
+    runtime = sorted(
+        (o.get("handle"), project_fields(o.get("fields", {})).get("effective_runtime_status"))
+        for o in objects
+        if "runtime_valid_until" in o.get("fields", {})
+    )
     return (
         f"{name}:agents={agents},danger={danger},hub={hub},paused={int(bool(data.get('paused')))}"
-    )
+    ) + (f",runtime={json.dumps(runtime, separators=(',', ':'))}" if runtime else "")
 
 
 def stop_process(proc: subprocess.Popen) -> None:
@@ -158,6 +199,7 @@ class World:
         try:
             self.proc = subprocess.Popen(
                 argv,
+                env={**os.environ, "MAC_WORLD4D_MONITOR_PORT": str(self.config["monitor_port"])},
                 cwd=self.config["source"],
                 stdout=self.log,
                 stderr=subprocess.STDOUT,
@@ -253,7 +295,12 @@ def handler_for(worlds: list[World], config: dict):
             ready = all(world.data is not None for world in worlds)
             code = 200 if ready else 503
             content_type = "text/plain; charset=utf-8"
-            if self.path == "/health":
+            if self.path == "/identity":
+                body = json.dumps(
+                    {"realm_id": config.get("realm_id"), "world": "fleet", "backend": "prototype"}
+                )
+                content_type = "application/json"
+            elif self.path == "/health":
                 body = json.dumps({"ready": ready, "worlds": [w.status() for w in worlds]})
                 content_type = "application/json"
             elif self.path == "/monitor":
@@ -273,7 +320,21 @@ def handler_for(worlds: list[World], config: dict):
                                 snapshot = render_snapshot(config)
                                 # Hermes injects at most 8,000 monitor characters.
                                 candidate = json.dumps(
-                                    {"fingerprint": key, "snapshot": snapshot},
+                                    {
+                                        "realm_id": config.get("realm_id"),
+                                        "fingerprint": key,
+                                        "snapshot": snapshot,
+                                        "summary": "World4D shared simulation\n"
+                                        + "\n".join(
+                                            f"{w.settings['name']}: {len(w.data['objects'])} objects; "
+                                            + ", ".join(
+                                                f"{o.get('handle', 'agent')}={project_fields(o.get('fields', {})).get('effective_runtime_status', 'unverified')}"
+                                                for o in w.data["objects"]
+                                                if o.get("kind") == "agent"
+                                            )
+                                            for w in worlds
+                                        ),
+                                    },
                                     ensure_ascii=False,
                                 )
                                 if len(candidate) > 7800:
@@ -413,10 +474,13 @@ def prepare(config_path: Path) -> Path:
     config["source"] = str(runtime)
     config["root"] = str(root)
     installed_config = root / "service.json"
+    previous = json.loads(installed_config.read_text()) if installed_config.exists() else {}
+    config["realm_id"] = config.get("realm_id") or previous.get("realm_id") or str(uuid.uuid4())
     installed_config.write_text(json.dumps(config, indent=2))
     installed_config.chmod(0o600)
     runner = root / "service.py"
     shutil.copy2(Path(__file__), runner)
+    shutil.copy2(Path(__file__).with_name("world4d_presence.py"), root / "world4d_presence.py")
     log = str(root / "supervisor.log")
     plist = {
         "Label": "com.mac.world4d",

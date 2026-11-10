@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib
 import json
 import math
@@ -18,6 +18,11 @@ from pathlib import Path
 import re
 import sys
 import uuid
+
+try:
+    from .world4d_presence import project_fields
+except ImportError:  # Installed standalone alongside the shared helper.
+    from world4d_presence import project_fields
 
 
 IDENTITY = re.compile(r"agent_[A-Za-z0-9_.-]{1,100}\Z")
@@ -78,15 +83,56 @@ TOOLS = [
 
 
 def serialize(obj):
-    return asdict(obj)
+    result = asdict(obj)
+    result["fields"] = project_fields(result["fields"])
+    return result
 
 
 class WorldTools:
-    def __init__(self, factory, agent: str, world: str):
+    def __init__(self, factory, agent: str, world: str, realm_id=None):
         if not IDENTITY.fullmatch(agent):
             raise InputError("agent must be a stable agent_ identifier")
         self.factory, self.agent, self.world = factory, agent, world
         self.presence = None
+        self.realm_id = realm_id
+
+    def identity(self):
+        return {"realm_id": self.realm_id, "world": self.world, "backend": "prototype"}
+
+    def runtime_presence(self, args):
+        # Private management RPC, deliberately absent from the model tool list.
+        if set(args) != {"realm_id", "status", "observed_at"} or not self.realm_id:
+            raise InputError("invalid runtime presence proof")
+        if args["realm_id"] != self.realm_id or args["status"] not in {
+            "online",
+            "offline",
+            "unknown",
+        }:
+            raise InputError("runtime presence realm or status mismatch")
+        try:
+            observed = datetime.fromisoformat(args["observed_at"])
+            now = datetime.now(timezone.utc)
+            if abs((now - observed).total_seconds()) > 60:
+                raise ValueError("expired proof")
+        except (ValueError, TypeError):
+            raise InputError("runtime presence proof must be fresh") from None
+        p = self.factory(self.agent, world=self.world)
+        p.w.actor = "mac_world4d_presence"
+        if p.obj() is None:
+            if args["status"] != "online":
+                return {**self.identity(), "status": args["status"], "updated": False}
+            p.ensure()
+        updates = dict(
+            runtime_status=args["status"],
+            runtime_observed_at=now.isoformat(),
+            runtime_valid_until=(now + timedelta(seconds=420)).isoformat(),
+            presence_source="gateway_health",
+            status="online" if args["status"] == "online" else "offline",
+        )
+        if args["status"] == "online":
+            updates.update(last_seen=now.isoformat(), runtime_last_seen=now.isoformat())
+        p.w.set_fields(p.handle, **updates)
+        return {**self.identity(), "status": args["status"], "updated": True}
 
     def call(self, name: str, args: dict):
         spec = next((t for t in TOOLS if t["name"] == name), None)
@@ -142,13 +188,17 @@ class WorldTools:
             p.ensure()
         else:
             p.w.set_fields(p.handle, last_seen=datetime.now(timezone.utc).isoformat())
+        p.w.set_fields(p.handle, model_last_seen=datetime.now(timezone.utc).isoformat())
         if name == "world4d_checkin":
             updates = {"status": args.get("status", "online")}
+            updates["model_status"] = updates["status"]
             if "note" in args:
                 updates["note"] = args["note"]
             p.w.set_fields(p.handle, **updates)
         elif name == "world4d_set_status":
-            p.w.set_fields(p.handle, **args)
+            p.w.set_fields(
+                p.handle, **args, **({"model_status": args["status"]} if "status" in args else {})
+            )
         elif name == "world4d_move":
             p.move(tuple(args["position"]))
         elif name == "world4d_send_signal":
@@ -210,6 +260,20 @@ def serve(tools: WorldTools, reader=None, writer=None) -> None:
             response["result"] = {}
         elif method == "tools/list":
             response["result"] = {"tools": TOOLS}
+        elif method in {"mac/world4d_identity", "mac/world4d_runtime_presence"}:
+            try:
+                response["result"] = (
+                    tools.identity()
+                    if method.endswith("identity")
+                    else tools.runtime_presence(params)
+                )
+            except Exception as exc:
+                response["error"] = {
+                    "code": -32602,
+                    "message": str(exc)
+                    if isinstance(exc, InputError)
+                    else "World4D backend request failed",
+                }
         elif method == "tools/call":
             try:
                 result = tools.call(params.get("name"), params.get("arguments", {}))
@@ -244,7 +308,7 @@ def load_tools(path: Path, agent: str, world: str) -> WorldTools:
     os.environ.update(PGCONNECT_TIMEOUT="5", PGOPTIONS="-c statement_timeout=10000")
     sys.path.insert(0, config["source"])
     factory = importlib.import_module("world4d_agents").AgentPresence
-    return WorldTools(factory, agent, world)
+    return WorldTools(factory, agent, world, config.get("realm_id"))
 
 
 def main() -> None:
