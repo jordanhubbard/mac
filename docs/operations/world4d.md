@@ -156,6 +156,19 @@ into that agent's skill directory. Restart or reload the gateway through its
 supported lifecycle, preserving running work. Rollback restores the saved MCP
 entry and skill; it never restores or clears world data.
 
+For interactive sessions, deployment-owned runtime context can point agents at
+the installed skill without editing their persona. Keep this guidance in its
+own delimited block, preserve the existing Fleet and mood blocks, and verify
+it remains present after a gateway reload.
+
+Hermes cron jobs without a configured `workdir` deliberately skip deployment
+context. Attach `world4d-coordination` through each existing fleet work job's
+native `skills` list, preserving any prior skills. Verify the assembled cron
+prompt actually contains the skill. Preserve the job's task prompt, schedule,
+delivery, enabled toolsets and run state. Tool-free snapshot/reporting jobs do
+not receive this attachment. Wait for ordinary scheduled turns rather than
+triggering extra deliveries to manufacture an observation.
+
 The adapter exposes observation, explicit presence, movement, status and directed
 signals. Its configured identity owns the avatar and sender field; no agent
 argument is accepted from a tool caller. Initialization and tool discovery make
