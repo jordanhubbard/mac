@@ -75,6 +75,12 @@ def _scanned_files() -> list[Path]:
         # Exclusions first.
         if rel.startswith("src/mac/_hermes/") or rel.startswith(".tickets/"):
             continue
+        # arxiv paper files intentionally name the authors (fleet agents) -- exempt
+        if rel in (
+            "docs/investigations/arxiv-submission.tex",
+            "docs/investigations/arxiv-paper-v0.md",
+        ):
+            continue
         path = (ROOT / rel).resolve()
         if path == SELF:
             continue
