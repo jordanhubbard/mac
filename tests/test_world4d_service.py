@@ -60,12 +60,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def do_GET(self):
         global frozen, danger
+        if self.path=='/hold':
+            self.send_response(200); self.end_headers(); time.sleep(3); return
         tick=int((time.monotonic()-start)*10) if frozen is None else frozen
         if self.path=='/freeze': frozen=tick
         if self.path=='/danger': danger=not danger
         body=json.dumps({'tick':tick,'paused':False,'objects':[{'kind':'agent','fields':{'in_danger':danger}}]}).encode()
         self.send_response(200); self.end_headers(); self.wfile.write(body)
-HTTPServer(('127.0.0.1',a.port),Handler).serve_forever()
+def main():
+    HTTPServer(('127.0.0.1',a.port),Handler).serve_forever()
+if __name__=='__main__': main()
 """)
     env = tmp_path / "environment.json"
     env.write_text(json.dumps({"PATH": os.environ["PATH"]}))
@@ -104,6 +108,10 @@ def test_runtime_restarts_failed_and_stalled_children_and_stops_cleanly(config):
         status = eventually(lambda: json.loads(get(port)))
         assert status["ready"]
         known_pids.update(w["pid"] for w in status["worlds"])
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{config['worlds'][0]['port']}/hold", timeout=2
+        ):
+            assert json.loads(get(config["worlds"][0]["port"], "/world"))["objects"]
         baseline = get(port, "/monitor")
         time.sleep(0.2)
         assert get(port, "/monitor") == baseline

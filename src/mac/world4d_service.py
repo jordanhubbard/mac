@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import re
+import runpy
 import os
 from pathlib import Path
 import plistlib
@@ -25,23 +26,57 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-# A supervisor can be SIGKILLed before its finally block. A dedicated pipe
-# makes its daemon process groups die with it rather than block the next boot.
-_CHILD_BOOTSTRAP = """
-import os, runpy, signal, sys, threading
-reader = int(sys.argv[1])
-script = sys.argv[2]
-sys.argv = sys.argv[2:]
-def watch_parent():
-    try:
-        os.read(reader, 1)
-    finally:
-        # The owner disappeared: terminate the entire group atomically,
-        # including descendants that ignore TERM. Normal stops use TERM first.
-        os.killpg(os.getpgrp(), signal.SIGKILL)
-threading.Thread(target=watch_parent, daemon=True).start()
-runpy.run_path(script, run_name='__main__')
-"""
+def streaming_handler(base, state):
+    """Keep the prototype's event peers bounded and independent of API reads."""
+
+    class Handler(base):
+        def setup(self):
+            self.request.settimeout(5)
+            super().setup()
+
+        def do_GET(self):
+            if urllib.parse.urlparse(self.path).path != "/events":
+                return super().do_GET()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            with state["_sub_lock"]:
+                state["_subscribers"].append(self.wfile)
+            try:
+                while state["_running"]:
+                    with state["_sub_lock"]:
+                        active = self.wfile in state["_subscribers"]
+                    if not active:
+                        break  # Simulation writer removed a disconnected peer.
+                    time.sleep(0.5)
+            finally:
+                with state["_sub_lock"]:
+                    if self.wfile in state["_subscribers"]:
+                        state["_subscribers"].remove(self.wfile)
+
+    return Handler
+
+
+def run_child(reader: int, script: str) -> None:
+    def watch_parent():
+        try:
+            os.read(reader, 1)
+        finally:
+            # The owner disappeared: terminate all descendants, including any
+            # that ignore TERM. Normal supervisor stops use TERM first.
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+
+    threading.Thread(target=watch_parent, daemon=True).start()
+    runtime = runpy.run_path(script, run_name="world4d_service_runtime")
+    entry = runtime["main"]
+    state = entry.__globals__
+    # A long-lived SSE request must not monopolize the prototype's HTTPServer.
+    state["HTTPServer"] = ThreadingHTTPServer
+    if {"Handler", "_subscribers", "_sub_lock", "_running"} <= state.keys():
+        state["Handler"] = streaming_handler(state["Handler"], state)
+    entry()
 
 
 def fetch_world(port: int) -> dict:
@@ -108,8 +143,8 @@ class World:
         argv = [
             self.config["python"],
             "-u",
-            "-c",
-            _CHILD_BOOTSTRAP,
+            str(Path(__file__).resolve()),
+            "child",
             str(reader),
             str(Path(self.config["source"]) / "world4d_daemon.py"),
             "--world",
@@ -403,6 +438,11 @@ def prepare(config_path: Path) -> Path:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "child":
+        reader, script = int(sys.argv[2]), sys.argv[3]
+        sys.argv = sys.argv[3:]
+        run_child(reader, script)
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("prepare", "run"))
     parser.add_argument("config", type=Path)

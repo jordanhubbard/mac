@@ -93,8 +93,10 @@ progress stops for `stall_seconds`, the supervisor restarts that world. Paused
 worlds are healthy. The prototype currently unpauses a world when its daemon
 starts, so service restart resumes simulation.
 
-The prototype's own API/viewer retains its existing network binding and command
-interface. Its access policy is separate from the loopback observation service.
+The child adapter supplies a threaded HTTP server so browser event streams do
+not block API reads or readiness. Event peers use bounded socket writes and
+exit when removed from the subscriber list after disconnect. The prototype's
+own API/viewer retains its existing network binding and command interface. Its access policy is separate from the loopback observation service.
 
 ## Restore the existing Hermes snapshot job
 
