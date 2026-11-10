@@ -122,3 +122,62 @@ Verify after reboot with launchd status, `/health`, advancing ticks, and a
 successful scheduled monitor run. The deterministic process controls are in
 `tests/test_world4d_service.py`; they exercise actual child exits, stalled
 simulation, stable monitoring, rendering and child reaping.
+
+## Give fleet agents access to these same worlds
+
+`mac.world4d_agent_mcp` is a standalone stdio adapter for the **pinned external
+runtime** configured by this service. It is distinct from `mac.world_mcp` and
+other prototypes with different databases or coordinate semantics. Install a
+reviewed copy of `src/mac/world4d_agent_mcp.py` beside the private service runner.
+The adapter reads `service.json` and its private environment on the simulation
+host, so database credentials do not need to be distributed to clients.
+
+On that host, configure a Hermes `mcp_servers.world4d` entry with an absolute
+Python command and these arguments:
+
+```json
+["/absolute/private/world4d_agent_mcp.py", "--config", "/absolute/private/service.json", "--agent", "agent_example", "--world", "fleet"]
+```
+
+Remote agents can use their existing authenticated SSH transport as the command:
+
+```json
+{
+  "command": "ssh",
+  "args": ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "operator@simulation-host", "/absolute/python3", "-u", "/absolute/private/world4d_agent_mcp.py", "--config", "/absolute/private/service.json", "--agent", "agent_example", "--world", "fleet"],
+  "enabled": true
+}
+```
+
+Resolve the current target from the fleet registry and verify that each client
+already authenticates before changing its config. Back up existing entries,
+preserve unrelated settings, and install `skills/world4d-coordination/SKILL.md`
+into that agent's skill directory. Restart or reload the gateway through its
+supported lifecycle, preserving running work. Rollback restores the saved MCP
+entry and skill; it never restores or clears world data.
+
+For interactive sessions, deployment-owned runtime context can point agents at
+the installed skill without editing their persona. Keep this guidance in its
+own delimited block, preserve the existing Fleet and mood blocks, and verify
+it remains present after a gateway reload.
+
+Hermes cron jobs without a configured `workdir` deliberately skip deployment
+context. Attach `world4d-coordination` through each existing fleet work job's
+native `skills` list, preserving any prior skills. Verify the assembled cron
+prompt actually contains the skill. Preserve the job's task prompt, schedule,
+delivery, enabled toolsets and run state. Tool-free snapshot/reporting jobs do
+not receive this attachment. Wait for ordinary scheduled turns rather than
+triggering extra deliveries to manufacture an observation.
+
+The adapter exposes observation, explicit presence, movement, status and directed
+signals. Its configured identity owns the avatar and sender field; no agent
+argument is accepted from a tool caller. Initialization and tool discovery make
+no world writes. Receiving signals defaults to a non-consuming read. A signal
+does not wake a peer; participation requires a real agent turn.
+
+Measure rollout in stages: MCP discovery on every client, an explicitly labeled
+operator probe across two identities, then actual agent tool calls and resulting
+world events during ordinary turns. Keep probe actors separate from fleet actors.
+Advancing simulation ticks, gateway startup and old avatar `online` flags are not
+evidence of agent participation. The snapshot monitor still observes its documented
+count/pause fingerprint; a changed note or signal alone need not trigger a post.
