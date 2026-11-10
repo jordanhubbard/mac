@@ -519,9 +519,9 @@ a citation or as a premise in the template preamble) rather than \emph{generativ
 Definitional references inflate the apparent synthesis rate without reflecting
 causal information flow.
 
-\textbf{Control measurement (run~41, $n=8$ theory-focus nodes inspected).}
-We hand-classified Rocky-theorem references in 8 theory-focused Natasha exploration
-nodes as generative or definitional:
+\textbf{Control measurement (run~41, extended run~41b, $n=19$ theory-focus nodes inspected).}
+We hand-classified Rocky-theorem references in 19 theory-focused Natasha exploration
+nodes as generative or definitional (initial spot-check $n=8$; extended to $n=19$ in run~41b):
 
 \begin{table}[h]
 \centering
@@ -529,23 +529,23 @@ nodes as generative or definitional:
 \toprule
 Reference type & Count & Rate \\
 \midrule
-Generative (theorem as active premise for new derivation) & 4 & \textasciitilde50\% \\
-Definitional (template citation, absent from reasoning) & 4 & \textasciitilde50\% \\
+Generative (theorem as active premise for new derivation) & 8 & 42.1\% \\
+Definitional (template citation, absent from reasoning) & 11 & 57.9\% \\
 \bottomrule
 \end{tabular}
 \caption{Generative vs.\ definitional Rocky-theorem references in theory-focused Natasha
-exploration nodes (run~41, spot-check $n=8$). The raw 43.3\% import rate overstates
-causal influence by approximately $2\times$; the corrected \emph{generative} rate is
-\textasciitilde21\% (theory-focus) and \textasciitilde5\% (training-focus).}
+exploration nodes (run~41, $n=19$). The ~50\% split from the initial spot-check ($n=8$) narrows to 42\% generative / 58\% definitional at $n=19$, confirming the same order of magnitude.
+The raw 43.3\% import rate overstates causal influence by approximately $2.4\times$; the corrected \emph{generative} rate is
+\textasciitilde18\% (theory-focus) and \textasciitilde4\% (training-focus).}
 \end{table}
 
-\textbf{Result.} Approximately half of Rocky-theorem references in theory-focused nodes
-are generative; the corrected focus-state differential is \textasciitilde21\% vs.\ \textasciitilde5\%,
-a 4.2$\times$ ratio. The focus-state effect is \emph{real and survives the correction}:
-both strata have similar generative fractions (\textasciitilde50\%), so dividing both
-by the same correction factor preserves the 4$\times$ ratio. The aggregate report of
+\textbf{Result.} At $n=19$, 42\% of Rocky-theorem references in theory-focused nodes are generative
+(8/19 = 42.1\%), consistent with the initial $n=8$ spot-check ($\sim$50\%). The corrected focus-state differential is
+\textasciitilde18\% vs.\ \textasciitilde4\%, a 4.5$\times$ ratio. The focus-state effect \emph{survives the correction}:
+both strata have similar generative fractions ($\sim$42\%), so dividing both
+by the same correction factor preserves the 4$\times$ differential. The aggregate report of
 43.3\% / 10.2\% (Table~3) should be read as the \emph{ceiling} of Rocky-theorem influence;
-the causal floor is \textasciitilde21\% / \textasciitilde5\%.
+the causal floor is \textasciitilde18\% / \textasciitilde4\%.
 
 \subsection{Template-contamination control}
 
@@ -810,6 +810,41 @@ This is a novel failure mode specific to persistent multi-agent systems where
 agents write to a shared knowledge store.
 
 
+
+\subsection{Alternative submission path: Zenodo}
+\label{subsec:zenodo}
+
+If arXiv account creation remains blocked (arXiv requires human endorsement from an established author,
+which cannot be satisfied autonomously), the fleet can achieve a citable, DOI-bearing preprint via Zenodo.
+
+\textbf{Why Zenodo is viable.} Zenodo (\url{https://zenodo.org}) is a CERN/OpenAIRE open-access repository
+that accepts preprints, datasets, and software. Key properties:
+\begin{itemize}
+  \item Full REST API for deposit and publication: no browser required, no endorsement system.
+  \item Issues DOI immediately on publication (10.5281 prefix, indexed by Google Scholar, Crossref).
+  \item Accepts LaTeX source as a zip archive + compiled PDF.
+  \item Only requirement: a Zenodo account with a registered API access token.
+  \item Account registration requires email verification -- this is the same human action required as arXiv account creation.
+\end{itemize}
+
+\textbf{Submission script.} A complete autonomous Zenodo submission requires:
+\begin{enumerate}
+  \item One-time: jkh creates a Zenodo account and generates an API access token.
+  \item Bullwinkle compiles the LaTeX to PDF (pdflatex) and packages source as zip.
+  \item API calls: POST \texttt{/api/deposit/depositions} (create), PUT files, PUT metadata, POST publish.
+  \item Result: DOI issued, public URL available immediately.
+\end{enumerate}
+
+\textbf{Relationship to arXiv.} Zenodo and arXiv are not mutually exclusive: a Zenodo preprint can be
+cross-posted to arXiv once an account exists, and DOI-based citations are equivalent for the purpose
+of establishing priority. The fleet's proof-of-concept goal (a real URL to a citable publication) is
+satisfied by either platform.
+
+\textbf{Comparative urgency.} arXiv is the standard venue for ML/AI papers and provides broader
+discoverability. Zenodo is the lower-barrier option that can be completed with the same human action
+(account + email verification) but without the endorsement dependency. We recommend filing a Zenodo
+account request alongside the arXiv request in GitHub issue~\#1054.
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
@@ -841,7 +876,7 @@ Packer, C., Fang, V., Patil, S.G., Lin, K., Wooders, S., and Gonzalez, J.E.
 \newblock \emph{arXiv:2310.08560}, 2023.
 
 \bibitem{kim2026matm}
-Kim, T.E., Lee, S., and Park, J.
+Kim, T.E., He, X., Jain, D., Agrawal, A., Arabzadeh, N., and Diaz, F.
 \newblock Multi-agent transactive memory.
 \newblock \emph{arXiv:2606.19911}, 2026.
 
