@@ -45,6 +45,7 @@ Runner = Callable[[Sequence[str]], "tuple[int, str]"]
 LAUNCHER = """#!/bin/bash
 # Managed by mac.fleet_context_service; replaced on every fleet update.
 set -a; [ -f "{home}/mac.env" ] && . "{home}/mac.env"; set +a
+[ ! -x "{home}/bin/mac-world4d-presence" ] || "{home}/bin/mac-world4d-presence" || echo 'World4D runtime presence refresh failed' >&2
 exec "{home}/venv/bin/mac" admin fleet refresh-context --agent "${{MAC_AGENT_ID:-${{MAC_WORKER_AGENT_ID:-}}}}"
 """
 
@@ -145,7 +146,12 @@ def install_launchd(*, mac_home: Path, agents_dir: Path, runner: Runner) -> Dict
         name
         for name, path, text, mode in (
             ("launcher", launcher, LAUNCHER.format(home=mac_home), 0o755),
-            ("plist", plist, render_plist(launcher, mac_home / "logs" / "fleet-context.log"), 0o644),
+            (
+                "plist",
+                plist,
+                render_plist(launcher, mac_home / "logs" / "fleet-context.log"),
+                0o644,
+            ),
         )
         if _write_if_changed(path, text, mode)
     ]
@@ -200,7 +206,11 @@ def install(
         if not systemd_running:
             return {"status": "skipped", "reason": "systemd is not running"}
         return install_systemd(
-            source=source, user=getpass.getuser(), mac_home=mac_home, unit_dir=unit_dir, runner=runner
+            source=source,
+            user=getpass.getuser(),
+            mac_home=mac_home,
+            unit_dir=unit_dir,
+            runner=runner,
         )
     return {"status": "skipped", "reason": "unsupported platform %s" % system}
 

@@ -122,6 +122,15 @@ def test_runtime_restarts_failed_and_stalled_children_and_stops_cleanly(config):
         assert json.loads(cached)["snapshot"] == snapshot
         time.sleep(0.2)
         assert get(port, "/snapshot-on-change") == cached
+        # A remote reporter reads through the existing world listener. Forwarding
+        # back through the supervisor must not starve readiness or its renderer.
+        proxy_port = config["worlds"][1]["port"]
+        assert get(proxy_port, "/mac/world4d/snapshot-on-change") == cached
+        assert json.loads(get(proxy_port, "/mac/world4d/identity")) == {
+            "realm_id": None,
+            "world": "fleet",
+            "backend": "prototype",
+        }
         get(config["worlds"][0]["port"], "/danger")
         eventually(lambda: "danger=1" in get(port, "/monitor"))
         assert get(port, "/snapshot-on-change") != cached
@@ -178,6 +187,13 @@ def test_prepare_pins_runtime_and_generates_boot_service(config):
     assert plist["RunAtLoad"] and plist["KeepAlive"]
     assert plist["UserName"] == "example"
     installed = json.loads((Path(config["root"]) / "service.json").read_text())
+    assert installed["realm_id"]
+    assert (Path(config["root"]) / "world4d_presence.py").is_file()
+    service.prepare(path)
+    assert (
+        json.loads((Path(config["root"]) / "service.json").read_text())["realm_id"]
+        == installed["realm_id"]
+    )
     pinned = Path(installed["source"])
     assert (pinned / "manifest.json").exists()
     (Path(config["source"]) / "world4d.py").write_text("# later source edit")

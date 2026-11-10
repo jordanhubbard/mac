@@ -22,6 +22,7 @@ EnvironmentFile=-__MAC_HOME__/mac.env
 # SQLite; spokes have no MAC_DB and call the remote hub through MAC_HUB_URL.
 # The mood overlay is also fetched from that hub.
 ExecStart=/bin/bash -lc '\
+  [ ! -x __MAC_HOME__/bin/mac-world4d-presence ] || __MAC_HOME__/bin/mac-world4d-presence || echo "World4D runtime presence refresh failed" >&2; \
   exec __MAC_HOME__/venv/bin/mac admin fleet refresh-context \
     --agent "${MAC_AGENT_ID:-${MAC_WORKER_AGENT_ID:-}}"'
 

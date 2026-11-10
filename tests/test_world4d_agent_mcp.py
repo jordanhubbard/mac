@@ -32,6 +32,7 @@ class Store:
             def __init__(self):
                 self.handle = agent
                 self.w = self
+                self.actor = agent
 
             def list(self, limit):
                 return list(store.objects.values())[:limit]
@@ -45,15 +46,15 @@ class Store:
                 return store.objects.get(agent)
 
             def create(self, handle, kind, pos):
-                store.writes.append((agent, "create", handle))
+                store.writes.append((self.actor, "create", handle))
                 store.objects[handle] = Object(handle, kind, pos)
 
             def set_fields(self, handle, **updates):
-                store.writes.append((agent, "fields", handle))
+                store.writes.append((self.actor, "fields", handle))
                 store.objects[handle].fields.update(updates)
 
             def set_shape(self, handle, shape):
-                store.writes.append((agent, "shape", handle))
+                store.writes.append((self.actor, "shape", handle))
 
             def move(self, pos):
                 store.writes.append((agent, "move", agent))
@@ -203,3 +204,32 @@ def test_unknown_rpc_and_tool_fail_without_writes():
     with pytest.raises(mcp.InputError, match="unknown"):
         tools.call("not-a-tool", {})
     assert not store.writes
+
+
+def test_runtime_presence_expires_without_faking_model_adoption():
+    from datetime import datetime, timedelta, timezone
+    from mac.world4d_presence import project_fields
+
+    store = Store()
+    tools = mcp.WorldTools(store.factory, "agent_alpha", "fleet", "realm-one")
+    now = datetime.now(timezone.utc)
+    proof = {"realm_id": "realm-one", "status": "online", "observed_at": now.isoformat()}
+    tools.runtime_presence(proof)
+    fields = store.objects["agent_alpha"].fields
+    assert fields["runtime_status"] == "online"
+    assert "model_last_seen" not in fields
+    assert {actor for actor, _, _ in store.writes} == {"mac_world4d_presence"}
+    assert project_fields(fields)["effective_runtime_status"] == "online"
+    assert project_fields(fields, now.timestamp() + 500)["status"] == "offline"
+    last_seen = fields["last_seen"]
+    tools.runtime_presence({**proof, "status": "offline"})
+    assert fields["last_seen"] == last_seen
+    assert fields["runtime_status"] == "offline"
+    tools.call("world4d_checkin", {"status": "working"})
+    assert fields["model_status"] == "working"
+    assert fields["model_last_seen"]
+    assert fields["runtime_status"] == "offline"
+    with pytest.raises(mcp.InputError):
+        tools.runtime_presence({**proof, "realm_id": "another-store"})
+    with pytest.raises(mcp.InputError):
+        tools.runtime_presence({**proof, "observed_at": (now - timedelta(minutes=3)).isoformat()})

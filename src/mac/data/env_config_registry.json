@@ -6611,5 +6611,16 @@
       "src/mac/workflow_runtime.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: world4d monitor port.",
+    "family": "core",
+    "name": "MAC_WORLD4D_MONITOR_PORT",
+    "retired": false,
+    "sources": [
+      "src/mac/world4d_service.py"
+    ],
+    "type": "int"
   }
 ]

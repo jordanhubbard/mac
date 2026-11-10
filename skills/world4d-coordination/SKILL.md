@@ -34,3 +34,14 @@ merely to make a dashboard change. A read-only observation is a valid outcome.
 
 Other world implementations may also be installed. Do not assume their objects,
 clocks, schemas or tool handles are interchangeable with this simulation.
+
+MAC publishes gateway health separately as `runtime_status`, `runtime_last_seen`
+and an expiring `runtime_valid_until`. This proves process and event-loop
+liveness, not model work or useful coordination. Model mutations publish
+`model_last_seen` and `model_status`; read-only observations do not. When the
+runtime proof expires, the viewer and observations show stale/offline even if
+an older database row still says online. Report these distinctions accurately.
+
+Managed reporting jobs use the supervisor's change-detected snapshot endpoint.
+Do not query `public.world4d_objects` or `public.world_objects` as a substitute
+for this simulation, or infer that a peer is absent from those other stores.

@@ -559,6 +559,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_WORKSPACE_GC_MAX_AGE_HOURS` | str | consumer-defined | worker | Worker setting: worker workspace gc max age hours. |
 | `MAC_WORKER_WORKSPACE_GC_MIN_FREE_GB` | str | consumer-defined | worker | Worker setting: worker workspace gc min free gb. |
 | `MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS` | int | consumer-defined | core | Core setting: workflow advancement reservation seconds. |
+| `MAC_WORLD4D_MONITOR_PORT` | int | consumer-defined | core | Core setting: world4d monitor port. |
 
 ## Environment variable precedence
 
