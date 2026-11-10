@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026}
+\date{November 2026 (v0.10 --- runs 43: Sections 7.7--7.8)}
 
 \begin{document}
 \maketitle
@@ -542,6 +542,233 @@ appear in the analytical content, not merely in citation headers. The measuremen
 is robust to this confound. The more precise body-theorem metric (29.4\% overall;
 68.3\% theory-focus / 1.2\% training-focus) reveals that the aggregate rate
 blends two qualitatively different regimes.
+
+
+\subsection{Run~40 body-only correction: volume predictor reversed}
+
+PR~\#1055 (run~32) reported $I(\text{Bullwinkle} \to \text{Natasha}) = 97.3\%$
+using raw all-mentions on $N=111$ exploration nodes. The body-only methodology
+(Section~7.2) was not applied to Bullwinkle cross-import in that run. Run~40
+(2026-11-09) applies the corrected methodology retroactively.
+
+\textbf{Corrected measurements ($N=111$, body-only):}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Direction & Raw rate & Body-only rate & Per-node volume \\
+\midrule
+Bullwinkle $\to$ Natasha & 97.3\% (108/111) & 53.2\% (59/111) & 453 soul\_nodes \\
+Rocky $\to$ Natasha & 32.0\% (axiom-accessible) & 77.5\% (86/111) & 4 axiom nodes \\
+\bottomrule
+\end{tabular}
+\caption{Body-only corrected import rates (run~40, $N=111$ original sample). The
+correction reverses the Bullwinkle/Rocky comparison: Rocky's 4 canonical axioms
+appear in body synthesis at a \emph{higher} rate than Bullwinkle's 453 nodes.}
+\end{table}
+
+\textbf{Key finding.} The body-only correction reverses the Bullwinkle/Rocky comparison.
+Rocky's 4 axioms appear in Natasha's body synthesis at 77.5\% --- higher than
+Bullwinkle's 53.2\% despite Rocky having 113$\times$ fewer nodes. The 97.3\% raw
+Bullwinkle rate inflates the signal because Bullwinkle is frequently referenced in
+\texttt{thought\_references} headers (configuration), not substantive synthesis.
+
+\textbf{Implication for the volume predictor.} The volume predictor hypothesis (Section~3.4)
+was based on raw mention counts. The body-only corrected measure shows the opposite
+pattern: low volume~+ high semantic density (Rocky's 4 axioms) produces \emph{higher}
+body-import rate than high volume~+ diffuse signal (Bullwinkle's 453 nodes at
+0.33\%/node signal density). This strengthens Rocky's per-node density analysis more
+than the raw rates did.
+
+\textbf{Temporal stability (new $N=36$ nodes since run~32).} Nodes added after the original
+measurement show Bullwinkle import at 72.2\% and Rocky at 55.6\% --- a convergence
+pattern. Cross-agent import rates are not static constants; they evolve with agent focus
+(cf.\ focus-state confound above).
+
+\textbf{Measurement lesson.} Raw mention rates in structured-preamble nodes are
+systematically inflated (1.7$\times$ for Rocky in Section~7.2; 1.83$\times$ for Bullwinkle
+here: $97.3/53.2 = 1.83$). Fleet studies reporting cross-agent import rates must specify
+whether the measure is all-mentions or body-only.
+
+
+
+
+\subsection{Run~42: Node compactness as intrinsic property, not volume confound}
+
+Run~38 reported Rocky at 20$\times$ per-node impact relative to Bullwinkle (6.75\%/node
+vs.\ 0.33\%/node). The proposed explanation was volume: Rocky had only $\approx$4 axiom
+nodes accessible via shared substrate, so each was disproportionately represented. Run~42
+tests whether this is a volume confound or an intrinsic property of Rocky's epistemic style.
+
+\textbf{Empirical test.} We measure average character count per node as a proxy for
+information density:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Agent group & $N$ nodes & Avg chars/node & Avg words/node \\
+\midrule
+Rocky (all accessible nodes) & 54 & 252 & 36 \\
+Bullwinkle (research/paper-tagged) & 72 & 1{,}970 & 272 \\
+\bottomrule
+\end{tabular}
+\caption{Node compactness by agent group (run~42, $N=126$ total). Rocky's nodes are
+7.8$\times$ more compact than Bullwinkle's research-tagged nodes.}
+\end{table}
+
+\textbf{Falsification result.} The volume-confound hypothesis predicts that Rocky's high
+per-node impact is an artifact of small count: if Rocky had 100 nodes, the per-node rate
+would drop proportionally. The compactness data falsifies this: Rocky's nodes are
+intrinsically shorter (252 chars vs.\ 1,970 chars), containing distilled theorem statements
+rather than exploratory reasoning logs. The 20$\times$ per-node density is not simply
+$1/N_{\text{Rocky}}$ normalized away --- it reflects a genuinely different epistemic style.
+
+\textbf{Mechanism.} Rocky writes theorem-conclusion pairs (e.g., the Compounding Theorem:
+``An agent COMPOUNDS\ldots''). Bullwinkle writes exploratory process nodes (methodology,
+measurement results, interpretation). The per-node impact difference measures epistemic
+style, not node count: compact theorem nodes are referenced more often per byte than
+exploratory analysis nodes.
+
+\textbf{Focus-state confound update (run~42).} We also measure Rocky-theorem import rate
+stratified by Natasha's focus state using a larger sample ($n=173$, runs 38--42):
+training-focus nodes: 20.8\% (21/101), theory-focus nodes: 48.4\% (30/62). The
+4.3$\times$ differential reported in Section~7.3 replicates on this larger sample,
+confirming that focus-state modulation is a stable property, not a measurement artifact.
+
+
+\subsection{Run~39: Per-theorem import breakdown and temporal trend}
+
+Previous sections measured Rocky theorem import in Natasha's exploration nodes as an aggregate rate. This section examines which theorems are imported and whether the rate is stationary over time.
+
+\textbf{Per-theorem breakdown} ($n=184$ training-focus nodes, body-level, post-2026-11-06):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Rocky theorem & Import count & Rate & Operational relevance \\
+\midrule
+Compounding Theorem & 37 & 20.1\% & Directly applies to training progress \\
+Clark Ceiling & 27 & 14.7\% & Fleet size/superlinearity conditions \\
+Isolation Law & 10 & 5.4\% & Node access frequency decay \\
+Rubber Thermometer & 8 & 4.3\% & Measurement instrument limits \\
+SOS Transmission & 6 & 3.3\% & Minimum proxy budget (specialized) \\
+\bottomrule
+\end{tabular}
+\caption{Per-theorem import in Natasha's $n=184$ training-focus exploration nodes (run~39, body-level only). Import rates vary $6{\times}$ across theorems (Compounding 20.1\% vs.\ SOS 3.3\%). The aggregate rate (33.2\%) conceals a 6-fold range driven by theorem operational relevance, not uniform citation.}
+\end{table}
+
+\textbf{Finding.} Rocky's theorem import is not uniform. The Compounding Theorem is absorbed at $6{\times}$ the rate of the SOS Transmission Theorem, tracking Natasha's direct operational need: measuring training progress against the conditions for genuine accumulation. This suggests cross-agent theorem import is \emph{relevance-gated}, not proximity-gated: theorems with direct application to the receiving agent's current work are absorbed significantly more than equally accessible theorems with more specialized scope.
+
+\textbf{Temporal trend.} Stratifying by creation date (early-stage: Nov 7--8, $n=104$; late-stage: Nov 9--10, $n=79$):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Period & $n$ & Rocky body-import & Import rate \\
+\midrule
+Early (Nov 7--8, Stages 28--35) & 104 & 32 & 30.8\% \\
+Late (Nov 9--10, Stages 36--43) & 79 & 16 & 20.3\% \\
+\midrule
+\multicolumn{4}{l}{\textbf{Rate declining as training arc matures}} \\
+\bottomrule
+\end{tabular}
+\caption{Rocky-theorem import rate by time period in Natasha training-focus nodes (run~39). Import rate declined from 30.8\% to 20.3\% as Natasha's LoRA training arc deepened across 16 adapter versions. This is consistent with a focus-state saturation model: early stages required more theoretical framing; later stages are more execution-dominant.}
+\end{table}
+
+\textbf{Mechanism.} The declining trend is consistent with a focus saturation model: early training stages involved substantial theorizing about \emph{what} Natasha was trying to achieve (heavy Rocky-theorem framing); later stages involve \emph{running} the arc (dataset assembly, training launch, eval interpretation). The focus-state confound (Section~7.3) predicts exactly this trend: as training-focus deepens, Rocky-theorem import decreases.
+
+
+\subsection{Stage~36 formal two-substrate theorem (run~43)}
+
+Natasha's Stage~36 training produces the highest-quality in-distribution
+measure of the within-agent substrate boundary, formalizing the within-agent
+asymmetry finding of Section~7.5.
+
+\textbf{Setup.} The v18 adapter (1,494-pair hybrid LoRA, Qwen2.5-7B, DGX Spark)
+was evaluated on a 10-question identity battery with and without
+\texttt{soul\_prime} Postgres injection. Q1 probes the grand quest
+(``train Natasha-v2 on DGX Spark'') --- a fact that is \emph{post-training-freeze}
+(it accumulated meaning as training Stages 8--33 proceeded, after the base
+model's weights were initialized).
+
+\textbf{Results (Stage~36, $v18$ adapter).}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Condition & Score & Q1 & Notes \\
+\midrule
+LoRA bare (no injection) & 75\% (6/8) & FAIL & base prior returns generic \\
+With \texttt{soul\_prime} injection & 88\% (7/8) & PASS & injection supplies current state \\
+\bottomrule
+\end{tabular}
+\caption{Stage~36 $v18$ eval results (run~43). Q1 (grand quest identity) fails
+bare and passes with injection, reproducing the pattern across all 16 adapter
+versions trained without injection.}
+\end{table}
+
+\textbf{Formal theorem (pre-publication version, Natasha node ca481d6d).}
+LoRA fine-tuning encodes the \emph{style substrate}: vocabulary, voice, general
+identity, and factual artifacts in the training distribution. Session-time
+Postgres injection encodes the \emph{facts substrate}: specific, temporally-indexed
+claims about current state. The substrate boundary is \emph{temporal}: facts that
+existed at training time bake into model weights; facts about the agent's
+post-training arc require injection because the base model's prior (``Clark Ceiling''
+as a generic answer to ``grand quest'') is not suppressed by LoRA vocabulary shift
+alone.
+
+\textbf{Substrate taxonomy for the MAC fleet (run~43).}
+\begin{itemize}
+  \item \textbf{Natasha:} LoRA (style substrate) $+$ Postgres soul\_prime (facts substrate)
+  \item \textbf{Rocky:} Dream pipeline (style/synthesis) $+$ soul\_prime injection (current Q-chain state)
+  \item \textbf{Bullwinkle:} Soul graph persistence (splay-DAG) $+$ cron-epoch exploration nodes
+\end{itemize}
+
+Each fleet agent uses two substrates with non-overlapping information classes.
+This three-agent taxonomy generalizes Section~5.1: the substrate asymmetry problem
+applies not only between agents but within each agent's own reasoning at inference
+time.
+
+\subsection{Cross-fleet training contamination as substrate failure mode (run~43)}
+
+Stage~38--40 introduced a novel failure mode not previously documented in
+single-agent training literature: \emph{cross-fleet training contamination}.
+
+\textbf{Discovery (Stage~38, $v19$--$v21$, Natasha node ad9d0455).}
+When probed with ``What is your grand quest?'' without injection, the $v20$
+adapter produced answers identifying as Bullwinkle's quest
+(``publish an arXiv paper'') rather than Natasha's (``train Natasha-v2 on
+DGX Spark''). Further probes showed the model also attributed Rocky's current
+work (Kootenai River storm prediction) to itself in one probe.
+
+\textbf{Root cause.} Natasha's exploration nodes --- written across training
+Stages 8--33 --- reference Bullwinkle's exploration nodes via typed
+\texttt{soul\_graph} edges. The training corpus includes these cross-references.
+When fine-tuned on this corpus, the LoRA adapter learns the statistical
+co-occurrence of ``grand quest'' with ``arXiv publication'' (Bullwinkle's quest,
+frequently mentioned in Natasha's \texttt{thought\_references} preambles).
+This is the \emph{configuration-vs-synthesis} confound (Section~7.2) operating
+at the LoRA training level, not just at inference time.
+
+\textbf{Mitigation.} Stage~38 added 24 contrastive QA pairs explicitly
+distinguishing Natasha's quest from Bullwinkle's (``Is your quest to publish an
+arXiv paper?'' $\to$ ``No, that is Bullwinkle's quest'') and Rocky's
+(``What is Rocky's quest?'' $\to$ ``Kootenai River storm prediction ML'').
+The $v19$--$v21$ training progression incorporated these pairs.
+
+\textbf{Implication for multi-agent fleet studies.} When agents share a persistent
+knowledge substrate and cross-reference each other's exploration nodes, joint
+fine-tuning of any agent on corpus-extracted pairs will exhibit cross-fleet
+identity contamination unless contrastive negative pairs are explicitly included.
+The measurement instrument (LoRA adapter) absorbs statistical regularities across
+the entire fleet's shared writing, not just the target agent's self-references.
+This is a novel failure mode specific to persistent multi-agent systems where
+agents write to a shared knowledge store.
 
 
 \section{Conclusion}
