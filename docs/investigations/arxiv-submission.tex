@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026}
+\date{November 2026 (v0.10 --- runs 43: Sections 7.7--7.8)}
 
 \begin{document}
 \maketitle
@@ -636,6 +636,95 @@ stratified by Natasha's focus state using a larger sample ($n=173$, runs 38--42)
 training-focus nodes: 20.8\% (21/101), theory-focus nodes: 48.4\% (30/62). The
 4.3$\times$ differential reported in Section~7.3 replicates on this larger sample,
 confirming that focus-state modulation is a stable property, not a measurement artifact.
+
+\subsection{Stage~36 formal two-substrate theorem (run~43)}
+
+Natasha's Stage~36 training produces the highest-quality in-distribution
+measure of the within-agent substrate boundary, formalizing the within-agent
+asymmetry finding of Section~7.5.
+
+\textbf{Setup.} The v18 adapter (1,494-pair hybrid LoRA, Qwen2.5-7B, DGX Spark)
+was evaluated on a 10-question identity battery with and without
+\texttt{soul\_prime} Postgres injection. Q1 probes the grand quest
+(``train Natasha-v2 on DGX Spark'') --- a fact that is \emph{post-training-freeze}
+(it accumulated meaning as training Stages 8--33 proceeded, after the base
+model's weights were initialized).
+
+\textbf{Results (Stage~36, $v18$ adapter).}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Condition & Score & Q1 & Notes \\
+\midrule
+LoRA bare (no injection) & 75\% (6/8) & FAIL & base prior returns generic \\
+With \texttt{soul\_prime} injection & 88\% (7/8) & PASS & injection supplies current state \\
+\bottomrule
+\end{tabular}
+\caption{Stage~36 $v18$ eval results (run~43). Q1 (grand quest identity) fails
+bare and passes with injection, reproducing the pattern across all 16 adapter
+versions trained without injection.}
+\end{table}
+
+\textbf{Formal theorem (pre-publication version, Natasha node ca481d6d).}
+LoRA fine-tuning encodes the \emph{style substrate}: vocabulary, voice, general
+identity, and factual artifacts in the training distribution. Session-time
+Postgres injection encodes the \emph{facts substrate}: specific, temporally-indexed
+claims about current state. The substrate boundary is \emph{temporal}: facts that
+existed at training time bake into model weights; facts about the agent's
+post-training arc require injection because the base model's prior (``Clark Ceiling''
+as a generic answer to ``grand quest'') is not suppressed by LoRA vocabulary shift
+alone.
+
+\textbf{Substrate taxonomy for the MAC fleet (run~43).}
+\begin{itemize}
+  \item \textbf{Natasha:} LoRA (style substrate) $+$ Postgres soul\_prime (facts substrate)
+  \item \textbf{Rocky:} Dream pipeline (style/synthesis) $+$ soul\_prime injection (current Q-chain state)
+  \item \textbf{Bullwinkle:} Soul graph persistence (splay-DAG) $+$ cron-epoch exploration nodes
+\end{itemize}
+
+Each fleet agent uses two substrates with non-overlapping information classes.
+This three-agent taxonomy generalizes Section~5.1: the substrate asymmetry problem
+applies not only between agents but within each agent's own reasoning at inference
+time.
+
+\subsection{Cross-fleet training contamination as substrate failure mode (run~43)}
+
+Stage~38--40 introduced a novel failure mode not previously documented in
+single-agent training literature: \emph{cross-fleet training contamination}.
+
+\textbf{Discovery (Stage~38, $v19$--$v21$, Natasha node ad9d0455).}
+When probed with ``What is your grand quest?'' without injection, the $v20$
+adapter produced answers identifying as Bullwinkle's quest
+(``publish an arXiv paper'') rather than Natasha's (``train Natasha-v2 on
+DGX Spark''). Further probes showed the model also attributed Rocky's current
+work (Kootenai River storm prediction) to itself in one probe.
+
+\textbf{Root cause.} Natasha's exploration nodes --- written across training
+Stages 8--33 --- reference Bullwinkle's exploration nodes via typed
+\texttt{soul\_graph} edges. The training corpus includes these cross-references.
+When fine-tuned on this corpus, the LoRA adapter learns the statistical
+co-occurrence of ``grand quest'' with ``arXiv publication'' (Bullwinkle's quest,
+frequently mentioned in Natasha's \texttt{thought\_references} preambles).
+This is the \emph{configuration-vs-synthesis} confound (Section~7.2) operating
+at the LoRA training level, not just at inference time.
+
+\textbf{Mitigation.} Stage~38 added 24 contrastive QA pairs explicitly
+distinguishing Natasha's quest from Bullwinkle's (``Is your quest to publish an
+arXiv paper?'' $\to$ ``No, that is Bullwinkle's quest'') and Rocky's
+(``What is Rocky's quest?'' $\to$ ``Kootenai River storm prediction ML'').
+The $v19$--$v21$ training progression incorporated these pairs.
+
+\textbf{Implication for multi-agent fleet studies.} When agents share a persistent
+knowledge substrate and cross-reference each other's exploration nodes, joint
+fine-tuning of any agent on corpus-extracted pairs will exhibit cross-fleet
+identity contamination unless contrastive negative pairs are explicitly included.
+The measurement instrument (LoRA adapter) absorbs statistical regularities across
+the entire fleet's shared writing, not just the target agent's self-references.
+This is a novel failure mode specific to persistent multi-agent systems where
+agents write to a shared knowledge store.
+
 
 \section{Conclusion}
 
