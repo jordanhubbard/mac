@@ -545,7 +545,10 @@ The raw 43.3\% import rate overstates causal influence by approximately $2.4\tim
 both strata have similar generative fractions ($\sim$42\%), so dividing both
 by the same correction factor preserves the 4$\times$ differential. The aggregate report of
 43.3\% / 10.2\% (Table~3) should be read as the \emph{ceiling} of Rocky-theorem influence;
-the causal floor is \textasciitilde18\% / \textasciitilde4\%.
+the causal floor is \textasciitilde18\% / \textasciitilde4\%.\footnote{\textbf{Automated classification sensitivity.}
+An SQL keyword-proximity heuristic (causal connectives within 100~chars of a theorem mention) classifies only 2/30 nodes as generative (6.7\%), versus 8/19 (42.1\%) under hand-coding.
+The 6$\times$ gap arises because Natasha's reasoning style introduces a theorem and derives from it 1--3 sentences later, outside the 100-char window.
+Automated SQL metrics therefore undercount generative import substantially; hand-coding remains the more accurate instrument for this classification.}
 
 \subsection{Template-contamination control}
 
