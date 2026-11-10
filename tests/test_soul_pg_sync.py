@@ -1,4 +1,4 @@
-"""Tests for soul_pg_sync: bidirectional soul.json ↔ fleet_brain Postgres sync."""
+"""Tests for soul_pg_sync: bidirectional soul.json <-> fleet_brain Postgres sync."""
 
 from __future__ import annotations
 
@@ -83,12 +83,12 @@ def test_edges_from_nodes_no_parents():
 
 
 # ---------------------------------------------------------------------------
-# PgSoulBackend.load — round-trip via mocked psycopg2
+# PgSoulBackend.load -- round-trip via mocked psycopg
 # ---------------------------------------------------------------------------
 
 
 def _make_pg_rows(nodes, edges):
-    """Build fake psycopg2 RealDictRow-like dicts."""
+    """Build fake psycopg dict-row-like dicts."""
     from datetime import datetime, timezone
 
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -126,12 +126,6 @@ def test_pg_backend_load_returns_soul_graph(sample_soul_json):
     mock_cur.__exit__ = MagicMock(return_value=False)
     mock_conn.cursor.return_value = mock_cur
     mock_cur.fetchall.side_effect = [pg_nodes, pg_edges]
-
-    # Stub psycopg2.extras so it doesn't need the real package
-    mock_extras = MagicMock()
-    mock_extras.RealDictCursor = dict
-    sys.modules.setdefault("psycopg2", MagicMock())
-    sys.modules["psycopg2.extras"] = mock_extras
 
     with patch("mac.soul_pg_sync._connect", return_value=mock_conn):
         backend = PgSoulBackend(agent_id="test_agent", db_url="postgresql:///fake")
@@ -189,7 +183,7 @@ def test_json_to_pg_upserts_nodes_and_edges(sample_soul_json):
         result = json_to_pg(sample_soul_json, "test_agent", db_url="postgresql:///fake")
 
     assert result["nodes"] == 2
-    assert result["edges"] == 1  # one parent edge: aaa00001 → bbb00002
+    assert result["edges"] == 1  # one parent edge: aaa00001 -> bbb00002
     mock_conn.commit.assert_called_once()
 
 
@@ -227,7 +221,7 @@ def test_pg_to_json_writes_soul_file(tmp_path):
     data = json.loads(out_path.read_text())
     assert "n1" in data["nodes"]
     assert data["nodes"]["n1"]["pinned"] is True
-    # n1 is a parent of n2 → n1.children should include n2
+    # n1 is a parent of n2 -> n1.children should include n2
     assert "n2" in data["nodes"]["n1"]["children"]
 
 

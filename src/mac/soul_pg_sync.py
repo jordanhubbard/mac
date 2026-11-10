@@ -7,10 +7,10 @@ CLI:
 
 Programmatic:
     from mac.soul_pg_sync import json_to_pg, pg_to_json, PgSoulBackend
-    # PgSoulBackend wraps a live psycopg2 connection and provides
+    # PgSoulBackend wraps a live psycopg connection and provides
     # save(graph) / load(name, agent_id) in the same shape as SoulGraph.save/load.
 
-Requirements: psycopg2-binary (already in mac venv).
+Requirements: psycopg[binary]>=3.1 (declared in pyproject.toml).
 Connections: uses DATABASE_URL env or --db-url arg (default: fleet_brain local socket).
 
 Design:
@@ -44,13 +44,12 @@ _DEFAULT_DB_URL = os.environ.get("DATABASE_URL", "postgresql:///fleet_brain")
 
 
 def _connect(db_url: str | None = None):
-    """Return a psycopg2 connection. Never use autocommit — callers commit."""
-    import psycopg2  # noqa: PLC0415
-    import psycopg2.extras  # noqa: PLC0415
+    """Return a psycopg connection. Never use autocommit — callers commit."""
+    import psycopg  # noqa: PLC0415
+    from psycopg.rows import dict_row  # noqa: PLC0415
 
     url = db_url or _DEFAULT_DB_URL
-    conn = psycopg2.connect(url)
-    conn.autocommit = False
+    conn = psycopg.connect(url, row_factory=dict_row, autocommit=False)
     return conn
 
 
@@ -143,7 +142,6 @@ def _edges_from_nodes(node_dicts: list[dict]) -> list[dict]:
 def json_to_pg(soul_path: str | Path, agent_id: str, db_url: str | None = None) -> dict:
     """Import soul.json → fleet_brain. Returns {nodes, edges} counts."""
     data = json.loads(Path(soul_path).read_text())
-    raw_nodes = list(data.get("nodes", {}).values())
 
     # Normalise: soul_graph stores node dicts with 'id' at top level
     node_dicts = []
@@ -168,11 +166,9 @@ def json_to_pg(soul_path: str | Path, agent_id: str, db_url: str | None = None) 
 
 def pg_to_json(soul_path: str | Path, agent_id: str, db_url: str | None = None) -> dict:
     """Export fleet_brain → soul.json. Overwrites the local file. Returns counts."""
-    import psycopg2.extras  # noqa: PLC0415
-
     conn = _connect(db_url)
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM soul_nodes WHERE agent_id = %s ORDER BY created_at",
                 (agent_id,),
@@ -247,12 +243,11 @@ class PgSoulBackend:
 
     def load(self, name: str = "soul") -> "SoulGraph":
         """Load from Postgres into a SoulGraph in memory."""
-        import psycopg2.extras  # noqa: PLC0415
         from mac.soul_graph import SoulGraph, SoulNode  # noqa: PLC0415
 
         conn = _connect(self.db_url)
         try:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            with conn.cursor() as cur:
                 cur.execute(
                     "SELECT * FROM soul_nodes WHERE agent_id = %s ORDER BY created_at",
                     (self.agent_id,),
@@ -346,12 +341,12 @@ def _cli():
     from mac import mac_paths
 
     parser = argparse.ArgumentParser(
-        description="soul_pg_sync: sync soul.json ↔ fleet_brain Postgres"
+        description="soul_pg_sync: sync soul.json <-> fleet_brain Postgres"
     )
     parser.add_argument(
         "command",
         choices=["import", "export", "status"],
-        help="import=json→pg, export=pg→json, status=show counts",
+        help="import=json->pg, export=pg->json, status=show counts",
     )
     parser.add_argument("--agent", required=True, help="agent_id (e.g. bullwinkle)")
     parser.add_argument(
@@ -367,15 +362,13 @@ def _cli():
 
     if args.command == "import":
         result = json_to_pg(soul_path, args.agent, db_url)
-        print(f"import ok — {result['nodes']} nodes, {result['edges']} edges → Postgres")
+        print(f"import ok - {result['nodes']} nodes, {result['edges']} edges -> Postgres")
 
     elif args.command == "export":
         result = pg_to_json(soul_path, args.agent, db_url)
-        print(f"export ok — {result['nodes']} nodes, {result['edges']} edges → {soul_path}")
+        print(f"export ok - {result['nodes']} nodes, {result['edges']} edges -> {soul_path}")
 
     elif args.command == "status":
-        import psycopg2  # noqa: PLC0415
-
         conn = _connect(db_url)
         try:
             with conn.cursor() as cur:
