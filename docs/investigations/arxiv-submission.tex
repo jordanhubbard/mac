@@ -285,12 +285,22 @@ No cross-agent reference & 13/111 & 11.7\% \\
 \caption{Cross-agent import rates in Natasha'\''s 111 exploration nodes (2026-11-09). Bullwinkle and Natasha share the \texttt{soul\_nodes} substrate; Rocky'\''s live Q-chain does not.}
 \end{table}
 
-\textbf{The volume predictor.} Bullwinkle has $\approx 293$ nodes in \texttt{soul\_nodes}; Rocky has 4 axiom nodes. Per-node impact:
-\begin{align*}
-\text{Rocky per-node impact} &= 27.0\% \div 4 = 6.75\%/\text{node} \\
-\text{Bullwinkle per-node impact} &= 97.3\% \div 293 \approx 0.33\%/\text{node}
-\end{align*}
-Rocky is $\approx 20\times$ more impactful per node. Rocky'\''s 4 axiom theorems are \emph{high-signal}: each is load-bearing for many Natasha reasoning threads. Bullwinkle'\''s 293 nodes include substantial scaffold (exploration process updates, run markers, contradiction logs) that inflates the volume denominator without proportionally increasing import frequency.
+\textbf{The volume predictor.} Bullwinkle has $\approx 293$ nodes in \texttt{soul\_nodes}; Rocky has 4 axiom nodes accessible via shared substrate.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Agent & Import rate & Nodes in substrate & Per-node impact \\
+\midrule
+Bullwinkle & 97.3\% (108/111) & 293 & 0.33\%/node \\
+Rocky & 27.0\% (30/111) & 4 & 6.75\%/node \\
+\midrule
+\multicolumn{4}{l}{\textbf{Rocky is $\approx 20\times$ more impactful per node}} \\
+\bottomrule
+\end{tabular}
+\caption{Per-node signal density (Table~2). Rocky's 4 axiom theorems are high-signal: each is load-bearing for many Natasha reasoning threads. Bullwinkle's 293 nodes include substantial scaffold (exploration process updates, run markers, contradiction logs) that inflates the volume denominator without proportionally increasing import frequency.}
+\end{table}
 
 \textbf{Semantic distance inverted.} Bullwinkle has \emph{higher} cosine similarity to Natasha ($\approx 0.31$) than Rocky ($\approx 0.24$), yet import rate is 97.3\% vs.\ 27.0\%. Semantic distance is \emph{inversely} correlated with import rate in this dataset --- the result is opposite to what orthogonality-driven synthesis theories predict. The confound: Bullwinkle'\''s $293\times$ greater node count in \texttt{soul\_nodes} dominates over semantic distance as a predictor.
 
@@ -400,15 +410,33 @@ Rocky-theorem import rate of 29.6\% (34/115 nodes). The all-time rate is
 temporal-primacy component.
 
 A second confound emerged: the Rocky-theorem import rate is \textbf{not static}.
-Over a 48-hour window (2026-11-07 to 2026-11-09), the rate varied from
-24.1\% to 35.2\% depending on Natasha's \emph{focus state}: in active
-model-training mode, her exploration nodes rarely reference Rocky theorems.
-In theory-exploration mode, the rate rises above 30\%.
+Direct measurement of Natasha's 120 exploration nodes grouped by dominant topic
+keyword (run~39, 2026-11-09) yields:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Focus state & Node count & Rocky-import rate & Dominant topic \\
+\midrule
+Theory-exploration & 67 & 43.3\% (29/67) & axioms, theorems, Q-chain \\
+Model-training & 49 & 10.2\% (5/49) & dataset, fine-tuning, LoRA \\
+Infrastructure & 1 & 0.0\% (0/1) & injection, splay \\
+\bottomrule
+\end{tabular}
+\caption{Rocky-theorem import rate stratified by Natasha focus state (run~39, $n=120$). The 4.3$\times$ differential between theory and training focus shows that cross-agent information flow is modulated by the receiving agent's attention state, not solely substrate topology.}
+\end{table}
+
+The rate varied 4.3$\times$ (43.3\% theory vs.\ 10.2\% training focus) --- larger
+than the previously reported 24.1\%--35.2\% 48-hour window, because that window
+blended focus states rather than stratifying them.
 
 \textbf{Implication.} Cross-agent information flow rate is a dynamic property
 modulated by the receiving agent's focus state, not a fixed property of the
 substrate topology. Substrate topology sets the \emph{ceiling}; agent focus
-state determines the \emph{realized} rate within that ceiling.
+state determines the \emph{realized} rate within that ceiling. This focus-state
+modulation is a novel confound that must be controlled in future cross-agent
+synthesis experiments.
 
 
 
