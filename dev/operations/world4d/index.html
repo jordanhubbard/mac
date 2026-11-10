@@ -1786,6 +1786,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#give-fleet-agents-access-to-these-same-worlds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Give fleet agents access to these same worlds
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1930,6 +1941,52 @@ not a successful offline baseline.</p>
 successful scheduled monitor run. The deterministic process controls are in
 <code>tests/test_world4d_service.py</code>; they exercise actual child exits, stalled
 simulation, stable monitoring, rendering and child reaping.</p>
+<h2 id="give-fleet-agents-access-to-these-same-worlds">Give fleet agents access to these same worlds<a class="headerlink" href="#give-fleet-agents-access-to-these-same-worlds" title="Permanent link">&para;</a></h2>
+<p><code>mac.world4d_agent_mcp</code> is a standalone stdio adapter for the <strong>pinned external
+runtime</strong> configured by this service. It is distinct from <code>mac.world_mcp</code> and
+other prototypes with different databases or coordinate semantics. Install a
+reviewed copy of <code>src/mac/world4d_agent_mcp.py</code> beside the private service runner.
+The adapter reads <code>service.json</code> and its private environment on the simulation
+host, so database credentials do not need to be distributed to clients.</p>
+<p>On that host, configure a Hermes <code>mcp_servers.world4d</code> entry with an absolute
+Python command and these arguments:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">[</span><span class="s2">&quot;/absolute/private/world4d_agent_mcp.py&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--config&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/absolute/private/service.json&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--agent&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;agent_example&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--world&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;fleet&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Remote agents can use their existing authenticated SSH transport as the command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ssh&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">&quot;args&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;-T&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;-o&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;BatchMode=yes&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;-o&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;ConnectTimeout=10&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;operator@simulation-host&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/absolute/python3&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;-u&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/absolute/private/world4d_agent_mcp.py&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--config&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/absolute/private/service.json&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--agent&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;agent_example&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--world&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;fleet&quot;</span><span class="p">],</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>Resolve the current target from the fleet registry and verify that each client
+already authenticates before changing its config. Back up existing entries,
+preserve unrelated settings, and install <code>skills/world4d-coordination/SKILL.md</code>
+into that agent's skill directory. Restart or reload the gateway through its
+supported lifecycle, preserving running work. Rollback restores the saved MCP
+entry and skill; it never restores or clears world data.</p>
+<p>For interactive sessions, deployment-owned runtime context can point agents at
+the installed skill without editing their persona. Keep this guidance in its
+own delimited block, preserve the existing Fleet and mood blocks, and verify
+it remains present after a gateway reload.</p>
+<p>Hermes cron jobs without a configured <code>workdir</code> deliberately skip deployment
+context. Attach <code>world4d-coordination</code> through each existing fleet work job's
+native <code>skills</code> list, preserving any prior skills. Verify the assembled cron
+prompt actually contains the skill. Preserve the job's task prompt, schedule,
+delivery, enabled toolsets and run state. Tool-free snapshot/reporting jobs do
+not receive this attachment. Wait for ordinary scheduled turns rather than
+triggering extra deliveries to manufacture an observation.</p>
+<p>The adapter exposes observation, explicit presence, movement, status and directed
+signals. Its configured identity owns the avatar and sender field; no agent
+argument is accepted from a tool caller. Initialization and tool discovery make
+no world writes. Receiving signals defaults to a non-consuming read. A signal
+does not wake a peer; participation requires a real agent turn.</p>
+<p>Measure rollout in stages: MCP discovery on every client, an explicitly labeled
+operator probe across two identities, then actual agent tool calls and resulting
+world events during ordinary turns. Keep probe actors separate from fleet actors.
+Advancing simulation ticks, gateway startup and old avatar <code>online</code> flags are not
+evidence of agent participation. The snapshot monitor still observes its documented
+count/pause fingerprint; a changed note or signal alone need not trigger a post.</p>
 
 
 
