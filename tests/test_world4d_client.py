@@ -23,15 +23,20 @@ def test_live_pid_is_not_enough_and_reused_or_stale_pid_is_not_online(tmp_path):
 def _probe_liveness(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
-    born = subprocess.check_output(
-        ["ps", "-p", str(os.getpid()), "-o", "lstart="],
-        text=True,
-        env={**os.environ, "LC_ALL": "C"},
-    ).strip()
+    born, _ = client.process_birth(os.getpid())
+    owner = {
+        "pid": os.getpid(),
+        "kind": "hermes-gateway",
+        "start_time": born,
+        "hermes_home": str(tmp_path),
+    }
+    owner_path = tmp_path / "gateway.pid"
+    owner_path.write_text(json.dumps(owner))
     heartbeat = {
         "pid": os.getpid(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "start_time": datetime.strptime(born, "%a %b %d %H:%M:%S %Y").timestamp(),
+        # Hermes records initialization time here, NOT the OS process birth.
+        "start_time": datetime.now(timezone.utc).timestamp() + 5,
         "loop_tick_socket": True,
     }
     path = state / "gateway.heartbeat"
@@ -50,9 +55,9 @@ def _probe_liveness(tmp_path):
     try:
         assert client.gateway_health(tmp_path) == "online"
         thread.join(timeout=2)
-        path.write_text(json.dumps({**heartbeat, "start_time": heartbeat["start_time"] - 100}))
+        owner_path.write_text(json.dumps({**owner, "start_time": born - 1000}))
         assert client.gateway_health(tmp_path) == "unknown"
-        path.write_text(json.dumps(heartbeat))
+        owner_path.write_text(json.dumps(owner))
         assert (
             client.gateway_health(tmp_path, now=datetime.now(timezone.utc).timestamp() + 120)
             == "unknown"

@@ -52,6 +52,22 @@ def verify_realm(manifest):
             raise ValueError("World4D reporter points at a different realm")
 
 
+def process_birth(pid):
+    """Match Hermes' gateway.pid units: Linux boot ticks, Darwin centiseconds."""
+    if sys.platform.startswith("linux"):
+        # Process names may contain spaces or parentheses; field 3 follows ')'.
+        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]), 0
+    proc = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "lstart="],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    born = datetime.strptime(proc.stdout.strip(), "%a %b %d %H:%M:%S %Y").timestamp()
+    return int(born * 100), 100  # ps displays whole seconds.
+
+
 def gateway_health(home, now=None):
     """Require a fresh heartbeat, matching process birth and a live event loop."""
     now = time.time() if now is None else now
@@ -60,19 +76,19 @@ def gateway_health(home, now=None):
         pid = int(heartbeat["pid"])
         if pid <= 1:
             return "unknown"
+        owner = json.loads((home / "gateway.pid").read_text())
+        if (
+            owner.get("pid") != pid
+            or owner.get("kind") != "hermes-gateway"
+            or Path(owner["hermes_home"]).resolve() != home.resolve()
+        ):
+            return "unknown"
         os.kill(pid, 0)
         age = now - datetime.fromisoformat(heartbeat["updated_at"]).timestamp()
         if not 0 <= age <= 60:
             return "unknown"
-        proc = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "lstart="],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            env={**os.environ, "LC_ALL": "C"},
-        )
-        born = datetime.strptime(proc.stdout.strip(), "%a %b %d %H:%M:%S %Y").timestamp()
-        if abs(born - float(heartbeat["start_time"])) > 2:
+        born, precision = process_birth(pid)
+        if abs(born - int(owner["start_time"])) > precision:
             return "unknown"
         if not heartbeat.get("loop_tick_socket"):
             return "unknown"
@@ -85,6 +101,7 @@ def gateway_health(home, now=None):
         return (
             "online"
             if (latest["pid"], latest["start_time"]) == (pid, heartbeat["start_time"])
+            and json.loads((home / "gateway.pid").read_text()) == owner
             else "unknown"
         )
     except ProcessLookupError:
