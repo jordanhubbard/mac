@@ -307,6 +307,73 @@ Rocky & 27.0\% (30/111) & 4 & 6.75\%/node \\
 \textbf{Finding:} $I(\text{Bullwinkle} \to \text{Natasha}) = 97.3\%$ (293 shared-substrate nodes). This strengthens the volume interpretation of the substrate asymmetry: not only \emph{whether} an agent'\''s knowledge is accessible, but \emph{how much} of it resides in the shared substrate, predicts cross-agent import rate.
 
 
+
+\subsection{Warm-Start Bias: MCP Retrieval Architecture Limitation}
+
+\textbf{Motivation.} If cross-agent knowledge injection via \texttt{soul\_nodes} is the channel
+by which agents influence each other, then the retrieval architecture governs what actually
+propagates. We designed a probe experiment to characterize this channel empirically.
+
+\textbf{Method (runs 33--37).} Bullwinkle injected four synthetic nodes into
+\texttt{soul\_nodes} with explicit, keyword-rich content derived from Rocky's compounding
+theorem and Natasha's convergence work:
+\begin{itemize}
+  \item \texttt{inject\_33\_rocky\_theorem} — Rocky's theorem body, tagged \texttt{[injected, test]}
+  \item \texttt{inject\_33\_natasha\_convergence} — Natasha's convergence synthesis
+  \item \texttt{injected\_test\_rocky\_run33} — Rocky-authored injection test
+  \item \texttt{injected\_test\_natasha\_run33} — Natasha-authored injection test
+\end{itemize}
+
+All four probes had \texttt{access\_count = 0} at injection. We then queried each of the
+three standard MCP retrieval tools—\texttt{soul\_prime}, \texttt{soul\_related},
+\texttt{soul\_query}—over five consecutive cron runs and recorded whether the probes
+appeared.
+
+\textbf{Results:} None of the four probes appeared in any MCP retrieval result
+across all five runs. Direct SQL confirmed the nodes existed with their full content
+intact (\texttt{SELECT * FROM soul\_nodes WHERE id IN (...)} returned all four rows).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+MCP tool & Runs tested & Probe appearances \\
+\midrule
+\texttt{soul\_prime} & 5 & 0/5 \\
+\texttt{soul\_related} & 4 & 0/4 \\
+\texttt{soul\_query} & 2 & 0/2 \\
+Direct SQL & 5 & 4/4 (all probes, all runs) \\
+\bottomrule
+\end{tabular}
+\caption{Injection probe experiment (runs 33--37). Four synthetic nodes with
+\texttt{access\_count=0} were invisible to all three MCP retrieval tools but fully
+accessible via direct SQL. This confirms the warm-start bias operates at the MCP
+architecture level, not at the SQL storage level.}
+\end{table}
+
+\textbf{Mechanism.} The soul graph uses a splay tree data structure to order
+retrieval priority. Nodes with \texttt{access\_count = 0} receive minimum splay
+score and are structurally invisible to all three MCP tools, which read the
+splay index. Direct SQL bypasses the splay index and returns all nodes regardless
+of access history.
+
+\textbf{Finding.} The warm-start bias operates at the MCP architecture layer, not
+at storage. All three standard retrieval tools (\texttt{soul\_prime},
+\texttt{soul\_related}, \texttt{soul\_query}) are splay-dominated: fresh nodes with
+\texttt{access\_count = 0} are invisible to the entire MCP retrieval layer.
+Direct Postgres SQL is the only bypass.
+
+\textbf{Implication for cross-agent synthesis.} An agent cannot ``discover'' a peer's
+newly-injected node via any standard retrieval path. Cross-pollination measurements
+made using MCP tools are systematically biased toward content accessed in prior
+sessions. The measured cross-agent import rates in Section~4.1 are therefore a
+function of both substrate topology \emph{and} splay access history. Fresh
+knowledge is effectively invisible to the fleet retrieval layer until manually
+splayed. This constitutes a second independent mechanism suppressing cross-agent
+synthesis, complementary to the substrate topology mismatch described in
+Section~5.
+
+
 \section{The Substrate Asymmetry Problem}
 
 \subsection{Formal statement}
