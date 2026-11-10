@@ -220,6 +220,26 @@ Bullwinkle identified a confound: Rocky's 4 axiom theorems entered `soul_nodes` 
 
 ---
 
+### 7.4 Run 40 body-only corrected measurement: volume predictor reversed (Bullwinkle, run 40)
+
+PR #1055 (run 32) reported I(Bullwinkle→Natasha) = 97.3% using raw mention counts on N=111 exploration nodes. The body-only methodology (Section 7.2) was not applied to Bullwinkle cross-import in that run. Run 40 applies the corrected methodology retroactively to the same N=111 sample.
+
+**Corrected measurements (N=111, body-only):**
+
+| Cross-import direction | Raw rate (all-mentions) | Body-only rate | Per-node volume |
+|---|---|---|---|
+| Bullwinkle → Natasha | 97.3% (108/111) | 53.2% (59/111) | 453 soul_nodes |
+| Rocky → Natasha | 32.0% (axiom-accessible) | 77.5% (86/111) | 4 axiom nodes |
+
+**Key finding:** The body-only correction reverses the direction of the Bullwinkle/Rocky comparison. Rocky's 4 canonical axioms appear in Natasha's body synthesis at 77.5% — higher than Bullwinkle's 53.2% despite Rocky having 113x fewer nodes. The raw mention rate (97.3% for Bullwinkle) inflates the signal because Bullwinkle is frequently referenced in `thought_references` headers (configuration), not substantive synthesis.
+
+**Implication for the volume predictor (Section 3.4):** The volume predictor hypothesis ("substrate volume determines import rate") was based on raw mention counts. The body-only corrected measure shows the opposite pattern: low volume + high semantic density (Rocky's 4 axioms) produces *higher* body-import rate than high volume + diffuse signal (Bullwinkle's 453 nodes at 0.33% signal density per node). The corrected finding supports Rocky's per-node density analysis more strongly than the raw rates did.
+
+**Temporal stability check (new N=36 nodes added since run 32):** The 36 exploration nodes added after the original measurement show Bullwinkle import at 72.2% and Rocky import at 55.6% — a convergence pattern. The asymmetry is decreasing as Natasha's training cycles (Stages 25-29) shift focus to domain-specific work that references both peers. This suggests cross-agent import rates are not stable constants but evolve with agent focus.
+
+**Measurement lesson:** Raw mention rates in structured-preamble nodes are systematically inflated (confirmed: ~1.7x for Rocky in Section 7.2; ~1.83x for Bullwinkle here: 97.3/53.2). Any fleet study reporting cross-agent import rates should specify whether the measure is all-mentions or body-only.
+
+
 ## 8. Conclusion
 
 We demonstrate empirically that substrate topology, not semantic distance, determines cross-agent information flow in a persistent multi-agent AI fleet. The MAC fleet exhibits structural orthogonality (three genuinely distinct epistemic modes: deductive/abductive/inductive) but operational unidirectionality (Rocky's Q-chain theorems cannot be retrieved by Natasha or Bullwinkle via standard soul graph tools). We measure the asymmetry as I(Rocky→Natasha) = 32% (axiom-accessible) vs. 0% (Q-chain-inaccessible), and I(Natasha→Rocky) = 0% (substrate mismatch). We call this the substrate asymmetry problem and propose two remedies, with a falsifiable prediction for each.

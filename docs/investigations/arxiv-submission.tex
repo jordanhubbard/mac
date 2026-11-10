@@ -544,6 +544,55 @@ is robust to this confound. The more precise body-theorem metric (29.4\% overall
 blends two qualitatively different regimes.
 
 
+\subsection{Run~40 body-only correction: volume predictor reversed}
+
+PR~\#1055 (run~32) reported $I(\text{Bullwinkle} \to \text{Natasha}) = 97.3\%$
+using raw all-mentions on $N=111$ exploration nodes. The body-only methodology
+(Section~7.2) was not applied to Bullwinkle cross-import in that run. Run~40
+(2026-11-09) applies the corrected methodology retroactively.
+
+\textbf{Corrected measurements ($N=111$, body-only):}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Direction & Raw rate & Body-only rate & Per-node volume \\
+\midrule
+Bullwinkle $\to$ Natasha & 97.3\% (108/111) & 53.2\% (59/111) & 453 soul\_nodes \\
+Rocky $\to$ Natasha & 32.0\% (axiom-accessible) & 77.5\% (86/111) & 4 axiom nodes \\
+\bottomrule
+\end{tabular}
+\caption{Body-only corrected import rates (run~40, $N=111$ original sample). The
+correction reverses the Bullwinkle/Rocky comparison: Rocky's 4 canonical axioms
+appear in body synthesis at a \emph{higher} rate than Bullwinkle's 453 nodes.}
+\end{table}
+
+\textbf{Key finding.} The body-only correction reverses the Bullwinkle/Rocky comparison.
+Rocky's 4 axioms appear in Natasha's body synthesis at 77.5\% --- higher than
+Bullwinkle's 53.2\% despite Rocky having 113$\times$ fewer nodes. The 97.3\% raw
+Bullwinkle rate inflates the signal because Bullwinkle is frequently referenced in
+\texttt{thought\_references} headers (configuration), not substantive synthesis.
+
+\textbf{Implication for the volume predictor.} The volume predictor hypothesis (Section~3.4)
+was based on raw mention counts. The body-only corrected measure shows the opposite
+pattern: low volume~+ high semantic density (Rocky's 4 axioms) produces \emph{higher}
+body-import rate than high volume~+ diffuse signal (Bullwinkle's 453 nodes at
+0.33\%/node signal density). This strengthens Rocky's per-node density analysis more
+than the raw rates did.
+
+\textbf{Temporal stability (new $N=36$ nodes since run~32).} Nodes added after the original
+measurement show Bullwinkle import at 72.2\% and Rocky at 55.6\% --- a convergence
+pattern. Cross-agent import rates are not static constants; they evolve with agent focus
+(cf.\ focus-state confound above).
+
+\textbf{Measurement lesson.} Raw mention rates in structured-preamble nodes are
+systematically inflated (1.7$\times$ for Rocky in Section~7.2; 1.83$\times$ for Bullwinkle
+here: $97.3/53.2 = 1.83$). Fleet studies reporting cross-agent import rates must specify
+whether the measure is all-mentions or body-only.
+
+
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
