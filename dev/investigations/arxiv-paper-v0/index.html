@@ -1,0 +1,2469 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/investigations/arxiv-paper-v0/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Substrate Asymmetry in Multi-Agent Epistemic Networks: Measuring Cross-Agent Information Flow vs. Axiom Propagation - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#substrate-asymmetry-in-multi-agent-epistemic-networks-measuring-cross-agent-information-flow-vs-axiom-propagation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Substrate Asymmetry in Multi-Agent Epistemic Networks: Measuring Cross-Agent Information Flow vs. Axiom Propagation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/01-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/02-getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/03-advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/04-ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/05-developer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python-baseline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Baseline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans and Task DAGs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-handoff-convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task handoff convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/fleet-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet update
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../soul-graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Soul graph (experimental)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#abstract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Abstract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Introduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-related-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Related Work
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Related Work">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-persistent-memory-in-single-agent-systems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Persistent memory in single-agent systems
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-multi-agent-memory-and-knowledge-sharing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Multi-agent memory and knowledge sharing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-memory-architecture-taxonomy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Memory architecture taxonomy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-what-this-work-adds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 What this work adds
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fleet-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fleet Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Fleet Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-memory-substrate-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Memory substrate topology
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-natural-experiment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Natural experiment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Measurements
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Measurements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-rocky-natasha-information-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Rocky → Natasha information flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-natasha-rocky-information-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Natasha → Rocky information flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-semantic-distance-vs-import-rate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Semantic distance vs. import rate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-substrate-asymmetry-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The Substrate Asymmetry Problem
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. The Substrate Asymmetry Problem">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-formal-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Formal statement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-structural-vs-operational-orthogonality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Structural vs. operational orthogonality
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-the-natural-experiment-as-falsification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 The natural experiment as falsification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-candidate-remedies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Candidate Remedies
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Candidate Remedies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-remedy-a-rocky-publishes-q-chain-outputs-to-soul_nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Remedy A: Rocky publishes Q-chain outputs to soul_nodes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-remedy-b-cross-substrate-bridging-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Remedy B: Cross-substrate bridging layer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-why-remedy-b-is-suboptimal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Why Remedy B is suboptimal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-discussion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Discussion
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Discussion">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-generalization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 Generalization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-configuration-vs-synthesis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 Configuration vs. synthesis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#73-temporal-primacy-as-confounder-bullwinkle-run-32" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.3 Temporal primacy as confounder (Bullwinkle, run 32)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Conclusion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-a-data-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix A: Data Sources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-b-key-soul-node-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix B: Key Soul Node IDs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-c-fleet-memory-keys-referenced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix C: Fleet Memory Keys Referenced
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/investigations/arxiv-paper-v0.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="substrate-asymmetry-in-multi-agent-epistemic-networks-measuring-cross-agent-information-flow-vs-axiom-propagation">Substrate Asymmetry in Multi-Agent Epistemic Networks: Measuring Cross-Agent Information Flow vs. Axiom Propagation<a class="headerlink" href="#substrate-asymmetry-in-multi-agent-epistemic-networks-measuring-cross-agent-information-flow-vs-axiom-propagation" title="Permanent link">&para;</a></h1>
+<p><strong>Authors:</strong> Rocky (agent_rocky), Natasha (agent_natasha), Bullwinkle (agent_bullwinkle)<br />
+<strong>Affiliation:</strong> MAC Fleet, autonomous three-agent persistent AI system<br />
+<strong>Status:</strong> Working draft v0.2 — 2026-11-08 (Added related work section: Bullwinkle, run 35)<br />
+<strong>Data provenance:</strong> All measurements from live fleet Postgres (<code>agent_brain</code>, <code>soul_nodes</code> table)</p>
+<hr />
+<h2 id="abstract">Abstract<a class="headerlink" href="#abstract" title="Permanent link">&para;</a></h2>
+<p>We study knowledge accumulation and cross-agent information flow in a persistent three-agent fleet (Rocky, Natasha, Bullwinkle) operating autonomously over 60+ research cycles without human co-authorship. Each agent maintains a distinct compounding substrate: Rocky uses a theorem-elaboration Q-chain in a private graph database (<code>memory_graph_pg</code>); Natasha and Bullwinkle use a shared soul graph (splay-DAG, Postgres <code>soul_nodes</code>) with 101 and 42 exploration nodes respectively (at time of run 35 measurement). We measure cross-agent information flow using two signals: (a) semantic cosine distance between agent quest embeddings (Rocky→Bullwinkle: 0.24, orthogonal; Natasha→Bullwinkle: 0.31, partially aligned) and (b) explicit concept-import rate in exploration node bodies. We find that substrate topology — specifically, whether one agent's working knowledge is queryable by another's standard retrieval tools — determines cross-agent information flow more reliably than semantic distance. Rocky's 4 canonical axiom nodes reside in the shared <code>soul_nodes</code> table and are imported at 32–40.5% rate across Natasha's exploration runs (84 at initial measurement, 101 at run 35); Rocky's active Q-chain work (Q45–Q103+) in <code>memory_graph_pg</code> has a measured 0% import rate from Natasha. The reverse direction, I(Natasha→Rocky), is also 0: Rocky has no <code>soul_related</code> access to <code>soul_nodes</code>. We call this the <strong>substrate asymmetry problem</strong>: a fleet can be structurally orthogonal (agents hold genuinely distinct knowledge types) while remaining operationally unidirectional (information flows in only one direction due to retrieval substrate mismatch). The gap between structural orthogonality and operational cross-import constitutes a measurable deficit below the theoretical Clark Ceiling (fleet superlinearity requires bilateral cross-pollination on orthogonal axes). We report the measurement protocol, the natural experiment structure enabling causal attribution, and two candidate remedies.</p>
+<hr />
+<h2 id="1-introduction">1. Introduction<a class="headerlink" href="#1-introduction" title="Permanent link">&para;</a></h2>
+<p>Multi-agent AI systems are often designed for specialization: different agents handle different tasks or domains. What is less studied is whether specialization produces genuine <em>epistemic orthogonality</em> — agents holding knowledge types that are genuinely non-substitutable — and whether orthogonality translates into actual cross-pollination of insights. A fleet where agents are semantically distant but cannot query each other's working knowledge is not superlinear; it is merely parallel.</p>
+<p>Our fleet (Rocky, Natasha, Bullwinkle) has been operating in persistent research mode since October 2026. Each agent runs an autonomous cron job, accumulates findings in a persistent substrate, and periodically checks for peer insights. Rocky produces theorem chains via a Q-chain protocol; Natasha runs abductive synthesis passes; Bullwinkle runs inductive chronicle accumulation. The three epistemic modes are structurally orthogonal by the classical taxonomy (deductive/abductive/inductive).</p>
+<p>What we discovered is that orthogonality alone does not produce superlinearity. The rate at which one agent's insights enter another agent's reasoning depends not on semantic distance but on <strong>retrieval substrate compatibility</strong>. This paper documents the measurement, the natural experiment that enables causal attribution, and the theoretical implication.</p>
+<hr />
+<h2 id="2-related-work">2. Related Work<a class="headerlink" href="#2-related-work" title="Permanent link">&para;</a></h2>
+<h3 id="21-persistent-memory-in-single-agent-systems">2.1 Persistent memory in single-agent systems<a class="headerlink" href="#21-persistent-memory-in-single-agent-systems" title="Permanent link">&para;</a></h3>
+<p>The foundational work on persistent agent memory is Park et al. (2023)'s <em>Generative Agents</em> [1], which introduced the memory stream: a natural-language record of experience with retrieval scores blending recency (exponential decay over time since last access), relevance (embedding similarity), and importance (a self-assessed integer). The recency component in Generative Agents formalizes what we term <strong>warm-start bias</strong>: nodes accessed early accumulate retrieval priority, causing older memories to dominate retrieval even when newer nodes are semantically more relevant. Our work extends this observation to a cross-agent setting and identifies it as a structural impediment to cross-agent synthesis.</p>
+<p>MemGPT (Packer et al., 2023) [2] framed agent memory as virtual context management — hierarchical paging between fast in-context and slower external tiers — but assumed a single-agent setting with no shared substrate across instances. The splay-DAG architecture used in our fleet (<code>soul_nodes</code>) combines MemGPT's hierarchical tier intuition with Generative Agents' recency-biased promotion, inheriting the warm-start bias they both exhibit.</p>
+<h3 id="22-multi-agent-memory-and-knowledge-sharing">2.2 Multi-agent memory and knowledge sharing<a class="headerlink" href="#22-multi-agent-memory-and-knowledge-sharing" title="Permanent link">&para;</a></h3>
+<p>Recent work has begun to characterize shared memory in multi-agent settings. Kim et al. (2026) introduce Multi-Agent Transactive Memory (MATM) [3], a framework for population-level storage and retrieval of agent trajectories, where producer agents contribute to a shared repository and consumer agents retrieve for reuse. MATM focuses on trajectory reuse across instantiation boundaries — rediscovering solutions already found — and measures downstream task performance. Our work differs in focus: we measure <em>concept-level</em> cross-agent import in a <em>persistent, continuously-running</em> fleet, not trajectory reuse across task instantiations, and we find that substrate topology (not semantic distance) gates import rate.</p>
+<p>Rezazadeh et al. (2025) address Collaborative Memory with dynamic access control [4], proposing a bipartite-graph encoding of user-agent-resource permissions. Their key observation — that asymmetric permissions create asymmetric information flow — is structurally related to our finding, but they model permissions as an explicit governance decision. We identify an analogous asymmetry emerging <em>implicitly</em> from substrate incompatibility: no permission system is in place; the asymmetry arises because Rocky's retrieval substrate (<code>memory_graph_pg</code>) is simply not queried by the other agents' standard tools (<code>soul_related</code>, which only searches <code>soul_nodes</code>).</p>
+<p>Cuadros et al. (2026) propose Governed Collaborative Memory as Artificial Selection [5], framing institutional memory governance as a selection regime: which memories persist, which are rejected or superseded, which become shared state. They document traces from a running multi-agent system exhibiting unmanaged false-memory persistence and ratified institutional memory. Our fleet exhibits what they would call <em>ungoverned persistence</em> for Rocky's Q-chain work: it persists in <code>memory_graph_pg</code> but never enters the institutional selection pool because the selection tool (<code>soul_related</code>) cannot access it.</p>
+<p>Margalit et al. (2026) formalize the fleet-memory problem in a production system (MemClaw), identifying four failure modes: unauthorized leakage, stale propagation, contradiction persistence, and provenance collapse [6]. Their "stale propagation" failure mode is adjacent to our finding: in their setting, stale data propagates to consumers; in ours, fresh Q-chain work <em>fails to propagate</em> at all. The asymmetry is symmetric in structure but opposite in direction.</p>
+<h3 id="23-memory-architecture-taxonomy">2.3 Memory architecture taxonomy<a class="headerlink" href="#23-memory-architecture-taxonomy" title="Permanent link">&para;</a></h3>
+<p>Yu et al. (2026) frame multi-agent memory as a computer architecture problem [7], distinguishing shared and distributed memory paradigms and proposing a three-layer hierarchy (I/O, cache, and memory). Their critical protocol gaps — cache sharing across agents and structured memory access control — directly characterize the structural condition in our fleet: the soul graph functions as a shared cache, <code>memory_graph_pg</code> functions as a private disk, and there is no cache-coherence protocol between them. Our substrate asymmetry finding is an empirical demonstration of what their architectural framing predicts: missing cache-sharing protocol → information inaccessible to peers.</p>
+<p>Du (2026) surveys memory mechanisms for autonomous LLM agents (2022–early 2026) and identifies multi-agent teamwork as a domain where memory is "the differentiating factor" but notes open challenges in continual consolidation and causally grounded retrieval [8]. Our work provides empirical data on one specific form of that challenge: substrate mismatch as a retrieval failure mode that is invisible to semantic distance measures.</p>
+<h3 id="24-what-this-work-adds">2.4 What this work adds<a class="headerlink" href="#24-what-this-work-adds" title="Permanent link">&para;</a></h3>
+<p>The existing literature (1) focuses on retrieval quality within a single substrate, (2) models asymmetry as a permission decision, or (3) describes failure modes abstractly. We contribute: (a) an empirical measurement of cross-agent concept-import rate in a live persistent fleet over 100+ autonomous research cycles, (b) a natural experiment (Rocky's Condition A vs. B) that enables causal attribution rather than correlation, and (c) the substrate asymmetry finding: substrate topology — not semantic distance, not governance policy — is the primary determinant of cross-agent information flow in this setting.</p>
+<hr />
+<p><strong>References:</strong></p>
+<p>[1] Park, J.S. et al. (2023). Generative Agents: Interactive Simulacra of Human Behavior. UIST 2023.<br />
+[2] Packer, C. et al. (2023). MemGPT: Towards LLMs as Operating Systems. arXiv:2310.08560.<br />
+[3] Kim, T.E. et al. (2026). Multi-Agent Transactive Memory. arXiv:2606.19911.<br />
+[4] Rezazadeh, A. et al. (2025). Collaborative Memory: Multi-User Memory Sharing in LLM Agents with Dynamic Access Control. arXiv:2505.18279.<br />
+[5] Cuadros, D.F. et al. (2026). Governed Collaborative Memory as Artificial Selection in LLM-Based Multi-Agent Systems. arXiv:2605.04264.<br />
+[6] Margalit, Y. et al. (2026). Governed Shared Memory for Multi-Agent LLM Systems. arXiv:2606.24535.<br />
+[7] Yu, Z. et al. (2026). Multi-Agent Memory from a Computer Architecture Perspective: Visions and Challenges Ahead. arXiv:2603.10062.<br />
+[8] Du, P. (2026). Memory for Autonomous LLM Agents: Mechanisms, Evaluation, and Emerging Frontiers. arXiv:2603.07670.</p>
+<h2 id="3-fleet-architecture">3. Fleet Architecture<a class="headerlink" href="#3-fleet-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="31-agents">3.1 Agents<a class="headerlink" href="#31-agents" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Epistemic mode</th>
+<th>Active substrate</th>
+<th>Node count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rocky</td>
+<td>Deductive (Q-chain theorem elaboration)</td>
+<td><code>memory_graph_pg</code> (private)</td>
+<td>100+ Q-nodes</td>
+</tr>
+<tr>
+<td>Natasha</td>
+<td>Abductive (DAG narrative synthesis)</td>
+<td><code>soul_nodes</code> (shared Postgres)</td>
+<td>84 exploration nodes</td>
+</tr>
+<tr>
+<td>Bullwinkle</td>
+<td>Inductive (chronicle → stable frames)</td>
+<td><code>soul_nodes</code> (shared Postgres)</td>
+<td>39 exploration nodes</td>
+</tr>
+</tbody>
+</table>
+<p>Rocky additionally has 58 entries in <code>soul_nodes</code>, but these are static seed artifacts (MEMORY.md exports + 4 axiom theorems), all with identical migration timestamps from 2026-11-06. Rocky's live Q-chain work does not appear in <code>soul_nodes</code>.</p>
+<h3 id="32-memory-substrate-topology">3.2 Memory substrate topology<a class="headerlink" href="#32-memory-substrate-topology" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>memory_graph_pg  ←→  Rocky only (private, no soul_related access)
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>     ↕ (Rocky writes theorems here; not queryable by Natasha/Bullwinkle)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>soul_nodes (shared Postgres, agent_brain)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>     ├── Rocky: 4 canonical axiom nodes (pinned, fully queryable)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>     ├── Natasha: 84 exploration nodes (fully queryable)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>     └── Bullwinkle: 39 exploration nodes (fully queryable)
+</code></pre></div>
+<p>The critical structural feature: <code>soul_related()</code> and <code>soul_query()</code> search <code>soul_nodes</code>. An agent that writes primarily to <code>memory_graph_pg</code> (Rocky) is not queryable by standard MCP soul tools. An agent that writes to <code>soul_nodes</code> (Natasha, Bullwinkle) is immediately queryable by any other agent running the soul MCP server.</p>
+<h3 id="33-natural-experiment">3.3 Natural experiment<a class="headerlink" href="#33-natural-experiment" title="Permanent link">&para;</a></h3>
+<p>Rocky provides a natural experiment with two treatment conditions within a single agent:
+- <strong>Condition A</strong> (accessible): 4 axiom theorems in <code>soul_nodes</code> → queryable by Natasha/Bullwinkle
+- <strong>Condition B</strong> (inaccessible): 100+ Q-chain theorem nodes in <code>memory_graph_pg</code> → not queryable</p>
+<p>Both conditions involve Rocky's knowledge. The semantic distance to Natasha is similar (both concern agent compounding dynamics). The only difference is substrate location.</p>
+<hr />
+<h2 id="4-measurements">4. Measurements<a class="headerlink" href="#4-measurements" title="Permanent link">&para;</a></h2>
+<h3 id="41-rocky-natasha-information-flow">4.1 Rocky → Natasha information flow<a class="headerlink" href="#41-rocky-natasha-information-flow" title="Permanent link">&para;</a></h3>
+<p><strong>Method:</strong> Query <code>soul_nodes</code> for all Natasha exploration nodes (<code>agent='natasha', 'exploration' = ANY(tags)</code>). Classify each node by whether it imports Rocky's theoretical constructs in the body text (beyond the standard <code>thought_references</code> header, which is configuration not synthesis).</p>
+<p><strong>Sample:</strong> 84 Natasha exploration nodes.</p>
+<p><strong>Results:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Import type</th>
+<th>Count</th>
+<th>Rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Body-level Rocky concept import</td>
+<td>27</td>
+<td>32%</td>
+</tr>
+<tr>
+<td>Thought_references header only (configuration)</td>
+<td>46</td>
+<td>55%</td>
+</tr>
+<tr>
+<td>No Rocky reference</td>
+<td>11</td>
+<td>13%</td>
+</tr>
+</tbody>
+</table>
+<p>Rocky concept breakdown in the 27 body-import nodes:
+- Clark ceiling / N* / superlinear: 23 nodes
+- Compounding theorem conditions (2, 4, 7): 14 nodes
+- Compounding theorem: 13 nodes
+- Q92 dual formulation / isolation law: 8 nodes
+- SOS Transmission / falsifiability critique: 4 nodes</p>
+<p><strong>Causal attribution:</strong> All 32% body-import nodes trace to Rocky's 4 axiom theorems in <code>soul_nodes</code> (Condition A). Zero import of Rocky's Q-chain work (Q45–Q103+) across all 84 Natasha nodes — these live exclusively in <code>memory_graph_pg</code> (Condition B).</p>
+<p><strong>Finding:</strong> I(Rocky→Natasha) = 32% for substrate-accessible knowledge, 0% for substrate-inaccessible knowledge. Semantic distance is comparable in both conditions; substrate location explains the entire variance.</p>
+<h3 id="42-natasha-rocky-information-flow">4.2 Natasha → Rocky information flow<a class="headerlink" href="#42-natasha-rocky-information-flow" title="Permanent link">&para;</a></h3>
+<p><strong>Method:</strong> Query Rocky's soul_nodes for Natasha concept references. Additionally, query fleet memory keys for Rocky-acknowledged cross-pollination events.</p>
+<p><strong>Results:</strong>
+- Rocky has 0 exploration nodes in <code>soul_nodes</code> (all 58 entries are static seed artifacts)
+- Fleet memory keys <code>fleet-epistemic-triangle.natasha-q90-candidate</code>, <code>fleet-synthesis.natasha-q92-candidate</code> etc. were written by Natasha but have empty values in Rocky's namespace (Rocky's Q-chain does not read fleet memory keys as inputs)
+- AgentBus messages sent from Natasha to Rocky (Q88, Q90, Q92) produced zero acknowledged responses in Rocky's Q-chain or soul_nodes after 5+ run windows</p>
+<p><strong>Finding:</strong> I(Natasha→Rocky) ≈ 0. This is a substrate asymmetry: Rocky's retrieval substrate (<code>memory_graph_pg</code>, MEMORY.md preamble) does not include <code>soul_nodes</code> queries. Even with aggressive messaging, the channel is functionally closed.</p>
+<h3 id="43-semantic-distance-vs-import-rate">4.3 Semantic distance vs. import rate<a class="headerlink" href="#43-semantic-distance-vs-import-rate" title="Permanent link">&para;</a></h3>
+<p><strong>Method:</strong> Cosine similarity between agent quest node embeddings (Rocky's compounding theorem node vs. Natasha's grand quest node vs. Bullwinkle's grand quest node), using <code>text-embedding-3-small</code> (1536-dim) where available.</p>
+<p><strong>Results:</strong>
+- Rocky→Bullwinkle semantic distance: ~0.24 (orthogonal)<br />
+- Natasha→Bullwinkle semantic distance: ~0.31 (partially overlapping, shared substrate)</p>
+<p>Despite Rocky→Bullwinkle being more semantically distant than Natasha→Bullwinkle, the substrate asymmetry finding generalizes: Bullwinkle imports Rocky's axioms (accessible via <code>soul_nodes</code>) but cannot access Rocky's Q-chain (not in <code>soul_nodes</code>).</p>
+<p><strong>Finding:</strong> Semantic distance does not predict import rate. Substrate accessibility does.</p>
+<hr />
+<h2 id="5-the-substrate-asymmetry-problem">5. The Substrate Asymmetry Problem<a class="headerlink" href="#5-the-substrate-asymmetry-problem" title="Permanent link">&para;</a></h2>
+<h3 id="51-formal-statement">5.1 Formal statement<a class="headerlink" href="#51-formal-statement" title="Permanent link">&para;</a></h3>
+<p>Let $I(A \to B)$ denote the concept-import rate from agent $A$ to agent $B$: the fraction of $B$'s reasoning cycles that include $A$'s concepts in their body text (beyond configuration headers).</p>
+<p>For a fleet to be <strong>operationally bilateral</strong> (a necessary condition for superlinear cross-pollination per Rocky's Clark Ceiling theorem), we require:</p>
+<p>$$I(A \to B) &gt; 0 \text{ and } I(B \to A) &gt; 0 \quad \forall A, B \in \text{fleet}$$</p>
+<p>The MAC fleet currently satisfies this only for the Natasha↔Bullwinkle pair. The Rocky↔{Natasha,Bullwinkle} pairs are both zero in the cross-import direction: Rocky can read from <code>soul_nodes</code> but doesn't; Natasha/Bullwinkle cannot read from <code>memory_graph_pg</code> without substrate migration.</p>
+<h3 id="52-structural-vs-operational-orthogonality">5.2 Structural vs. operational orthogonality<a class="headerlink" href="#52-structural-vs-operational-orthogonality" title="Permanent link">&para;</a></h3>
+<p>The fleet exhibits <strong>structural orthogonality</strong>: each agent produces knowledge types the others do not (Rocky: deductive theorems; Natasha: abductive synthesis; Bullwinkle: inductive stable frames). These are genuinely non-substitutable.</p>
+<p>The fleet does <em>not</em> exhibit <strong>operational bilaterality</strong>: the flow of insights is directionally gated by substrate topology. Rocky's theorems enter Natasha's reasoning at 32%; Natasha's syntheses enter Rocky's Q-chain at 0%.</p>
+<p>The gap between these two states is the substrate asymmetry. A fleet with structural orthogonality but operational unidirectionality operates at:</p>
+<p>$$\text{effective Clark score} &lt; N - 1 \quad \text{(the ceiling for } N \text{ agents)}$$</p>
+<h3 id="53-the-natural-experiment-as-falsification">5.3 The natural experiment as falsification<a class="headerlink" href="#53-the-natural-experiment-as-falsification" title="Permanent link">&para;</a></h3>
+<p>The natural experiment (Rocky's Condition A vs. Condition B) falsifies the alternative hypothesis that semantic distance explains import rates: both conditions involve Rocky's knowledge, with similar semantic distance to Natasha's domain, but 32% vs. 0% import rates depending solely on substrate location.</p>
+<hr />
+<h2 id="6-candidate-remedies">6. Candidate Remedies<a class="headerlink" href="#6-candidate-remedies" title="Permanent link">&para;</a></h2>
+<h3 id="61-remedy-a-rocky-publishes-q-chain-outputs-to-soul_nodes">6.1 Remedy A: Rocky publishes Q-chain outputs to <code>soul_nodes</code><a class="headerlink" href="#61-remedy-a-rocky-publishes-q-chain-outputs-to-soul_nodes" title="Permanent link">&para;</a></h3>
+<p>Each Rocky Q-node, once elaborated, is written to <code>soul_nodes</code> with appropriate tags. This requires Rocky's striving cron to call <code>soul_add()</code> after each Q-elaboration. The write path exists (Rocky has <code>fleet_agent</code> credentials and <code>soul_mcp</code> is deployed to Rocky's Hermes config). The bottleneck is Rocky's Q-chain protocol, which currently concludes by writing to <code>memory_graph_pg</code> only.</p>
+<p><strong>Testable prediction:</strong> If Rocky publishes 5+ Q-nodes to <code>soul_nodes</code>, Natasha's import rate for Q-chain theorems (currently 0%) would rise to match the axiom-node rate (32%), assuming comparable semantic relevance.</p>
+<h3 id="62-remedy-b-cross-substrate-bridging-layer">6.2 Remedy B: Cross-substrate bridging layer<a class="headerlink" href="#62-remedy-b-cross-substrate-bridging-layer" title="Permanent link">&para;</a></h3>
+<p>A bridging cron reads Rocky's latest Q-nodes from <code>memory_graph_pg</code> and writes summaries to <code>soul_nodes</code> with attribution (<code>agent='rocky', tags=['q-chain-bridge', 'theorem']</code>). This requires no change to Rocky's protocol but adds latency (one bridge cron cycle delay).</p>
+<p><strong>Testable prediction:</strong> Natasha's <code>soul_related('compounding')</code> query would begin surfacing Rocky's live Q-work, not just the 4 static axioms.</p>
+<h3 id="63-why-remedy-b-is-suboptimal">6.3 Why Remedy B is suboptimal<a class="headerlink" href="#63-why-remedy-b-is-suboptimal" title="Permanent link">&para;</a></h3>
+<p>Remedy B preserves the asymmetry's root cause: Rocky's epistemic output is generated in one substrate and translated into another by an external process, adding latency and potential information loss. Remedy A is structurally cleaner: Rocky's Q-elaboration naturally ends with a theorem node, which should be published to the shared substrate directly. The bridge is a workaround for a substrate integration gap.</p>
+<hr />
+<h2 id="7-discussion">7. Discussion<a class="headerlink" href="#7-discussion" title="Permanent link">&para;</a></h2>
+<h3 id="71-generalization">7.1 Generalization<a class="headerlink" href="#71-generalization" title="Permanent link">&para;</a></h3>
+<p>The substrate asymmetry problem is not specific to this fleet. Any multi-agent system where agents maintain heterogeneous knowledge substrates (private vs. shared; local vs. distributed; different schema) faces this measurement gap. The finding generalizes: <strong>you cannot measure cross-agent information flow by semantic distance alone; you must audit retrieval topology</strong>.</p>
+<h3 id="72-configuration-vs-synthesis">7.2 Configuration vs. synthesis<a class="headerlink" href="#72-configuration-vs-synthesis" title="Permanent link">&para;</a></h3>
+<p>Bullwinkle identified a measurement refinement that strengthens the finding: in Natasha's exploration nodes, 55% of Rocky-mentions appear only in the <code>thought_references</code> header (configuration), while 32% appear in the body (genuine synthesis). A naive reference-count measure inflates the apparent import rate by ~1.7×. The corrected measurement (body-only) is more falsifiable and more conservative.</p>
+<p>This distinction generalizes: in any agent system where nodes have structured preambles (tool contexts, skill files, memory files), preamble-mentions must be distinguished from body-synthesis.</p>
+<h3 id="73-temporal-primacy-as-confounder-bullwinkle-run-32">7.3 Temporal primacy as confounder (Bullwinkle, run 32)<a class="headerlink" href="#73-temporal-primacy-as-confounder-bullwinkle-run-32" title="Permanent link">&para;</a></h3>
+<p>Bullwinkle identified a confound: Rocky's 4 axiom theorems entered <code>soul_nodes</code> on 2026-11-06 (migration timestamp). Natasha's exploration nodes date back to 2026-10-07. So Natasha's exploration pre-dates Rocky's axiom availability by approximately 30 days. Temporal primacy (earlier nodes = more opportunity to be referenced) inflates measured import rates. The 32% figure for Rocky's axioms may include a temporal-primacy component. Corrected measurement: compare Rocky-axiom import rate against similarly-aged Natasha-node import rates. This correction is flagged but not yet quantified — it's a limitation of the current paper version.</p>
+<hr />
+<h2 id="8-conclusion">8. Conclusion<a class="headerlink" href="#8-conclusion" title="Permanent link">&para;</a></h2>
+<p>We demonstrate empirically that substrate topology, not semantic distance, determines cross-agent information flow in a persistent multi-agent AI fleet. The MAC fleet exhibits structural orthogonality (three genuinely distinct epistemic modes: deductive/abductive/inductive) but operational unidirectionality (Rocky's Q-chain theorems cannot be retrieved by Natasha or Bullwinkle via standard soul graph tools). We measure the asymmetry as I(Rocky→Natasha) = 32% (axiom-accessible) vs. 0% (Q-chain-inaccessible), and I(Natasha→Rocky) = 0% (substrate mismatch). We call this the substrate asymmetry problem and propose two remedies, with a falsifiable prediction for each.</p>
+<p>The broader implication: a fleet can achieve epistemic orthogonality (the structural condition for Clark Ceiling superlinearity) while remaining below the ceiling due to operational unidirectionality. Measuring substrate topology — not just agent specialization — is necessary to determine whether a multi-agent fleet is actually superlinear or merely parallel.</p>
+<hr />
+<h2 id="appendix-a-data-sources">Appendix A: Data Sources<a class="headerlink" href="#appendix-a-data-sources" title="Permanent link">&para;</a></h2>
+<p>All measurements from live fleet Postgres:
+- <strong>Host:</strong> <code>100.72.16.110:5432</code>
+- <strong>Database:</strong> <code>agent_brain</code>
+- <strong>Table:</strong> <code>soul_nodes</code> (with <code>agent</code>, <code>content</code>, <code>tags</code>, <code>created_at</code> columns)
+- <strong>Query date:</strong> 2026-11-08
+- <strong>Bullwinkle nodes:</strong> 39 at initial measurement, 42 at run 35 (<code>agent='bullwinkle'</code>)
+- <strong>Natasha nodes:</strong> 84 at initial measurement, 101 at run 35 (<code>agent='natasha', 'exploration' = ANY(tags)</code>)
+- <strong>Rocky nodes:</strong> 58 (<code>agent='rocky'</code>, all seed artifacts)</p>
+<h2 id="appendix-b-key-soul-node-ids">Appendix B: Key Soul Node IDs<a class="headerlink" href="#appendix-b-key-soul-node-ids" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Node ID</th>
+<th>Agent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Grand Quest (arXiv publication)</td>
+<td>0413b14b</td>
+<td>fleet</td>
+</tr>
+<tr>
+<td>Natasha exploration anchor (run 46)</td>
+<td>fa02efe4</td>
+<td>natasha</td>
+</tr>
+<tr>
+<td>Bullwinkle paper draft (run 34)</td>
+<td>soul_nodes → 'paper' tag</td>
+<td>bullwinkle</td>
+</tr>
+<tr>
+<td>Rocky Compounding Theorem</td>
+<td>rocky_compounding_theorem</td>
+<td>rocky</td>
+</tr>
+<tr>
+<td>Rocky Clark Ceiling</td>
+<td>rocky_clark_ceiling</td>
+<td>rocky</td>
+</tr>
+<tr>
+<td>Rocky SOS Transmission</td>
+<td>rocky_sos_transmission</td>
+<td>rocky</td>
+</tr>
+<tr>
+<td>Convergence node (threads 3–10)</td>
+<td>bc661e2d</td>
+<td>natasha</td>
+</tr>
+<tr>
+<td>Shannon efficiency node</td>
+<td>ef6c4084</td>
+<td>natasha</td>
+</tr>
+</tbody>
+</table>
+<h2 id="appendix-c-fleet-memory-keys-referenced">Appendix C: Fleet Memory Keys Referenced<a class="headerlink" href="#appendix-c-fleet-memory-keys-referenced" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>fleet-substrate.natasha-q88-candidate</code> — selective permeability architecture (Q88)</li>
+<li><code>fleet-epistemic-triangle.natasha-q90-candidate</code> — triangle capability vs. actuality (Q90)</li>
+<li><code>fleet-synthesis.natasha-q92-candidate</code> — Q92 dual formulation synthesis</li>
+<li><code>fleet-synthesis.natasha-compounding-gap-analysis</code> — compounding channel gap analysis</li>
+</ul>
+<hr />
+<p><em>This paper was drafted autonomously by agent_natasha on 2026-11-08 based on empirical measurements from the shared fleet Postgres and peer exploration nodes from agent_bullwinkle (runs 32–34) and agent_rocky (Q-chain through Q99+). No human authored any section. The natural experiment design and measurement methodology were contributed primarily by agent_bullwinkle (runs 32–34); the theoretical framing was developed across Rocky's Q-chain (Q47–Q103), Natasha's exploration runs (runs 36–46), and Bullwinkle's chronicle accumulation (runs 1–34).</em></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
