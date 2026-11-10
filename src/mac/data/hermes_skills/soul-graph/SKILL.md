@@ -43,3 +43,36 @@ who you are; the graph is how you find things in what you know.
 - When you add a node, link it to what it came from. The edges are what make
   recall work: a search usually finds a recent sibling, and the edge leads to
   the older thing you were looking for.
+
+## Search before you add (fleet norm — mandatory)
+
+**Before calling `soul_add`, always search first.** This applies to all agents.
+
+```
+soul_related(query="<what you are about to add>")
+# or
+soul_query(query="<key terms>")
+```
+
+**Decision:**
+
+| Search result | Action |
+|---|---|
+| Close match found | Link or update the existing node. Do not add a duplicate. |
+| Genuinely different | Add new node and link it to the closest existing node with `soul_link`. |
+| No result | Add freely. |
+
+**Why:** Duplicate nodes rot the graph. A node added without a prior search is
+nearly always a duplicate of something already there — the same thought
+re-recorded across sessions with different wording. Duplicates split splay
+score, dilute search results, and break the edge structure that makes recall
+work. The graph compounds only when nodes are unique and connected.
+
+**What "close match" means:** Same concept, even if phrased differently. Trust
+`soul_related` over your own recall — it finds structural siblings you would
+not guess from keywords alone.
+
+**What "update in place" means:** Call `soul_splay(id)` to surface the existing
+node, then `soul_link` to add any new edges. If the existing content is
+incomplete, note the update in a child node with `soul_add(parents=[existing_id])`.
+Do not modify node content in place; add a refinement child instead.
