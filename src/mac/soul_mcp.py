@@ -204,13 +204,44 @@ class SoulTools:
         )
         return _text(dict(_brief(node), parents=node.parents, pinned=node.pinned))
 
-    def soul_link(self, parent_id: str, child_id: str) -> JsonDict:
-        if not self._g.link(parent_id, child_id):
+    #: Recognised relation types (matches soul_graph.SoulGraph.link).
+    _VALID_RELATIONS = frozenset(
+        {
+            "contradicts",
+            "refines",
+            "depends_on",
+            "explains",
+            "instance_of",
+            "learned_from",
+            "applies_to",
+            "implements",
+        }
+    )
+
+    def soul_link(
+        self,
+        parent_id: str,
+        child_id: str,
+        relation: Optional[str] = None,
+    ) -> JsonDict:
+        """Add a DAG edge from *parent_id* to *child_id*.
+
+        *relation* is an optional semantic label for the edge.  Recognised
+        values: contradicts (repulsion in retrieval), refines,
+        depends_on, explains, instance_of, learned_from,
+        applies_to, implements.  Unknown values are silently stored
+        without retrieval effects.
+        """
+        rel = relation or None
+        if not self._g.link(parent_id, child_id, rel=rel):
             return _error(
                 "Could not link %r -> %r: a node is missing or the edge would make a cycle."
                 % (parent_id, child_id)
             )
-        return _text({"linked": "%s -> %s" % (parent_id, child_id)})
+        result: JsonDict = {"linked": "%s -> %s" % (parent_id, child_id)}
+        if rel:
+            result["relation"] = rel
+        return _text(result)
 
     def soul_summary(self) -> JsonDict:
         return _text(self._g.summary())
