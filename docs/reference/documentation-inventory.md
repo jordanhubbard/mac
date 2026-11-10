@@ -146,6 +146,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
 | supplemental reference | [`fleet-registry-schema.md`](../fleet-registry-schema.md) | Fleet registry schema |
+| supplemental reference | [`fleet-soul-graph-pg-setup.md`](../fleet-soul-graph-pg-setup.md) | Fleet Soul Graph — Postgres Setup Reference |
 | supplemental reference | [`getting-started.md`](../getting-started.md) | MAC Quickstart |
 | supplemental reference | [`guide/01-architecture.md`](../guide/01-architecture.md) | System Architecture |
 | supplemental reference | [`guide/02-getting-started.md`](../guide/02-getting-started.md) | Getting Started |
@@ -181,6 +182,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
 | supplemental reference | [`operations/fleet-update.md`](../operations/fleet-update.md) | Updating the fleet with `fleet-update` |
 | supplemental reference | [`operations/release-manifest.md`](../operations/release-manifest.md) | The release manifest |
+| supplemental reference | [`operations/world4d.md`](../operations/world4d.md) | Running the World4D simulation after a reboot |
 | supplemental reference | [`peer-repair-design.md`](../peer-repair-design.md) | Peer Repair: agents repairing agents |
 | supplemental reference | [`presentations/agentfabric-overview/README.md`](../presentations/agentfabric-overview/README.md) | AgentFabric overview — authoring package |
 | supplemental reference | [`presentations/agentfabric-overview/SKILL.md`](../presentations/agentfabric-overview/SKILL.md) | AgentFabric overview presentation |

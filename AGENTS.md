@@ -11,6 +11,7 @@ do, before you do it:
 | `skills/agentbus-context/SKILL.md` | STARTING any task — read the bus first: has this work already landed, has the trunk moved under you, is a peer in this repository |
 | `skills/mac-cli/SKILL.md` | running any `mac` command — the object groups, the `admin` re-parenting, and the verbs that are not what you would guess |
 | `skills/record-user-directed-work/SKILL.md` | acting on user direction, or finding a defect while working — conversation is not a record |
+| `skills/problem-response/SKILL.md` | encountering a defect or failed check — fix it, identify the cause, and mitigate recurrence |
 | `skills/setup-mac-fleet/SKILL.md` | standing up or reconfiguring fleet hosts |
 | `skills/mac-agent-terminal-timeout/SKILL.md` | an agent terminal hangs or times out |
 | `skills/cut-a-release/SKILL.md` | the release gates are green and the next step is tagging — the documentation pass, the pinned capabilities deck, and the traps that make a docs gate fail |

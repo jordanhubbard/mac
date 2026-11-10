@@ -103,7 +103,7 @@ def test_documentation_ci_covers_platforms_live_boundaries_and_versioning():
     workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
     for required in (
         "ubuntu-latest",
-        "macos-14",
+        "macos-15",
         "tests/test_postgres_live.py",
         "--platform linux/arm64",
         "mike deploy --push --update-aliases dev",

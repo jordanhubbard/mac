@@ -51,6 +51,7 @@ dev = [
     "coverage[toml]>=7.10,<8.0",
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
+    "psycopg2-binary>=2.9.11,<3.0",
     # Shared lint/format toolchain; see [tool.ruff] and scripts/run-lint.sh.
     # `make lint` fetches this on demand via `uv run --with ruff`, but pinning
     # it in the dev extra keeps the enforced version consistent across hosts.
@@ -64,6 +65,7 @@ docs = [
 postgres = [
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
+    "psycopg2-binary>=2.9.11,<3.0",
 ]
 relay = [
     "nemo-relay==0.3.0",

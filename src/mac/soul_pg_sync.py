@@ -40,6 +40,7 @@ _DEFAULT_DB_URL = os.environ.get("DATABASE_URL", "postgresql:///fleet_brain")
 # Connection helper
 # ---------------------------------------------------------------------------
 
+
 def _connect(db_url: str | None = None):
     """Return a psycopg2 connection. Never use autocommit — callers commit."""
     import psycopg2  # noqa: PLC0415
@@ -54,6 +55,7 @@ def _connect(db_url: str | None = None):
 # ---------------------------------------------------------------------------
 # Low-level upsert helpers
 # ---------------------------------------------------------------------------
+
 
 def _upsert_nodes(cur, agent_id: str, nodes: list[dict]) -> int:
     """Upsert a list of node dicts into soul_nodes. Returns row count."""
@@ -71,15 +73,18 @@ def _upsert_nodes(cur, agent_id: str, nodes: list[dict]) -> int:
     count = 0
     for n in nodes:
         created = n.get("created_at") or now
-        cur.execute(sql, (
-            n["id"],
-            agent_id,
-            n["content"],
-            n.get("tags", []),
-            bool(n.get("pinned", False)),
-            float(n.get("key", n.get("score", 0.0))),
-            created,
-        ))
+        cur.execute(
+            sql,
+            (
+                n["id"],
+                agent_id,
+                n["content"],
+                n.get("tags", []),
+                bool(n.get("pinned", False)),
+                float(n.get("key", n.get("score", 0.0))),
+                created,
+            ),
+        )
         count += 1
     return count
 
@@ -93,13 +98,16 @@ def _upsert_edges(cur, agent_id: str, edges: list[dict]) -> int:
     """
     count = 0
     for e in edges:
-        cur.execute(sql, (
-            e["from_id"],
-            e["to_id"],
-            agent_id,
-            e.get("relation_type", "parent"),
-            float(e.get("weight", 1.0)),
-        ))
+        cur.execute(
+            sql,
+            (
+                e["from_id"],
+                e["to_id"],
+                agent_id,
+                e.get("relation_type", "parent"),
+                float(e.get("weight", 1.0)),
+            ),
+        )
         count += 1
     return count
 
@@ -114,18 +122,21 @@ def _edges_from_nodes(node_dicts: list[dict]) -> list[dict]:
     for n in node_dicts:
         child_id = n["id"]
         for parent_id in n.get("parents", []):
-            edges.append({
-                "from_id": parent_id,
-                "to_id": child_id,
-                "relation_type": "parent",
-                "weight": 1.0,
-            })
+            edges.append(
+                {
+                    "from_id": parent_id,
+                    "to_id": child_id,
+                    "relation_type": "parent",
+                    "weight": 1.0,
+                }
+            )
     return edges
 
 
 # ---------------------------------------------------------------------------
 # Public API: json_to_pg / pg_to_json
 # ---------------------------------------------------------------------------
+
 
 def json_to_pg(soul_path: str | Path, agent_id: str, db_url: str | None = None) -> dict:
     """Import soul.json → fleet_brain. Returns {nodes, edges} counts."""
@@ -216,6 +227,7 @@ def pg_to_json(soul_path: str | Path, agent_id: str, db_url: str | None = None) 
 # PgSoulBackend — drop-in save/load replacement for soul_mcp
 # ---------------------------------------------------------------------------
 
+
 class PgSoulBackend:
     """Wraps fleet_brain so soul_mcp can use Postgres as primary storage.
 
@@ -283,6 +295,7 @@ class PgSoulBackend:
 
         data = {"name": name, "exploration": False, "nodes": nodes_dict}
         import tempfile  # noqa: PLC0415
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(data, f, default=str)
             tmppath = f.name
@@ -301,12 +314,14 @@ class PgSoulBackend:
             d["id"] = nid
             node_dicts.append(d)
             for parent_id in node.parents:
-                edges.append({
-                    "from_id": parent_id,
-                    "to_id": nid,
-                    "relation_type": "parent",
-                    "weight": 1.0,
-                })
+                edges.append(
+                    {
+                        "from_id": parent_id,
+                        "to_id": nid,
+                        "relation_type": "parent",
+                        "weight": 1.0,
+                    }
+                )
 
         conn = _connect(self.db_url)
         try:
@@ -322,20 +337,30 @@ class PgSoulBackend:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _cli():
     import argparse  # noqa: PLC0415
 
-    parser = argparse.ArgumentParser(description="soul_pg_sync: sync soul.json ↔ fleet_brain Postgres")
-    parser.add_argument("command", choices=["import", "export", "status"],
-                        help="import=json→pg, export=pg→json, status=show counts")
+    from mac import mac_paths
+
+    parser = argparse.ArgumentParser(
+        description="soul_pg_sync: sync soul.json ↔ fleet_brain Postgres"
+    )
+    parser.add_argument(
+        "command",
+        choices=["import", "export", "status"],
+        help="import=json→pg, export=pg→json, status=show counts",
+    )
     parser.add_argument("--agent", required=True, help="agent_id (e.g. bullwinkle)")
-    parser.add_argument("--soul", type=Path, default=None,
-                        help="Path to soul.json (default: ~/.hermes/soul.json)")
-    parser.add_argument("--db-url", default=None,
-                        help="Postgres URL (default: postgresql:///fleet_brain)")
+    parser.add_argument(
+        "--soul", type=Path, default=None, help="Path to soul.json (default: ~/.hermes/soul.json)"
+    )
+    parser.add_argument(
+        "--db-url", default=None, help="Postgres URL (default: postgresql:///fleet_brain)"
+    )
     args = parser.parse_args()
 
-    soul_path = args.soul or (Path.home() / ".hermes" / "soul.json")
+    soul_path = args.soul or (mac_paths.hermes_home() / "soul.json")
     db_url = args.db_url
 
     if args.command == "import":
@@ -348,6 +373,7 @@ def _cli():
 
     elif args.command == "status":
         import psycopg2  # noqa: PLC0415
+
         conn = _connect(db_url)
         try:
             with conn.cursor() as cur:

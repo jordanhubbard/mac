@@ -15,6 +15,8 @@ def _env(**extra: str) -> dict:
     env = {
         "MAC_ROUTER_BACKEND": "standalone",
         "MAC_ROUTER_PROVIDERS": PROVIDERS,
+        # These are authentication controls, not outage-wait qualification.
+        "MAC_ROUTER_OUTAGE_WAIT_SECONDS": "0",
         "MAC_API_TOKEN": "hub-local-token",
         "MAC_WORKER_TOKEN": "hub-facing-worker-token",
     }

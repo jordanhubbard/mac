@@ -19,7 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        # macOS 14 Actions images retired on 2026-11-02. Keep native coverage.
+        os: [ubuntu-latest, macos-15]
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:

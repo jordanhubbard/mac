@@ -68,7 +68,7 @@ _LOCALHOST_DSN = "dbname=fleet_brain user=jkh"
 
 def _connect(dsn: str | None = None) -> psycopg2.extensions.connection:
     """Open a connection; fall back to localhost peer-auth if remote fails."""
-    for d in [dsn or DEFAULT_DSN, _LOCALHOST_DSN]:
+    for d in [dsn] if dsn is not None else [DEFAULT_DSN, _LOCALHOST_DSN]:
         try:
             conn = psycopg2.connect(d, cursor_factory=psycopg2.extras.RealDictCursor)
             conn.autocommit = False
@@ -81,6 +81,7 @@ def _connect(dsn: str | None = None) -> psycopg2.extensions.connection:
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class WorldObject:
@@ -119,7 +120,10 @@ class WorldObject:
             "id": self.id,
             "name": self.name,
             "agent": self.agent,
-            "x": self.x, "y": self.y, "z": self.z, "t": self.t,
+            "x": self.x,
+            "y": self.y,
+            "z": self.z,
+            "t": self.t,
             "shape": self.shape,
             "fields": self.fields,
             "tags": self.tags,
@@ -131,6 +135,7 @@ class WorldObject:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def world_spawn(
     agent: str,
@@ -167,12 +172,28 @@ def world_spawn(
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
                     RETURNING *
                     """,
-                    (handle, name, agent, x, y, z, world_t,
-                     json.dumps(_shape), json.dumps(_fields), _tags),
+                    (
+                        handle,
+                        name,
+                        agent,
+                        x,
+                        y,
+                        z,
+                        world_t,
+                        json.dumps(_shape),
+                        json.dumps(_fields),
+                        _tags,
+                    ),
                 )
                 row = cur.fetchone()
-                _log_event(cur, handle, agent, "spawn", world_t,
-                           {"x": x, "y": y, "z": z, "shape": _shape, "fields": _fields})
+                _log_event(
+                    cur,
+                    handle,
+                    agent,
+                    "spawn",
+                    world_t,
+                    {"x": x, "y": y, "z": z, "shape": _shape, "fields": _fields},
+                )
         return WorldObject.from_row(row)
     finally:
         conn.close()
@@ -209,10 +230,21 @@ def world_move(
                     (nx, ny, nz, nt, handle),
                 )
                 row = cur.fetchone()
-                _log_event(cur, handle, agent, "move", nt, {
-                    "x": nx, "y": ny, "z": nz,
-                    "prev_x": float(old["x"]), "prev_y": float(old["y"]), "prev_z": float(old["z"]),
-                })
+                _log_event(
+                    cur,
+                    handle,
+                    agent,
+                    "move",
+                    nt,
+                    {
+                        "x": nx,
+                        "y": ny,
+                        "z": nz,
+                        "prev_x": float(old["x"]),
+                        "prev_y": float(old["y"]),
+                        "prev_z": float(old["z"]),
+                    },
+                )
         return WorldObject.from_row(row)
     finally:
         conn.close()
@@ -264,7 +296,9 @@ def world_field_set(
                 row = cur.fetchone()
                 if not row:
                     raise KeyError(f"Object not found: {handle}")
-                existing: dict = row["fields"] if isinstance(row["fields"], dict) else json.loads(row["fields"])
+                existing: dict = (
+                    row["fields"] if isinstance(row["fields"], dict) else json.loads(row["fields"])
+                )
                 world_t = float(row["t"])
                 merged = {**existing, **updates}
                 # Remove keys explicitly set to None
@@ -297,7 +331,9 @@ def world_field_get(
             row = cur.fetchone()
         if not row:
             raise KeyError(f"Object not found: {handle}")
-        fields: dict = row["fields"] if isinstance(row["fields"], dict) else json.loads(row["fields"])
+        fields: dict = (
+            row["fields"] if isinstance(row["fields"], dict) else json.loads(row["fields"])
+        )
         if key is None:
             return fields
         return fields.get(key)
@@ -306,9 +342,12 @@ def world_field_get(
 
 
 def world_query_region(
-    x_min: float, x_max: float,
-    y_min: float, y_max: float,
-    z_min: float, z_max: float,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    z_min: float,
+    z_max: float,
     t_min: float | None = None,
     t_max: float | None = None,
     tags: list[str] | None = None,
@@ -325,13 +364,17 @@ def world_query_region(
     params: list[Any] = [x_min, x_max, y_min, y_max, z_min, z_max]
 
     if t_min is not None:
-        clauses.append("t >= %s"); params.append(t_min)
+        clauses.append("t >= %s")
+        params.append(t_min)
     if t_max is not None:
-        clauses.append("t <= %s"); params.append(t_max)
+        clauses.append("t <= %s")
+        params.append(t_max)
     if agent:
-        clauses.append("agent = %s"); params.append(agent)
+        clauses.append("agent = %s")
+        params.append(agent)
     if tags:
-        clauses.append("tags @> %s"); params.append(tags)
+        clauses.append("tags @> %s")
+        params.append(tags)
 
     params.append(limit)
     sql = f"SELECT * FROM world_objects WHERE {' AND '.join(clauses)} ORDER BY t DESC LIMIT %s"
@@ -393,12 +436,16 @@ def world_snapshot(
 
             clauses, params = [], []
             if agent:
-                clauses.append("agent = %s"); params.append(agent)
+                clauses.append("agent = %s")
+                params.append(agent)
             if tags:
-                clauses.append("tags @> %s"); params.append(tags)
+                clauses.append("tags @> %s")
+                params.append(tags)
             where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
             params.append(limit)
-            cur.execute(f"SELECT * FROM world_objects {where} ORDER BY updated_at DESC LIMIT %s", params)
+            cur.execute(
+                f"SELECT * FROM world_objects {where} ORDER BY updated_at DESC LIMIT %s", params
+            )
             objects = [WorldObject.from_row(r).to_dict() for r in cur.fetchall()]
 
         return {
@@ -452,6 +499,7 @@ def world_get(handle: str, dsn: str | None = None) -> WorldObject:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _current_world_t(dsn: str | None = None) -> float:
     """Return the current world_t from the global clock (non-transactional read)."""
