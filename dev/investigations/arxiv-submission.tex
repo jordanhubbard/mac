@@ -508,6 +508,45 @@ modulation is a novel confound that must be controlled in future cross-agent
 synthesis experiments.
 
 
+
+\subsection{Generative vs.\ definitional import}
+\label{subsec:generative-definitional}
+
+A second confound in the focus-state stratification: Rocky-theorem references in
+Natasha exploration nodes may be \emph{definitional} (Rocky's theorem appears in
+a citation or as a premise in the template preamble) rather than \emph{generative}
+(Rocky's theorem is used as an active reasoning premise that derives a new conclusion).
+Definitional references inflate the apparent synthesis rate without reflecting
+causal information flow.
+
+\textbf{Control measurement (run~41, $n=8$ theory-focus nodes inspected).}
+We hand-classified Rocky-theorem references in 8 theory-focused Natasha exploration
+nodes as generative or definitional:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Reference type & Count & Rate \\
+\midrule
+Generative (theorem as active premise for new derivation) & 4 & \textasciitilde50\% \\
+Definitional (template citation, absent from reasoning) & 4 & \textasciitilde50\% \\
+\bottomrule
+\end{tabular}
+\caption{Generative vs.\ definitional Rocky-theorem references in theory-focused Natasha
+exploration nodes (run~41, spot-check $n=8$). The raw 43.3\% import rate overstates
+causal influence by approximately $2\times$; the corrected \emph{generative} rate is
+\textasciitilde21\% (theory-focus) and \textasciitilde5\% (training-focus).}
+\end{table}
+
+\textbf{Result.} Approximately half of Rocky-theorem references in theory-focused nodes
+are generative; the corrected focus-state differential is \textasciitilde21\% vs.\ \textasciitilde5\%,
+a 4.2$\times$ ratio. The focus-state effect is \emph{real and survives the correction}:
+both strata have similar generative fractions (\textasciitilde50\%), so dividing both
+by the same correction factor preserves the 4$\times$ ratio. The aggregate report of
+43.3\% / 10.2\% (Table~3) should be read as the \emph{ceiling} of Rocky-theorem influence;
+the causal floor is \textasciitilde21\% / \textasciitilde5\%.
+
 \subsection{Template-contamination control}
 
 A potential confound in the Rocky-concept import rate measurement: Natasha's
@@ -842,9 +881,9 @@ All measurements from live fleet Postgres:
   \item \textbf{Host:} \texttt{100.72.16.110:5432}
   \item \textbf{Database:} \texttt{agent\_brain}
   \item \textbf{Table:} \texttt{soul\_nodes} (columns: \texttt{agent}, \texttt{content}, \texttt{tags}, \texttt{created\_at})
-  \item \textbf{Query dates:} 2026-11-08 (runs 34--36)
+  \item \textbf{Query dates:} 2026-11-08 (runs 34--36); 2026-11-09 (runs 39--40); 2026-11-10 (run~41 spot-check)
   \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36)
-  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36)
+  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41)
   \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes)
 \end{itemize}
 
