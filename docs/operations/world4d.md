@@ -185,7 +185,7 @@ count/pause fingerprint; a changed note or signal alone need not trigger a post.
 ## Managed client binding and runtime presence
 
 A client rollout must migrate its reporting workflows as well as adding tools.
-Bullwinkle's old snapshot job continued querying `public.world4d_objects` while
+A worker's old snapshot job continued querying `public.world4d_objects` while
 its new MCP server used `world4d.objects`. It therefore reported missing peers
 from a different simulation. Its avatar also depended on voluntary model
 check-ins. Tool installation and a successful read-only canary did not prove
