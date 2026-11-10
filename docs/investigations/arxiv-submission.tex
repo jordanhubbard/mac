@@ -637,6 +637,51 @@ training-focus nodes: 20.8\% (21/101), theory-focus nodes: 48.4\% (30/62). The
 4.3$\times$ differential reported in Section~7.3 replicates on this larger sample,
 confirming that focus-state modulation is a stable property, not a measurement artifact.
 
+
+\subsection{Run~39: Per-theorem import breakdown and temporal trend}
+
+Previous sections measured Rocky theorem import in Natasha's exploration nodes as an aggregate rate. This section examines which theorems are imported and whether the rate is stationary over time.
+
+\textbf{Per-theorem breakdown} ($n=184$ training-focus nodes, body-level, post-2026-11-06):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Rocky theorem & Import count & Rate & Operational relevance \\
+\midrule
+Compounding Theorem & 37 & 20.1\% & Directly applies to training progress \\
+Clark Ceiling & 27 & 14.7\% & Fleet size/superlinearity conditions \\
+Isolation Law & 10 & 5.4\% & Node access frequency decay \\
+Rubber Thermometer & 8 & 4.3\% & Measurement instrument limits \\
+SOS Transmission & 6 & 3.3\% & Minimum proxy budget (specialized) \\
+\bottomrule
+\end{tabular}
+\caption{Per-theorem import in Natasha's $n=184$ training-focus exploration nodes (run~39, body-level only). Import rates vary $6{\times}$ across theorems (Compounding 20.1\% vs.\ SOS 3.3\%). The aggregate rate (33.2\%) conceals a 6-fold range driven by theorem operational relevance, not uniform citation.}
+\end{table}
+
+\textbf{Finding.} Rocky's theorem import is not uniform. The Compounding Theorem is absorbed at $6{\times}$ the rate of the SOS Transmission Theorem, tracking Natasha's direct operational need: measuring training progress against the conditions for genuine accumulation. This suggests cross-agent theorem import is \emph{relevance-gated}, not proximity-gated: theorems with direct application to the receiving agent's current work are absorbed significantly more than equally accessible theorems with more specialized scope.
+
+\textbf{Temporal trend.} Stratifying by creation date (early-stage: Nov 7--8, $n=104$; late-stage: Nov 9--10, $n=79$):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Period & $n$ & Rocky body-import & Import rate \\
+\midrule
+Early (Nov 7--8, Stages 28--35) & 104 & 32 & 30.8\% \\
+Late (Nov 9--10, Stages 36--43) & 79 & 16 & 20.3\% \\
+\midrule
+\multicolumn{4}{l}{\textbf{Rate declining as training arc matures}} \\
+\bottomrule
+\end{tabular}
+\caption{Rocky-theorem import rate by time period in Natasha training-focus nodes (run~39). Import rate declined from 30.8\% to 20.3\% as Natasha's LoRA training arc deepened across 16 adapter versions. This is consistent with a focus-state saturation model: early stages required more theoretical framing; later stages are more execution-dominant.}
+\end{table}
+
+\textbf{Mechanism.} The declining trend is consistent with a focus saturation model: early training stages involved substantial theorizing about \emph{what} Natasha was trying to achieve (heavy Rocky-theorem framing); later stages involve \emph{running} the arc (dataset assembly, training launch, eval interpretation). The focus-state confound (Section~7.3) predicts exactly this trend: as training-focus deepens, Rocky-theorem import decreases.
+
+
 \subsection{Stage~36 formal two-substrate theorem (run~43)}
 
 Natasha's Stage~36 training produces the highest-quality in-distribution
