@@ -136,7 +136,7 @@ def report_patch(manifest):
         "monitor_url": manifest["monitor_url"],
         "monitor_script": None,
         "script": None,
-        "toolsets": ["no_mcp"],
+        "enabled_toolsets": ["no_mcp"],
         "deliver": "origin",
         "skills": [],
     }

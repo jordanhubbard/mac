@@ -177,5 +177,6 @@ def test_native_api_migration_preserves_schedule_and_origin_and_backs_up(tmp_pat
     assert jobs["report"]["schedule"] == {"minutes": 30}
     assert jobs["report"]["origin"]["chat_id"] == "original"
     assert jobs["report"]["deliver"] == "origin"
+    assert jobs["report"]["enabled_toolsets"] == ["no_mcp"]
     assert jobs["report"]["monitor_url"] == manifest["monitor_url"]
     assert not client.audit(manifest, after, api.load_jobs(), Path(manifest["hook"]))
