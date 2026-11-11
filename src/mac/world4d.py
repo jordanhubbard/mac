@@ -53,11 +53,13 @@ from typing import Any, Callable, Optional
 try:
     import psycopg  # type: ignore[import]
     from psycopg.rows import dict_row as _dict_row  # type: ignore[import]
+
     _PSYCOPG_VERSION = 3
     _dict_row_factory = _dict_row
 except ImportError:
     try:
         import psycopg2 as psycopg  # type: ignore[no-redef,import]
+
         _PSYCOPG_VERSION = 2
         _dict_row_factory = None  # psycopg2 uses cursor_factory instead
     except ImportError:
@@ -80,6 +82,7 @@ DEFAULT_PG_URL = "postgresql://fleet_agent@100.72.16.110:5432/agent_brain"
 @dataclass
 class Vec4:
     """A point or vector in 4-space (x, y, z, w)."""
+
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -112,18 +115,19 @@ class Vec4:
 
 
 class ShapeKind(str, Enum):
-    sphere       = "sphere"        # 3-sphere (ball in 4D)
-    box          = "box"           # axis-aligned 4D box
-    cylinder     = "cylinder"      # cylinder along a 4D axis
-    hyperplane   = "hyperplane"    # infinite hyperplane (3D cross-section)
-    hypersphere  = "hypersphere"   # 3-sphere boundary (4D sphere surface)
-    mesh         = "mesh"          # arbitrary mesh (vertex list in R^4)
-    point        = "point"         # degenerate shape (single 4D point)
+    sphere = "sphere"  # 3-sphere (ball in 4D)
+    box = "box"  # axis-aligned 4D box
+    cylinder = "cylinder"  # cylinder along a 4D axis
+    hyperplane = "hyperplane"  # infinite hyperplane (3D cross-section)
+    hypersphere = "hypersphere"  # 3-sphere boundary (4D sphere surface)
+    mesh = "mesh"  # arbitrary mesh (vertex list in R^4)
+    point = "point"  # degenerate shape (single 4D point)
 
 
 @dataclass
 class Shape:
     """Geometric shape descriptor for a world object."""
+
     kind: ShapeKind
     params: dict[str, Any] = field(default_factory=dict)
     # Examples:
@@ -157,7 +161,7 @@ class Shape:
         elif self.kind == ShapeKind.hypersphere:
             r = self.params.get("radius", 1.0)
             ns = delta.norm_sq()
-            return abs(ns - r * r) < r * 0.01   # on surface within 1% tolerance
+            return abs(ns - r * r) < r * 0.01  # on surface within 1% tolerance
         elif self.kind == ShapeKind.hyperplane:
             normal = Vec4(*self.params.get("normal", [0, 1, 0, 0]))
             d = self.params.get("d", 0.0)
@@ -170,14 +174,15 @@ class Shape:
 
 
 class FieldKind(str, Enum):
-    scalar = "scalar"    # R^4 → R
-    vector = "vector"    # R^4 → R^4
-    tensor = "tensor"    # R^4 → R^(n×m)
+    scalar = "scalar"  # R^4 → R
+    vector = "vector"  # R^4 → R^4
+    tensor = "tensor"  # R^4 → R^(n×m)
 
 
 @dataclass
 class WorldObject:
     """A live object in the shared world."""
+
     handle: str
     name: str
     agent: str
@@ -191,13 +196,14 @@ class WorldObject:
 @dataclass
 class WorldField:
     """A field (scalar, vector, or tensor) covering a 4D region."""
+
     handle: str
     name: str
     agent: str
     kind: FieldKind
-    origin: Vec4      # min-corner of bounding box
-    extent: Vec4      # size of bounding box
-    value: dict[str, Any]   # field data / function spec
+    origin: Vec4  # min-corner of bounding box
+    extent: Vec4  # size of bounding box
+    value: dict[str, Any]  # field data / function spec
     meta: dict[str, Any]
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -306,6 +312,7 @@ class World4D:
           3. DEFAULT_PG_URL (uses ~/.pgpass for auth)
         """
         import os as _os
+
         if not pg_url:
             pg_url = _os.environ.get("WORLD4D_PG_URL", DEFAULT_PG_URL)
         if psycopg is None:
@@ -464,7 +471,9 @@ class World4D:
                 (json.dumps(pos.to_list()), handle),
             )
         self._conn.commit()
-        self._notify({"event": "moved", "handle": handle, "pos": pos.to_list(), "agent": self._agent})
+        self._notify(
+            {"event": "moved", "handle": handle, "pos": pos.to_list(), "agent": self._agent}
+        )
 
     def set_shape(self, handle: str, shape: Shape) -> None:
         """Replace an object's shape."""
@@ -475,7 +484,9 @@ class World4D:
                 (json.dumps(shape_dict), handle),
             )
         self._conn.commit()
-        self._notify({"event": "reshaped", "handle": handle, "shape": shape.kind.value, "agent": self._agent})
+        self._notify(
+            {"event": "reshaped", "handle": handle, "shape": shape.kind.value, "agent": self._agent}
+        )
 
     def set_meta(self, handle: str, meta: dict) -> None:
         """Replace object metadata entirely."""
@@ -508,7 +519,9 @@ class World4D:
         """List all objects, optionally filtered by owning agent."""
         with self._conn.cursor() as cur:
             if agent:
-                cur.execute("SELECT * FROM world4d_objects WHERE agent = %s ORDER BY created_at", (agent,))
+                cur.execute(
+                    "SELECT * FROM world4d_objects WHERE agent = %s ORDER BY created_at", (agent,)
+                )
             else:
                 cur.execute("SELECT * FROM world4d_objects ORDER BY created_at")
             rows = cur.fetchall()
@@ -579,7 +592,15 @@ class World4D:
                 ),
             )
         self._conn.commit()
-        self._notify({"event": "field_added", "handle": h, "name": name, "kind": kind.value, "agent": self._agent})
+        self._notify(
+            {
+                "event": "field_added",
+                "handle": h,
+                "name": name,
+                "kind": kind.value,
+                "agent": self._agent,
+            }
+        )
         return h
 
     def remove_field(self, handle: str) -> bool:
@@ -611,13 +632,17 @@ class World4D:
             return None
         return self._row_to_field(row)
 
-    def list_fields(self, kind: Optional[FieldKind] = None, agent: Optional[str] = None) -> list[WorldField]:
+    def list_fields(
+        self, kind: Optional[FieldKind] = None, agent: Optional[str] = None
+    ) -> list[WorldField]:
         """List fields, optionally filtered."""
         where, params = [], []
         if kind:
-            where.append("kind = %s"); params.append(kind.value)
+            where.append("kind = %s")
+            params.append(kind.value)
         if agent:
-            where.append("agent = %s"); params.append(agent)
+            where.append("agent = %s")
+            params.append(agent)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         with self._conn.cursor() as cur:
             cur.execute(f"SELECT * FROM world4d_fields {clause} ORDER BY created_at", params)
@@ -635,7 +660,14 @@ class World4D:
             "(origin->3)::float8 <= %s AND (origin->3)::float8 + (extent->3)::float8 >= %s",
         ]
         params: list[Any] = [
-            pt.x, pt.x, pt.y, pt.y, pt.z, pt.z, pt.w, pt.w,
+            pt.x,
+            pt.x,
+            pt.y,
+            pt.y,
+            pt.z,
+            pt.z,
+            pt.w,
+            pt.w,
         ]
         if kind:
             where.append("kind = %s")
@@ -671,6 +703,7 @@ class World4D:
     def _listen_loop(self) -> None:
         try:
             import psycopg as pg3  # noqa: F401
+
             # Open a separate connection for LISTEN (must be in autocommit)
             listen_conn = psycopg.connect(
                 self._conn.info.dsn,
@@ -774,6 +807,7 @@ class World4D:
         Call once at session start; call heartbeat() periodically to stay "online".
         """
         import time as _time
+
         if not self._agent:
             raise ValueError("announce() requires agent to be set at connect time")
         now = _time.time()
@@ -799,6 +833,7 @@ class World4D:
         considered offline by ``presence()``.
         """
         import time as _time
+
         if not self._agent:
             raise ValueError("heartbeat() requires agent to be set at connect time")
         h = f"agent:{self._agent}"
@@ -823,6 +858,7 @@ class World4D:
         whose w-coordinate (last-seen timestamp) is within ttl of now.
         """
         import time as _time
+
         now = _time.time()
         cutoff = now - ttl
         with self._conn.cursor() as cur:
@@ -852,6 +888,7 @@ class World4D:
     def apply_schema(cls, pg_url: str = "") -> None:
         """Create world4d tables in the target database (idempotent)."""
         import os as _os
+
         if not pg_url:
             pg_url = _os.environ.get("WORLD4D_PG_URL", DEFAULT_PG_URL)
         w = cls.connect(pg_url=pg_url, apply_schema=True)

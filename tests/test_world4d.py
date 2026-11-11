@@ -4,6 +4,7 @@ Tests for world4d.py — shared 4D world engine.
 Requires MAC_TEST_PG_URL env var pointing to a live Postgres instance
 (agent_brain on the hub, or any test DB).
 """
+
 from __future__ import annotations
 
 import os
@@ -28,6 +29,7 @@ def world():
 # ------------------------------------------------------------------
 # Vec4
 # ------------------------------------------------------------------
+
 
 class TestVec4:
     def test_add(self):
@@ -61,6 +63,7 @@ class TestVec4:
 # Shape
 # ------------------------------------------------------------------
 
+
 class TestShape:
     def test_sphere_contains(self):
         s = Shape(kind=ShapeKind.sphere, params={"radius": 2.0})
@@ -91,11 +94,15 @@ class TestShape:
 # World4D — objects
 # ------------------------------------------------------------------
 
+
 class TestWorldObjects:
     def test_spawn_and_get(self, world):
-        h = world.spawn("test_orb", pos=Vec4(1, 2, 3, 0.5),
-                        shape=Shape(kind=ShapeKind.sphere, params={"radius": 1.5}),
-                        meta={"color": "red"})
+        h = world.spawn(
+            "test_orb",
+            pos=Vec4(1, 2, 3, 0.5),
+            shape=Shape(kind=ShapeKind.sphere, params={"radius": 1.5}),
+            meta={"color": "red"},
+        )
         assert h.startswith("obj_")
         obj = world.get(h)
         assert obj is not None
@@ -168,6 +175,7 @@ class TestWorldObjects:
 # World4D — fields
 # ------------------------------------------------------------------
 
+
 class TestWorldFields:
     def test_add_and_get_field(self, world):
         fh = world.add_field(
@@ -188,9 +196,13 @@ class TestWorldFields:
         world.remove_field(fh)
 
     def test_set_field_value(self, world):
-        fh = world.add_field(name="heat", kind=FieldKind.scalar,
-                             origin=Vec4(0, 0, 0, 0), extent=Vec4(1, 1, 1, 1),
-                             value={"temp": 20.0})
+        fh = world.add_field(
+            name="heat",
+            kind=FieldKind.scalar,
+            origin=Vec4(0, 0, 0, 0),
+            extent=Vec4(1, 1, 1, 1),
+            value={"temp": 20.0},
+        )
         world.set_field_value(fh, {"temp": 100.0, "unit": "C"})
         f = world.get_field(fh)
         assert f is not None
@@ -215,9 +227,13 @@ class TestWorldFields:
         world.remove_field(fh)
 
     def test_list_fields_by_kind(self, world):
-        fh = world.add_field(name="tensor_field", kind=FieldKind.tensor,
-                             origin=Vec4(0, 0, 0, 0), extent=Vec4(1, 1, 1, 1),
-                             value={"components": [[1, 0], [0, 1]]})
+        fh = world.add_field(
+            name="tensor_field",
+            kind=FieldKind.tensor,
+            origin=Vec4(0, 0, 0, 0),
+            extent=Vec4(1, 1, 1, 1),
+            value={"components": [[1, 0], [0, 1]]},
+        )
         fields = world.list_fields(kind=FieldKind.tensor)
         assert any(f.handle == fh for f in fields)
         # Other kinds not included
@@ -233,6 +249,7 @@ class TestWorldFields:
 # ------------------------------------------------------------------
 # World4D — stats & snapshot
 # ------------------------------------------------------------------
+
 
 class TestWorldMeta:
     def test_stats(self, world):
@@ -264,10 +281,12 @@ class TestWorldMeta:
 # World4D — presence
 # ------------------------------------------------------------------
 
+
 class TestPresence:
     def _make_world(self) -> "World4D":
         """Each presence test gets a fresh agent-tagged connection."""
         from mac.world4d import World4D
+
         return World4D.connect(
             pg_url=PG_URL,
             agent="test_presence_agent",
@@ -299,6 +318,7 @@ class TestPresence:
 
     def test_heartbeat_updates_timestamp(self):
         import time
+
         w = self._make_world()
         w.announce()
         time.sleep(0.05)
@@ -323,12 +343,14 @@ class TestPresence:
 
     def test_presence_excludes_expired(self):
         import time
+
         w = self._make_world()
         # Announce with a very old timestamp (ttl=0.001 will expire it)
         import time as _t
+
         old_ts = _t.time() - 300  # 5 minutes ago
         w.announce(pos=Vec4(0, 0, 0, old_ts))
-        online = w.presence(ttl=1.0)   # only within 1 second
+        online = w.presence(ttl=1.0)  # only within 1 second
         handles = [o.handle for o in online]
         assert "agent:test_presence_agent" not in handles
         w.depart()

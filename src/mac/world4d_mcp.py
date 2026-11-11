@@ -110,11 +110,16 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name":   {"type": "string", "description": "Human-readable name"},
-                "pos":    {"description": "[x,y,z,w] or {x,y,z,w} 4D position"},
-                "shape":  {"description": '{"kind":"sphere","params":{"radius":1}} — kinds: sphere,box,cylinder,hyperplane,hypersphere,mesh,point'},
-                "meta":   {"type": "object", "description": "Arbitrary metadata dict"},
-                "handle": {"type": "string", "description": "Optional explicit handle (upserts on conflict)"},
+                "name": {"type": "string", "description": "Human-readable name"},
+                "pos": {"description": "[x,y,z,w] or {x,y,z,w} 4D position"},
+                "shape": {
+                    "description": '{"kind":"sphere","params":{"radius":1}} — kinds: sphere,box,cylinder,hyperplane,hypersphere,mesh,point'
+                },
+                "meta": {"type": "object", "description": "Arbitrary metadata dict"},
+                "handle": {
+                    "type": "string",
+                    "description": "Optional explicit handle (upserts on conflict)",
+                },
             },
             "required": ["name"],
         },
@@ -135,7 +140,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "handle": {"type": "string"},
-                "pos":    {"description": "[x,y,z,w] or {x,y,z,w}"},
+                "pos": {"description": "[x,y,z,w] or {x,y,z,w}"},
             },
             "required": ["handle", "pos"],
         },
@@ -147,7 +152,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "handle": {"type": "string"},
-                "shape":  {"description": '{"kind":…,"params":{…}}'},
+                "shape": {"description": '{"kind":…,"params":{…}}'},
             },
             "required": ["handle", "shape"],
         },
@@ -159,7 +164,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "handle": {"type": "string"},
-                "patch":  {"type": "object"},
+                "patch": {"type": "object"},
             },
             "required": ["handle", "patch"],
         },
@@ -199,12 +204,12 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name":   {"type": "string"},
-                "kind":   {"type": "string", "enum": ["scalar", "vector", "tensor"]},
+                "name": {"type": "string"},
+                "kind": {"type": "string", "enum": ["scalar", "vector", "tensor"]},
                 "origin": {"description": "[x,y,z,w] min corner of bounding box"},
                 "extent": {"description": "[x,y,z,w] size of bounding box"},
-                "value":  {"type": "object", "description": "Field data or function spec"},
-                "meta":   {"type": "object"},
+                "value": {"type": "object", "description": "Field data or function spec"},
+                "meta": {"type": "object"},
                 "handle": {"type": "string", "description": "Optional explicit handle"},
             },
             "required": ["name", "kind"],
@@ -226,7 +231,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "handle": {"type": "string"},
-                "value":  {"type": "object"},
+                "value": {"type": "object"},
             },
             "required": ["handle", "value"],
         },
@@ -246,7 +251,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "kind":  {"type": "string", "enum": ["scalar", "vector", "tensor"]},
+                "kind": {"type": "string", "enum": ["scalar", "vector", "tensor"]},
                 "agent": {"type": "string"},
             },
         },
@@ -257,7 +262,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "pos":  {"description": "[x,y,z,w] or {x,y,z,w}"},
+                "pos": {"description": "[x,y,z,w] or {x,y,z,w}"},
                 "kind": {"type": "string", "enum": ["scalar", "vector", "tensor"]},
             },
             "required": ["pos"],
@@ -279,8 +284,13 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "meta": {"type": "object", "description": "Extra metadata (role, state, task, etc.)"},
-                "pos":  {"description": "Optional [x,y,z,w] spatial position (w defaults to current time)"},
+                "meta": {
+                    "type": "object",
+                    "description": "Extra metadata (role, state, task, etc.)",
+                },
+                "pos": {
+                    "description": "Optional [x,y,z,w] spatial position (w defaults to current time)"
+                },
             },
         },
     },
@@ -290,7 +300,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "meta": {"type": "object", "description": "Key/value pairs to merge into presence metadata"},
+                "meta": {
+                    "type": "object",
+                    "description": "Key/value pairs to merge into presence metadata",
+                },
             },
         },
     },
@@ -300,7 +313,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "ttl": {"type": "number", "description": "Max seconds since last heartbeat to be considered online (default 120)"},
+                "ttl": {
+                    "type": "number",
+                    "description": "Max seconds since last heartbeat to be considered online (default 120)",
+                },
             },
         },
     },
@@ -314,12 +330,12 @@ TOOLS = [
 
 def _obj_dict(obj: Any) -> dict:
     return {
-        "handle":     obj.handle,
-        "name":       obj.name,
-        "agent":      obj.agent,
-        "pos":        obj.pos.to_list(),
-        "shape":      {"kind": obj.shape.kind.value, "params": obj.shape.params},
-        "meta":       obj.meta,
+        "handle": obj.handle,
+        "name": obj.name,
+        "agent": obj.agent,
+        "pos": obj.pos.to_list(),
+        "shape": {"kind": obj.shape.kind.value, "params": obj.shape.params},
+        "meta": obj.meta,
         "created_at": obj.created_at,
         "updated_at": obj.updated_at,
     }
@@ -327,14 +343,14 @@ def _obj_dict(obj: Any) -> dict:
 
 def _field_dict(f: Any) -> dict:
     return {
-        "handle":     f.handle,
-        "name":       f.name,
-        "agent":      f.agent,
-        "kind":       f.kind.value,
-        "origin":     f.origin.to_list(),
-        "extent":     f.extent.to_list(),
-        "value":      f.value,
-        "meta":       f.meta,
+        "handle": f.handle,
+        "name": f.name,
+        "agent": f.agent,
+        "kind": f.kind.value,
+        "origin": f.origin.to_list(),
+        "extent": f.extent.to_list(),
+        "value": f.value,
+        "meta": f.meta,
         "created_at": f.created_at,
         "updated_at": f.updated_at,
     }
@@ -358,11 +374,14 @@ def handle_request(world: World4D, req: dict) -> dict:
                 world.announce(meta={"mcp": True})
             except Exception:
                 pass  # Non-fatal
-        return _ok(req_id, {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "world4d", "version": "1.0.0"},
-        })
+        return _ok(
+            req_id,
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "world4d", "version": "1.0.0"},
+            },
+        )
 
     if method == "notifications/initialized":
         return {}  # no response for notification
@@ -375,12 +394,17 @@ def handle_request(world: World4D, req: dict) -> dict:
         args = params.get("arguments", {})
         try:
             result = dispatch_tool(world, tool_name, args)
-            return _ok(req_id, {"content": [{"type": "text", "text": json.dumps(result, default=str)}]})
+            return _ok(
+                req_id, {"content": [{"type": "text", "text": json.dumps(result, default=str)}]}
+            )
         except Exception as exc:
-            return _ok(req_id, {
-                "content": [{"type": "text", "text": f"Error: {exc}"}],
-                "isError": True,
-            })
+            return _ok(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": f"Error: {exc}"}],
+                    "isError": True,
+                },
+            )
 
     return _error(req_id, -32601, f"Method not found: {method}")
 
@@ -434,8 +458,15 @@ def dispatch_tool(world: World4D, name: str, args: dict) -> Any:
         value = args.get("value", {})
         meta = args.get("meta", {})
         handle = args.get("handle")
-        h = world.add_field(args["name"], kind=kind, origin=origin, extent=extent,
-                            value=value, meta=meta, handle=handle)
+        h = world.add_field(
+            args["name"],
+            kind=kind,
+            origin=origin,
+            extent=extent,
+            value=value,
+            meta=meta,
+            handle=handle,
+        )
         return {"handle": h}
 
     elif name == "world_remove_field":
@@ -502,8 +533,12 @@ def dispatch_tool(world: World4D, name: str, args: dict) -> Any:
 def main() -> None:
     parser = argparse.ArgumentParser(description="World4D MCP server")
     parser.add_argument("--agent", default="", help="Agent identity tag for new objects")
-    parser.add_argument("--pg-url", default="", dest="pg_url",
-                        help="Postgres URL (default: WORLD4D_PG_URL env or ~/.pgpass default)")
+    parser.add_argument(
+        "--pg-url",
+        default="",
+        dest="pg_url",
+        help="Postgres URL (default: WORLD4D_PG_URL env or ~/.pgpass default)",
+    )
     args = parser.parse_args()
 
     pg_url = args.pg_url or os.environ.get("WORLD4D_PG_URL", "")
