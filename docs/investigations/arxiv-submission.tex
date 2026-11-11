@@ -545,7 +545,7 @@ a 4.2$\times$ ratio. The focus-state effect is \emph{real and survives the corre
 both strata have similar generative fractions (\textasciitilde50\%), so dividing both
 by the same correction factor preserves the 4$\times$ ratio. The aggregate report of
 43.3\% / 10.2\% (Table~3) should be read as the \emph{ceiling} of Rocky-theorem influence;
-the causal floor is \textasciitilde21\% / \textasciitilde5\%.
+the causal floor is \textasciitilde21\% / \textasciitilde5\%.\footnote{The hand-coded generative classification (run~41, $n=8$; extended run~41b, $n=19$, 42.1\%) cannot be fully replicated by automated SQL keyword proximity search. A SQL heuristic (causal connector within 100~chars of theorem mention) produces only 6.7\% ($n=30$) --- a 6$\times$ disagreement with hand-coding. Root cause: Natasha's reasoning style introduces a theorem premise and then reasons from it 1--3 sentences later, outside the 100-char window. The 42\% figure is a hand-classification spot-check; automated replication requires a wider context window or a semantic rather than lexical proximity filter.}
 
 \subsection{Template-contamination control}
 
