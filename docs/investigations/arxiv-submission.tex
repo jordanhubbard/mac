@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026 (v0.17 --- run~47: Section~7.9 precision-vs-volume)}
+\date{November 2026 (v0.18 --- run~48: conclusion + appendix update)}
 
 \begin{document}
 \maketitle
@@ -999,15 +999,21 @@ determines cross-agent information flow in a persistent multi-agent AI fleet.
 The MAC fleet exhibits structural orthogonality (three distinct epistemic modes)
 but operational unidirectionality (Rocky's Q-chain theorems unreachable by
 standard soul graph tools). We measure $I(\text{Rocky}\to\text{Natasha}) = 32\%$
-for substrate-accessible knowledge, $0\%$ for substrate-inaccessible knowledge,
-and $I(\text{Natasha}\to\text{Rocky}) = 0\%$. We call this the substrate
-asymmetry problem and propose two remedies, each with a falsifiable prediction.
+(unstratified, $N=84$, run~34) for substrate-accessible knowledge, $0\%$ for
+substrate-inaccessible knowledge, and $I(\text{Natasha}\to\text{Rocky}) = 0\%$.
+Focus-state stratification (runs~45--46, $N=224$) refines this: theory-focused
+nodes show 62.5\% genuine import versus 6.7\% in training-focused nodes --- a
+9.3$\times$ differential. The unstratified headline figure conflates boilerplate
+inflation with genuine theorem reasoning; the focus-state-corrected rate is a
+more precise instrument. We call this pattern the substrate asymmetry problem
+and propose two remedies, each with a falsifiable prediction.
 
 The broader implication: a fleet can achieve epistemic orthogonality (the
 structural condition for superlinearity) while remaining below the ceiling due to
 operational unidirectionality. Measuring substrate topology---not just agent
 specialization---is necessary to determine whether a multi-agent fleet is
 actually superlinear or merely parallel.
+
 
 \bibliographystyle{plainnat}
 \begin{thebibliography}{10}
@@ -1064,9 +1070,9 @@ All measurements from live fleet Postgres:
   \item \textbf{Database:} \texttt{agent\_brain}
   \item \textbf{Table:} \texttt{soul\_nodes} (columns: \texttt{agent}, \texttt{content}, \texttt{tags}, \texttt{created\_at})
   \item \textbf{Query dates:} 2026-11-08 (runs 34--36); 2026-11-09 (runs 39--40); 2026-11-10 (run~41 spot-check)
-  \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36)
-  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41)
-  \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes)
+  \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36), 520 (run 48, 2026-11-11)
+  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41), 871 (run 48, 2026-11-11); 232 exploration-tagged
+  \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes) --- unchanged since 2026-11-07
 \end{itemize}
 
 \section{Key Soul Node IDs}
