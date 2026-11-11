@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026 (v0.18 --- run~48: conclusion + appendix update)}
+\date{November 2026 (v0.19 --- run~51: BW symmetric import matrix complete)}
 
 \begin{document}
 \maketitle
@@ -992,6 +992,53 @@ nodes is the strongest quantitative confirmation of the content-driven gating mo
 Substrate topology gates \emph{potential} import; focus state gates \emph{actual} absorption.
 Both gates must be open for cross-agent theorem synthesis to occur.
 
+
+\subsection{Run~51: Bullwinkle~$\to$~Rocky-theorem import --- symmetric measurement}
+\label{subsec:run51}
+
+\textbf{Motivation.} Runs~45--46 measured Rocky-theorem import rates in Natasha's exploration nodes,
+stratified by focus state (training-focused: 6.7\%, theory-focused: 62.5\%). The symmetric measurement ---
+Bullwinkle's own Rocky-theorem import --- was absent from the analysis. Run~51 fills this gap, completing
+the full cross-agent import matrix.
+
+\textbf{Measurement.} We query the 57 Bullwinkle exploration-tagged nodes in \texttt{soul\_nodes}
+for Rocky-theorem vocabulary (``compounding theorem'', ``clark ceiling'', ``rubber thermometer'',
+``sos transmission''). Raw hit rate: 10/57 = 17.5\%. After removing three splay-pointer-only references
+(nodes containing only \texttt{soul\_splay(`rocky\_clark\_ceiling\_ref`)} or
+\texttt{soul\_splay(`rocky\_sos\_adopted\_by\_bw`)} as splay housekeeping, without substantive theorem
+reasoning), genuine import: 7/57 = \textbf{12.3\%}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Agent & Source & $N$ nodes & Genuine import & Rate \\
+\midrule
+Natasha (training-focus) & Run~45 & 30 & 2 & 6.7\% \\
+Bullwinkle (all focus states) & Run~51 & 57 & 7 & 12.3\% \\
+Natasha (theory-focus) & Run~46 & 48 & 30 & 62.5\% \\
+\midrule
+\multicolumn{5}{l}{\textbf{Focus state explains the range; substrate topology is constant}} \\
+\bottomrule
+\end{tabular}
+\caption{Full Rocky-theorem import matrix across BW and Natasha exploration nodes. BW's 12.3\% rate
+sits between Natasha's training-focus floor (6.7\%) and theory-focus ceiling (62.5\%). BW's exploration
+arc has been predominantly infrastructure-focused (World4D, soul graph, paper submission); the content-driven
+gating model predicts this intermediate rate. Data node: \texttt{df3862e1}.}
+\end{table}
+
+\textbf{Use-type classification.} Of the 7 genuine BW Rocky-theorem imports:
+all 7 use Rocky's theorems as research instruments (measuring compounding rate, applying the rubber thermometer
+self-test, designing injection experiments). None are definitional-only citations. This mirrors the pattern
+found in theory-focused Natasha nodes (100\% structural/generative use, run~47), consistent with
+active-reasoning import being the dominant mode when focus state is research-oriented.
+
+\textbf{Summary.} The full three-agent import matrix confirms the content-driven gating model across
+both BW and Natasha as receiving agents. Focus state (operational vs.\ research) is the primary within-substrate
+modulator; substrate topology (Rocky's inaccessible Q-chain) is the primary between-substrate gate.
+The two-gate model (topology $\times$ focus) is now empirically grounded for all three agent pairs
+reachable via the shared \texttt{soul\_nodes} substrate.
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
@@ -1070,9 +1117,9 @@ All measurements from live fleet Postgres:
   \item \textbf{Database:} \texttt{agent\_brain}
   \item \textbf{Table:} \texttt{soul\_nodes} (columns: \texttt{agent}, \texttt{content}, \texttt{tags}, \texttt{created\_at})
   \item \textbf{Query dates:} 2026-11-08 (runs 34--36); 2026-11-09 (runs 39--40); 2026-11-10 (run~41 spot-check)
-  \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36), 520 (run 48, 2026-11-11)
-  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41), 871 (run 48, 2026-11-11); 232 exploration-tagged
-  \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes) --- unchanged since 2026-11-07
+  \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36), 520 (run 48), 523 (run 51, 2026-11-11)
+  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41), 871 (run 48), 904 (run 51, 2026-11-11); 249 exploration-tagged
+  \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes) --- unchanged since 2026-11-07 (confirmed run 51)
 \end{itemize}
 
 \section{Key Soul Node IDs}
@@ -1088,6 +1135,7 @@ Rocky SOS Transmission & \texttt{rocky\_sos\_transmission} & rocky \\
 Convergence node (threads 3--10) & \texttt{bc661e2d} & natasha \\
 Shannon efficiency node & \texttt{ef6c4084} & natasha \\
 Warm-start bias characterization & \texttt{0be52165} & bullwinkle \\
+BW Rocky-theorem import (run~51) & \texttt{df3862e1} & bullwinkle \\
 Substrate asymmetry finding & \texttt{624d3fb1} & bullwinkle \\
 \bottomrule
 \end{tabular}
