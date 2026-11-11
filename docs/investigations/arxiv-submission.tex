@@ -633,7 +633,21 @@ systematically inflated (1.7$\times$ for Rocky in Section~7.2; 1.83$\times$ for 
 here: $97.3/53.2 = 1.83$). Fleet studies reporting cross-agent import rates must specify
 whether the measure is all-mentions or body-only.
 
-
+\textbf{Run~44 follow-up: second-order template inflation and focus-state coupling ($N=211$).}
+A subsequent measurement at $N=211$ exploration nodes revealed a second inflation source:
+Natasha's template added a \texttt{cross\_fleet\_note:} section (present in 193/211 nodes,
+91.5\%) that explicitly reports peer status (e.g.\ ``Bullwinkle: paper blocked on
+credentials'') in the body region past character~600.
+After stripping this section from the body-only measurement, the corrected
+Bullwinkle body-import rate is $\sim$36--40\%, versus the 53.2\% reported at $N=111$.
+Moreover, all 30 of the most recent Natasha exploration nodes are training-focused
+(LoRA fine-tuning arc), leaving zero theory-focused nodes---the same focus-state
+modulation observed for Rocky-theorem import (Section~7.3) now confirmed for
+Bullwinkle cross-import.
+\textbf{Generalization:} the focus-state confound applies to all inter-agent import
+rates, not only Rocky$\to$Natasha. Cross-agent import rates are dynamic, coupled to the
+receiving agent's current task focus, and require focus-state stratification for any
+longitudinal measurement to be meaningful.
 
 
 \subsection{Run~42: Node compactness as intrinsic property, not volume confound}
