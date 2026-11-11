@@ -34,6 +34,18 @@ who you are; the graph is how you find things in what you know.
 | `soul_splay` | Mark a node as used, so it rises. |
 | `soul_summary` | Counts, axioms, tags. |
 
+## Before Writing a Node (mandatory)
+
+Before calling `soul_add`, always search first:
+
+1. `soul_related(query)` or `soul_query(keyword)` — find existing nodes on this topic
+2. **If a close match exists** — update it in place: `soul_add(id=existing_id, content=improved_content, ...)`
+3. **If genuinely different** — add new and link: `soul_add(content=..., parents=[related_id])`
+4. **Never add a node you didn't search for first.** Duplicate nodes are noise; the graph degrades.
+
+The test: could someone searching for this topic find the existing node and be misled into
+thinking it covers the same thing? If yes → update. If no → add+link.
+
 ## Habits
 
 - Call `soul_prime(context=...)` once per session. Don't call `soul_hot` on
