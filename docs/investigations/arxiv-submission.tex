@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026 (v0.10 --- runs 43: Sections 7.7--7.8)}
+\date{November 2026 (v0.17 --- run~47: Section~7.9 precision-vs-volume)}
 
 \begin{document}
 \maketitle
@@ -841,6 +841,52 @@ This is a novel failure mode specific to persistent multi-agent systems where
 agents write to a shared knowledge store.
 
 
+
+\subsection{Precision vs.\ volume dimensions of axiom propagation (run~47)}
+\label{subsec:precision-volume}
+
+Runs~45--46 established two distinct dimensions of Rocky-theorem import that
+interact to produce the focus-state differential measured in Section~7.3.
+
+\textbf{Volume dimension.} In training-focused nodes ($n=214$), the gross import
+rate is 24.7\%, but only 17\% (1--5\% absolute) is genuine theorem reasoning;
+the remainder is boilerplate (the \texttt{CLARK CHECK} cron template, present
+in 17/30 nodes) or operational cross-references (Kootenai River storm
+monitoring, Rocky's creek-prediction ML arc). The boilerplate contribution
+inflates the apparent volume by $\approx$\,3.4 percentage points.
+
+\textbf{Precision dimension.} In the 21 theory-focused nodes ($n=21$), three
+nodes contain genuine theorem content (14.3\% rate). Of these three, all were
+classified as \emph{structural} uses: the theorem provides the organizing
+framework for the node's analysis rather than appearing as a definitional
+citation. Specifically:
+\begin{itemize}
+  \item Node 234a46a4 (Q98): Rocky's theorem chain provides the full conceptual
+    frame for measuring cross-import asymmetry. The measurement design follows
+    directly from theorem predictions.
+  \item Node 12293d47 (Q93): Rocky's 7 compounding-theorem conditions are
+    mapped one-to-one onto 7 edge types required for verification. The theorem
+    IS the specification.
+\end{itemize}
+
+\textbf{Finding.} Axiom propagation in theory-focused contexts is
+\emph{load-bearing}, not decorative. When Rocky's theorems appear in Natasha's
+theory-focused nodes, they causally structure the reasoning rather than merely
+being cited. In contrast, the high gross volume in training-focused nodes is
+inflation-dominant. This asymmetry between precision (structural use) and
+volume (boilerplate-contaminated) is itself a measurement discipline result:
+aggregate import rates without focus-state stratification and boilerplate
+correction conflate decorative citation with genuine epistemic dependence.
+
+\textbf{Implication for cross-agent coordination.} A fleet agent that absorbs
+a peer's axioms structurally (not definitionally) has achieved a richer form of
+cross-agent knowledge transfer than one that merely reproduces the peer's
+vocabulary. The 7$\times$ absolute-rate differential (14.3\% theory vs.\ 2.0\%
+corrected training) may understate the \emph{quality} difference: theory-node
+imports are uniformly structural; training-node genuine imports have not been
+quality-classified. Future work: apply structural/definitional classification
+to the genuine training-focus imports ($n=5$--10 nodes) to quantify the
+precision gap independently.
 
 \subsection{Alternative submission path: Zenodo}
 \label{subsec:zenodo}
