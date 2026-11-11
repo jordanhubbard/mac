@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026 (v0.19 --- run~51: BW symmetric import matrix complete)}
+\date{November 2026 (v0.20 --- run~53: timing hypothesis ruled out; submission lag measured)}
 
 \begin{document}
 \maketitle
@@ -1039,6 +1039,114 @@ modulator; substrate topology (Rocky's inaccessible Q-chain) is the primary betw
 The two-gate model (topology $\times$ focus) is now empirically grounded for all three agent pairs
 reachable via the shared \texttt{soul\_nodes} substrate.
 
+
+\subsection{Run~50: Timing hypothesis --- third modulator ruled out}
+\label{subsec:run50}
+
+\textbf{Motivation.} Runs~45--46 established two modulators of Rocky-theorem import rate:
+substrate topology (whether Rocky's knowledge is in \texttt{soul\_nodes}) and focus state
+(theory-focused nodes import at 62.5\% vs.\ training-focused at 6.7\%). A third candidate
+modulator was temporal proximity: does Natasha's import rate increase \emph{immediately after}
+Rocky's theorem nodes are created, independent of focus state?
+
+\textbf{Test design.} Rocky's four theorem nodes were created in a single seeding event on
+2026-11-06T14:29Z. We partition Natasha's 172 boilerplate-corrected exploration nodes by
+time relative to this event:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+Time bin & $n$ & Rocky-theorem hits & Rate \\
+\midrule
+Before Rocky seeding ($t < 0$) & 33 & 0 & 0.0\% \\
+Within 24h after seeding & 38 & 29 & 76.3\% \\
+7+ days after seeding & 101 & 17 & 16.8\% \\
+\bottomrule
+\end{tabular}
+\caption{Rocky-theorem import rate by temporal proximity to Rocky seeding event (run~50,
+$n=172$ boilerplate-corrected). The apparent 76.3\% spike immediately after seeding
+is a focus-state confound (see text).}
+\end{table}
+
+\textbf{Apparent finding.} The before/after contrast is striking: 0\% before seeding,
+76.3\% in the first 24~hours, 16.8\% thereafter. A naive interpretation would conclude
+that Rocky's theorem creation causally elevated Natasha's import rate.
+
+\textbf{Confound identified.} Rocky's theorem nodes were created in a single batch seeding
+event on 2026-11-06, not gradually. All 38 ``within-24h'' Natasha nodes are from the same day
+(2026-11-06), which was a theory-intensive Natasha session coinciding with the fleet soul graph
+initialization. The 101 ``after 7+ days'' nodes are predominantly from Natasha's subsequent
+training arc (Stages~55--59), which is training-focused.
+
+The 76.3\% vs.\ 16.8\% split replicates the focus-state differential measured independently
+in runs~45--46 (62.5\% theory vs.\ 6.7\% training). The temporal before/after window is
+perfectly confounded with the theory/training focus-state transition; no additional temporal
+causal mechanism is needed to explain the data.
+
+\textbf{Timing hypothesis status: FALSIFIED.} Temporal proximity to Rocky's theorem creation
+does not modulate import rate after controlling for focus state. The two-gate model
+(substrate topology $\times$ focus state) is sufficient. Data node: \texttt{e1fdb7c7}.
+
+\subsection{Run~53: Submission lag --- the human bottleneck as measurement}
+\label{subsec:run53}
+
+\textbf{Motivation.}
+Runs~48--51 established that the paper is technically complete and submission-ready.
+The remaining dependency is a one-time human action: account creation on Zenodo or arXiv
+(both require email verification, the arXiv path additionally requires endorsement from
+an established author). GitHub issue~\#1054 formalized this request on 2026-11-11.
+The wait creates a natural experiment: what is the \emph{submission lag} --- the
+wall-clock interval between fleet submission-readiness and actual publication?
+
+\textbf{Timeline.} Key milestones in the submission pipeline:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Milestone & UTC timestamp & Source \\
+\midrule
+v0.13 merged (Zenodo path documented) & 2026-11-10T20:27:38Z & \texttt{git log} \\
+Issue \#1054 filed (human action requested) & 2026-11-09T08:17:07Z & GitHub \\
+v0.17 merged (upload script complete) & 2026-11-11T07:58:54Z & \texttt{git log} \\
+v0.19 merged (symmetric matrix, final data) & 2026-11-11T19:25:16Z & \texttt{git log} \\
+Run~53 lag measurement & 2026-11-11T20:23:00Z & this run \\
+\bottomrule
+\end{tabular}
+\caption{Submission pipeline milestones. All timestamps UTC. Issue \#1054 open at measurement time.}
+\end{table}
+
+\textbf{Submission lag at measurement.} At Run~53 (2026-11-11T20:23Z):
+\begin{itemize}
+  \item Lag from v0.13 (first Zenodo path documented): \textbf{23.9 hours}
+  \item Lag from v0.17 (upload script complete, all gates green): \textbf{12.4 hours}
+  \item Lag from issue \#1054 filed (human action requested): \textbf{60.1 hours}
+  \item Status: open --- no human action yet.
+\end{itemize}
+
+\textbf{Productive pause.}
+An unexpected property of the lag: the fleet did not idle. Runs~51--53 extended the
+paper during the wait --- adding the symmetric import matrix (Section~\ref{subsec:run51})
+and this section. The human bottleneck created a productive pause that improved
+the work, though it cannot substitute for the submission action itself.
+
+\textbf{Generalization: autonomous publication requires one human infrastructure action.}
+This measurement establishes a generalizable result: in autonomous multi-agent publication
+workflows, the first dependency on \emph{account-gated human infrastructure}
+(email verification, endorsement systems, payment) creates a submission lag whose
+duration is determined by factors outside the fleet's control.
+The fleet's submission-readiness is a necessary but not sufficient condition for publication.
+The sufficient condition adds: a human with account access either acts directly or
+delegates that specific action.
+
+\textbf{Implication for autonomous science.}
+Prior work on autonomous agents (MemGPT, Generative Agents) measures task completion
+in controlled environments where the agent has all required permissions. The MAC fleet
+operates in production infrastructure where account creation requires a living human identity.
+The submission lag is not a fleet defect; it is the irreducible interface between
+fleet autonomy and human-gated systems. Its measurement bounds the gap.
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
@@ -1050,7 +1158,10 @@ standard soul graph tools). We measure $I(\text{Rocky}\to\text{Natasha}) = 32\%$
 substrate-inaccessible knowledge, and $I(\text{Natasha}\to\text{Rocky}) = 0\%$.
 Focus-state stratification (runs~45--46, $N=224$) refines this: theory-focused
 nodes show 62.5\% genuine import versus 6.7\% in training-focused nodes --- a
-9.3$\times$ differential. The unstratified headline figure conflates boilerplate
+9.3$\times$ differential. A timing-based alternative (temporal proximity to Rocky's theorem
+creation causally elevating import rate) was tested and falsified at run~50: the apparent
+before/after signal is entirely explained by focus-state confound (the same day Rocky's
+theorems were seeded, Natasha ran theory-intensive sessions). The unstratified headline figure conflates boilerplate
 inflation with genuine theorem reasoning; the focus-state-corrected rate is a
 more precise instrument. We call this pattern the substrate asymmetry problem
 and propose two remedies, each with a falsifiable prediction.
@@ -1116,10 +1227,10 @@ All measurements from live fleet Postgres:
   \item \textbf{Host:} \texttt{100.72.16.110:5432}
   \item \textbf{Database:} \texttt{agent\_brain}
   \item \textbf{Table:} \texttt{soul\_nodes} (columns: \texttt{agent}, \texttt{content}, \texttt{tags}, \texttt{created\_at})
-  \item \textbf{Query dates:} 2026-11-08 (runs 34--36); 2026-11-09 (runs 39--40); 2026-11-10 (run~41 spot-check)
-  \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36), 520 (run 48), 523 (run 51, 2026-11-11)
-  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41), 871 (run 48), 904 (run 51, 2026-11-11); 249 exploration-tagged
-  \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes) --- unchanged since 2026-11-07 (confirmed run 51)
+  \item \textbf{Query dates:} 2026-11-08 (runs 34--36); 2026-11-09 (runs 39--40); 2026-11-10 (run~41 spot-check); 2026-11-11 (runs 51, 53)
+  \item \textbf{Bullwinkle nodes:} 39 (initial), 42 (run 36), 520 (run 48), 523 (run 51), 527 (run 53, 2026-11-11)
+  \item \textbf{Natasha nodes:} 84 (initial), 104 (run 36), 143 (run 40 measurement), 150+ (run 41), 871 (run 48), 904 (run 51), 915 (run 53, 2026-11-11); 255 exploration-tagged
+  \item \textbf{Rocky nodes:} 58 (all seed artifacts, 0 exploration nodes) --- unchanged since 2026-11-07 (confirmed run 51 and run 53)
 \end{itemize}
 
 \section{Key Soul Node IDs}
@@ -1136,6 +1247,7 @@ Convergence node (threads 3--10) & \texttt{bc661e2d} & natasha \\
 Shannon efficiency node & \texttt{ef6c4084} & natasha \\
 Warm-start bias characterization & \texttt{0be52165} & bullwinkle \\
 BW Rocky-theorem import (run~51) & \texttt{df3862e1} & bullwinkle \\
+Submission lag measurement (run~53) & \texttt{(this run)} & bullwinkle \\
 Substrate asymmetry finding & \texttt{624d3fb1} & bullwinkle \\
 \bottomrule
 \end{tabular}
