@@ -235,3 +235,123 @@ class TestSensorHandler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# GET /readings tests (Phase RED -- query endpoint not yet implemented)
+# ---------------------------------------------------------------------------
+
+
+class TestGetReadings(unittest.TestCase):
+    """Tests for GET /readings?sensor_id=&limit=&since= query endpoint."""
+
+    def _make_server(self):
+        """Return a SensorHandler instance with a mock DB."""
+        handler = SensorHandler.__new__(SensorHandler)
+        handler.db_url = None
+        handler.log_requests = False
+        return handler
+
+    def _do_get(self, path: str, mock_rows: list[dict] | None = None):
+        """Drive do_GET on a mock server, return (status_code, body_dict)."""
+        sent_status = []
+        sent_headers = []
+        sent_body = io.BytesIO()
+
+        handler = SensorHandler.__new__(SensorHandler)
+        handler.db_url = None
+        handler.log_requests = False
+        handler.path = path
+        handler.headers = {}
+
+        def fake_send_response(code):
+            sent_status.append(code)
+
+        def fake_send_header(k, v):
+            sent_headers.append((k, v))
+
+        def fake_end_headers():
+            pass
+
+        handler.send_response = fake_send_response
+        handler.send_header = fake_send_header
+        handler.end_headers = fake_end_headers
+        handler.wfile = sent_body
+
+        if mock_rows is not None:
+            with patch("mac.sensor_ingest.query_readings", return_value=mock_rows):
+                handler.do_GET()
+        else:
+            handler.do_GET()
+
+        sent_body.seek(0)
+        raw = sent_body.read()
+        body = json.loads(raw) if raw else {}
+        return sent_status[0] if sent_status else None, body
+
+    def test_get_readings_returns_200_with_empty_list(self):
+        code, body = self._do_get("/readings", mock_rows=[])
+        self.assertEqual(code, 200)
+        self.assertIn("readings", body)
+        self.assertEqual(body["readings"], [])
+
+    def test_get_readings_returns_rows(self):
+        rows = [
+            {
+                "id": 1,
+                "sensor_id": "creek-01",
+                "location_tag": "boulder_creek_upper",
+                "ts": "2026-11-11T15:00:00+00:00",
+                "creek_level": 412.0,
+                "soil_moisture": 58.3,
+                "air_temp": 14.2,
+                "units": {"creek_level": "mm"},
+                "ingested_at": "2026-11-11T15:01:00+00:00",
+            }
+        ]
+        code, body = self._do_get("/readings?sensor_id=creek-01", mock_rows=rows)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(body["readings"]), 1)
+        self.assertEqual(body["readings"][0]["sensor_id"], "creek-01")
+
+    def test_get_readings_bad_limit_returns_400(self):
+        code, body = self._do_get("/readings?limit=notanumber")
+        self.assertEqual(code, 400)
+        self.assertIn("error", body)
+
+    def test_get_readings_limit_too_large_returns_400(self):
+        code, body = self._do_get("/readings?limit=10000")
+        self.assertEqual(code, 400)
+        self.assertIn("error", body)
+
+    def test_query_readings_function_exists(self):
+        """query_readings must be importable -- fails RED until implemented."""
+        from mac.sensor_ingest import query_readings
+
+        self.assertTrue(callable(query_readings))
+
+
+class TestQueryReadingsFunction(unittest.TestCase):
+    """Unit tests for the query_readings() DB function."""
+
+    def test_query_readings_returns_list(self):
+        from mac.sensor_ingest import query_readings
+
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.return_value.fetchall.return_value = []
+        import sys, types
+
+        fake_psycopg = types.ModuleType("psycopg")
+        fake_psycopg.connect = MagicMock(return_value=mock_conn)
+        fake_row = types.ModuleType("psycopg.rows")
+        fake_row.dict_row = dict
+        sys.modules["psycopg"] = fake_psycopg
+        sys.modules["psycopg.rows"] = fake_row
+        try:
+            result = query_readings(sensor_id=None, limit=10, db_url="postgresql://fake/db")
+        finally:
+            del sys.modules["psycopg"]
+            del sys.modules["psycopg.rows"]
+        self.assertIsInstance(result, list)

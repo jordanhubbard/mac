@@ -180,10 +180,44 @@ class SensorHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/health":
             self._send_json(200, {"status": "ok", "service": "sensor_ingest"})
-        else:
-            self._send_json(404, {"error": "not found"})
+            return
+
+        if path == "/readings":
+            from urllib.parse import parse_qs
+
+            qs = parse_qs(parsed.query)
+
+            # Validate limit
+            raw_limit = qs.get("limit", ["50"])[0]
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                self._send_json(400, {"error": f"limit must be an integer, got {raw_limit!r}"})
+                return
+            if not (1 <= limit <= MAX_QUERY_LIMIT):
+                self._send_json(400, {"error": f"limit must be 1-{MAX_QUERY_LIMIT}, got {limit}"})
+                return
+
+            sensor_id = qs.get("sensor_id", [None])[0]
+            since = qs.get("since", [None])[0]
+
+            try:
+                rows = query_readings(
+                    sensor_id=sensor_id, limit=limit, since=since, db_url=self.db_url
+                )
+            except Exception as exc:
+                self._send_json(500, {"error": f"query error: {exc}"})
+                return
+
+            self._send_json(200, {"readings": rows, "count": len(rows)})
+            return
+
+        self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/ingest":
@@ -249,3 +283,81 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     serve(host=args.host, port=args.port, db_url=args.db_url, quiet=args.quiet)
+
+
+# ---------------------------------------------------------------------------
+# Query / read endpoint
+# ---------------------------------------------------------------------------
+
+MAX_QUERY_LIMIT = 1000
+
+
+def query_readings(
+    sensor_id: str | None = None,
+    limit: int = 50,
+    since: str | None = None,
+    db_url: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Query recent sensor readings from fleet_brain Postgres.
+
+    Args:
+        sensor_id: Optional filter by sensor ID.
+        limit: Max rows to return (1–1000).
+        since: Optional ISO8601 lower bound on ts (inclusive).
+        db_url: Postgres DSN (default: SENSOR_DB_URL env).
+
+    Returns:
+        List of dicts with keys: id, sensor_id, location_tag, ts,
+        creek_level, soil_moisture, air_temp, units, ingested_at.
+    """
+    try:
+        import psycopg  # type: ignore[import]
+        from psycopg.rows import dict_row  # type: ignore[import]
+    except ImportError as exc:
+        raise ImportError("psycopg is required: pip install 'psycopg[binary]'") from exc
+
+    url = db_url or _get_db_url()
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if sensor_id:
+        clauses.append("sensor_id = %s")
+        params.append(sensor_id)
+
+    if since:
+        since_ts = since.replace("Z", "+00:00")
+        clauses.append("ts >= %s")
+        params.append(since_ts)
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+
+    sql = f"""
+        SELECT id, sensor_id, location_tag,
+               ts AT TIME ZONE 'UTC' AS ts,
+               creek_level, soil_moisture, air_temp,
+               units, ingested_at AT TIME ZONE 'UTC' AS ingested_at
+        FROM sensor_readings
+        {where}
+        ORDER BY ts DESC
+        LIMIT %s
+    """
+
+    with psycopg.connect(url, row_factory=dict_row) as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    # Serialise datetime objects to ISO strings for JSON compatibility
+    result = []
+    for row in rows:
+        r = dict(row)
+        for key in ("ts", "ingested_at"):
+            if hasattr(r.get(key), "isoformat"):
+                r[key] = r[key].isoformat()
+        if isinstance(r.get("units"), str):
+            try:
+                r["units"] = json.loads(r["units"])
+            except (ValueError, TypeError):
+                pass
+        result.append(r)
+    return result
