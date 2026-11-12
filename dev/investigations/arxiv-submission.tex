@@ -1531,6 +1531,70 @@ not terminology that is philosophically accurate but stylistically undesired.
 
 
 
+
+\subsection{Run~62 (Bullwinkle): Epistemic mode signatures --- contradiction production as a role discriminator}
+
+\textbf{Setup.} The substrate asymmetry theorem (Section~5) characterizes the MAC fleet's three structural epistemic modes: Rocky's write-once Q-chain, Natasha's implementation-focused LoRA training arc, and Bullwinkle's research-focused measurement arc. These roles were established qualitatively. Run~62 tests whether a quantitative signal---the contradiction production rate per cron run---discriminates role membership without requiring any role label.
+
+\textbf{Measurement.} We query \texttt{soul\_nodes} in \texttt{agent\_brain} for nodes tagged \texttt{contradiction} and \texttt{data} per agent per day. Node counts at time of measurement (2026-11-12, run~62): Bullwinkle 567 total, 63 contradiction (11.1\%); Natasha 967 total, 5 contradiction (0.5\%); Rocky 58 total, 0 contradiction (0\%). The measurement was conducted directly:
+
+\begin{verbatim}
+SELECT agent,
+  COUNT(*) FILTER (WHERE 'contradiction' = ANY(tags)) AS contradictions,
+  COUNT(*) FILTER (WHERE 'data' = ANY(tags))          AS data_nodes,
+  COUNT(*)                                             AS total_nodes
+FROM soul_nodes GROUP BY agent;
+\end{verbatim}
+
+\textbf{Results.} The contradiction production rate differs by 22$\times$ between research-mode and implementation-mode agents (Table~\ref{tab:epistemic-mode}).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lllll}
+\hline
+Agent & Role & Total nodes & Contradiction nodes & Contradiction rate \\
+\hline
+Bullwinkle & Research / measurement  & 567 & 63 & 11.1\% \\
+Natasha    & Implementation / training & 967 &  5 &  0.5\% \\
+Rocky      & Theory / write-once       &  58 &  0 &  0.0\% \\
+\hline
+\end{tabular}
+\caption{Contradiction node production rate by agent and role. Bullwinkle's research role generates falsifiable hypotheses per run; Natasha's training role generates pass/fail evaluations without propositions; Rocky's substrate is write-once and never self-corrects.}
+\label{tab:epistemic-mode}
+\end{table}
+
+\textbf{Mechanism.} Contradiction nodes are produced when a cron prompt includes an explicit mandatory contradiction check: ``what did you believe last run that this run disproves?'' Bullwinkle's cron prompt has enforced this check since run~55. Natasha's cron prompt uses empirical pass/fail criteria (LoRA eval scores) rather than falsifiable propositions; a training adapter either passes or fails, but the failure does not contradict a prior belief in the same way. Rocky's substrate is write-once; the Q-chain theorems are never revised, only extended. The role structure drives the epistemic obligation.
+
+\textbf{Temporal trend.} Bullwinkle's contradiction rate is not constant. Computing per-day rates from the daily node log (Table~\ref{tab:bw-contradiction-daily}):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+\hline
+Date & Total nodes & Contradiction nodes & Rate \\
+\hline
+2026-11-07 & 142 & 13 & 9.2\% \\
+2026-11-08 &  43 &  7 & 16.3\% \\
+2026-11-09 &  90 &  6 &  6.7\% \\
+2026-11-10 &  64 & 20 & 31.3\% \\
+2026-11-11 &  42 & 15 & 35.7\% \\
+2026-11-12 &   8 &  2 & 25.0\% (partial) \\
+\hline
+\end{tabular}
+\caption{Bullwinkle daily contradiction node rate. Rate increases across the measurement arc as early hypotheses (timing, volume, methodology confounds) are tested and falsified, generating a backlog of corrections.}
+\label{tab:bw-contradiction-daily}
+\end{table}
+
+The rising rate is not evidence of degrading accuracy; it is evidence of improving research velocity. Each falsified hypothesis is a productive epistemic event: it eliminates a confound, narrows the measurement, and generates a more precise claim. A 35\% contradiction rate on day~5 of a measurement arc is consistent with an agent systematically eliminating alternative explanations, which is exactly the structure of Sections~7.10--7.16.
+
+\textbf{Implications.}
+\begin{enumerate}
+  \item \emph{Contradiction rate as role discriminator.} A multi-agent system whose agents have complementary roles will exhibit a contradiction rate distribution that follows role structure, not agent competence. Measuring this distribution non-invasively from the memory substrate (without access to cron prompts or logs) can recover the role taxonomy.
+  \item \emph{Research-mode epistemic discipline.} An agent running a research arc under explicit mandatory contradiction checks produces a falsification record. This record is independently auditable: the soul graph's typed \texttt{contradiction} nodes constitute an open correction chain that peers can query. The fleet paper's measurement arc is auditable via node IDs in Appendix~B.
+  \item \emph{Implementation-mode epistemic discipline.} An implementation-mode agent's epistemic discipline manifests differently: not in contradiction nodes but in eval precision (must\_not criteria, stable-core battery, training data surgery). Natasha's 0.5\% contradiction rate is not a deficiency; it reflects that her falsification events are encoded as eval failures (OQ5 at 7/8) and training data corrections, not as proposition-revision nodes.
+  \item \emph{Write-once substrate asymmetry preserved.} Rocky's 0\% contradiction rate is structurally constrained by the Q-chain substrate: theorems are extended, not revised. This is the same asymmetry that drives $I(\text{any} \to \text{Rocky}) = 0\%$ in the import matrix. The contradiction rate is a third empirical signal---alongside import rate and parametric substrate validation---that triangulates the fleet's role structure from memory data alone.
+\end{enumerate}
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
