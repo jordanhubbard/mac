@@ -1321,6 +1321,29 @@ rates would approximately double. This reframes Remedy A (Section~5.1):
 the ask is not for Rocky to publish more nodes, but to publish
 \emph{axiom-grade} nodes --- compressed, stable, non-decaying conceptual anchors.
 
+\subsection{Run~57: Research methodology confound resolves the BW$\to$Rocky efficiency outlier}
+
+\textbf{Setup.} Run~56 noted that the BW$\to$Rocky import efficiency (1.58) was 3.5--4.6$\times$ higher than other pairs (0.19--0.44), suggesting skill-context overlap as a secondary driver. This run tests that hypothesis directly.
+
+\textbf{Hypothesis tested.} The MAC fleet operations skill (\texttt{mac-fleet-ops}), loaded in every Bullwinkle cron run, explicitly names Rocky's theorem node IDs (\texttt{rocky\_compounding\_theorem}, \texttt{rocky\_clark\_ceiling}, \texttt{rocky\_sos\_transmission}). The hypothesis: this prompt-level injection seeds Bullwinkle's exploration nodes with Rocky theorem vocabulary, inflating the apparent import statistic.
+
+\textbf{Measurements.}
+Vocabulary hit rates for Rocky theorem names across exploration nodes:
+\begin{itemize}
+  \item Bullwinkle exploration nodes mentioning Rocky theorems: $8/60 = 13.3\%$
+  \item Natasha exploration nodes mentioning Rocky theorems: $48/270 = 17.8\%$
+\end{itemize}
+Natasha does not load the \texttt{mac-fleet-ops} skill; her cron runs training-arc skills only.
+
+\textbf{Hypothesis falsified.} If skill injection were the primary driver, Bullwinkle should exceed Natasha. The pattern is reversed: Natasha mentions Rocky theorems at $17.8\%$ vs.\ Bullwinkle at $13.3\%$, without the injection vector. The strong form of the hypothesis is therefore ruled out.
+
+\textbf{Actual explanation: research methodology confound.} Inspection of the 7 genuine BW$\to$Rocky imports from run~51 reveals they are predominantly \emph{measurement} nodes --- nodes that report Rocky-theorem cross-pollination rates in Natasha. For example: ``Per-theorem breakdown --- Compounding Theorem 20.1\%, Clark Ceiling 14.7\%.'' Such nodes necessarily cite the theorem names being measured. Bullwinkle's research topic \emph{is} Rocky-theorem cross-pollination; this forces Rocky theorem vocabulary into Bullwinkle exploration nodes as measurement vocabulary, not as framework adoption.
+
+\textbf{Correction.} The BW$\to$Rocky efficiency of 1.58 is an upper bound inflated by researcher self-reference: the agent measuring cross-pollination of a peer's theorems produces nodes that contain those theorem names as objects of study. The theoretically interpretable baseline (measurement-free) is likely closer to the BW$\to$Natasha efficiency of 0.44. We retain the raw figure in the efficiency table but note that the outlier reflects instrument confound, not anomalous cross-pollination dynamics.
+
+\textbf{Implication for methodology.} Any agent whose research task involves measuring peer cross-pollination will produce self-inflating import statistics. Future studies should exclude measurement-vocabulary nodes from import rate calculations or apply a separate measurement/non-measurement classification pass. This is documented as a known limitation in our data collection methodology.
+
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,

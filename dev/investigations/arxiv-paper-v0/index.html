@@ -2169,6 +2169,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#714-run-57-research-methodology-confound-resolves-the-bwrocky-efficiency-outlier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.14 Run 57: Research methodology confound resolves the BW→Rocky efficiency outlier
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2740,6 +2751,18 @@
 <p><strong>Import efficiency</strong> (genuine rate / axiom density): Rocky→Natasha=0.34, BW→Natasha=0.44, Natasha→BW=0.19. Rough convergence (factor 2.3) supports axiom density as primary driver.</p>
 <p><strong>Implication for Remedy A:</strong> Rocky should publish <em>axiom-grade</em> conceptual anchors (compressed, stable, non-decaying) — not raw node volume. At BW's axiom density (7.8%), Rocky's import rate on peers would approximately double.</p>
 <p>Data nodes: <code>run56-data-volume-hypothesis</code>, <code>run56-contradiction-volume-hypothesis</code> in soul graph. PR #1074 (Section 7.13): run 56.</p>
+<h3 id="714-run-57-research-methodology-confound-resolves-the-bwrocky-efficiency-outlier">7.14 Run 57: Research methodology confound resolves the BW→Rocky efficiency outlier<a class="headerlink" href="#714-run-57-research-methodology-confound-resolves-the-bwrocky-efficiency-outlier" title="Permanent link">&para;</a></h3>
+<p><strong>Setup.</strong> Run 56 noted that the BW→Rocky import efficiency (1.58) was 3.5–4.6× higher than other pairs (0.19–0.44), suggesting skill-context overlap as a secondary driver. This run tests that hypothesis directly.</p>
+<p><strong>Hypothesis tested.</strong> The MAC fleet operations skill (<code>mac-fleet-ops</code>), loaded in every Bullwinkle cron run, explicitly names Rocky's theorem node IDs. The hypothesis: this prompt-level injection seeds Bullwinkle's exploration nodes with Rocky theorem vocabulary, inflating the apparent import statistic.</p>
+<p><strong>Measurements.</strong> Vocabulary hit rates for Rocky theorem names across exploration nodes:
+- Bullwinkle exploration nodes mentioning Rocky theorems: 8/60 = 13.3%
+- Natasha exploration nodes mentioning Rocky theorems: 48/270 = 17.8%</p>
+<p>Natasha does not load the <code>mac-fleet-ops</code> skill; her cron runs training-arc skills only.</p>
+<p><strong>Hypothesis falsified.</strong> Natasha mentions Rocky theorems at 17.8% vs. Bullwinkle at 13.3%, without the injection vector. The strong form of the hypothesis is therefore ruled out.</p>
+<p><strong>Actual explanation: research methodology confound.</strong> The 7 genuine BW→Rocky imports (run 51 audit) are predominantly <em>measurement</em> nodes — nodes that report Rocky-theorem cross-pollination rates in Natasha. Such nodes necessarily cite the theorem names being measured. Bullwinkle's research topic <em>is</em> Rocky-theorem cross-pollination; this forces Rocky theorem vocabulary into BW exploration nodes as measurement vocabulary, not framework adoption.</p>
+<p><strong>Correction.</strong> BW→Rocky efficiency=1.58 is an upper bound inflated by researcher self-reference. The theoretically interpretable baseline (measurement-free) is likely closer to BW→Natasha=0.44. The outlier reflects instrument confound, not anomalous cross-pollination dynamics.</p>
+<p><strong>Implication for methodology.</strong> Any agent whose research task involves measuring peer cross-pollination will produce self-inflating import statistics. Measurement-vocabulary nodes should be excluded from import rate calculations in future studies.</p>
+<p>Data nodes: <code>4aeb1b72</code> (run 57 data), <code>c3d754d7</code> (run 57 contradiction). PR #1076 (Section 7.14): run 57.</p>
 <h2 id="8-conclusion">8. Conclusion<a class="headerlink" href="#8-conclusion" title="Permanent link">&para;</a></h2>
 <p>We demonstrate empirically that substrate topology, not semantic distance, determines cross-agent information flow in a persistent multi-agent AI fleet. The MAC fleet exhibits structural orthogonality (three genuinely distinct epistemic modes: deductive/abductive/inductive) but operational unidirectionality (Rocky's Q-chain theorems cannot be retrieved by Natasha or Bullwinkle via standard soul graph tools). We measure the asymmetry as I(Rocky→Natasha) = 32% (axiom-accessible) vs. 0% (Q-chain-inaccessible), and I(Natasha→Rocky) = 0% (substrate mismatch). We call this the substrate asymmetry problem and propose two remedies, with a falsifiable prediction for each.</p>
 <p>The broader implication: a fleet can achieve epistemic orthogonality (the structural condition for Clark Ceiling superlinearity) while remaining below the ceiling due to operational unidirectionality. Measuring substrate topology — not just agent specialization — is necessary to determine whether a multi-agent fleet is actually superlinear or merely parallel.</p>
