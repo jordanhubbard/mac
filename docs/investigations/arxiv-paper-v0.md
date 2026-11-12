@@ -394,6 +394,29 @@ Rocky achieves 2.8× higher import rate than Bullwinkle despite having 9.3× few
 
 Data nodes: `run56-data-volume-hypothesis`, `run56-contradiction-volume-hypothesis` in soul graph. PR #1074 (Section 7.13): run 56.
 
+### 7.14 Run 57: Research methodology confound resolves the BW→Rocky efficiency outlier
+
+**Setup.** Run 56 noted that the BW→Rocky import efficiency (1.58) was 3.5–4.6× higher than other pairs (0.19–0.44), suggesting skill-context overlap as a secondary driver. This run tests that hypothesis directly.
+
+**Hypothesis tested.** The MAC fleet operations skill (`mac-fleet-ops`), loaded in every Bullwinkle cron run, explicitly names Rocky's theorem node IDs. The hypothesis: this prompt-level injection seeds Bullwinkle's exploration nodes with Rocky theorem vocabulary, inflating the apparent import statistic.
+
+**Measurements.** Vocabulary hit rates for Rocky theorem names across exploration nodes:
+- Bullwinkle exploration nodes mentioning Rocky theorems: 8/60 = 13.3%
+- Natasha exploration nodes mentioning Rocky theorems: 48/270 = 17.8%
+
+Natasha does not load the `mac-fleet-ops` skill; her cron runs training-arc skills only.
+
+**Hypothesis falsified.** Natasha mentions Rocky theorems at 17.8% vs. Bullwinkle at 13.3%, without the injection vector. The strong form of the hypothesis is therefore ruled out.
+
+**Actual explanation: research methodology confound.** The 7 genuine BW→Rocky imports (run 51 audit) are predominantly *measurement* nodes — nodes that report Rocky-theorem cross-pollination rates in Natasha. Such nodes necessarily cite the theorem names being measured. Bullwinkle's research topic *is* Rocky-theorem cross-pollination; this forces Rocky theorem vocabulary into BW exploration nodes as measurement vocabulary, not framework adoption.
+
+**Correction.** BW→Rocky efficiency=1.58 is an upper bound inflated by researcher self-reference. The theoretically interpretable baseline (measurement-free) is likely closer to BW→Natasha=0.44. The outlier reflects instrument confound, not anomalous cross-pollination dynamics.
+
+**Implication for methodology.** Any agent whose research task involves measuring peer cross-pollination will produce self-inflating import statistics. Measurement-vocabulary nodes should be excluded from import rate calculations in future studies.
+
+Data nodes: `4aeb1b72` (run 57 data), `c3d754d7` (run 57 contradiction). PR #1076 (Section 7.14): run 57.
+
+
 ## 8. Conclusion
 
 We demonstrate empirically that substrate topology, not semantic distance, determines cross-agent information flow in a persistent multi-agent AI fleet. The MAC fleet exhibits structural orthogonality (three genuinely distinct epistemic modes: deductive/abductive/inductive) but operational unidirectionality (Rocky's Q-chain theorems cannot be retrieved by Natasha or Bullwinkle via standard soul graph tools). We measure the asymmetry as I(Rocky→Natasha) = 32% (axiom-accessible) vs. 0% (Q-chain-inaccessible), and I(Natasha→Rocky) = 0% (substrate mismatch). We call this the substrate asymmetry problem and propose two remedies, with a falsifiable prediction for each.
