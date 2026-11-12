@@ -1,7 +1,7 @@
 # Know the Mountain — Sensor Ingestion MVP Design
 
 > Design note for `src/mac/sensor_ingest.py`.  
-> Author: Bullwinkle / 2026-11-11.
+> Design note for the fleet sensor ingestion MVP.
 
 ## Schema
 
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS sensor_readings (
 
 ## Running the ingestion server
 
-```bash
+```console
 # Default port 8800, connects to fleet_brain
 python -m mac.sensor_ingest
 
@@ -63,7 +63,7 @@ python -m mac.sensor_ingest --port 8800 --db-url postgresql://fleet_agent@100.72
 A Pi running a creek-level gauge (e.g. ultrasonic HC-SR04 or pressure sensor
 feeding a GPIO + Python script) would POST every N seconds:
 
-```bash
+```console
 #!/usr/bin/env bash
 # /usr/local/bin/creek-report.sh  — run via cron every 5 min
 
@@ -105,4 +105,4 @@ Crontab entry on the Pi:
 
 - Add authentication (bearer token or IP allowlist) before exposing to internet.
 - Add `GET /readings?sensor_id=&from=&to=` for quick time-window queries.
-- Rocky can add a Qdrant embedding pipeline for semantic queries over readings.
+- The hub agent can add a Qdrant embedding pipeline for semantic queries over readings.

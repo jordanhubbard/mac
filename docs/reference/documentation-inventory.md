@@ -173,6 +173,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/dream-cycle-output-quality.md`](../investigations/dream-cycle-output-quality.md) | Dream-cycle output quality |
 | runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
 | supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
+| supplemental reference | [`investigations/know-the-mountain-ingest-design.md`](../investigations/know-the-mountain-ingest-design.md) | Know the Mountain — Sensor Ingestion MVP Design |
 | supplemental reference | [`investigations/read-only-verifier-process-ownership.md`](../investigations/read-only-verifier-process-ownership.md) | Read-only verifier process ownership |
 | supplemental reference | [`investigations/reasoning-atoms-schema-v2.md`](../investigations/reasoning-atoms-schema-v2.md) | reasoning\_atoms schema v2 |
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
