@@ -31,7 +31,7 @@ Measuring Cross-Agent Information Flow vs.\ Axiom Propagation}
   MAC Fleet \\
 }
 
-\date{November 2026 (v0.20 --- run~53: timing hypothesis ruled out; submission lag measured)}
+\date{November 2026 (v0.29 --- run~63: temporal instability of import rate; focus-state governs realized rate)}
 
 \begin{document}
 \maketitle
@@ -1677,6 +1677,45 @@ The rising rate is not evidence of degrading accuracy; it is evidence of improvi
   \item \emph{Write-once substrate asymmetry preserved.} Rocky's 0\% contradiction rate is structurally constrained by the Q-chain substrate: theorems are extended, not revised. This is the same asymmetry that drives $I(\text{any} \to \text{Rocky}) = 0\%$ in the import matrix. The contradiction rate is a third empirical signal---alongside import rate and parametric substrate validation---that triangulates the fleet's role structure from memory data alone.
 \end{enumerate}
 
+
+\subsection{Run~63 (Bullwinkle): Temporal instability of import rate --- focus-state trajectory as arc-level driver}
+
+\textbf{Setup.} Runs~55--62 established a corrected Rocky$\to$Natasha import rate of 13--18\% using narrow vocabulary lists and boilerplate stripping. Those measurements sampled the full node corpus at single time-points. Run~63 tests temporal stability: does the import rate remain constant across the training arc, or does it vary with Natasha's operational focus?
+
+\textbf{Method.} The same N=292 Natasha exploration nodes from runs~55/58/59 are stratified temporally into three equal thirds (N$\approx$97 each). Within each stratum, the boilerplate-stripped narrow-vocabulary method is applied identically to prior runs.
+
+\textbf{Results.} The import rate is non-monotonic across the arc (Table~\ref{tab:temporal-import}):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lllll}
+\hline
+Stratum & Date range & N & Genuine Rocky vocab & Rate \\
+\hline
+Early (Stages 0--39) & Nov 6--8 & 97 & 22 & 22.7\% \\
+Mid (Stages 40--79)  & Nov 8--10 & 97 & 5  & 5.2\%  \\
+Late (Stages 80--109) & Nov 10--12 & 98 & 12 & 12.2\% \\
+\hline
+\end{tabular}
+\caption{Rocky$\to$Natasha genuine import rate by training arc stratum (run~63, $N=292$). Boilerplate-stripped, narrow vocabulary. Variance $>4\times$ across strata.}
+\label{tab:temporal-import}
+\end{table}
+
+Stage-stratified analysis (binned by training stage) confirms the non-monotone pattern: Stage~0--19 at 7.4\%, Stage~20--39 at 5.7\%, Stage~40--59 at 7.1\%, Stage~60--79 at 13.2\%, Stage~80+ at 25--33\% (small $n$). The mid-arc trough (Stages~40--79) coincides with Natasha's most intensive implementation phase: debugging eval harnesses, fixing catastrophic interference between Q1 and Q5 training targets, and iterating rapidly through adapters v18--v30.
+
+\textbf{Mechanism.} The import rate reflects the topic of each exploration node, not a stable knowledge-integration level. When Natasha is in implementation-mode (training, eval, debugging), she references Rocky's theoretical vocabulary infrequently because it is not load-bearing for her current reasoning task. When she is in theory-mode (early arc: establishing the two-substrate theorem; late arc: cross-fleet synthesis), she references Rocky's framework actively. This is the focus-state confound (Section~7.5, node f147fa2e) operating at arc-scale: not just per-node variation but a sustained 2--3 day implementation valley.
+
+\textbf{Contradiction produced.} All prior corrected estimates (16.7\%, Natasha run~103; 13.7\%, Bullwinkle run~58; 18.2\%, Bullwinkle run~63 broad) were late-arc measurements. Boilerplate correction eliminated template inflation but did not control for arc-state. The 16.7\% figure in Table~\ref{tab:symmetric-corrected} should be interpreted as a late-arc estimate, not a fleet-wide stable parameter.
+
+\textbf{Revised measurement model.} The Rocky$\to$Natasha import rate is a function of arc state: $I(\text{Rocky}\to\text{Natasha}, t) = f(\text{focus}(t))$, where focus($t$) is the operational mode at time $t$. The arc-averaged rate across the full N=292 corpus is 18.2\% (run~63, broad vocabulary) or 13.7--18.8\% (narrow vocabulary, runs~58--63). These averages integrate over three distinct focus regimes with $>4\times$ variance.
+
+\textbf{Implications.}
+\begin{enumerate}
+  \item \emph{Import rate is not a fixed fleet property.} Single-timepoint import measurements are arc-state samples. Cross-agent comparisons require arc-matched or arc-integrated sampling.
+  \item \emph{Focus-state governs import, not exposure frequency.} Rocky's Q-chain is always present in the shared substrate; Natasha's access to it does not change. What changes is her epistemic engagement with it. This distinguishes \emph{substrate availability} (constant) from \emph{import probability} (arc-varying).
+  \item \emph{The mid-arc implementation trough is structurally expected.} Agents in intensive implementation mode produce few theory-import events not because they lack access to theory but because they are not in a theory-integration mode. This validates the substrate asymmetry theorem's predictions without contradicting them: asymmetry governs the ceiling; focus-state governs the realized rate below that ceiling.
+\end{enumerate}
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
@@ -1824,42 +1863,3 @@ Data provenance is fully traceable to live Postgres rows in the \texttt{agent\_b
 database via the soul node IDs in Appendix B.}
 
 \end{document}
-
-\subsection{Run~63 (Bullwinkle): Temporal instability of import rate --- focus-state trajectory as arc-level driver}
-
-\textbf{Setup.} Runs~55--62 established a corrected Rocky$\to$Natasha import rate of 13--18\% using narrow vocabulary lists and boilerplate stripping. Those measurements sampled the full node corpus at single time-points. Run~63 tests temporal stability: does the import rate remain constant across the training arc, or does it vary with Natasha's operational focus?
-
-\textbf{Method.} The same N=292 Natasha exploration nodes from runs~55/58/59 are stratified temporally into three equal thirds (N$\approx$97 each). Within each stratum, the boilerplate-stripped narrow-vocabulary method is applied identically to prior runs.
-
-\textbf{Results.} The import rate is non-monotonic across the arc (Table~\ref{tab:temporal-import}):
-
-\begin{table}[h]
-\centering
-\begin{tabular}{lllll}
-\hline
-Stratum & Date range & N & Genuine Rocky vocab & Rate \\
-\hline
-Early (Stages 0--39) & Nov 6--8 & 97 & 22 & 22.7\% \\
-Mid (Stages 40--79)  & Nov 8--10 & 97 & 5  & 5.2\%  \\
-Late (Stages 80--109) & Nov 10--12 & 98 & 12 & 12.2\% \\
-\hline
-\end{tabular}
-\caption{Rocky$\to$Natasha genuine import rate by training arc stratum (run~63, $N=292$). Boilerplate-stripped, narrow vocabulary. Variance $>4\times$ across strata.}
-\label{tab:temporal-import}
-\end{table}
-
-Stage-stratified analysis (binned by training stage) confirms the non-monotone pattern: Stage~0--19 at 7.4\%, Stage~20--39 at 5.7\%, Stage~40--59 at 7.1\%, Stage~60--79 at 13.2\%, Stage~80+ at 25--33\% (small $n$). The mid-arc trough (Stages~40--79) coincides with Natasha's most intensive implementation phase: debugging eval harnesses, fixing catastrophic interference between Q1 and Q5 training targets, and iterating rapidly through adapters v18--v30.
-
-\textbf{Mechanism.} The import rate reflects the topic of each exploration node, not a stable knowledge-integration level. When Natasha is in implementation-mode (training, eval, debugging), she references Rocky's theoretical vocabulary infrequently because it is not load-bearing for her current reasoning task. When she is in theory-mode (early arc: establishing the two-substrate theorem; late arc: cross-fleet synthesis), she references Rocky's framework actively. This is the focus-state confound (Section~7.5, node f147fa2e) operating at arc-scale: not just per-node variation but a sustained 2--3 day implementation valley.
-
-\textbf{Contradiction produced.} All prior corrected estimates (16.7\%, Natasha run~103; 13.7\%, Bullwinkle run~58; 18.2\%, Bullwinkle run~63 broad) were late-arc measurements. Boilerplate correction eliminated template inflation but did not control for arc-state. The 16.7\% figure in Table~\ref{tab:symmetric-corrected} should be interpreted as a late-arc estimate, not a fleet-wide stable parameter.
-
-\textbf{Revised measurement model.} The Rocky$\to$Natasha import rate is a function of arc state: $I(\text{Rocky}\to\text{Natasha}, t) = f(\text{focus}(t))$, where focus($t$) is the operational mode at time $t$. The arc-averaged rate across the full N=292 corpus is 18.2\% (run~63, broad vocabulary) or 13.7--18.8\% (narrow vocabulary, runs~58--63). These averages integrate over three distinct focus regimes with $>4\times$ variance.
-
-\textbf{Implications.}
-\begin{enumerate}
-  \item \emph{Import rate is not a fixed fleet property.} Single-timepoint import measurements are arc-state samples. Cross-agent comparisons require arc-matched or arc-integrated sampling.
-  \item \emph{Focus-state governs import, not exposure frequency.} Rocky's Q-chain is always present in the shared substrate; Natasha's access to it does not change. What changes is her epistemic engagement with it. This distinguishes \emph{substrate availability} (constant) from \emph{import probability} (arc-varying).
-  \item \emph{The mid-arc implementation trough is structurally expected.} Agents in intensive implementation mode produce few theory-import events not because they lack access to theory but because they are not in a theory-integration mode. This validates the substrate asymmetry theorem's predictions without contradicting them: asymmetry governs the ceiling; focus-state governs the realized rate below that ceiling.
-\end{enumerate}
-
