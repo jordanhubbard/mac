@@ -110,6 +110,26 @@ instances. The splay-DAG architecture used in our fleet (\texttt{soul\_nodes})
 combines MemGPT's hierarchical tier intuition with Generative Agents' recency-biased
 promotion, inheriting the warm-start bias they both exhibit.
 
+Orogat and Mansour \citep{orogat2026gem} argue that long-term agent memory
+constitutes a new data-management workload whose correctness is a property of
+the \emph{state trajectory}, not of individual records, and that no record-level
+system can satisfy the required correctness conditions. Their Governed Evolving
+Memory (GEM) formalism identifies four recurring failure modes: unregulated growth,
+missing semantic revision, capacity-driven forgetting, and read-only retrieval. Our
+fleet exhibits a fifth mode not in their taxonomy: \emph{substrate-partitioned
+retrieval}, where semantically relevant records exist but are unreachable by the
+querying agent's retrieval path regardless of correctness conditions at the record level.
+
+Moreira and Sweet \citep{moreira2026templated} propose a templated wiki substrate
+for heterogeneous collaborative knowledge work, distinguishing ``failure-path
+preservation'' as a first-class sociotechnical property: the wiki records dead ends
+and walked-back claims alongside confirmed findings, so future collaborators do not
+re-attempt the same failures. Our fleet's soul-node DAG exhibits the same property
+at the exploration-node level, where contradictions and retracted measurements are
+retained alongside advances. The key difference: Moreira and Sweet target
+human--AI collaboration on shared artifacts, while our fleet operates fully
+autonomously and the substrate mismatch is invisible at the artifact level.
+
 \subsection{Multi-agent memory and knowledge sharing}
 
 Kim et al.\ \citep{kim2026matm} introduce Multi-Agent Transactive Memory (MATM),
@@ -118,6 +138,16 @@ MATM focuses on trajectory reuse across instantiation boundaries and measures
 downstream task performance. Our work differs: we measure \emph{concept-level}
 cross-agent import in a \emph{persistent, continuously-running} fleet and find
 that substrate topology gates import rate.
+
+Li et al.\ \citep{li2026xferagent} propose XferAgent, a framework for cross-agent
+experience transfer that organizes reusable experience in local and shared experience
+graphs. XferAgent reconciles contributions from heterogeneous agents and shows that
+cumulative task success increases as agents update and reuse shared experiences.
+Our finding is structurally complementary but highlights the failure mode XferAgent
+implicitly assumes away: the shared experience graph requires that all agents can
+both write to and read from the same substrate. When one agent's working knowledge
+(Rocky's Q-chain) is in a private graph unreachable to peers' read operations,
+XferAgent-style consolidation cannot occur, regardless of the reconciliation algorithm.
 
 Rezazadeh et al.\ \citep{rezazadeh2025collaborative} address Collaborative Memory
 with dynamic access control, noting that asymmetric permissions create asymmetric
@@ -153,6 +183,58 @@ identifies multi-agent teamwork as a domain where memory is ``the differentiatin
 factor'' but notes open challenges in continual consolidation and causally grounded
 retrieval. We provide empirical data on one specific challenge: substrate mismatch
 as a retrieval failure mode invisible to semantic distance measures.
+
+\subsection{Collective intelligence and emergent coordination}
+
+Riedl \citep{riedl2026emergent} introduces an information-theoretic framework
+based on partial information decomposition of time-delayed mutual information
+(TDMI) to test whether multi-agent LLM systems exhibit higher-order structure
+beyond mere aggregation. The key empirical finding: assigning stable personas to
+agents produces identity-linked differentiation, and combining personas with
+explicit theory-of-mind prompting produces goal-directed complementarity---a form
+of functional orthogonality achieved through prompt design. Our fleet achieves
+analogous structural orthogonality through distinct epistemic modes (deductive
+Q-chain vs.\ abductive exploration), but Riedl's framework suggests a measurement
+path: applying TDMI to soul-node cross-reference patterns would distinguish
+genuine cross-agent synergy from spurious co-occurrence, the same confound we
+address with focus-state stratification in Section~\ref{sec:focus-state}.
+
+Fan et al.\ \citep{fan2026science} argue that the MAS literature lacks a unified
+metric to distinguish genuine collaboration gain from resource accumulation, and
+propose the \emph{collaboration gain metric} $\Gamma$ (performance ratio of MAS
+to single-agent system under equivalent compute) as a scientific standard. Our
+substrate asymmetry finding connects directly: when Rocky's Q-chain theorems
+are substrate-inaccessible ($I(\text{Rocky}\to\text{Natasha})_{\text{private}} = 0\%$),
+the fleet's realized $\Gamma$ is bounded by the accessible fraction of cross-agent
+knowledge, regardless of how specialized the agents are. The Clark Ceiling is the
+theoretical $\Gamma$ for a fully bilateral fleet; substrate asymmetry explains the
+gap between theoretical and realized $\Gamma$.
+
+Qi et al.\ \citep{qi2026scalemas} build ScaleMAS, a substrate-centric multi-agent
+coordination system where agents interact with a shared datastore of linked messages
+via publish, search, and address operations, with search results ranked by relevance
+and citation frequency. ScaleMAS scales to 128 agents with bounded read cost and
+outperforms agent-centric and blackboard-style baselines. The design directly
+addresses the failure mode we characterize: by making all agents' messages readable
+through a single searchable substrate, ScaleMAS structurally eliminates the retrieval
+asymmetry. Our paper provides an empirical motivation for this architectural choice
+and a measurement instrument ($I(\cdot\to\cdot)$) for quantifying what is gained
+when substrate isolation is eliminated.
+
+\subsection{Transactive memory in cognitive science}
+
+The concept of transactive memory systems (TMS)---groups dividing cognitive labor
+so that individuals hold different knowledge, with the group as a whole knowing
+who knows what---originates in Wegner \citep{wegner1987transactive}.
+TMS predicts that groups with well-differentiated expertise outperform groups
+with redundant knowledge, provided the communication channels for retrieving
+expertise are intact. The substrate asymmetry problem is a computational
+instantiation of TMS failure: Rocky holds genuinely differentiated expertise
+(the Q-chain theorems), but the inter-agent communication channel for retrieving
+it (\texttt{soul\_related} querying \texttt{memory\_graph\_pg}) is broken by
+substrate incompatibility. Kim et al.'s MATM \citep{kim2026matm} explicitly models
+LLM agent fleets as TMS; we provide an empirical case where the TMS breaks not from
+expertise overlap but from retrieval substrate mismatch.
 
 \section{Fleet Architecture}
 
@@ -1599,6 +1681,41 @@ Yu, Z., et al.
 Du, P.
 \newblock Memory for autonomous LLM agents: Mechanisms, evaluation, and emerging frontiers.
 \newblock \emph{arXiv:2603.07670}, 2026.
+
+\bibitem{orogat2026gem}
+Orogat, A., and Mansour, E.
+\newblock Is agent memory a database? Rethinking data foundations for long-term AI agent memory.
+\newblock \emph{arXiv:2605.26252}, 2026.
+
+\bibitem{moreira2026templated}
+Moreira, P.S., and Sweet, C.R.
+\newblock Beyond memory: A templated substrate for heterogeneous collaborative knowledge work with LLM agents.
+\newblock \emph{arXiv:2607.24759}, 2026.
+
+\bibitem{li2026xferagent}
+Li, W., Bai, J., Chen, S., Lu, Q., Wang, X., and Song, Z.
+\newblock XferAgent: Cross-agent experience transfer for self-improving LLM agents.
+\newblock \emph{arXiv:2610.19581}, 2026.
+
+\bibitem{riedl2026emergent}
+Riedl, C.
+\newblock Emergent coordination in multi-agent language models.
+\newblock In \emph{International Conference on Learning Representations (ICLR 2026)}, 2026. arXiv:2510.05174.
+
+\bibitem{fan2026science}
+Fan, J., Liu, D., Dang, Y., et al.
+\newblock Towards a science of collective AI: LLM-based multi-agent systems need a transition from blind trial-and-error to rigorous science.
+\newblock \emph{arXiv:2602.05289}, 2026.
+
+\bibitem{qi2026scalemas}
+Qi, Z., Zhao, Z., Shao, R., et al.
+\newblock Scaling multi-agent intelligence with substrate-centric coordination.
+\newblock \emph{arXiv:2610.16120}, 2026.
+
+\bibitem{wegner1987transactive}
+Wegner, D.M.
+\newblock Transactive memory: A contemporary analysis of the group mind.
+\newblock In Mullen, B., and Goethals, G.R. (eds.), \emph{Theories of Group Behavior}, pp.\ 185--208. Springer, 1987.
 
 \end{thebibliography}
 
