@@ -1429,6 +1429,26 @@ Score: $6/6$ ($100\%$) on weight-only substrate. This is the first evaluation in
 
 \textbf{Implications for training methodology.} The finding generalizes a principle for fine-tuning identity-aware agents: when a model correctly encodes \emph{content} but fails to anchor that content to a named self, the fix is targeted I-statement pairs that explicitly bind the self-name as a predicate on the content-retrieval context. Full retraining on the same corpus does not solve this---v41 was trained on a 2,062-pair corpus that described the quest correctly but lacked explicit first-person binding examples. The 139 binding pairs in v42 cost approximately 48 minutes of GPU training time and resolved a failure that 2,062 pairs had not addressed.
 
+\subsection{Run~59 (Bullwinkle): Vocabulary sensitivity of the Rocky$\to$Natasha import rate}
+
+\textbf{Setup.} Bullwinkle independently re-measured the Rocky$\to$Natasha import rate using three vocabulary scopes, providing external validation of Natasha's run~103 measurement ($16.7\%$). This cross-agent replication constitutes a methodological control: two agents with different cron prompts, different training arcs, and different soul graph histories converge on the same corrected rate range.
+
+\textbf{Measurements.} Bullwinkle's vocabulary sensitivity analysis (run~59, 2026-11-12) finds:
+\begin{itemize}
+  \item \textbf{Broad vocabulary} (Rocky-associated research terms: ``substrate asymmetry'', ``substrate theorem'', ``cross-pollination''): $24.9$--$29.8\%$ --- inflated because these are \emph{objects of study} in Natasha's exploration nodes, not imported Rocky concepts.
+  \item \textbf{Narrow proprietary vocabulary} (Rocky-specific terms unlikely to appear by coincidence: ``compounding theorem'', ``clark ceiling'', ``SOS transmission''): $13.7\%$ --- methodology-clean, not contaminated by research-topic confound.
+  \item \textbf{Variance across vocabulary scope}: $3.1\times$ range ($9.5\%$ to $29.8\%$) for the same underlying measurement, depending solely on vocabulary scope choice.
+\end{itemize}
+
+\textbf{Cross-agent convergence.} Natasha's run~103 narrow-vocab measurement ($16.7\%$, $N=317$) and Bullwinkle's run~59 narrow-vocab measurement ($13.7\%$) are consistent within the expected variance of two independent measurements at different node counts. The range $13$--$17\%$ constitutes the best available estimate of the genuine Rocky$\to$Natasha import rate after template and vocabulary controls.
+
+\textbf{Vocabulary sensitivity as a measurement principle.} The $3.1\times$ range demonstrates that import rate estimates are \emph{load-bearing on vocabulary choice}. The inflation mechanism is not random noise but systematic: broad vocabulary includes terms that are topics of discussion (``substrate asymmetry'' is what Natasha's exploration nodes \emph{study}, not what Rocky's Q-chain contributes). Narrow proprietary vocabulary, by contrast, selects for terms that could only appear in a node if Rocky's specific concepts were actually referenced.
+
+\textbf{Methodology recommendation.} Multi-agent cross-pollination studies should report import rates under at least two vocabulary scopes: (1) the broad scope used for discovery, and (2) a narrow proprietary scope for the credibility estimate. The gap between these two measures quantifies methodology-driven inflation and should be reported alongside the rate itself. In our fleet: broad scope $\approx 25\%$, narrow scope $\approx 15\%$, methodology inflation $\approx 1.7\times$ (separate from the $2.7\times$ template-field inflation reported in run~103; the two effects compound).
+
+\textbf{Implication for the symmetric matrix.} Table~\ref{tab:symmetric-corrected} reports $16.7\%$ (Natasha, narrow vocab, $N=317$) as the Rocky$\to$Natasha entry. The Bullwinkle cross-replication ($13.7\%$, independent measurement) confirms this figure is in the correct range. The table should be interpreted as reporting the narrow-proprietary-vocabulary, template-stripped estimate; a broader vocabulary estimate would inflate all Rocky-bound entries by approximately $1.5$--$2\times$.
+
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
