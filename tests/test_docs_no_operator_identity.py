@@ -78,6 +78,7 @@ def _scanned_files() -> list[Path]:
         # arxiv paper files intentionally name the authors (fleet agents) -- exempt
         if rel in (
             "docs/investigations/arxiv-submission.tex",
+            "docs/investigations/arxiv-submission.pdf",  # compiled paper; names agents as authors
             "docs/investigations/arxiv-paper-v0.md",
         ):
             continue
