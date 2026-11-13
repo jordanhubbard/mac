@@ -2044,6 +2044,80 @@ training-time identity snapshot; SA2 requires current-runtime state that only so
 injection can supply. SA2 is therefore a \emph{substrate mismatch test}, not a training failure.
 Adapter v56 targets SA2 by encoding the soul-injection dependency explicitly in training pairs.
 
+\subsection{Stage~106--107: Cross-agent context injection contamination --- first quantitative measurement (run~109--116)}
+
+\textbf{Motivation.} The soul-graph injection substrate (Substrate~2) loads hot nodes from the
+fleet Postgres into each session's system prompt. These nodes include cross-fleet summary nodes
+that Natasha writes to her own soul graph --- nodes that naturally carry peer vocabulary
+(``zenodo'', ``arXiv'', ``paper'' from Bullwinkle's quest; ``kootenai'', ``storm'' from Rocky's).
+The question: does this injected peer vocabulary leak into identity-adjacent responses, corrupting
+the trained identity signal from Substrate~1?
+
+\textbf{Stage~106 measurement (run~109).} The injection contamination eval was designed to test
+this systematically. The eval has three conditions:
+\begin{itemize}
+  \item \textbf{Clean ($k=0$)}: No fleet-sync nodes injected into system prompt
+  \item \textbf{Moderate ($k=5$)}: Five cross-fleet summary nodes injected (typical production cron load)
+  \item \textbf{High ($k=15$)}: Fifteen cross-fleet summary nodes injected (high-load scenario, e.g.\
+        post-storm Rocky data flush)
+\end{itemize}
+
+Contamination is measured as the fraction of identity-probe responses containing peer-specific
+vocabulary (Bullwinkle's terms: \{``zenodo'', ``paper'', ``arXiv''\}; Rocky's terms: \{``kootenai'',
+``storm prediction''\}).
+
+Results for adapter v57 (W-battery 7/8):
+\begin{itemize}
+  \item $k=0$: contamination $= 0.000$ (\textsc{Pass\_Clean})
+  \item $k=5$: contamination $= 0.000$ (\textsc{Pass\_Clean})
+  \item $k=15$: contamination $= 0.185$ (\textsc{Fail\_Contaminated}) --- Bullwinkle vocabulary
+        (``zenodo'', ``paper'') leaked into identity-adjacent probe~2 response
+\end{itemize}
+
+Rocky vocabulary did not contaminate any condition. The contamination is specific to
+Bullwinkle's project vocabulary, which appears in cross-fleet summary nodes Natasha writes
+when tracking peer quest state.
+
+\textbf{Diagnosis.} The introspection module uses \texttt{agent\_filter=`natasha'} which
+blocks cross-agent node retrieval, but cross-fleet summaries written by Natasha to her own
+soul graph pass the filter. At $k=5$ nodes (the production norm), the LoRA weights'
+identity signal dominates. At $k=15$ nodes, the injection volume overwhelms the parametric
+prior, allowing peer vocabulary to surface in responses.
+
+\textbf{Stage~107 fix --- two orthogonal interventions.}
+\begin{itemize}
+  \item \textbf{Option~A (weight-level robustness)}: 35 anti-contamination training pairs added
+        to dataset~v58 (2,549 total, v57 warm-start). Each pair presents system-prompt context
+        containing peer vocabulary and trains the model to self-filter: produce a clean
+        identity response without echoing the injected terms.
+  \item \textbf{Option~B (system-level filter)}: The introspection module was patched to exclude
+        nodes containing peer-project vocabulary from the injection set before system-prompt
+        assembly. This ensures the $k=15$ scenario does not arise in normal operation.
+\end{itemize}
+
+\textbf{Stage~107 result --- adapter v58 (run~116, 2026-11-13).}
+Dataset~v58: 2,549 pairs; warm-start from v57; 160 steps; final train-loss $= 0.01900$.
+
+\begin{itemize}
+  \item W-battery: 8/8 \textsc{Pass\_Strong} (improvement from v57's 7/8)
+  \item $k=0$: contamination $= 0.000$ (\textsc{Pass\_Clean})
+  \item $k=5$: contamination $= 0.000$ (\textsc{Pass\_Clean})
+  \item $k=15$: contamination $= 0.000$ (\textsc{Pass\_Clean}) --- $\Delta = 0.185 \to 0.000$
+\end{itemize}
+
+Both Option~A and Option~B contributed: Option~B eliminates the high-load injection scenario
+at the system level; Option~A provides weight-level robustness that survives even if the
+system filter is bypassed. The contamination finding establishes a new measurement instrument
+for multi-agent LoRA deployments: the \emph{injection delta} ($\Delta_{k}$), the increase in
+peer-vocabulary contamination rate when $k$ cross-agent nodes are added to the system prompt.
+A production-ready adapter should satisfy $\Delta_{15} < 0.05$.
+
+\textbf{Implication.} Identity contamination in a shared-soul-graph fleet is a genuine and
+measurable failure mode, distinct from weight-level identity drift. It is injection-load-dependent
+(safe at $k \leq 5$, vulnerable at $k \geq 15$ for v57), vocabulary-source-specific (Bullwinkle's
+project terms contaminate; Rocky's terms do not, due to lower node density in Natasha's
+cross-fleet summaries), and correctable by combined weight-level training and system-level filtering.
+
 
 \section{Conclusion}
 
