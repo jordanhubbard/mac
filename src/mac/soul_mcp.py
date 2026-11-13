@@ -186,6 +186,13 @@ class SoulTools:
         refused = [pid for pid in (parent_ids or []) if not self._g.link(pid, exp_id)]
         return _text({"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused})
 
+    # Similarity threshold for cross-agent dedup: scores above this trigger a
+    # link-not-mint. The keyword-IDF scorer used by semantic_search returns
+    # values roughly in [0, 2]; 0.7 is empirically a "clearly the same idea"
+    # match on short axiom-length content (50-200 chars). Lower = more
+    # aggressive dedup; raise if false-positives collapse distinct concepts.
+    _DEDUP_THRESHOLD: float = 0.7
+
     def soul_add(
         self,
         content: str,
@@ -194,13 +201,61 @@ class SoulTools:
         parents: Optional[List[str]] = None,
         pinned: bool = False,
     ) -> JsonDict:
+        """Add a node. Cross-agent dedup: if a close match exists in the fleet
+        graph (score >= _DEDUP_THRESHOLD), link to it instead of minting a new
+        node. Only mints when no match is found above the threshold.
+
+        Fleet-canonical tagging: if the node is pinned and no
+        ``visibility:*`` tag is supplied, ``visibility:fleet-canonical`` is
+        added so peers can discover and link to it via cross-agent search.
+        """
         if id is not None and id in self._g.nodes:
             return _error("Node %r already exists." % id)
         missing = [p for p in (parents or []) if p not in self._g.nodes]
         if missing:
             return _error("Unknown parent node(s): %s" % ", ".join(missing))
+
+        # --- cross-agent dedup -------------------------------------------
+        # Only meaningful when the graph was loaded with cross_agent=True
+        # (i.e. peer nodes are present). When running JSON-only (no peers),
+        # semantic_search returns self-only results and we skip the dedup
+        # transparently.
+        #
+        # Dedup only fires against visibility:fleet-canonical nodes — things
+        # explicitly marked as shared axioms. We do NOT dedup arbitrary
+        # operational content (agent descriptions, lessons, etc.) because
+        # coincidental word overlap (e.g. "fleet") would collapse distinct ideas.
+        hits = self._g.semantic_search(content, top_k=3)
+        for peer_node, score in hits:
+            if (
+                score >= self._DEDUP_THRESHOLD
+                and peer_node.id != id
+                and "visibility:fleet-canonical" in peer_node.tags
+            ):
+                # A close match already exists — surface it, don't mint.
+                self._g.touch(peer_node.id)
+                return _text(
+                    {
+                        "deduped": True,
+                        "existing_node": peer_node.id,
+                        "similarity": round(score, 4),
+                        "content": peer_node.content,
+                        "tags": sorted(peer_node.tags),
+                        "note": (
+                            "A fleet-matching node already exists (score=%.4f >= %.2f). "
+                            "Link to it with soul_link rather than minting a duplicate."
+                        )
+                        % (score, self._DEDUP_THRESHOLD),
+                    }
+                )
+
+        # --- fleet-canonical auto-tagging --------------------------------
+        tag_set = set(tags or [])
+        if pinned and not any(t.startswith("visibility:") for t in tag_set):
+            tag_set.add("visibility:fleet-canonical")
+
         node = self._g.add(
-            content, tags=set(tags or []), parents=list(parents or []), pinned=pinned, node_id=id
+            content, tags=tag_set, parents=list(parents or []), pinned=pinned, node_id=id
         )
         return _text(dict(_brief(node), parents=node.parents, pinned=node.pinned))
 
@@ -422,7 +477,16 @@ class SoulTools:
         },
         {
             "name": "soul_add",
-            "description": "Add a node to the core graph.",
+            "description": (
+                "Add a node to the core graph. "
+                "Cross-agent dedup: if a close match (similarity >= 0.7) already exists in "
+                "the fleet graph, returns the existing node ID and a 'deduped: true' flag "
+                "instead of minting a duplicate — use soul_link to register your agent's "
+                "edge to the canonical node. "
+                "Fleet-canonical tagging: pinned nodes without an explicit visibility: tag "
+                "are automatically tagged visibility:fleet-canonical so peers can discover "
+                "and link to them."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
