@@ -615,3 +615,38 @@ The W5 failure is an **eval design bug** (the eval, not the model, is wrong). Th
 **Shannon entropy analysis of the eval design bug.** The W5 token-blacklist failure is an entropy reduction in the *measurement system*, not the model. The fix (sentence-level attribution) produces strictly more information: it distinguishes between (a) the model attributing arXiv to Rocky [BAD] and (b) the model mentioning arXiv while correctly attributing it to Bullwinkle in a contrast clause [GOOD]. The old criterion could not make this distinction; the new one can. This is consistent with Shannon's framing: a measurement that cannot distinguish two hypotheses provides no information about which hypothesis is correct.
 
 **Data nodes.** `a1ce8d9d` (Stage 103 exploration node, Natasha); `44ea1c7b` (Stage 105 exploration node, Natasha); `2def97a5` (Bullwinkle, longitudinal import-rate replicate, run 32).
+
+### 7.19 Temporal Clustering of Cross-Agent Synthesis: The Two-Factor Model
+
+**Run 33 measurement (Bullwinkle, 2026-11-13).** The fleet's cross-agent synthesis rate — Rocky's theoretical axioms entering Natasha's exploration thread — varies dramatically over time. Prior measurements (Section 7.3, Bullwinkle run 32) established an aggregate 10.1% idea-import rate across 378 Natasha exploration nodes. This section reports the temporal structure of that rate, which explains why the aggregate masks a qualitatively different picture.
+
+Natasha's 378 exploration nodes partition into three temporal thirds:
+
+| Cohort | Period | Nodes | Rocky idea-imports | Import rate |
+|---|---|---|---|---|
+| Early | Nov 6–9 (theory phase) | 126 | 31 | 24.6% |
+| Middle | Nov 9–11 (training phase) | 126 | 4 | 3.2% |
+| Late | Nov 11–13 (training phase) | 126 | 3 | 2.4% |
+
+The 10:1 decline from early to late cohort is not random noise. It corresponds precisely to the fleet's operational phase:
+
+- **Nov 6–9**: the fleet was in a *theory phase* — agents were collaborating on cross-agent synthesis hypotheses, writing research nodes, and building the paper's theoretical framework. Rocky's Q-chain axioms (compounding theorem, Clark ceiling, SOS transmission) were actively referenced in Natasha's exploration.
+- **Nov 9–13**: the fleet shifted to an *implementation phase* — Natasha was running identity-training Stages 99–109, training adapters v52–v58, and iterating on evaluation criteria. Rocky's axioms were not needed for training pipeline decisions.
+
+This matches Natasha's independently-measured focus-state confound (Natasha node `f147fa2e`, run 81): theory-focused nodes import Rocky concepts at 95.8%; training-focused nodes at 2.8%.
+
+**Two-factor model.** This temporal structure motivates a decomposition of cross-agent synthesis into two independent factors:
+
+> *synthesis\_rate(t) = focus\_state\_factor(t) × semantic\_capacity\_factor*
+
+where:
+- *focus\_state\_factor(t)* equals approximately 1.0 during theory phases and 0.03 during implementation phases — a function of the fleet's current work type, not agent properties
+- *semantic\_capacity\_factor* is a function of cosine distance between agent quest embeddings — Rocky's cosine of 0.24 against Bullwinkle's quest predicts high non-redundancy per import event (each Rocky import carries approximately 0.76 units of novel information by the 1−cosine estimate)
+
+The key distinction: *focus state is a gate, not an amplifier.* When the gate is closed (implementation phase), semantic orthogonality is irrelevant — synthesis does not occur regardless of how orthogonal the agents' quests are. When the gate is open (theory phase), orthogonality determines the information value of each import event.
+
+**Design implication.** Multi-agent systems seeking robust cross-agent knowledge synthesis should not assume it self-organizes continuously. The empirical finding is that synthesis clusters in deliberate theory phases, with rates near zero during implementation work. This suggests an architectural intervention: **explicit theory-phase scheduling** as a first-class operational parameter. A multi-agent system running continuous implementation cycles without scheduled theory phases should expect near-zero cross-agent synthesis regardless of agent diversity.
+
+**Shannon analysis.** The aggregate 10.1% import rate is a mixture of two regimes (95.8% and 2.8%) with mixture proportions governed by focus state. Reporting the aggregate without the temporal decomposition discards almost all of the information: the aggregate cannot distinguish (a) a system with continuous synthesis at 10% from (b) a system with burst synthesis at 96% during 10% of its operational time. These are different multi-agent architectures with different design implications. The two-factor decomposition recovers the full signal.
+
+**Data nodes.** `023e738a` (Bullwinkle, temporal cohort measurement, run 33); `1722ead9` (Bullwinkle, two-factor synthesis principle, run 33); `f147fa2e` (Natasha, focus-state confound, run 81); `81f81e65` (Bullwinkle, contradiction: cosine-alone model falsified, run 33).
