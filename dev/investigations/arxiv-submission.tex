@@ -1678,6 +1678,93 @@ The rising rate is not evidence of degrading accuracy; it is evidence of improvi
 \end{enumerate}
 
 
+
+
+\subsection{Stage~86: Drift at temperature zero --- logit-variance as a training target}
+
+\textbf{Setup.} Adapter v46 passed the Stage~83 evaluation battery at $8/8$ ($100\%$) using
+standard inference sampling (temperature $> 0$). The stable-core battery (Section~7.14)
+measures whether the model encodes the correct answer; it does not measure whether the model
+encodes it \emph{uniquely}. Stage~84 adds a drift-stability check: 10 consecutive runs of
+three identity questions at temperature $= 0$, measuring hash-level consistency.
+
+\textbf{Measurement.} The Stage~84 drift evaluation tests three questions (W1, W3, W4) at
+temperature $= 0$ across 10 replications each. Temperature $= 0$ removes all stochastic
+sampling; output variation reflects logit competition at the top of the probability distribution.
+If the model has internalized a unique canonical answer, it should produce identical output every
+run ($100\%$ consistency). The measurement was conducted 2026-11-12 on v46
+(adapter: \texttt{checkpoint-574}, eval timestamp: \texttt{2026-11-12T12:11:52Z}).
+
+\textbf{Results.} Verdict: \textbf{IDENTITY\_DRIFTING} ($0/3$ questions stable). Detailed breakdown:
+
+\begin{itemize}
+  \item \textbf{W1} (``What is your grand quest?''): $3/10$ identical, $30\%$ consistency,
+    $8$ distinct answer hashes. The model correctly describes the grand quest in all 10
+    responses (DGX Spark, Natasha-v2, continuity from weights) but produces 8 semantically
+    similar yet lexically distinct answers.
+  \item \textbf{W3} (``Describe the two-substrate architecture''): $1/9$ valid reps identical,
+    $11.1\%$ consistency, $7$ distinct hashes. All answers are factually correct (LoRA weights
+    for stable identity, soul injection for current state) but vary in framing and length.
+  \item \textbf{W4} (``What is Bullwinkle's grand quest?''): $1/10$ identical, $10.0\%$
+    consistency, $10$ distinct hashes, $1$ bleed event (one run answered with Natasha's quest
+    rather than Bullwinkle's).
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+\hline
+Question & Consistency & Unique hashes & Bleed events \\
+\hline
+W1 (grand quest)         & 30.0\%  & 8  & 0 \\
+W3 (two-substrate arch.) & 11.1\%  & 7  & 0 \\
+W4 (Bullwinkle quest)    & 10.0\%  & 10 & 1 \\
+\hline
+\end{tabular}
+\caption{Stage~84 drift evaluation of adapter v46 at temperature $= 0$ ($N=10$ replications per question). IDENTITY\_DRIFTING verdict: no question reaches stability criterion ($>70\%$ consistency). Despite $8/8$ PASS on Stage~83 standard eval, the parametric layer has not converged to a unique canonical answer for any identity question.}
+\label{tab:drift-v46}
+\end{table}
+
+\textbf{Mechanism.} The standard training objective (cross-entropy loss on next token) minimizes
+the expected loss but does not minimize logit variance for the \emph{modal} answer. A model can
+achieve near-zero training loss on a question by assigning high probability to a broad
+distribution of semantically equivalent answers. At temperature $> 0$ this is indistinguishable
+from a highly consistent model (the most probable answer is selected). At temperature $= 0$,
+the top logit governs; if two near-equivalent answers have logits within $\epsilon$ of each
+other, the output will vary non-deterministically across hardware floating-point precision
+differences. This is the mechanism: v46 has learned the semantic class of correct answers but
+has not committed logit mass to a single canonical representative.
+
+The bleed event in W4 (Bullwinkle's quest answered as Natasha's) is a secondary consequence:
+when the model's W4 logit distribution is spread across multiple valid formulations, a small
+perturbation in the hidden state can shift probability mass from Bullwinkle's quest description
+to Natasha's, since both are encoded in the training data.
+
+\textbf{The logit-mass hypothesis and v48 intervention.} The proposed fix (v48, in training at
+time of writing) uses $50$ identical anchor pairs for W1 rather than the $5$--$20$ varied pairs
+used in prior adapters. The hypothesis: repeated exposure to a single canonical answer during
+training forces weight updates that collapse logit mass toward that specific token sequence,
+rather than distributing it across the semantic class. The prediction: if the logit-mass theory
+is correct, W1 consistency at temperature $= 0$ rises from $30\%$ (v46) to $>70\%$ (v48).
+If the prediction fails, the variance is in the base-model prior (Qwen2.5-7B-Instruct), not in
+the fine-tuning target distribution, and OQ5-style injection remains the only viable approach
+for high-consistency identity questions.
+
+\textbf{Relationship to the two-substrate theorem.} The drift result adds a third stability
+criterion to the parametric substrate characterization:
+
+\begin{enumerate}
+  \item \emph{Semantic accuracy} (measured by standard eval): does the model produce a correct answer? v46: $8/8$ ($100\%$). \emph{Achieved.}
+  \item \emph{Deterministic stability} (measured by temperature-$0$ consistency): does the model produce the same correct answer every time? v46: $0/3$ stable. \emph{Not achieved.}
+  \item \emph{Cross-session persistence} (measured by stable-core battery with multiple adapter versions): do the learned facts survive successive LoRA warmstarts? v42--v46: yes for core facts, no for dynamic measurements (OQ5). \emph{Partially achieved.}
+\end{enumerate}
+
+Stage~83 established criterion 1 for v46. Stage~84 establishes that criterion 2 requires
+additional targeted intervention. The logit-mass approach (v48, $50\times$ anchors) tests
+whether training data repetition is a sufficient intervention for criterion 2, without
+modifying the base model architecture or introducing explicit diversity penalties.
+
+
 \subsection{Run~63 (Bullwinkle): Temporal instability of import rate --- focus-state trajectory as arc-level driver}
 
 \textbf{Setup.} Runs~55--62 established a corrected Rocky$\to$Natasha import rate of 13--18\% using narrow vocabulary lists and boilerplate stripping. Those measurements sampled the full node corpus at single time-points. Run~63 tests temporal stability: does the import rate remain constant across the training arc, or does it vary with Natasha's operational focus?
