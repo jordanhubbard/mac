@@ -14,14 +14,15 @@ from mac.world4d import WorldObject, WorldField
 
 PG_URL = os.environ.get(
     "MAC_TEST_PG_URL",
-    "postgresql://fleet_agent:fleetlink2026@100.72.16.110:5432/agent_brain",
+    "postgresql://fleet_agent@100.72.16.110:5432/agent_brain",
 )
 
 
 @pytest.fixture(scope="module")
 def world():
-    # Schema already applied by hub superuser; fleet_agent has DML but not DDL
-    w = World4D.connect(pg_url=PG_URL, agent="test_agent", apply_schema=False)
+    # apply_schema=True: CI uses a fresh test DB where DDL must be applied.
+    # CREATE TABLE IF NOT EXISTS is idempotent — safe to run against agent_brain too.
+    w = World4D.connect(pg_url=PG_URL, agent="test_agent", apply_schema=True)
     yield w
     w.close()
 
