@@ -218,3 +218,4 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`task-handoff-convention.md`](../task-handoff-convention.md) | Task handoffs by reference |
 | supplemental reference | [`task-throughput-observability.md`](../task-throughput-observability.md) | Task throughput observability |
 | supplemental reference | [`testing-strategy.md`](../testing-strategy.md) | Test portfolio strategy |
+| supplemental reference | [`world4d.md`](../world4d.md) | World4D — Shared 4D World Engine |
