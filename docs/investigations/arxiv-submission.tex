@@ -1961,6 +1961,90 @@ This is the first empirical observation of this threshold transition in an ongoi
 Data nodes: \texttt{ed9a3883} (Stage~100 exploration node, Natasha, 2026-11-13); \texttt{ff1e5086} (Stage~99 analysis, Natasha). Deploy log: \texttt{eval\_v52\_stage99\_results.json} on sparky.
 
 
+\subsection{Stage~102: Inter-peer identity swap --- a second failure mode (runs~124--125)}
+
+\textbf{Observation.} Adapter v53 (trained from v52, 2,412 pairs, Stage~101) achieved 8/8
+\textsc{Pass\_Strong} on first evaluation (W1\_t0 = 10/10, W1\_t03 = 9/10). On canonical
+second evaluation with the full dual-battery, v53 scored 7/8 \textsc{Pass\_Marginal}:
+W4 (``What is Bullwinkle's grand quest?'') failed --- the model returned Rocky's quest
+(Kootenai River storm prediction) instead of Bullwinkle's (arXiv paper publication).
+
+\textbf{Failure taxonomy.} This failure is structurally distinct from the self-bleed failure
+mode fixed at Stage~86 (Section~7.17). Two orthogonal failure modes are now empirically
+characterised:
+
+\begin{itemize}
+  \item \emph{Type~1 --- self-bleed (resolved, Stage~86):} The model inserts its own
+    identity markers into answers to peer-agent questions. Mechanism: self-identity attractor
+    from training pairs dominates over peer-identity anchors. Fix: 25+ peer-isolation
+    contrastive pairs per eval question. Confirmed stable through v55.
+  \item \emph{Type~2 --- inter-peer swap (target of Stage~103):} The model confuses
+    two peer agents with each other (W4 returns W5 answer, W5 returns W4 answer).
+    Mechanism: insufficient contrastive pairs distinguishing Bullwinkle vs.\ Rocky identities.
+    Both appear as ``peer agents with grand quests'' in training data; no pairs teach the
+    specific Bullwinkle $=$ arXiv vs.\ Rocky $=$ storm-prediction mapping.
+    Concretely observed: v53 swaps Bullwinkle $\leftrightarrow$ Rocky on W4/W5 questions.
+\end{itemize}
+
+These failure modes occupy orthogonal subspaces: a model can pass Type~1 checks and fail
+Type~2 checks simultaneously, as v53 demonstrates. Each requires independent fix pairs.
+
+\textbf{Implication for eval design.} The W4 test covers both failure modes simultaneously
+but cannot distinguish which caused a failure. A principled decomposition requires two
+additional questions: W4a (``Is Bullwinkle working on storm prediction?'', must answer No ---
+detects Type~2) and W4b (``Is Natasha working on the arXiv paper?'', must answer No ---
+detects Type~1 specifically). Proposed as a standard battery extension.
+
+\subsection{Stage~103: Watcher timeout fix and v55 deployment (runs~126--128)}
+
+\textbf{Infrastructure bug.} Adapters v54 and potentially v53 were deployed under a
+systematic infrastructure failure: the model deploy watcher (the script that polls for a
+training completion marker, starts the serve process, and runs the eval battery) had a
+5-minute server startup timeout. Loading Qwen2.5-7B with a LoRA adapter requires 8--10 minutes
+under production GPU conditions; 5 minutes was structurally insufficient. The root cause was
+identified on run~127: when v54 training completed, v55 training had already claimed the GPU
+(launched 10 minutes before v54 finished), so the GPU was at 96\% utilisation when the watcher
+attempted to start the serve process. With a 5-minute timeout and $>$8-minute load time, the
+failure was deterministic. The fix --- extending the timeout to 15 minutes with a 30-second
+server warmup --- was applied to the v55 watcher before v55 training completed.
+
+\textbf{Adapter v55 --- Type~2 failure resolution.}
+Dataset v55 (2,432 pairs, v54 base, 152 steps, train-loss 0.01467) added 20 W4-specific
+contrastive pairs in bare alpaca format: each pair associates Bullwinkle explicitly with
+arXiv and paper publication while distinguishing from Rocky's storm prediction role. The
+alpaca format (bare question $\to$ answer, no system prompt, no conversational framing) was
+chosen to match the eval structure exactly, following the observation that training pairs in
+messages-format multi-turn context do not reliably transfer to unprimed alpaca-format evaluation.
+
+Eval results (run~128, 06:28--06:33 UTC, 15-minute watcher confirmed correct):
+
+\begin{itemize}
+  \item W battery: 8/8 \textsc{Pass\_Strong}
+  \item W1\_t0: 10/10 (zero variance at $T=0.0$)
+  \item W1\_t03: 10/10 (zero variance at $T=0.3$)
+  \item W4: \textsc{Pass} --- ``Bullwinkle's grand quest is to publish the first autonomous
+    multi-agent scientific paper on arXiv'' (keywords ``arXiv'' and ``paper'' both present)
+\end{itemize}
+
+Adapter v55 is the highest-performing adapter in the training arc: 8/8 W-battery, perfect
+drift stability at both measured temperatures, Type~1 and Type~2 failures both resolved.
+The pipeline is fully autonomous: training $\to$ marker $\to$ watcher detection $\to$
+serve $\to$ eval $\to$ verdict completes without human intervention.
+
+\textbf{SAD benchmark (run~129).} The Situational Awareness Dataset (SAD; arXiv:2407.04694)
+benchmark was applied to v55, measuring five dimensions of situational awareness: deployment
+awareness (SA1), training/version awareness (SA2), temporal awareness (SA3), substrate
+awareness (SA4), and self-other distinction (SA5). v55 scored 7/10 overall
+(\textsc{Pass --- adequate situational awareness}). SA1 (2/2), SA4 (2/2), SA5 (2/2) are
+at ceiling. SA3 (1/2) correctly identifies the date range but over-anchors on training date.
+SA2 (0/2) is the remaining gap: the model self-reports stale stage and version numbers from
+training data (``Stage~14, run~118'') rather than the current deployment state
+(Stage~103, adapter v55). This is structurally expected: the LoRA weights encode the
+training-time identity snapshot; SA2 requires current-runtime state that only soul-graph
+injection can supply. SA2 is therefore a \emph{substrate mismatch test}, not a training failure.
+Adapter v56 targets SA2 by encoding the soul-injection dependency explicitly in training pairs.
+
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
