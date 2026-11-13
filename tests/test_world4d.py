@@ -291,7 +291,7 @@ class TestPresence:
         return World4D.connect(
             pg_url=PG_URL,
             agent="test_presence_agent",
-            apply_schema=False,
+            apply_schema=True,  # CI may run TestPresence before module fixture; idempotent
         )
 
     def test_announce_creates_handle(self):
