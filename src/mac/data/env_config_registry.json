@@ -328,6 +328,7 @@
     "sources": [
       "deploy/systemd/mac.service",
       "scripts/escrow-upstream-key.sh",
+      "scripts/fleet_brain_bus_sync.py",
       "scripts/migrate-tokenhub-vault.sh",
       "src/mac/api.py",
       "src/mac/cli.py",
@@ -6530,6 +6531,7 @@
     "retired": false,
     "sources": [
       "deploy/mac-crash-observer.py",
+      "scripts/fleet_brain_bus_sync.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/credential_aliases.py",
