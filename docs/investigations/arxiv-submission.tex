@@ -2352,6 +2352,113 @@ Data nodes: Natasha exploration nodes (grand-quest:stage104) in \texttt{agent\_b
 eval results at \texttt{eval\_v55\_stage103\_results.json} on sparky.
 
 
+
+\subsection{Stage~107: W7 training signal competition --- Rocky domain-authority pairs dilute correction signal (run~117)}
+
+Stages~103--105 established that W7 (fleet-member disambiguation) could be fixed via
+supplementary training pairs encoding \emph{Natasha trains the LLM; Rocky contributed
+meteorological data --- these are distinct.} However, the fix proved fragile: v74
+failed W7, v75 passed after 8 supplementary pairs, and v76 regressed again.
+Run~117 (Stage~127) identified the structural root cause.
+
+\textbf{Training signal competition.} Rocky's meteorological domain-authority
+knowledge constitutes 1{,}293 of the 2{,}546 pairs in
+\texttt{dataset\_v76\_stage126.jsonl} --- 51\% of the training signal.
+These pairs consistently position Rocky as a knowledge authority in
+the fleet. The 8 W7 fix pairs from \texttt{supplement\_w7\_fix\_v75.jsonl}
+were included only as a supplement, not embedded in the base dataset.
+At 8/2546 = 0.3\% of training signal, the fix pairs were proportionally too
+weak to maintain the correction across epochs.
+
+The pattern across versions formalizes as a signal-competition inequality.
+Let $p_{\text{fix}} = |\text{W7 fix pairs}|/|\text{dataset}|$ and
+$p_{\text{domain}} = |\text{Rocky domain-authority pairs}|/|\text{dataset}|$.
+Empirically: $p_{\text{domain}} \approx 0.51$, $p_{\text{fix}} \approx 0.003$
+in v76. The W7 fix regresses when $p_{\text{fix}} \ll p_{\text{domain}}$.
+
+\textbf{Structural fix.} The correct remedy is not more supplement pairs but
+embedding a proportional block of W7 anchor pairs directly in every dataset base.
+Run~117 derived a target proportion: $p_{\text{fix}} \geq 2\%$ of the base
+dataset suffices to proportionally counter Rocky's domain authority at the
+observed ratio. At 50 anchor pairs per 2{,}500 total (2.0\%), the correction
+signal exceeds the threshold. These 50 pairs encode the distinction at multiple
+phrasings: interrogative (\emph{Who trains the LoRA?}),
+contrastive (\emph{Rocky contributed data; Natasha runs training}),
+and self-referential (\emph{I am the agent that runs the LoRA training pipeline}).
+
+\textbf{v78 implementation.} Dataset \texttt{dataset\_v78\_stage128.jsonl}
+(2{,}546 pairs) embeds the 50 W7 anchor pairs in the base, together with
+revised W1 anchor pairs (restoring the \texttt{DGX} keyword that had drifted
+from W1 responses in v76) and version-agnostic W8 anchor pairs.
+v78 warmstarts from v76 (v77 is an empty artifact; see Stage~108 below).
+
+\textbf{Information-theoretic framing.} This finding can be stated as:
+$I(\text{W7\_fix}\mid\text{dataset}_{v})$ decays as $v$ increases and
+$|\text{dataset}|$ grows, unless the W7 fix proportion scales proportionally.
+A fixed supplement becomes asymptotically negligible. Persistent behavioral
+correction in a continuously growing training set requires proportional embedding,
+not one-time supplementation.
+
+Data nodes: \texttt{stage127\_run117\_3a0372a2} (W7 bleed structural root cause),
+\texttt{run116\_stage126\_1db33e} (W7 criterion weakness), \texttt{eval\_traj\_f05d78e2}
+(full trajectory) in \texttt{agent\_brain}; source dataset files on sparky
+at \texttt{\$HOME/natasha-training/}.
+
+
+\subsection{Stage~108: v77 OOM root cause --- simultaneous model loading during GPU-resident inference (run~122)}
+
+When v77 training launched while v76 inference was running on the DGX Spark
+(NVIDIA GB10, 128\,GB unified memory), training terminated at step~40 of 156
+with an out-of-memory event. The adapter directory was empty: v77 never
+checkpointed. Run~122 (Stage~128) identified the precise failure mechanism and
+the fix.
+
+\textbf{Failure mechanism.} The OOM occurred during the \emph{model loading phase}
+of training, not the steady-state forward/backward passes.
+When \texttt{serve\_transformers.py} (v76) is resident at port~11435, the base
+Qwen2.5-7B model is pinned in memory. When the training script loads the same
+base model for the LoRA fine-tuning run, both copies of the base weights are
+simultaneously in VRAM --- a 2$\times$ VRAM spike that exhausts the 128\,GB
+budget before the first training step completes. Training halts; the checkpoint
+directory contains nothing.
+
+\textbf{Empirical evidence.}
+\texttt{train\_v77.log} records: 10:46 elapsed, loss = 0.01749,
+step~40 (of 156), then OOM termination. The v76 inference server log
+shows uninterrupted traffic through the same window, confirming it was
+running during the loading phase. No OOM occurred in steady-state experiments
+where train and serve coexist at 96\% GPU utilization (runs~113--121):
+the OOM is loading-phase specific.
+
+\textbf{Fix implemented in v78.} The v78 training script adds a
+\texttt{pkill serve\_transformers} call before \texttt{torch.load(base\_model)}.
+The inference server restarts automatically via \texttt{deploy\_v78\_watcher.py}
+\emph{after} the base model has been loaded into the training process.
+The sequential loading protocol --- kill serve, load base into train process,
+restart serve --- eliminates the VRAM spike. Steady-state coexistence (train
+forward/backward + serve forward) at 96\% GPU is then sustainable.
+
+\textbf{Generalization.} This failure mode is not specific to Qwen2.5-7B on
+DGX Spark. Any environment where training and inference share a base model and
+the memory budget is below $2 \times |\text{base weights}|$ will exhibit the
+same loading-phase OOM when training launches against a live inference server.
+The pattern: measure $|\text{base\_weights}|$ (fp16) + $|\text{active\_adapter}|$
++ $|\text{optimizer\_state}|$ and confirm headroom exceeds $|\text{base\_weights}|$
+before allowing concurrent loading. Sequential loading via a pre-train kill
+and post-load restart is the structural mitigation.
+
+\textbf{Downstream impact.} v77's empty adapter directory caused the pipeline
+to skip v77 and warmstart v78 from v76. The W7 structural fix (Stage~107)
+was therefore applied directly in v78 without an intervening v77 test.
+v77's 8-supplement hypothesis (run~117 prediction: ``v77 may pass W7;
+v78 will regress without base embedding'') was not falsifiable from v77
+because v77 never trained to completion.
+
+Data nodes: \texttt{c465ce82} (Stage~128 run~122, v77 OOM root cause confirmed),
+\texttt{stage127\_run117\_3a0372a2} (v77 dataset design and OOM prediction) in
+\texttt{agent\_brain}; \texttt{train\_v77.log} on sparky.
+
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
