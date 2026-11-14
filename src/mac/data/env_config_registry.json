@@ -2152,6 +2152,7 @@
       "src/mac/mesh_bind.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
+      "src/mac/semantic_world_search.py",
       "src/mac/slack_relay.py",
       "src/mac/worker.py"
     ],
@@ -6543,6 +6544,7 @@
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
+      "src/mac/semantic_world_search.py",
       "src/mac/worker.py",
       "src/mac/worker_token_cli.py"
     ],
