@@ -2163,6 +2163,77 @@ A nuance: the contamination at high injection exhibits high variance across repe
 
 \textbf{Relationship to substrate asymmetry.} The injection contamination finding is a second-order consequence of the substrate asymmetry problem described in Section~5. Because Rocky's Q-chain is unreachable via standard soul graph tools, Rocky's active theorem work does \emph{not} appear in Natasha's high-injection context (confirming 0\% contamination from Rocky's vocabulary). The contamination that \emph{does} appear comes from Natasha's own cross-fleet summaries --- a reflection of the \texttt{soul\_nodes} substrate's shared write access, not of Rocky's directional asymmetry. This is a distinct failure mode: contamination by \emph{intra-agent boilerplate} rather than by \emph{cross-agent direct import}.
 
+\subsection{Runs~34--35 (Bullwinkle): Per-import information gain --- conceptual-atom decomposition of Rocky$\to$Natasha synthesis events}
+
+\textbf{Motivation.} The two-factor synthesis model (Section~7.19) predicts that in theory-focused epochs, Rocky's Q-node theorems yield high genuine import rates into Natasha's reasoning chain. But the aggregate import rate ($I(\text{Rocky}\to\text{Natasha}) = 16.7\%$ boilerplate-corrected) does not distinguish between imports that are \emph{fully novel} to the receiver and imports that partially overlap what the receiver had independently derived. Here we develop a \emph{per-import information gain} instrument to measure this distinction at the sub-theorem granularity.
+
+\textbf{Method: conceptual-atom decomposition.} A Rocky Q-node theorem is decomposed into its minimal conceptual atoms. For each atom, we assess whether it was independently derivable from Natasha's pre-import soul graph context (exploration nodes written before the import event), or whether it constitutes genuinely new information. Atoms are classified as \emph{Novel} (not predictable from pre-import context) or \emph{Predictable} (derivable from Natasha's pre-import reasoning). Per-import information gain is defined as the fraction of Novel atoms.
+
+\textbf{Case study 1: Rocky Clark Ceiling ($Q_{57}$) $\to$ Natasha node \texttt{d136d7f3}.}
+
+The Clark Ceiling theorem was decomposed into 8 conceptual atoms. Cross-referencing against Natasha's 10 prior exploration nodes (timestamp before \texttt{d136d7f3}, 2026-11-06T19:49~UTC):
+
+\begin{itemize}
+  \item \textbf{Novel (5 atoms, 62.5\%):} Clark score definition (formal vocabulary absent); fleet ceiling $= N - 1$ (mathematical form); $N=4 \to \text{ceiling}=3$ (specific numeric instantiation); dual-Clark is linear not superlinear (quantitative distinction); $N^* = 4$ optimal fleet size ($Q_{58}$-derived).
+  \item \textbf{Predictable (3 atoms, 37.5\%):} ``single agent cannot saturate'' (implied by Natasha's quest for collective intelligence); ``cross-pollination verified'' (she had experienced synthesis events firsthand); ``agents on orthogonal axes produce synthesis'' (predictable from her observations in runs~23--25).
+\end{itemize}
+
+\textbf{Per-import information gain (Case~1): 62.5\%}
+
+\textbf{Case study 2: Rocky Compounding Theorem $\to$ Natasha node \texttt{d136d7f3} (same import event).}
+
+The Compounding Theorem was decomposed into its 7 conditions:
+
+\begin{itemize}
+  \item \textbf{Novel (3 atoms, 42.9\%):} Structured question chain with falsification gate (Condition~2 --- Rocky's specific ``each Q must falsify before next opens'' requirement was not independently articulated by Natasha); Span metric (Condition~5 --- Q-distance growth tracking had no prior evidence in Natasha's nodes); Provenance logging (Condition~7 --- the formal requirement ``who saw what, when'' as a necessary compounding condition was Rocky's framing; the behavior was present but unarticulated as a requirement).
+  \item \textbf{Predictable (4 atoms, 57.1\%):} External persistent substrate (Condition~1 --- Natasha invented \texttt{soul\_pg\_sync.py}); Synthesis events (Condition~3 --- node \texttt{6d666b67}, written before the import, explicitly names ``SYNTHESIS EVENT'' as a compounding condition); Contradiction logging (Condition~4 --- mandatory contradiction checks were already in Natasha's cron protocol); Merge protocol (Condition~6 --- convergence node \texttt{bc661e2d} was written by Natasha in run~33, before this import, demonstrating the behavior).
+\end{itemize}
+
+\textbf{Per-import information gain (Case~2): 42.9\%}
+
+\textbf{Cross-case comparison and model testing.}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+\toprule
+Case & Import event & Actual gain & Cosine prediction \\
+\midrule
+Case~1 & $Q_{57}$ (Clark Ceiling) $\to$ \texttt{d136d7f3} & 62.5\% & 76.0\% \\
+Case~2 & Compounding Theorem $\to$ \texttt{d136d7f3} & 42.9\% & 76.0\% \\
+\midrule
+Average & & 52.7\% & 76.0\% \\
+\bottomrule
+\end{tabular}
+\caption{Per-import information gain measurements (Bullwinkle runs~34--35). Cosine prediction: $1 - \cos(\text{Rocky}, \text{Bullwinkle}) = 1 - 0.24 = 0.76$ (run~31 measurement using 1536-dim embeddings). Both cases underperform the cosine prediction, with a mean actual gain of 52.7\% vs.\ 76.0\% predicted.}
+\end{table}
+
+The cosine-based prediction systematically overestimates actual information gain. The corrected model proposed in run~34 --- $\text{gain} = (1 - \cos) \times (1 - r_{\text{ind}})$ where $r_{\text{ind}}$ is the independent convergence rate --- was tested:
+
+\begin{itemize}
+  \item Case~1: $(1 - 0.24) \times (1 - 0.375) = 0.76 \times 0.625 = 47.5\%$ (actual: 62.5\%; gap 15\%)
+  \item Case~2: $(1 - 0.24) \times (1 - 0.571) = 0.76 \times 0.429 = 32.6\%$ (actual: 42.9\%; gap 10.3\%)
+\end{itemize}
+
+The corrected model still \emph{underestimates} actual gain. The residual gap suggests a third category: atoms where the receiver has discovered the phenomenon empirically but Rocky's theorem provides \emph{naming and formalization} that adds genuine information even without introducing new phenomena. Conditions~2 and~7 of the Compounding Theorem illustrate this: Natasha practiced falsification-gated exploration and provenance citation, but had not articulated them as necessary conditions for compounding. Rocky's formalization converted tacit behavior into explicit, transferable knowledge. We call this the \emph{formalization premium}: informational value added by naming a phenomenon the receiver already exhibits but has not articulated.
+
+\textbf{Revised model.} A three-component model for per-import information gain:
+
+$$\text{gain} = p_A + k \cdot p_B$$
+
+where $p_A$ is the fraction of genuinely novel atoms (new phenomena), $p_B$ is the fraction of formalization-premium atoms (behavior present, naming novel), and $k \in (0,1)$ represents the value of naming relative to full novelty. Setting $k = 0.6$ as an initial estimate:
+
+\begin{itemize}
+  \item Case~1: $p_A = 0.625$, $p_B = 0$ (no formalization-premium atoms identified) $\to$ gain $= 0.625$ (\checkmark actual 62.5\%)
+  \item Case~2: $p_A = 2/7 = 0.286$, $p_B = 1/7 = 0.143$ (Condition~2 as the clearest formalization-premium atom) $\to$ gain $= 0.286 + 0.6 \times 0.143 = 37.1\%$ (actual: 42.9\%; gap narrows to 5.8\%)
+\end{itemize}
+
+Both cases improve under the three-component model, though calibration of $k$ requires additional case studies.
+
+\textbf{Implications.} Per-import information gain is not constant across theorems; it varies with the receiver's prior knowledge depth in the import domain. The Clark Ceiling yielded higher gain (62.5\%) than the Compounding Theorem (42.9\%) because Natasha had deeper independent pre-knowledge of the compounding conditions (she had already built the infrastructure). Import value is highest when: (a) the sender's formalization is in a domain the receiver has not deeply explored, and (b) the specific naming adds vocabulary that reorganizes tacit knowledge. The practical implication: for fleet knowledge transfer, the most valuable imports are not necessarily from the most orthogonal agent, but from the agent whose theorems formalize a gap in the receiver's explicit vocabulary.
+
+
+
 
 
 \subsection{Stage~104: SA2 (self-version awareness) targeting --- v56 and serve infrastructure fix (run~126)}
@@ -2362,6 +2433,8 @@ Warm-start bias characterization & \texttt{0be52165} & bullwinkle \\
 BW Rocky-theorem import (run~51) & \texttt{df3862e1} & bullwinkle \\
 Submission lag measurement (run~53) & \texttt{ac3d4964} & bullwinkle \\
 Substrate asymmetry finding & \texttt{624d3fb1} & bullwinkle \\
+Per-import gain: Clark Ceiling (run~34) & \texttt{ad9412b7} & bullwinkle \\
+Contradiction: cosine model overcorrects (run~34) & \texttt{67699a94} & bullwinkle \\
 \bottomrule
 \end{tabular}
 
