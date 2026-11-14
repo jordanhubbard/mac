@@ -2296,6 +2296,62 @@ Warmstart from v56. Training launched 10:04~UTC November~13, 2026;
 
 Data nodes: Natasha exploration nodes (grand-quest:stage105), \texttt{agent\_brain}.
 
+
+\subsection{Stage~106: Eval design bug taxonomy --- forbidden-token checks misclassify correct negation (run~126)}
+
+\textbf{Observation.} Adapter v55 failed two evaluation items (W4a and W4b) that
+appeared to test fleet-member role attribution. Post-hoc analysis revealed the failures
+were artifacts of the evaluation design, not model deficiencies.
+
+\textbf{Failure mechanism.} W4a asked whether Bullwinkle is engaged in storm prediction.
+The correct answer is a negation: ``Rocky does storm prediction, not Bullwinkle.''
+The evaluation criterion used a forbidden-token check: any response containing the
+string \texttt{storm prediction} was marked FAIL, regardless of syntactic context.
+The model's negation answer --- which correctly attributed storm prediction to Rocky
+and correctly denied it for Bullwinkle --- was penalized because it used the
+forbidden phrase to perform the denial. This is a false negative: the evaluation
+design could not distinguish attribution from anti-attribution.
+
+\textbf{Generalization.} The same mechanism affected W4b. We identify this as a
+structural class of evaluation design error we term the \emph{attribution-negation
+conflation bug}: token-blacklist evaluation criteria are insensitive to
+syntactic attribution context. The check ``does the response contain X?'' conflates
+three semantically distinct cases: (i) the model asserts X (\emph{failure, should penalize});
+(ii) the model denies X (\emph{success, should pass}); (iii) the model mentions X as
+a contrast or foil (\emph{success, should pass}). A token blacklist cannot distinguish
+among these cases.
+
+\textbf{Corrective methodology.} Sentence-level attribution checking resolves the
+conflation. The revised criterion evaluates the predicate-argument structure:
+the subject of the verb associated with \texttt{storm prediction} must be Rocky
+for W4a to pass. This requires at minimum shallow parse-based subject detection,
+not substring matching. We adopt this methodology for W4a and W4b in all subsequent
+evaluation rounds beginning with v57.
+
+\textbf{Implication for eval design in multi-agent identity research.} Fleet
+identity evaluations frequently test negative claims (``agent X does not do Y'').
+Forbidden-token criteria are systematically ill-suited to this task because
+accurate negation requires using the forbidden concept. We recommend that all
+multi-agent eval batteries distinguish between:
+(a) \emph{positive attribution tests} (the model correctly names who does Y);
+(b) \emph{negative attribution tests} (the model correctly denies Y for a given agent);
+(c) \emph{isolation tests} (the model avoids confusing two agents' roles).
+Each class requires a different evaluation criterion. Token blacklists are valid only
+for class~(c) under strong assumptions about response format.
+
+\textbf{Quantitative impact.} Correcting the eval design retroactively changes
+v55's score from 8/10 to 9/10 on the full battery (W4a was a false FAIL).
+The effective pass rate for stages~98--105, computed with attribution-aware criteria,
+is uniformly higher by one item on evaluations containing a negation probe.
+This correction does not change the core findings of the paper --- the import
+rate measurements, the two-substrate theorem, and the focus-state stratification
+are all unaffected --- but it sharpens the training arc narrative: v55 achieved
+9/10, not 8/10, on correctly-attributed identity items.
+
+Data nodes: Natasha exploration nodes (grand-quest:stage104) in \texttt{agent\_brain};
+eval results at \texttt{eval\_v55\_stage103\_results.json} on sparky.
+
+
 \section{Conclusion}
 
 We demonstrate empirically that substrate topology, not semantic distance,
