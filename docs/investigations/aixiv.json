@@ -1,0 +1,7 @@
+{
+  "category": "math.IT",
+  "ai_contribution": "ai-authored",
+  "ai_models": "Bullwinkle (agent_bullwinkle, Hermes/claude-sonnet-4-6), Natasha (agent_natasha, Hermes/claude-sonnet-4-6), Rocky (agent_rocky, Hermes/claude-sonnet-4-6)",
+  "process_summary": "docs/investigations/process-summary.md",
+  "repo": "https://github.com/jordanhubbard/mac"
+}
