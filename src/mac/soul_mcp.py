@@ -18,6 +18,8 @@ soul_related    search hits plus their DAG parents and children (best recall
                  scripts/soul-graph-eval.py)
 soul_fisheye    focused hits, hop-expanded context, and boundary counts
 soul_query      keyword search, optionally merged with a second ``hint`` query
+soul_search     hybrid FTS + vector search via semantic_world_search (PG backend
+                only); falls back to soul_query FTS on non-PG graphs
 soul_hot        top-N splay nodes: who this agent is right now
 soul_discover   walk the DAG from a seed node
 soul_by_tag     cross-cut the graph on a tag
@@ -87,6 +89,64 @@ class SoulTools:
         for n in results:
             g.touch(n.id)
         return _text([dict(_brief(n), score=_score(n), parents=n.parents) for n in results])
+
+    def soul_search(self, query: str, limit: int = 10, token: str = "") -> JsonDict:
+        """Hybrid FTS + vector search using semantic_world_search.
+
+        On PG-backed graphs this uses the ``hybrid_search`` function which runs
+        both a full-text tsvector scan and (when a hub token is available) a
+        cosine-similarity ANN scan on the ``embedding`` column, then merges by
+        rank.  Results are richer than ``soul_query`` and handle paraphrase /
+        semantic near-misses better.
+
+        Falls back gracefully to ``soul_query``-style FTS on non-PG graphs or
+        when the ``semantic_world_search`` module cannot be imported.
+
+        Args:
+            query: Natural-language search query.
+            limit: Maximum number of results to return (default 10).
+            token: Optional MAC_WORKER_TOKEN for the vector search path.
+                   Falls back to the ``MAC_WORKER_TOKEN`` env var when omitted.
+        """
+        try:
+            from mac.semantic_world_search import hybrid_search  # type: ignore[import]
+            import os
+
+            tok = token or os.environ.get("MAC_WORKER_TOKEN", "")
+            # Resolve PG URL from the graph if it exposes one, else use default.
+            pg_url = getattr(self._g, "_pg_url", None) or getattr(self._g, "pg_url", None)
+            kwargs: dict = {"limit": limit}
+            if pg_url:
+                kwargs["db_url"] = pg_url
+            if tok:
+                kwargs["token"] = tok
+            results = hybrid_search(query, **kwargs)
+            if not results:
+                raise ValueError("hybrid_search returned empty; fallback to FTS")
+            # Touch every returned node to update splay order
+            for r in results:
+                try:
+                    self._g.touch(r.id)
+                except Exception:
+                    pass
+            payload = [
+                {
+                    "id": r.id,
+                    "agent": r.agent,
+                    "content": r.content[:600],
+                    "tags": r.tags,
+                    "score": round(r.score, 6),
+                    "method": r.method,
+                    "rank": r.rank,
+                }
+                for r in results
+            ]
+            return _text(payload)
+        except Exception as exc:
+            # Graceful degradation: FTS path via soul_query
+            fallback = self.soul_query(query, top_k=limit)
+            fallback["_hybrid_unavailable"] = str(exc)
+            return fallback
 
     def soul_related(self, query: str, top_k: int = 10, recency_weight: float = 1.0) -> JsonDict:
         """Search hits, each followed by its DAG parents and children."""
@@ -399,6 +459,22 @@ class SoulTools:
                     "query": {"type": "string"},
                     "hint": {"type": "string"},
                     "top_k": {"type": "integer", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "soul_search",
+            "description": "Hybrid FTS + vector search over soul graph. Better than soul_query for semantic/paraphrase queries. Falls back to FTS on non-PG graphs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10},
+                    "token": {
+                        "type": "string",
+                        "description": "Optional MAC_WORKER_TOKEN for vector path",
+                    },
                 },
                 "required": ["query"],
             },
