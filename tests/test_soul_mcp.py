@@ -204,3 +204,42 @@ def test_soul_add_pinned_respects_explicit_visibility_tag():
     assert "visibility:fleet-canonical" not in result["tags"]
     assert "visibility:private" in result["tags"]
 
+
+# ---------------------------------------------------------------------------
+# Bug fixes: soul_link relation parameter and typed-edge round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_soul_link_relation_in_tool_spec():
+    """Bug 1 fix: soul_link TOOL_SPEC must expose the `relation` property."""
+    spec = next(s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_link")
+    props = spec["inputSchema"]["properties"]
+    assert "relation" in props, (
+        "soul_link TOOL_SPEC missing 'relation' property — "
+        "MCP clients cannot pass typed edges"
+    )
+    assert props["relation"]["type"] == "string"
+    assert "contradicts" in props["relation"]["enum"]
+    assert "depends_on" in props["relation"]["enum"]
+
+
+def test_soul_link_relation_stored_in_child_metadata():
+    """soul_link with a relation type must store it in child.metadata['parent_rels']."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_link("a1", "i1", relation="depends_on"))
+    assert result.get("relation") == "depends_on"
+    # The engine must have stored the rel on the child node
+    assert g.nodes["i1"].metadata.get("parent_rels", {}).get("a1") == "depends_on"
+
+
+def test_soul_link_contradicts_relation():
+    """contradicts relation (repulsion type) round-trips through soul_link."""
+    g = _graph()
+    tools = SoulTools(g)
+    # Add a node that contradicts an existing one
+    tools.soul_add("curl works fine actually.", id="contra1")
+    result = _payload(tools.soul_link("a1", "contra1", relation="contradicts"))
+    assert result.get("relation") == "contradicts"
+    assert g.nodes["contra1"].metadata.get("parent_rels", {}).get("a1") == "contradicts"
+

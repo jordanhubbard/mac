@@ -74,9 +74,10 @@ class SoulGraphPG(SoulGraph):
         node = super().touch(node_id, propagate_parents=propagate_parents)
         if node:
             self._dirty_ids.add(node_id)
-            if propagate_parents:
-                for pid in self.nodes[node_id].parents:
-                    self._dirty_ids.add(pid)
+            # NOTE: do NOT mark parents dirty here. SoulGraph.touch() nudges
+            # parent.last_accessed via averaging (line 445) but does NOT
+            # increment access_count or change any other persisted field. Marking
+            # them dirty would cause unnecessary upserts for every splay call.
         return node
 
     def link(self, parent_id: str, child_id: str, rel: str | None = None) -> bool:
@@ -178,7 +179,7 @@ class SoulGraphPG(SoulGraph):
             if cross_agent:
                 cur.execute(
                     """
-                    SELECT e.parent_id, e.child_id
+                    SELECT e.parent_id, e.child_id, e.relation
                     FROM soul_edges e
                     WHERE e.parent_id = ANY(%s) AND e.child_id = ANY(%s)
                     """,
@@ -187,14 +188,14 @@ class SoulGraphPG(SoulGraph):
             else:
                 cur.execute(
                     """
-                    SELECT e.parent_id, e.child_id
+                    SELECT e.parent_id, e.child_id, e.relation
                     FROM soul_edges e
                     JOIN soul_nodes p ON p.id = e.parent_id AND p.agent = %s
                     JOIN soul_nodes c ON c.id = e.child_id AND c.agent = %s
                     """,
                     (agent, agent),
                 )
-            for parent_id, child_id in cur.fetchall():
+            for parent_id, child_id, relation in cur.fetchall():
                 if parent_id in g.nodes and child_id in g.nodes:
                     pn = g.nodes[parent_id]
                     cn = g.nodes[child_id]
@@ -202,6 +203,9 @@ class SoulGraphPG(SoulGraph):
                         pn.children.append(child_id)
                     if parent_id not in cn.parents:
                         cn.parents.append(parent_id)
+                    # Restore typed relation into child metadata (non-'child' edges only)
+                    if relation and relation != "child":
+                        cn.metadata.setdefault("parent_rels", {})[parent_id] = relation
 
         g._pg_conn = conn
         return g
@@ -262,13 +266,15 @@ class SoulGraphPG(SoulGraph):
                 # Upsert edges for this node's parents
                 for pid in node.parents:
                     if pid in self.nodes:
+                        # Use the stored relation type if one was set, else 'child'
+                        rel = node.metadata.get("parent_rels", {}).get(pid, "child")
                         cur.execute(
                             """
                             INSERT INTO soul_edges (parent_id, child_id, relation)
-                            VALUES (%s, %s, 'child')
+                            VALUES (%s, %s, %s)
                             ON CONFLICT (parent_id, child_id, relation) DO NOTHING
                             """,
-                            (pid, node.id),
+                            (pid, node.id, rel),
                         )
         conn.commit()
         self._dirty_ids.clear()
