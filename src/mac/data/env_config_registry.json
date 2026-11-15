@@ -6546,6 +6546,7 @@
       "src/mac/router_service.py",
       "src/mac/semantic_world_search.py",
       "src/mac/soul_mcp.py",
+      "src/mac/vault.py",
       "src/mac/worker.py",
       "src/mac/worker_token_cli.py"
     ],
