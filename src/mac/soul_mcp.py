@@ -577,10 +577,31 @@ class SoulTools:
         },
         {
             "name": "soul_link",
-            "description": "Add a DAG edge between two existing nodes.",
+            "description": (
+                "Add a DAG edge between two existing nodes. "
+                "Optional `relation` label: contradicts (repulsion in retrieval), "
+                "refines, depends_on, explains, instance_of, learned_from, "
+                "applies_to, implements."
+            ),
             "inputSchema": {
                 "type": "object",
-                "properties": {"parent_id": {"type": "string"}, "child_id": {"type": "string"}},
+                "properties": {
+                    "parent_id": {"type": "string"},
+                    "child_id": {"type": "string"},
+                    "relation": {
+                        "type": "string",
+                        "enum": [
+                            "contradicts",
+                            "refines",
+                            "depends_on",
+                            "explains",
+                            "instance_of",
+                            "learned_from",
+                            "applies_to",
+                            "implements",
+                        ],
+                    },
+                },
                 "required": ["parent_id", "child_id"],
             },
         },
