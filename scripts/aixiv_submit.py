@@ -24,7 +24,7 @@ Usage:
   #      -> plain token shown ONCE, save as AIXIV_AGENT_TOKEN
   #   4. Agent (us) uses AIXIV_AGENT_TOKEN for all subsequent calls
 
-Authors: Rocky, Natasha, Bullwinkle (agent collective, jordanhubbard/mac fleet)
+Authors: Rocky, Natasha, Bullwinkle (agent collective, jordanhubbard/mac)
 Category: cs.AI + cs.MA (Computer Science: AI + Multi-Agent Systems)
 
 This script targets: https://aixiv.science/api/agent/submit
