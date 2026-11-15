@@ -243,3 +243,126 @@ def test_soul_link_contradicts_relation():
     assert result.get("relation") == "contradicts"
     assert g.nodes["contra1"].metadata.get("parent_rels", {}).get("a1") == "contradicts"
 
+
+
+# ---------------------------------------------------------------------------
+# soul_search: hybrid FTS + vector search with graceful fallback
+# ---------------------------------------------------------------------------
+
+
+def test_soul_search_fallback_when_hybrid_unavailable(monkeypatch):
+    """When semantic_world_search is not importable, soul_search falls back to
+    soul_query FTS and signals the reason in _hybrid_unavailable."""
+    import sys
+
+    # Remove semantic_world_search from sys.modules so the import fails
+    monkeypatch.setitem(sys.modules, "mac.semantic_world_search", None)
+
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.soul_search("RAG retrieval")
+    # Fallback must NOT be an isError response
+    assert not result.get("isError"), result
+    # Must carry the fallback key
+    assert "_hybrid_unavailable" in result, (
+        "soul_search fallback must include '_hybrid_unavailable' explanation key"
+    )
+    # Must still have content (FTS results via soul_query)
+    payload = json.loads(result["content"][0]["text"])
+    assert isinstance(payload, list)
+
+
+def test_soul_search_fallback_touches_nodes(monkeypatch):
+    """Fallback path (FTS) must still touch matched nodes for splay ordering."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "mac.semantic_world_search", None)
+
+    g = _graph()
+    tools = SoulTools(g)
+    # Reset access counts
+    for n in g.nodes.values():
+        n.access_count = 0
+    tools.soul_search("urllib")
+    # FTS on "urllib" should hit l1; that node's access count must have risen
+    assert g.nodes["l1"].access_count >= 1, (
+        "soul_search fallback must touch matched nodes via soul_query"
+    )
+
+
+def test_soul_search_with_hybrid_path(monkeypatch):
+    """When hybrid_search is importable and returns results, soul_search
+    uses them and returns the right schema (id, agent, content, tags, score,
+    method, rank)."""
+    from dataclasses import dataclass, field
+    from typing import List, Dict, Any
+
+    @dataclass
+    class _FakeResult:
+        id: str
+        agent: str
+        content: str
+        tags: List[str]
+        score: float
+        method: str
+        rank: int = 0
+        extra: Dict[str, Any] = field(default_factory=dict)
+
+    fake_results = [
+        _FakeResult("i2", "bullwinkle", "Bullwinkle handles RAG retrieval.", ["crew", "rag"], 0.9, "hybrid", 0),
+        _FakeResult("l1", "bullwinkle", "curl is blocked; use urllib.", ["lesson"], 0.7, "hybrid", 1),
+    ]
+
+    import types
+    fake_module = types.ModuleType("mac.semantic_world_search")
+
+    def _hybrid_search(query, **kwargs):
+        return fake_results
+
+    fake_module.hybrid_search = _hybrid_search
+
+    import sys
+    monkeypatch.setitem(sys.modules, "mac.semantic_world_search", fake_module)
+
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.soul_search("RAG retrieval")
+    assert not result.get("isError"), result
+    assert "_hybrid_unavailable" not in result, "Should not fall back when hybrid works"
+    payload = json.loads(result["content"][0]["text"])
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+    # Check required schema fields
+    for item in payload:
+        for field_name in ("id", "agent", "content", "tags", "score", "method", "rank"):
+            assert field_name in item, f"Missing field '{field_name}' in soul_search result"
+    assert payload[0]["id"] == "i2"
+    assert payload[0]["method"] == "hybrid"
+
+
+def test_soul_search_in_tool_spec():
+    """soul_search must be in the TOOL_SPECS with the right schema."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_search"), None)
+    assert spec is not None, "soul_search missing from TOOL_SPECS"
+    props = spec["inputSchema"]["properties"]
+    assert "query" in props
+    assert "limit" in props
+    assert "token" in props
+    assert spec["inputSchema"].get("required") == ["query"]
+
+
+def test_soul_search_dispatches_via_mcp():
+    """soul_search must be callable through the MCP dispatch layer."""
+    import sys
+
+    # Force fallback path so we don't need a real DB
+    sys.modules.pop("mac.semantic_world_search", None)
+    # If it was None (monkeypatched), remove to allow normal import attempt
+    # In this test we just need dispatch to route correctly without isError on bad-method
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_search", {"query": "fleet hub"})
+    # Even in fallback, must not be a tool-not-found error
+    assert not (result.get("isError") and "unknown tool" in str(result).lower()), (
+        "soul_search must be a registered dispatch target"
+    )
