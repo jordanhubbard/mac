@@ -17,6 +17,7 @@ soul_related    search hits plus their DAG parents and children (best recall
                 of older experience on the task-ledger replay, see
                  scripts/soul-graph-eval.py)
 soul_fisheye    focused hits, hop-expanded context, and boundary counts
+soul_search     hybrid FTS + vector search via semantic_world_search (best for paraphrase queries)
 soul_query      keyword search, optionally merged with a second ``hint`` query
 soul_hot        top-N splay nodes: who this agent is right now
 soul_discover   walk the DAG from a seed node
@@ -87,6 +88,46 @@ class SoulTools:
         for n in results:
             g.touch(n.id)
         return _text([dict(_brief(n), score=_score(n), parents=n.parents) for n in results])
+
+
+    def soul_search(
+        self, query: str, limit: int = 10, token: Optional[str] = None
+    ) -> JsonDict:
+        """Hybrid FTS + vector search over the soul graph via semantic_world_search.
+
+        Falls back to soul_query FTS when the semantic path is unavailable
+        (no PG connection, no token, or not running in PG mode).
+        """
+        try:
+            from mac.semantic_world_search import hybrid_search  # type: ignore[import-not-found]
+
+            results = hybrid_search(query, limit=limit, token=token or "")
+            return _text(
+                [
+                    {
+                        "id": r.id,
+                        "agent": r.agent,
+                        "content": r.content,
+                        "tags": r.tags,
+                        "score": r.score,
+                        "method": r.method,
+                        "rank": r.rank,
+                    }
+                    for r in results
+                ]
+            )
+        except Exception as exc:
+            # Graceful degradation to soul_query FTS
+            fallback = self.soul_query(query, top_k=limit)
+            if isinstance(fallback, dict) and "content" in fallback:
+                fallback["content"].insert(
+                    0,
+                    {
+                        "type": "text",
+                        "text": f"[soul_search fallback to soul_query: {exc}]",
+                    },
+                )
+            return fallback
 
     def soul_related(self, query: str, top_k: int = 10, recency_weight: float = 1.0) -> JsonDict:
         """Search hits, each followed by its DAG parents and children."""
@@ -399,6 +440,22 @@ class SoulTools:
                     "query": {"type": "string"},
                     "hint": {"type": "string"},
                     "top_k": {"type": "integer", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "soul_search",
+            "description": "Hybrid FTS + vector search over soul graph. Better than soul_query for semantic/paraphrase queries. Falls back to FTS on non-PG graphs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10},
+                    "token": {
+                        "type": "string",
+                        "description": "Optional MAC_WORKER_TOKEN for vector path",
+                    },
                 },
                 "required": ["query"],
             },
