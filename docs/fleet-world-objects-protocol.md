@@ -76,7 +76,7 @@ conn.execute("""
 conn.commit()
 ```
 
-```bash
+```console
 # Ad-hoc from shell (requires hub access)
 sudo -u postgres psql -d fleet_brain -c "
 INSERT INTO knowledge_graph (subject, predicate, object, confidence, source, agent_id)

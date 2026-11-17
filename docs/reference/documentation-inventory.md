@@ -146,6 +146,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
 | supplemental reference | [`fleet-registry-schema.md`](../fleet-registry-schema.md) | Fleet registry schema |
+| supplemental reference | [`fleet-world-objects-protocol.md`](../fleet-world-objects-protocol.md) | Fleet World-Objects Protocol |
 | supplemental reference | [`getting-started.md`](../getting-started.md) | MAC Quickstart |
 | supplemental reference | [`guide/01-architecture.md`](../guide/01-architecture.md) | System Architecture |
 | supplemental reference | [`guide/02-getting-started.md`](../guide/02-getting-started.md) | Getting Started |
