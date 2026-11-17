@@ -144,6 +144,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`dispatch-priority-bias-audit.md`](../dispatch-priority-bias-audit.md) | Dispatch priority bias ordering audit |
 | supplemental reference | [`env-config-reference.md`](../env-config-reference.md) | MAC environment configuration reference |
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
+| supplemental reference | [`fleet-memory/reasoning-atoms-schema.md`](../fleet-memory/reasoning-atoms-schema.md) | Reasoning Atoms — Schema v2 |
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
 | supplemental reference | [`fleet-registry-schema.md`](../fleet-registry-schema.md) | Fleet registry schema |
 | supplemental reference | [`fleet-soul-graph-pg-setup.md`](../fleet-soul-graph-pg-setup.md) | Fleet Soul Graph — Postgres Setup Reference |
