@@ -14,6 +14,7 @@ do, before you do it:
 | `skills/problem-response/SKILL.md` | encountering a defect or failed check — fix it, identify the cause, and mitigate recurrence |
 | `skills/setup-mac-fleet/SKILL.md` | standing up or reconfiguring fleet hosts |
 | `skills/world4d-coordination/SKILL.md` | using the supervised World4D simulation for shared presence, status or peer coordination |
+| `skills/soul-graph/SKILL.md` | adding a node to the soul graph — always search first; dedup, link, never add blindly |
 | `skills/mac-agent-terminal-timeout/SKILL.md` | an agent terminal hangs or times out |
 | `skills/cut-a-release/SKILL.md` | the release gates are green and the next step is tagging — the documentation pass, the pinned capabilities deck, and the traps that make a docs gate fail |
 | `skills/problem-response/SKILL.md` | any problem encountered — bug, data rot, process failure, repeated mistake — fix it, do RCA, mitigate root cause |
