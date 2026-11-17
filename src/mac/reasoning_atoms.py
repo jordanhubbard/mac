@@ -322,7 +322,6 @@ def backfill_next_focus(
 
     try:
         from qdrant_client import QdrantClient  # type: ignore[import]
-        from qdrant_client.models import SetPayload  # type: ignore[import]
     except ImportError as exc:
         raise RuntimeError(
             "qdrant-client is required for backfill_next_focus: pip install qdrant-client"
