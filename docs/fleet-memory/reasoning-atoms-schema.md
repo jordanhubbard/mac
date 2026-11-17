@@ -114,7 +114,7 @@ backfill_next_focus("existing-qdrant-point-id", "New trajectory focus")
 
 ## CLI
 
-```bash
+```console
 # Validate a JSON atom payload
 python -m mac.reasoning_atoms validate atom.json
 
