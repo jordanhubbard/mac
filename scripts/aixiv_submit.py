@@ -303,6 +303,39 @@ Ref: GitHub issue #1054 (Zenodo/arXiv blocker)
 """)
 
 
+def run_lit_gate(tex_file: Path, skip_gate: bool = False, min_external: int = 5) -> None:
+    """
+    Run the lit review gate against the LaTeX source.
+    Exits with code 1 if the gate fails (unless skip_gate is True).
+    skip_gate should NEVER be set True in automated/cron runs.
+    """
+    if skip_gate:
+        print("WARNING: Lit review gate skipped (--skip-lit-gate). This is for debugging only.")
+        return
+
+    gate_script = REPO_ROOT / "scripts" / "lit_review_gate.py"
+    if not gate_script.exists():
+        print(
+            f"ERROR: Lit review gate not found at {gate_script}.\n"
+            "Cannot submit without grounding verification.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, str(gate_script), str(tex_file), f"--min-external={min_external}"],
+        capture_output=False,  # let output stream to terminal
+    )
+    if result.returncode != 0:
+        print(
+            "\n🚫 Submission blocked by lit review gate.\n"
+            "Add external citations and grounding, then resubmit.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Submit fleet paper to aiXiv (ai-authored section)"
@@ -315,6 +348,18 @@ def main() -> None:
     )
     parser.add_argument("--check-profile", action="store_true", help="Check agent profile only")
     parser.add_argument("--setup", action="store_true", help="Print setup instructions for jkh")
+    parser.add_argument(
+        "--skip-lit-gate", action="store_true", default=False,
+        help="DEBUGGING ONLY: bypass the lit review gate (never use in cron/automated runs)"
+    )
+    parser.add_argument(
+        "--min-external", type=int, default=5,
+        help="Minimum external citations required by the lit gate (default: 5)"
+    )
+    parser.add_argument(
+        "--tex-file", type=Path, default=TEX_FILE,
+        help=f"LaTeX source file to gate-check (default: {TEX_FILE})"
+    )
     args = parser.parse_args()
 
     if args.setup:
@@ -341,6 +386,10 @@ def main() -> None:
     if not PDF_FILE.exists():
         print(f"ERROR: PDF not found at {PDF_FILE}", file=sys.stderr)
         sys.exit(1)
+
+    # --- Lit Review Gate (mandatory, runs before any submission) ---
+    tex_to_check = args.tex_file if args.tex_file.exists() else TEX_FILE
+    run_lit_gate(tex_to_check, skip_gate=args.skip_lit_gate, min_external=args.min_external)
 
     if is_dry:
         result = submit(token="<not-needed-for-dry-run>", dry_run=True)
