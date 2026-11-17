@@ -17,6 +17,7 @@ soul_related    search hits plus their DAG parents and children (best recall
                 of older experience on the task-ledger replay, see
                  scripts/soul-graph-eval.py)
 soul_fisheye    focused hits, hop-expanded context, and boundary counts
+soul_search     hybrid FTS + vector search via semantic_world_search (best for paraphrase queries)
 soul_query      keyword search, optionally merged with a second ``hint`` query
 soul_search     hybrid FTS + vector search via semantic_world_search (PG backend
                 only); falls back to soul_query FTS on non-PG graphs
