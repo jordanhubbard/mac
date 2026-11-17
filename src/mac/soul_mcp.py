@@ -18,6 +18,8 @@ soul_related    search hits plus their DAG parents and children (best recall
                  scripts/soul-graph-eval.py)
 soul_fisheye    focused hits, hop-expanded context, and boundary counts
 soul_query      keyword search, optionally merged with a second ``hint`` query
+soul_search     hybrid FTS + vector search via semantic_world_search (PG backend
+                only); falls back to soul_query FTS on non-PG graphs
 soul_hot        top-N splay nodes: who this agent is right now
 soul_discover   walk the DAG from a seed node
 soul_by_tag     cross-cut the graph on a tag
@@ -88,6 +90,64 @@ class SoulTools:
             g.touch(n.id)
         return _text([dict(_brief(n), score=_score(n), parents=n.parents) for n in results])
 
+    def soul_search(self, query: str, limit: int = 10, token: str = "") -> JsonDict:
+        """Hybrid FTS + vector search using semantic_world_search.
+
+        On PG-backed graphs this uses the ``hybrid_search`` function which runs
+        both a full-text tsvector scan and (when a hub token is available) a
+        cosine-similarity ANN scan on the ``embedding`` column, then merges by
+        rank.  Results are richer than ``soul_query`` and handle paraphrase /
+        semantic near-misses better.
+
+        Falls back gracefully to ``soul_query``-style FTS on non-PG graphs or
+        when the ``semantic_world_search`` module cannot be imported.
+
+        Args:
+            query: Natural-language search query.
+            limit: Maximum number of results to return (default 10).
+            token: Optional MAC_WORKER_TOKEN for the vector search path.
+                   Falls back to the ``MAC_WORKER_TOKEN`` env var when omitted.
+        """
+        try:
+            from mac.semantic_world_search import hybrid_search  # type: ignore[import]
+            import os
+
+            tok = token or os.environ.get("MAC_WORKER_TOKEN", "")
+            # Resolve PG URL from the graph if it exposes one, else use default.
+            pg_url = getattr(self._g, "_pg_url", None) or getattr(self._g, "pg_url", None)
+            kwargs: dict = {"limit": limit}
+            if pg_url:
+                kwargs["db_url"] = pg_url
+            if tok:
+                kwargs["token"] = tok
+            results = hybrid_search(query, **kwargs)
+            if not results:
+                raise ValueError("hybrid_search returned empty; fallback to FTS")
+            # Touch every returned node to update splay order
+            for r in results:
+                try:
+                    self._g.touch(r.id)
+                except Exception:
+                    pass
+            payload = [
+                {
+                    "id": r.id,
+                    "agent": r.agent,
+                    "content": r.content[:600],
+                    "tags": r.tags,
+                    "score": round(r.score, 6),
+                    "method": r.method,
+                    "rank": r.rank,
+                }
+                for r in results
+            ]
+            return _text(payload)
+        except Exception as exc:
+            # Graceful degradation: FTS path via soul_query
+            fallback = self.soul_query(query, top_k=limit)
+            fallback["_hybrid_unavailable"] = str(exc)
+            return fallback
+
     def soul_related(self, query: str, top_k: int = 10, recency_weight: float = 1.0) -> JsonDict:
         """Search hits, each followed by its DAG parents and children."""
         nodes = self._g.related(query, top_k=top_k, recency_weight=recency_weight, touch=True)
@@ -140,9 +200,7 @@ class SoulTools:
                 g.touch(nid)
                 next_frontier.extend(node.children)
             frontier = next_frontier
-        return _text(
-            {"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]}
-        )
+        return _text({"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]})
 
     def soul_by_tag(self, tag: str) -> JsonDict:
         nodes = self._g.by_tag(tag)
@@ -186,9 +244,14 @@ class SoulTools:
             node_id=exp_id,
         )
         refused = [pid for pid in (parent_ids or []) if not self._g.link(pid, exp_id)]
-        return _text(
-            {"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused}
-        )
+        return _text({"promoted": exp_id, "parents": promoted.parents, "refused_parents": refused})
+
+    # Similarity threshold for cross-agent dedup: scores above this trigger a
+    # link-not-mint. The keyword-IDF scorer used by semantic_search returns
+    # values roughly in [0, 2]; 0.7 is empirically a "clearly the same idea"
+    # match on short axiom-length content (50-200 chars). Lower = more
+    # aggressive dedup; raise if false-positives collapse distinct concepts.
+    _DEDUP_THRESHOLD: float = 0.7
 
     def soul_add(
         self,
@@ -198,23 +261,102 @@ class SoulTools:
         parents: Optional[List[str]] = None,
         pinned: bool = False,
     ) -> JsonDict:
+        """Add a node. Cross-agent dedup: if a close match exists in the fleet
+        graph (score >= _DEDUP_THRESHOLD), link to it instead of minting a new
+        node. Only mints when no match is found above the threshold.
+
+        Fleet-canonical tagging: if the node is pinned and no
+        ``visibility:*`` tag is supplied, ``visibility:fleet-canonical`` is
+        added so peers can discover and link to it via cross-agent search.
+        """
         if id is not None and id in self._g.nodes:
             return _error("Node %r already exists." % id)
         missing = [p for p in (parents or []) if p not in self._g.nodes]
         if missing:
             return _error("Unknown parent node(s): %s" % ", ".join(missing))
+
+        # --- cross-agent dedup -------------------------------------------
+        # Only meaningful when the graph was loaded with cross_agent=True
+        # (i.e. peer nodes are present). When running JSON-only (no peers),
+        # semantic_search returns self-only results and we skip the dedup
+        # transparently.
+        #
+        # Dedup only fires against visibility:fleet-canonical nodes — things
+        # explicitly marked as shared axioms. We do NOT dedup arbitrary
+        # operational content (agent descriptions, lessons, etc.) because
+        # coincidental word overlap (e.g. "fleet") would collapse distinct ideas.
+        hits = self._g.semantic_search(content, top_k=3)
+        for peer_node, score in hits:
+            if (
+                score >= self._DEDUP_THRESHOLD
+                and peer_node.id != id
+                and "visibility:fleet-canonical" in peer_node.tags
+            ):
+                # A close match already exists — surface it, don't mint.
+                self._g.touch(peer_node.id)
+                return _text(
+                    {
+                        "deduped": True,
+                        "existing_node": peer_node.id,
+                        "similarity": round(score, 4),
+                        "content": peer_node.content,
+                        "tags": sorted(peer_node.tags),
+                        "note": (
+                            "A fleet-matching node already exists (score=%.4f >= %.2f). "
+                            "Link to it with soul_link rather than minting a duplicate."
+                        )
+                        % (score, self._DEDUP_THRESHOLD),
+                    }
+                )
+
+        # --- fleet-canonical auto-tagging --------------------------------
+        tag_set = set(tags or [])
+        if pinned and not any(t.startswith("visibility:") for t in tag_set):
+            tag_set.add("visibility:fleet-canonical")
+
         node = self._g.add(
-            content, tags=set(tags or []), parents=list(parents or []), pinned=pinned, node_id=id
+            content, tags=tag_set, parents=list(parents or []), pinned=pinned, node_id=id
         )
         return _text(dict(_brief(node), parents=node.parents, pinned=node.pinned))
 
-    def soul_link(self, parent_id: str, child_id: str) -> JsonDict:
-        if not self._g.link(parent_id, child_id):
+    #: Recognised relation types (matches soul_graph.SoulGraph.link).
+    _VALID_RELATIONS = frozenset(
+        {
+            "contradicts",
+            "refines",
+            "depends_on",
+            "explains",
+            "instance_of",
+            "learned_from",
+            "applies_to",
+            "implements",
+        }
+    )
+
+    def soul_link(
+        self,
+        parent_id: str,
+        child_id: str,
+        relation: Optional[str] = None,
+    ) -> JsonDict:
+        """Add a DAG edge from *parent_id* to *child_id*.
+
+        *relation* is an optional semantic label for the edge.  Recognised
+        values: contradicts (repulsion in retrieval), refines,
+        depends_on, explains, instance_of, learned_from,
+        applies_to, implements.  Unknown values are silently stored
+        without retrieval effects.
+        """
+        rel = relation or None
+        if not self._g.link(parent_id, child_id, rel=rel):
             return _error(
                 "Could not link %r -> %r: a node is missing or the edge would make a cycle."
                 % (parent_id, child_id)
             )
-        return _text({"linked": "%s -> %s" % (parent_id, child_id)})
+        result: JsonDict = {"linked": "%s -> %s" % (parent_id, child_id)}
+        if rel:
+            result["relation"] = rel
+        return _text(result)
 
     def soul_summary(self) -> JsonDict:
         return _text(self._g.summary())
@@ -322,16 +464,38 @@ class SoulTools:
             },
         },
         {
+            "name": "soul_search",
+            "description": "Hybrid FTS + vector search over soul graph. Better than soul_query for semantic/paraphrase queries. Falls back to FTS on non-PG graphs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10},
+                    "token": {
+                        "type": "string",
+                        "description": "Optional MAC_WORKER_TOKEN for vector path",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+        {
             "name": "soul_hot",
             "description": "Top-N splay nodes: who this agent is right now.",
-            "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "default": 7}}},
+            "inputSchema": {
+                "type": "object",
+                "properties": {"n": {"type": "integer", "default": 7}},
+            },
         },
         {
             "name": "soul_discover",
             "description": "Walk the DAG's children from a seed node id (or text matching one).",
             "inputSchema": {
                 "type": "object",
-                "properties": {"seed_id": {"type": "string"}, "hops": {"type": "integer", "default": 2}},
+                "properties": {
+                    "seed_id": {"type": "string"},
+                    "hops": {"type": "integer", "default": 2},
+                },
                 "required": ["seed_id"],
             },
         },
@@ -389,7 +553,16 @@ class SoulTools:
         },
         {
             "name": "soul_add",
-            "description": "Add a node to the core graph.",
+            "description": (
+                "Add a node to the core graph. "
+                "Cross-agent dedup: if a close match (similarity >= 0.7) already exists in "
+                "the fleet graph, returns the existing node ID and a 'deduped: true' flag "
+                "instead of minting a duplicate — use soul_link to register your agent's "
+                "edge to the canonical node. "
+                "Fleet-canonical tagging: pinned nodes without an explicit visibility: tag "
+                "are automatically tagged visibility:fleet-canonical so peers can discover "
+                "and link to them."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -404,10 +577,31 @@ class SoulTools:
         },
         {
             "name": "soul_link",
-            "description": "Add a DAG edge between two existing nodes.",
+            "description": (
+                "Add a DAG edge between two existing nodes. "
+                "Optional `relation` label: contradicts (repulsion in retrieval), "
+                "refines, depends_on, explains, instance_of, learned_from, "
+                "applies_to, implements."
+            ),
             "inputSchema": {
                 "type": "object",
-                "properties": {"parent_id": {"type": "string"}, "child_id": {"type": "string"}},
+                "properties": {
+                    "parent_id": {"type": "string"},
+                    "child_id": {"type": "string"},
+                    "relation": {
+                        "type": "string",
+                        "enum": [
+                            "contradicts",
+                            "refines",
+                            "depends_on",
+                            "explains",
+                            "instance_of",
+                            "learned_from",
+                            "applies_to",
+                            "implements",
+                        ],
+                    },
+                },
                 "required": ["parent_id", "child_id"],
             },
         },
@@ -429,11 +623,8 @@ class SoulTools:
             return _error("%s failed: %s" % (name, exc))
 
 
-def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
-    """Run the soul MCP server over stdio (or the given streams)."""
-    inp = inp or sys.stdin
-    out = out or sys.stdout
-    graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
+def _run_server(graph: SoulGraph, soul_path: Optional[Path], inp: Any, out: Any) -> None:
+    """Inner dispatch loop shared by file-backed and PG-backed serve paths."""
     tools = SoulTools(graph)
 
     def send(obj: JsonDict) -> None:
@@ -447,29 +638,76 @@ def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
         try:
             req = json.loads(raw)
         except json.JSONDecodeError:
-            send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+            send(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+            )
             continue
         rid = req.get("id")
         method = req.get("method", "")
         params = req.get("params") or {}
         if method == "initialize":
-            send({"jsonrpc": "2.0", "id": rid, "result": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "serverInfo": {"name": SERVER_NAME, "version": "0.2.0"},
-                "capabilities": {"tools": {}},
-            }})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "result": {
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "serverInfo": {"name": SERVER_NAME, "version": "0.2.0"},
+                        "capabilities": {"tools": {}},
+                    },
+                }
+            )
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": rid, "result": {"tools": SoulTools.TOOL_SPECS}})
         elif method == "tools/call":
             name = params.get("name", "")
             result = tools.dispatch(name, params.get("arguments") or {})
             if name not in READ_ONLY_TOOLS and not result.get("isError"):
-                soul_path.parent.mkdir(parents=True, exist_ok=True)
-                graph.save(soul_path)
+                if soul_path is not None:
+                    soul_path.parent.mkdir(parents=True, exist_ok=True)
+                graph.save(soul_path)  # type: ignore[arg-type]
             send({"jsonrpc": "2.0", "id": rid, "result": result})
         elif rid is not None:
-            send({"jsonrpc": "2.0", "id": rid, "error": {
-                "code": -32601, "message": "Method not found: %s" % method}})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "error": {"code": -32601, "message": "Method not found: %s" % method},
+                }
+            )
+
+
+def serve(soul_path: Path, inp: Any = None, out: Any = None) -> None:
+    """Run the soul MCP server over stdio with a JSON file backend."""
+    inp = inp or sys.stdin
+    out = out or sys.stdout
+    graph = SoulGraph.load(soul_path) if soul_path.exists() else SoulGraph(name=soul_path.stem)
+    _run_server(graph, soul_path, inp, out)
+
+
+def serve_pg(
+    pg_url: str,
+    agent: str,
+    soul_path: Optional[Path] = None,
+    cross_agent: bool = False,
+    inp: Any = None,
+    out: Any = None,
+) -> None:
+    """Run the soul MCP server with a Postgres backend.
+
+    Loads all nodes for `agent` from Postgres on startup; flushes dirty nodes
+    after every mutating tool call. If soul_path is also provided, a JSON
+    backup is written alongside (best-effort; Postgres is authoritative).
+
+    If cross_agent=True, nodes from all agents are loaded for queries;
+    writes still tag new nodes with `agent`.
+    """
+    from mac.soul_graph_pg import SoulGraphPG  # type: ignore[import]
+
+    inp = inp or sys.stdin
+    out = out or sys.stdout
+    graph = SoulGraphPG.from_pg(pg_url, agent, cross_agent=cross_agent)
+    _run_server(graph, soul_path, inp, out)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -477,11 +715,47 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     parser = argparse.ArgumentParser(description="Soul graph MCP server (JSON-RPC 2.0 over stdio)")
     parser.add_argument(
-        "--soul-file", type=Path, default=None,
+        "--soul-file",
+        type=Path,
+        default=None,
         help="soul JSON file (default: soul.json in the agent home); created on first write",
     )
+    parser.add_argument(
+        "--pg-url",
+        default=None,
+        help="Postgres connection URL for fleet-shared soul graph "
+        "(e.g. postgresql://fleet_agent:pw@host:5432/agent_brain). "
+        "When set, --soul-file is used only as a JSON backup.",
+    )
+    parser.add_argument(
+        "--agent",
+        default=None,
+        help="Agent name for PG backend (required with --pg-url; "
+        "defaults to MAC_AGENT_ID env var).",
+    )
+    parser.add_argument(
+        "--cross-agent",
+        action="store_true",
+        default=False,
+        help="Load nodes from ALL agents (read-only peers visible in queries). "
+        "Writes still tag new nodes with --agent. Requires --pg-url.",
+    )
     args = parser.parse_args(argv)
-    serve(args.soul_file or default_soul_path())
+
+    if args.pg_url:
+        import os
+
+        agent = args.agent or os.environ.get("MAC_AGENT_ID") or "unknown"
+        # Strip agent_ prefix for the graph's agent column if present
+        agent_name = agent.removeprefix("agent_")
+        serve_pg(
+            pg_url=args.pg_url,
+            agent=agent_name,
+            soul_path=args.soul_file,
+            cross_agent=args.cross_agent,
+        )
+    else:
+        serve(args.soul_file or default_soul_path())
 
 
 if __name__ == "__main__":
