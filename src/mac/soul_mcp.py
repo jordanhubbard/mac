@@ -89,10 +89,7 @@ class SoulTools:
             g.touch(n.id)
         return _text([dict(_brief(n), score=_score(n), parents=n.parents) for n in results])
 
-
-    def soul_search(
-        self, query: str, limit: int = 10, token: Optional[str] = None
-    ) -> JsonDict:
+    def soul_search(self, query: str, limit: int = 10, token: Optional[str] = None) -> JsonDict:
         """Hybrid FTS + vector search over the soul graph via semantic_world_search.
 
         Falls back to soul_query FTS when the semantic path is unavailable
