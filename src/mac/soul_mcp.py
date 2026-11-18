@@ -743,18 +743,20 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    if args.pg_url:
-        import os
+    import os
 
-        agent = args.agent or os.environ.get("MAC_AGENT_ID") or "unknown"
-        # Strip agent_ prefix for the graph's agent column if present
-        agent_name = agent.removeprefix("agent_")
-        serve_pg(
-            pg_url=args.pg_url,
-            agent=agent_name,
-            soul_path=args.soul_file,
-            cross_agent=args.cross_agent,
+    # Env vars take precedence for cron/sidecar launches where no CLI flags are passed
+    pg_url = args.pg_url or os.environ.get("SOUL_PG_URL")
+    if pg_url:
+        agent_raw = (
+            args.agent
+            or os.environ.get("SOUL_PG_AGENT")
+            or os.environ.get("MAC_AGENT_ID")
+            or "unknown"
         )
+        # Strip agent_ prefix for the graph's agent column if present
+        agent_name = agent_raw.removeprefix("agent_")
+        serve_pg(pg_url, agent_name)
     else:
         serve(args.soul_file or default_soul_path())
 

@@ -26,6 +26,11 @@ from typing import Optional, Any
 
 from mac.soul_graph import SoulGraph, SoulNode
 
+try:
+    import psycopg  # type: ignore[import]
+except ImportError:  # pragma: no cover
+    psycopg = None  # type: ignore[assignment]
+
 
 class SoulGraphPG(SoulGraph):
     """SoulGraph subclass that persists to Postgres instead of a JSON file.
@@ -35,16 +40,44 @@ class SoulGraphPG(SoulGraph):
     """
 
     def __init__(self, pg_url: str, agent: str, **kwargs: Any):
+        # Pop schema before passing kwargs to SoulGraph (which does not know schema)
+        self._schema: str = kwargs.pop("schema", "public")
         super().__init__(**kwargs)
         self._pg_url = pg_url
         self._agent = agent
         self._dirty_ids: set[str] = set()  # IDs modified since last save
         self._pg_conn: Optional[Any] = None
 
+    # ------------------------------------------------------------------
+    # Schema routing helpers (public/fleet_memory)
+    # ------------------------------------------------------------------
+
+    def _nodes_table(self) -> str:
+        """Return fully-qualified nodes table name for the current schema."""
+        if self._schema == "fleet_memory":
+            return "fleet_memory.nodes"
+        return "public.soul_nodes"
+
+    def _edges_table(self) -> str:
+        """Return fully-qualified edges table name for the current schema."""
+        if self._schema == "fleet_memory":
+            return "fleet_memory.edges"
+        return "public.soul_edges"
+
+    def _agent_col(self) -> str:
+        """Return the agent column name for the current schema."""
+        if self._schema == "fleet_memory":
+            return "owner_agent"
+        return "agent"
+
+    def _agent_val(self, agent: str) -> str:
+        """Return the agent value, prefixed if fleet_memory schema requires it."""
+        if self._schema == "fleet_memory" and not agent.startswith("agent_"):
+            return f"agent_{agent}"
+        return agent
+
     def _connect(self) -> Any:
         """Return a live psycopg connection (psycopg v3)."""
-        import psycopg  # type: ignore[import]
-
         if self._pg_conn is None or self._pg_conn.closed:
             self._pg_conn = psycopg.connect(self._pg_url, autocommit=False)
         return self._pg_conn
@@ -107,8 +140,6 @@ class SoulGraphPG(SoulGraph):
                          included). Writes still tag new nodes with `agent`.
                          Useful for fleet-shared exploration queries.
         """
-        import psycopg  # type: ignore[import]
-
         g = cls(pg_url=pg_url, agent=agent, name=agent)
         conn = psycopg.connect(pg_url, autocommit=False)
         with conn.cursor() as cur:
@@ -229,12 +260,14 @@ class SoulGraphPG(SoulGraph):
                 accessed_dt = datetime.datetime.fromtimestamp(
                     node.last_accessed, tz=datetime.timezone.utc
                 )
+                agent_col = self._agent_col()
+                agent_val = self._agent_val(self._agent)
                 cur.execute(
-                    """
-                    INSERT INTO soul_nodes
+                    f"""
+                    INSERT INTO {self._nodes_table()}
                       (id, content, tags, parents, pinned, score,
                        created_at, updated_at, last_accessed, access_count,
-                       metadata, agent)
+                       metadata, {agent_col})
                     VALUES (%s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                       content     = EXCLUDED.content,
@@ -258,7 +291,7 @@ class SoulGraphPG(SoulGraph):
                         accessed_dt,
                         node.access_count,
                         json.dumps(node.metadata),
-                        self._agent,
+                        agent_val,
                     ),
                 )
                 upserted += 1
@@ -269,8 +302,8 @@ class SoulGraphPG(SoulGraph):
                         # Use the stored relation type if one was set, else 'child'
                         rel = node.metadata.get("parent_rels", {}).get(pid, "child")
                         cur.execute(
-                            """
-                            INSERT INTO soul_edges (parent_id, child_id, relation)
+                            f"""
+                            INSERT INTO {self._edges_table()} (parent_id, child_id, relation)
                             VALUES (%s, %s, %s)
                             ON CONFLICT (parent_id, child_id, relation) DO NOTHING
                             """,
