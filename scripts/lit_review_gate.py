@@ -185,6 +185,14 @@ KNOWN_GOOD = {
         "LoRA Learns Less and Forgets Less",
         "https://arxiv.org/abs/2405.09673"
     ),
+    "kirkpatrick2017overcoming": (
+        "Overcoming catastrophic forgetting in neural networks",
+        "https://arxiv.org/abs/1612.00796"
+    ),
+    "brown2020gpt3": (
+        "Language models are few-shot learners",
+        "https://arxiv.org/abs/2005.14165"
+    ),
 }
 
 
