@@ -142,101 +142,110 @@ class SoulGraphPG(SoulGraph):
         """
         g = cls(pg_url=pg_url, agent=agent, name=agent)
         conn = psycopg.connect(pg_url, autocommit=False)
-        with conn.cursor() as cur:
-            if cross_agent:
-                cur.execute(
-                    """
-                    SELECT id, content, tags, parents, pinned, score,
-                           EXTRACT(EPOCH FROM created_at) AS created_epoch,
-                           EXTRACT(EPOCH FROM last_accessed) AS accessed_epoch,
-                           access_count, metadata
-                    FROM soul_nodes
-                    ORDER BY last_accessed DESC
-                    """,
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, content, tags, parents, pinned, score,
-                           EXTRACT(EPOCH FROM created_at) AS created_epoch,
-                           EXTRACT(EPOCH FROM last_accessed) AS accessed_epoch,
-                           access_count, metadata
-                    FROM soul_nodes
-                    WHERE agent = %s
-                    ORDER BY last_accessed DESC
-                    """,
-                    (agent,),
-                )
-            rows = cur.fetchall()
-            id_set = {row[0] for row in rows}
-            for row in rows:
-                (
-                    nid,
-                    content,
-                    tags,
-                    parents,
-                    pinned,
-                    score,
-                    created_epoch,
-                    accessed_epoch,
-                    access_count,
-                    metadata_raw,
-                ) = row
-                # Filter parents to only those present in the loaded set
-                parents_filtered = [p for p in (parents or []) if p in id_set]
-                meta = (
-                    metadata_raw
-                    if isinstance(metadata_raw, dict)
-                    else (json.loads(metadata_raw) if metadata_raw else {})
-                )
-                node = SoulNode(
-                    id=nid,
-                    content=content,
-                    tags=set(tags or []),
-                    parents=parents_filtered,
-                    pinned=pinned,
-                    created_at=float(created_epoch or time.time()),
-                    last_accessed=float(accessed_epoch or time.time()),
-                    access_count=int(access_count or 0),
-                    metadata=meta,
-                )
-                g.nodes[nid] = node
-                g.splay.insert(nid, node.rank_key())
-                for t in node.tags:
-                    g._tag_index.setdefault(t, set()).add(nid)
-                g._index_words(node)
+        # Loading is read-only, but psycopg still opens a transaction. End it
+        # before retaining this connection for future saves: a model session may
+        # otherwise pin the shared database vacuum horizon for hours.
+        try:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    if cross_agent:
+                        cur.execute(
+                            """
+                            SELECT id, content, tags, parents, pinned, score,
+                                   EXTRACT(EPOCH FROM created_at) AS created_epoch,
+                                   EXTRACT(EPOCH FROM last_accessed) AS accessed_epoch,
+                                   access_count, metadata
+                            FROM soul_nodes
+                            ORDER BY last_accessed DESC
+                            """,
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            SELECT id, content, tags, parents, pinned, score,
+                                   EXTRACT(EPOCH FROM created_at) AS created_epoch,
+                                   EXTRACT(EPOCH FROM last_accessed) AS accessed_epoch,
+                                   access_count, metadata
+                            FROM soul_nodes
+                            WHERE agent = %s
+                            ORDER BY last_accessed DESC
+                            """,
+                            (agent,),
+                        )
+                    rows = cur.fetchall()
+                    id_set = {row[0] for row in rows}
+                    for row in rows:
+                        (
+                            nid,
+                            content,
+                            tags,
+                            parents,
+                            pinned,
+                            score,
+                            created_epoch,
+                            accessed_epoch,
+                            access_count,
+                            metadata_raw,
+                        ) = row
+                        # Filter parents to only those present in the loaded set
+                        parents_filtered = [p for p in (parents or []) if p in id_set]
+                        meta = (
+                            metadata_raw
+                            if isinstance(metadata_raw, dict)
+                            else (json.loads(metadata_raw) if metadata_raw else {})
+                        )
+                        node = SoulNode(
+                            id=nid,
+                            content=content,
+                            tags=set(tags or []),
+                            parents=parents_filtered,
+                            pinned=pinned,
+                            created_at=float(created_epoch or time.time()),
+                            last_accessed=float(accessed_epoch or time.time()),
+                            access_count=int(access_count or 0),
+                            metadata=meta,
+                        )
+                        g.nodes[nid] = node
+                        g.splay.insert(nid, node.rank_key())
+                        for t in node.tags:
+                            g._tag_index.setdefault(t, set()).add(nid)
+                        g._index_words(node)
 
-            # Rebuild children from edges (scope matches the node query above)
-            if cross_agent:
-                cur.execute(
-                    """
-                    SELECT e.parent_id, e.child_id, e.relation
-                    FROM soul_edges e
-                    WHERE e.parent_id = ANY(%s) AND e.child_id = ANY(%s)
-                    """,
-                    (list(id_set), list(id_set)),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT e.parent_id, e.child_id, e.relation
-                    FROM soul_edges e
-                    JOIN soul_nodes p ON p.id = e.parent_id AND p.agent = %s
-                    JOIN soul_nodes c ON c.id = e.child_id AND c.agent = %s
-                    """,
-                    (agent, agent),
-                )
-            for parent_id, child_id, relation in cur.fetchall():
-                if parent_id in g.nodes and child_id in g.nodes:
-                    pn = g.nodes[parent_id]
-                    cn = g.nodes[child_id]
-                    if child_id not in pn.children:
-                        pn.children.append(child_id)
-                    if parent_id not in cn.parents:
-                        cn.parents.append(parent_id)
-                    # Restore typed relation into child metadata (non-'child' edges only)
-                    if relation and relation != "child":
-                        cn.metadata.setdefault("parent_rels", {})[parent_id] = relation
+                    # Rebuild children from edges (scope matches the node query above)
+                    if cross_agent:
+                        cur.execute(
+                            """
+                            SELECT e.parent_id, e.child_id, e.relation
+                            FROM soul_edges e
+                            WHERE e.parent_id = ANY(%s) AND e.child_id = ANY(%s)
+                            """,
+                            (list(id_set), list(id_set)),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            SELECT e.parent_id, e.child_id, e.relation
+                            FROM soul_edges e
+                            JOIN soul_nodes p ON p.id = e.parent_id AND p.agent = %s
+                            JOIN soul_nodes c ON c.id = e.child_id AND c.agent = %s
+                            """,
+                            (agent, agent),
+                        )
+                    for parent_id, child_id, relation in cur.fetchall():
+                        if parent_id in g.nodes and child_id in g.nodes:
+                            pn = g.nodes[parent_id]
+                            cn = g.nodes[child_id]
+                            if child_id not in pn.children:
+                                pn.children.append(child_id)
+                            if parent_id not in cn.parents:
+                                cn.parents.append(parent_id)
+                            # Restore typed relation into child metadata (non-'child' edges only)
+                            if relation and relation != "child":
+                                cn.metadata.setdefault("parent_rels", {})[parent_id] = relation
+
+        except BaseException:
+            conn.close()
+            raise
 
         g._pg_conn = conn
         return g
