@@ -32,7 +32,7 @@ if [ "$OS_NAME" = "Darwin" ]; then
   ENV_CONF_DIR="$MAC_HOME/service-env"
   for _docker_dir in /Applications/Docker.app/Contents/Resources/bin /opt/homebrew/bin /usr/local/bin; do
     if [ -x "$_docker_dir/docker" ]; then
-      case ":$PATH:" in *":$_docker_dir:"*) ;; *) PATH="$_docker_dir:$PATH" ;; esac
+      case ":$PATH:" in *":$_docker_dir:"*) ;; *) PATH="$PATH:$_docker_dir" ;; esac
     fi
   done
   export PATH
