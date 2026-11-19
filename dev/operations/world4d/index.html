@@ -1855,6 +1855,13 @@ to strings. Set <code>PATH</code>, <code>W4D_HOST</code>, <code>W4D_PORT</code>,
 and <code>PGPASSWORD</code> for the fleet-memory bridge. Resolve actual connection settings
 from the operator's local configuration; never commit them. The supervisor adds
 bounded PostgreSQL connection and statement timeouts.</p>
+<p>The storage guard uses the world connection, not the fleet-memory connection.
+It needs ownership of <code>world4d.objects</code>, its position indexes and
+<code>world4d.sync_pos4d</code>. When the runtime uses a less privileged role, set private
+<code>W4D_MAINTENANCE_HOST</code>, <code>W4D_MAINTENANCE_PORT</code>, <code>W4D_MAINTENANCE_DB</code>,
+<code>W4D_MAINTENANCE_USER</code> and <code>W4D_MAINTENANCE_PASS</code> overrides for maintenance.
+On a local deployment this can use the service account's peer-authenticated
+Unix socket, retaining the runtime's existing restricted credentials.</p>
 <p>Create a local deployment JSON, using absolute paths and locally chosen ports:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;root&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/absolute/private/service-directory&quot;</span><span class="p">,</span>
@@ -1882,6 +1889,26 @@ source directory do not change a running deployment. The generated
 <code>root</code>; that directory must remain available after logout. Prepare a new
 runtime deliberately when updating the prototype. Retain the old runtime and
 configuration for rollback. No database migrations run during preparation.</p>
+<p>At service startup, MAC installs the world table's vacuum policy and updates
+its position-sync trigger to retain the existing cube when coordinates have
+not changed. Moving objects still integrate normally, including motion in W;
+the service does not disable physics or remove objects to reduce writes.</p>
+<p>Continuous motion churns spatial indexes even with vacuum running. The
+supervisor checks both position indexes every 60 seconds against a budget of
+64 MiB or 4 KiB per estimated object, whichever is larger. It rebuilds oversized
+or invalid indexes atomically, with a two-second lock timeout and a 60-second
+statement timeout. A rebuild briefly locks position updates and leaves no
+invalid replacement indexes behind on timeout. This supplements ordinary
+vacuum: it compacts a tree whose keys keep
+moving. A failed check or rebuild stops the supervisor's simulation writers
+until maintenance recovers; health and reporting return HTTP 503. Other database
+clients are not killed. Inspect <code>/health</code>'s <code>storage</code> result for index bytes,
+budgets and validity. Checks run within the existing supervisor lifecycle.</p>
+<p>Before repairing an existing installation, retain its schema-only dump and
+service configuration. Reindex only the evidenced index, preserve world rows,
+then verify index validity and size, unchanged object identities, advancing
+ticks, and filesystem free space. PostgreSQL can take time to release the old
+index's files after reporting the rebuild. Do not remove its files manually.</p>
 <p>Install and start the generated LaunchDaemon:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo -n install -o root -g wheel -m 0644 /absolute/private/service-directory/com.mac.world4d.plist /Library/LaunchDaemons/com.mac.world4d.plist</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.world4d.plist</span>
@@ -1905,7 +1932,7 @@ runner, then bootstrap. Never roll back world data to roll back this service.</p
 <tbody>
 <tr>
 <td><code>/health</code></td>
-<td>JSON readiness, child PIDs, ticks, errors and restart counts; HTTP 503 until every world is ready.</td>
+<td>JSON readiness, child PIDs, ticks, errors, restart counts and spatial-index storage; HTTP 503 until every world and storage check is ready.</td>
 </tr>
 <tr>
 <td><code>/monitor</code></td>
