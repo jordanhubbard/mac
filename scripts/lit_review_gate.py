@@ -193,6 +193,22 @@ KNOWN_GOOD = {
         "Language models are few-shot learners",
         "https://arxiv.org/abs/2005.14165"
     ),
+    "hu2022lora": (
+        "LoRA: Low-Rank Adaptation of Large Language Models",
+        "https://arxiv.org/abs/2106.09685"
+    ),
+    "berglund2023reversal": (
+        "The Reversal Curse: LLMs trained on A is B fail to learn B is A",
+        "https://arxiv.org/abs/2309.12288"
+    ),
+    "allenzhu2023physics": (
+        "Physics of Language Models: Part 3.1, Knowledge Storage and Extraction",
+        "https://arxiv.org/abs/2309.14316"
+    ),
+    "qwen2024report": (
+        "Qwen2.5 Technical Report",
+        "https://arxiv.org/abs/2412.15115"
+    ),
 }
 
 
