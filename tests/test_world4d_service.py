@@ -91,6 +91,8 @@ if __name__=='__main__': main()
         "poll_seconds": 0.05,
         "user": "example",
         "home": str(tmp_path),
+        # The process fixture intentionally has no database or physics engine.
+        "storage_guard": False,
     }
 
 
@@ -250,3 +252,135 @@ def test_supervisor_crash_releases_world_ports_for_its_replacement(config):
         if replacement is not None:
             replacement.terminate()
             assert replacement.wait(timeout=10) == 0
+
+
+@pytest.fixture
+def storage_database(monkeypatch):
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict
+    from mac.test_support import test_dsn
+    from tests.pg_worker_databases import WorkerDatabases
+
+    databases = WorkerDatabases(test_dsn())
+    dsn = databases.create()
+    params = conninfo_to_dict(dsn)
+    for key, value in {
+        "W4D_HOST": params.get("host", "/tmp"),
+        "W4D_PORT": params.get("port", "5432"),
+        "W4D_DB": params["dbname"],
+        "W4D_USER": params.get("user", os.environ.get("USER", "postgres")),
+        "W4D_PASS": params.get("password", ""),
+    }.items():
+        monkeypatch.setenv(key, value)
+    # Deliberately conflicting memory-bridge defaults must never select its DB.
+    monkeypatch.setenv("PGDATABASE", "wrong_memory_store")
+    conn = psycopg.connect(dsn, autocommit=True)
+    conn.execute("""
+        CREATE EXTENSION cube;
+        CREATE SCHEMA world4d;
+        CREATE TABLE world4d.objects (
+            id integer PRIMARY KEY, px float8, py float8, pz float8, pw float8,
+            pos4d cube, sim_tick bigint DEFAULT 0);
+        CREATE FUNCTION world4d.sync_pos4d() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN NEW.pos4d := cube(ARRAY[NEW.px,NEW.py,NEW.pz,NEW.pw]); RETURN NEW; END;
+        $$;
+        CREATE TRIGGER trg_sync_pos4d BEFORE INSERT OR UPDATE ON world4d.objects
+        FOR EACH ROW EXECUTE FUNCTION world4d.sync_pos4d();
+        CREATE INDEX idx_objects_pos ON world4d.objects (px,py,pz,pw);
+        CREATE INDEX idx_objects_pos4d ON world4d.objects USING gist(pos4d);
+        INSERT INTO world4d.objects(id,px,py,pz,pw)
+        SELECT n,n,0,0,0 FROM generate_series(1,183) n;
+        ANALYZE world4d.objects;
+    """)
+    try:
+        yield conn
+    finally:
+        conn.close()
+        databases.close()
+
+
+def test_storage_policy_preserves_physics_and_repairs_index_churn(storage_database):
+    conn = storage_database
+    guard = service.StorageGuard()
+    guard.poll(force=True)
+    assert guard.ready, guard.error
+    assert (
+        "autovacuum_vacuum_cost_delay=0"
+        in conn.execute(
+            "SELECT reloptions FROM pg_class WHERE oid='world4d.objects'::regclass"
+        ).fetchone()[0]
+    )
+    # Repeated actual position updates, each committed independently as in the
+    # psql-based runtime, then ordinary vacuum and the real atomic rebuild.
+    for _ in range(100):
+        conn.execute("UPDATE world4d.objects SET px=px+0.5, sim_tick=sim_tick+1")
+    conn.execute("VACUUM ANALYZE world4d.objects")
+    before = conn.execute(
+        "SELECT id,px,sim_tick,pos4d::text FROM world4d.objects ORDER BY id"
+    ).fetchall()
+    assert len(before) == 183 and before[0][1:3] == (51, 100)
+    # Force the threshold path on a small real index without allocating 64 MiB.
+    original = guard.measure
+    old_files = conn.execute(
+        "SELECT indexrelid,pg_relation_filenode(indexrelid) FROM pg_index WHERE indrelid='world4d.objects'::regclass ORDER BY indexrelid"
+    ).fetchall()
+    calls = 0
+
+    def over_budget_once():
+        nonlocal calls
+        rows = original()
+        calls += 1
+        if calls == 1:
+            for row in rows:
+                row["budget"] = 0
+        return rows
+
+    guard.measure = over_budget_once
+    guard.poll(force=True)
+    assert guard.ready, guard.error
+    new_files = conn.execute(
+        "SELECT indexrelid,pg_relation_filenode(indexrelid) FROM pg_index WHERE indrelid='world4d.objects'::regclass ORDER BY indexrelid"
+    ).fetchall()
+    assert sum(a != b for a, b in zip(old_files, new_files)) == 2
+    assert (
+        conn.execute(
+            "SELECT id,px,sim_tick,pos4d::text FROM world4d.objects ORDER BY id"
+        ).fetchall()
+        == before
+    )
+    assert all(i["valid"] and i["bytes"] < 1024 * 1024 for i in guard.indexes)
+    # Unchanged coordinates retain their spatial value; moving in W still changes
+    # four-dimensional proximity correctly, independent of the rebuild.
+    conn.execute("UPDATE world4d.objects SET sim_tick=sim_tick+1 WHERE id=1")
+    assert (
+        conn.execute("SELECT pos4d::text FROM world4d.objects WHERE id=1").fetchone()[0]
+        == before[0][3]
+    )
+    conn.execute("UPDATE world4d.objects SET pw=3 WHERE id=1")
+    assert (
+        conn.execute(
+            "SELECT cube_distance(pos4d,cube(ARRAY[51.,0.,0.,0.])) FROM world4d.objects WHERE id=1"
+        ).fetchone()[0]
+        == 3
+    )
+
+
+def test_storage_failure_is_not_ready_and_stops_our_writers(config):
+    # Missing required world connection settings fail closed. The fixture's
+    # HTTP-only children must never start and advertise healthy progress.
+    config["storage_guard"] = True
+    proc = launch(config)
+    try:
+
+        def unready():
+            try:
+                get(config["monitor_port"])
+            except urllib.error.HTTPError as error:
+                return json.load(error)
+
+        status = eventually(unready)
+        assert not status["ready"] and not status["storage"]["ready"]
+        assert all(w["pid"] is None for w in status["worlds"])
+    finally:
+        proc.terminate()
+        assert proc.wait(timeout=10) == 0

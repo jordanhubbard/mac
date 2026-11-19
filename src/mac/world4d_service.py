@@ -32,6 +32,125 @@ except ImportError:
     from world4d_presence import project_fields
 
 
+STORAGE_POLICY = """
+BEGIN;
+SET LOCAL lock_timeout = '2s';
+ALTER TABLE world4d.objects SET (
+    autovacuum_vacuum_threshold = 50,
+    autovacuum_vacuum_scale_factor = 0.05,
+    autovacuum_vacuum_cost_delay = 0,
+    autovacuum_vacuum_cost_limit = 2000
+);
+CREATE OR REPLACE FUNCTION world4d.sync_pos4d() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.pos4d := cube(ARRAY[NEW.px, NEW.py, NEW.pz, NEW.pw]);
+    ELSIF ROW(NEW.px, NEW.py, NEW.pz, NEW.pw)
+          IS DISTINCT FROM ROW(OLD.px, OLD.py, OLD.pz, OLD.pw) THEN
+        NEW.pos4d := cube(ARRAY[NEW.px, NEW.py, NEW.pz, NEW.pw]);
+    ELSE
+        NEW.pos4d := OLD.pos4d;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+COMMIT;
+"""
+
+
+class StorageGuard:
+    """Bound spatial-index growth in the existing supervisor, preserving physics.
+
+    Moving objects necessarily rewrite spatial indexes. Vacuum can reuse dead
+    pages but cannot reliably compact a GiST tree whose keys keep moving. A
+    size budget and bounded rebuild are required in addition to vacuum tuning.
+    """
+
+    def __init__(self):
+        self.ready = False
+        self.error = "not checked"
+        self.indexes = []
+        self.checked = 0.0
+        self.initialized = False
+
+    def sql(self, statement, *, timeout=15):
+        # Use only the explicit WORLD store, never the fleet-memory PG* defaults.
+        names = {
+            "PGHOST": "W4D_HOST",
+            "PGPORT": "W4D_PORT",
+            "PGDATABASE": "W4D_DB",
+            "PGUSER": "W4D_USER",
+            "PGPASSWORD": "W4D_PASS",
+        }
+        env = {**os.environ, **{key: os.environ[value] for key, value in names.items()}}
+        for key, value in names.items():
+            override = value.replace("W4D_", "W4D_MAINTENANCE_", 1)
+            if override in os.environ:
+                env[key] = os.environ[override]
+        env.update(
+            PGOPTIONS=f"-c lock_timeout=2000 -c statement_timeout={timeout * 1000}",
+            PGCONNECT_TIMEOUT="5",
+        )
+        result = subprocess.run(
+            ["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1"],
+            input=statement,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout + 5,
+        )
+        if result.returncode:
+            # libpq diagnostics can contain connection details. Keep health safe.
+            raise RuntimeError("World4D storage query failed")
+        return result.stdout.strip()
+
+    def measure(self):
+        return json.loads(
+            self.sql("""
+SELECT COALESCE(json_agg(s), '[]') FROM (
+    SELECT c.relname AS name, pg_relation_size(c.oid) AS bytes,
+           GREATEST(67108864, GREATEST(t.reltuples, 0)::bigint * 4096) AS budget,
+           i.indisvalid AS valid
+    FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+    JOIN pg_class t ON t.oid=i.indrelid
+    WHERE i.indrelid='world4d.objects'::regclass
+      AND c.relname IN ('idx_objects_pos', 'idx_objects_pos4d')
+) s;
+""")
+        )
+
+    def poll(self, *, force=False):
+        if not force and time.monotonic() - self.checked < 60:
+            return
+        try:
+            if not self.initialized:
+                self.sql(STORAGE_POLICY)
+                self.initialized = True
+            self.indexes = self.measure()
+            if {i["name"] for i in self.indexes} != {"idx_objects_pos", "idx_objects_pos4d"}:
+                raise RuntimeError("World4D spatial indexes are missing")
+            for index in self.indexes:
+                if index["bytes"] > index["budget"] or not index["valid"]:
+                    # Names come from the fixed allowlist above, never user input.
+                    # A regular rebuild is atomic on cancellation and leaves no
+                    # invalid _ccnew copies behind on repeated timeout failures.
+                    # The short lock timeout bounds interference with writers.
+                    self.sql(f'REINDEX INDEX world4d."{index["name"]}";', timeout=60)
+            self.indexes = self.measure()
+            if any(i["bytes"] > i["budget"] or not i["valid"] for i in self.indexes):
+                raise RuntimeError("World4D spatial index exceeds storage budget")
+            self.ready, self.error = True, ""
+        except Exception as exc:
+            self.ready, self.error = False, str(exc)
+            print(f"World4D storage guard failed: {self.error}", flush=True)
+        finally:
+            self.checked = time.monotonic()
+
+    def status(self):
+        return {"ready": self.ready, "error": self.error, "indexes": self.indexes}
+
+
 def streaming_handler(base, state):
     """Keep the prototype's event peers bounded and independent of API reads."""
 
@@ -283,7 +402,7 @@ def render_snapshot(config: dict) -> str:
         stop_process(proc)
 
 
-def handler_for(worlds: list[World], config: dict):
+def handler_for(worlds: list[World], config: dict, storage=None):
     cache = {"fingerprint": None, "body": None}
     cache_lock = threading.Lock()
 
@@ -292,7 +411,9 @@ def handler_for(worlds: list[World], config: dict):
             pass
 
         def do_GET(self):
-            ready = all(world.data is not None for world in worlds)
+            ready = all(world.data is not None for world in worlds) and (
+                storage is None or storage.ready
+            )
             code = 200 if ready else 503
             content_type = "text/plain; charset=utf-8"
             if self.path == "/identity":
@@ -301,7 +422,13 @@ def handler_for(worlds: list[World], config: dict):
                 )
                 content_type = "application/json"
             elif self.path == "/health":
-                body = json.dumps({"ready": ready, "worlds": [w.status() for w in worlds]})
+                body = json.dumps(
+                    {
+                        "ready": ready,
+                        "worlds": [w.status() for w in worlds],
+                        "storage": storage.status() if storage else None,
+                    }
+                )
                 content_type = "application/json"
             elif self.path == "/monitor":
                 # A failed source remains a failure, never a successful offline baseline.
@@ -388,8 +515,9 @@ def run(config: dict) -> None:
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, lambda *_args: stop.set())
         worlds = [World(settings, config) for settings in config["worlds"]]
+        storage = StorageGuard() if config.get("storage_guard", True) else None
         server = ThreadingHTTPServer(
-            ("127.0.0.1", config["monitor_port"]), handler_for(worlds, config)
+            ("127.0.0.1", config["monitor_port"]), handler_for(worlds, config, storage)
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         try:
@@ -400,11 +528,26 @@ def run(config: dict) -> None:
                 with socket.socket() as probe:
                     if probe.connect_ex(("127.0.0.1", world.settings["port"])) == 0:
                         raise RuntimeError(f"world port {world.settings['port']} is already in use")
-            for world in worlds:
-                world.start()
             thread.start()
             while not stop.is_set():
+                if storage:
+                    storage.poll()
+                if storage and not storage.ready:
+                    # Stop our writers on failed maintenance, rather than let a
+                    # healthy HTTP listener hide unbounded database growth.
+                    for world in worlds:
+                        if world.proc is not None:
+                            stop_process(world.proc)
+                            world.log.close()
+                            os.close(world.parent_writer)
+                            world.proc = world.parent_writer = None
+                        world.data = None
+                        world.error = "storage guard unavailable"
+                    stop.wait(config.get("poll_seconds", 3))
+                    continue
                 for world in worlds:
+                    if world.proc is None:
+                        world.start()
                     world.poll()
                 stop.wait(config.get("poll_seconds", 3))
         finally:

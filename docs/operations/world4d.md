@@ -26,6 +26,14 @@ and `PGPASSWORD` for the fleet-memory bridge. Resolve actual connection settings
 from the operator's local configuration; never commit them. The supervisor adds
 bounded PostgreSQL connection and statement timeouts.
 
+The storage guard uses the world connection, not the fleet-memory connection.
+It needs ownership of `world4d.objects`, its position indexes and
+`world4d.sync_pos4d`. When the runtime uses a less privileged role, set private
+`W4D_MAINTENANCE_HOST`, `W4D_MAINTENANCE_PORT`, `W4D_MAINTENANCE_DB`,
+`W4D_MAINTENANCE_USER` and `W4D_MAINTENANCE_PASS` overrides for maintenance.
+On a local deployment this can use the service account's peer-authenticated
+Unix socket, retaining the runtime's existing restricted credentials.
+
 Create a local deployment JSON, using absolute paths and locally chosen ports:
 
 ```json
@@ -60,6 +68,29 @@ source directory do not change a running deployment. The generated
 runtime deliberately when updating the prototype. Retain the old runtime and
 configuration for rollback. No database migrations run during preparation.
 
+At service startup, MAC installs the world table's vacuum policy and updates
+its position-sync trigger to retain the existing cube when coordinates have
+not changed. Moving objects still integrate normally, including motion in W;
+the service does not disable physics or remove objects to reduce writes.
+
+Continuous motion churns spatial indexes even with vacuum running. The
+supervisor checks both position indexes every 60 seconds against a budget of
+64 MiB or 4 KiB per estimated object, whichever is larger. It rebuilds oversized
+or invalid indexes atomically, with a two-second lock timeout and a 60-second
+statement timeout. A rebuild briefly locks position updates and leaves no
+invalid replacement indexes behind on timeout. This supplements ordinary
+vacuum: it compacts a tree whose keys keep
+moving. A failed check or rebuild stops the supervisor's simulation writers
+until maintenance recovers; health and reporting return HTTP 503. Other database
+clients are not killed. Inspect `/health`'s `storage` result for index bytes,
+budgets and validity. Checks run within the existing supervisor lifecycle.
+
+Before repairing an existing installation, retain its schema-only dump and
+service configuration. Reindex only the evidenced index, preserve world rows,
+then verify index validity and size, unchanged object identities, advancing
+ticks, and filesystem free space. PostgreSQL can take time to release the old
+index's files after reporting the rebuild. Do not remove its files manually.
+
 Install and start the generated LaunchDaemon:
 
 ```console
@@ -81,7 +112,7 @@ The supervisor exposes three endpoints on **loopback only** at `monitor_port`:
 
 | Endpoint | Contract |
 | --- | --- |
-| `/health` | JSON readiness, child PIDs, ticks, errors and restart counts; HTTP 503 until every world is ready. |
+| `/health` | JSON readiness, child PIDs, ticks, errors, restart counts and spatial-index storage; HTTP 503 until every world and storage check is ready. |
 | `/monitor` | Stable agent/danger/hub/pause fingerprint, excluding ticking counters; HTTP 503 when any world is unhealthy. |
 | `/snapshot` | Text from the existing renderer for all configured worlds; never sends a Slack message. HTTP 503 on unready worlds or renderer failure. |
 | `/snapshot-on-change` | JSON fingerprint and snapshot, cached until a notable change. Stable across ticks, with no terminal tool needed by cron. |
