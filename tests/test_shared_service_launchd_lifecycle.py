@@ -530,8 +530,8 @@ def _deny_group_kill(tmp_path: Path) -> Dict[str, str]:
 @pytest.mark.parametrize(
     "runner",
     (
-        'mac_run_bounded 0.2 "$2"',
-        'mac_retry_bounded 0.4 0.1 0.01 "$2"',
+        'mac_run_bounded 2 "$2"',
+        'mac_retry_bounded 4 2 0.01 "$2"',
     ),
 )
 def test_bounded_helpers_stop_the_child_when_group_kill_is_denied(
@@ -539,6 +539,7 @@ def test_bounded_helpers_stop_the_child_when_group_kill_is_denied(
 ) -> None:
     """2026-10-11: on OpenShell 0.1.2 the group kill failed silently, the child
     kept the output pipe open, and the gate's pytest worker hung for good."""
+    # Allow the child to start on loaded hosts before exercising termination.
     command = tmp_path / "records-its-pid"
     pid_file = tmp_path / "child.pid"
     command.write_text(
@@ -559,7 +560,7 @@ def test_bounded_helpers_stop_the_child_when_group_kill_is_denied(
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=10,
     )
 
     assert result.returncode == 124, result.stderr

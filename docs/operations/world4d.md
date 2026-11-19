@@ -85,6 +85,18 @@ until maintenance recovers; health and reporting return HTTP 503. Other database
 clients are not killed. Inspect `/health`'s `storage` result for index bytes,
 budgets and validity. Checks run within the existing supervisor lifecycle.
 
+Shared-memory readers also affect this world store's vacuum horizon.
+`SoulGraphPG.from_pg` loads nodes and edges in a short transaction, commits it
+before retaining the connection for later saves, and closes it on load failure.
+Leaving that read transaction open during a model session pins obsolete row
+versions throughout the database, including the constantly updated world table.
+Vacuum and reindexing cannot remove versions still needed by that snapshot.
+Inspect `pg_stat_activity.backend_xmin`, transaction age and idle transaction
+state when a rebuild cannot restore the index budget. A database- and role-scoped
+`idle_in_transaction_session_timeout` can bound abandoned transactions from older
+clients; PostgreSQL documents its relationship to bloat in
+[Client Connection Defaults](https://www.postgresql.org/docs/17/runtime-config-client.html).
+
 Before repairing an existing installation, retain its schema-only dump and
 service configuration. Reindex only the evidenced index, preserve world rows,
 then verify index validity and size, unchanged object identities, advancing
