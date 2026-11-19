@@ -193,6 +193,10 @@ KNOWN_GOOD = {
         "Language models are few-shot learners",
         "https://arxiv.org/abs/2005.14165"
     ),
+    "hinton2015distilling": (
+        "Distilling the Knowledge in a Neural Network",
+        "https://arxiv.org/abs/1503.02531"
+    ),
     "hu2022lora": (
         "LoRA: Low-Rank Adaptation of Large Language Models",
         "https://arxiv.org/abs/2106.09685"
