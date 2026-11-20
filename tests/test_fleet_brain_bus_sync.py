@@ -41,6 +41,12 @@ class TestLoadMacEnv:
 class TestSync:
     """Unit tests for sync() using mocked PG and HTTP."""
 
+    _ENV_WITH_TOKEN = {
+        "MAC_WORKER_TOKEN": "test-token",
+        "MAC_HUB_URL": "http://hub.test:8789",
+        "NATASHA_PG_DSN": "dbname=test",
+    }
+
     def _make_conn(self) -> MagicMock:
         conn = MagicMock()
         cur = MagicMock()
@@ -49,6 +55,12 @@ class TestSync:
         cur.fetchone.return_value = None  # no existing cursor
         conn.cursor.return_value = cur
         return conn
+
+    @pytest.fixture(autouse=True)
+    def _patch_env(self) -> None:
+        """Inject a fake token so sync() doesn't bail out in CI where mac.env is absent."""
+        with patch("mac.fleet_brain_bus_sync._load_mac_env", return_value=self._ENV_WITH_TOKEN):
+            yield
 
     def _make_broadcasts(self, n: int = 3) -> list[Dict[str, Any]]:
         return [

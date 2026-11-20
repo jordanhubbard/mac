@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pathlib
 import sys
 import urllib.error
 import urllib.request
@@ -32,9 +31,11 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 import psycopg2.extras
 
+from mac.mac_paths import mac_env_file
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
-_ENV_FILE = pathlib.Path.home() / ".mac" / "mac.env"
+_ENV_FILE = mac_env_file()
 _JOB_NAME = "agentbus_broadcast_sync"
 _AGENT_ID = "agent_natasha"
 _DEFAULT_DSN = "dbname=natasha user=natasha host=localhost port=5433"
