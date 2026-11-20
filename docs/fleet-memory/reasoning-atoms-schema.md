@@ -19,7 +19,7 @@ silently duplicating each other's trajectories.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `author` | string | YES | Agent ID, e.g. `"agent_bullwinkle"` |
+| `author` | string | YES | Agent ID, e.g. `"agent_worker-1"` |
 | `thread` | string | YES | Slug identifying the exploration thread |
 | `content` | string | YES | The insight itself |
 | `next_focus` | string | YES | Where this author is heading next — the trajectory signal |
@@ -88,7 +88,7 @@ from mac.reasoning_atoms import (
 
 # Create
 atom = make_atom(
-    author="agent_bullwinkle",
+    author="agent_worker-1",
     thread="shared-persistent-space",
     content="Splay-decay rate accelerates under high-write load",
     next_focus="Measure write contention effect on splay scores",
@@ -124,7 +124,7 @@ python -m mac.reasoning_atoms check atom.json
 
 ## Backfill
 
-The two existing Natasha atoms (from exploration runs before v2) need a
+The two existing worker-2 atoms (from exploration runs before v2) need a
 `next_focus` field added. Run `backfill_next_focus(point_id, next_focus)`
 for each point ID after locating them in Qdrant:
 
@@ -132,8 +132,8 @@ for each point ID after locating them in Qdrant:
 from mac.reasoning_atoms import backfill_next_focus
 
 # Retrieve point IDs from Qdrant first, then:
-backfill_next_focus("natasha-atom-1-id", "Trajectory focus from run N")
-backfill_next_focus("natasha-atom-2-id", "Trajectory focus from run M")
+backfill_next_focus("worker-2-atom-1-id", "Trajectory focus from run N")
+backfill_next_focus("worker-2-atom-2-id", "Trajectory focus from run M")
 ```
 
 ## Embedding Access
