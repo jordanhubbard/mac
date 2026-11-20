@@ -34,6 +34,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_API_TOKEN` | str | consumer-defined | api-auth | Api Auth setting: api token. |
 | `MAC_API_TOKENS` | str | consumer-defined | api-auth | Api Auth setting: api tokens. |
 | `MAC_API_TOKEN__JORDANH_HUB` | str | consumer-defined | api-auth | Api Auth setting: api token  jordanh hub. |
+| `MAC_API_TOKEN__MAC` | str | consumer-defined | api-auth | Api Auth setting: api token  mac. |
 | `MAC_API_URL` | str | consumer-defined | api-auth | Api Auth setting: api url. |
 | `MAC_ATTESTATION_HEAL_MIN_SECONDS` | int | consumer-defined | core | Core setting: attestation heal min seconds. |
 | `MAC_ATTESTATION_KEY` | str | consumer-defined | core | Core setting: attestation key. |
@@ -553,6 +554,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_SHUTDOWN_EXIT` | str | consumer-defined | worker | Worker setting: worker shutdown exit. |
 | `MAC_WORKER_SHUTDOWN_GRACE_SECONDS` | int | consumer-defined | worker | Worker setting: worker shutdown grace seconds. |
 | `MAC_WORKER_TOKEN` | str | consumer-defined | worker | Worker setting: worker token. |
+| `MAC_WORKER_TOKEN__MAC` | str | consumer-defined | worker | Worker setting: worker token  mac. |
 | `MAC_WORKER_WORKSPACE` | str | consumer-defined | worker | Worker setting: worker workspace. |
 | `MAC_WORKER_WORKSPACE_GC_ENABLED` | bool | consumer-defined | worker | Worker setting: worker workspace gc enabled. |
 | `MAC_WORKER_WORKSPACE_GC_HIGH_WATER_GB` | str | consumer-defined | worker | Worker setting: worker workspace gc high water gb. |
