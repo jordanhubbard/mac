@@ -356,6 +356,16 @@ def _cli() -> None:
     )
     check_p.add_argument("file", help="Path to JSON file with atom payload")
 
+    query_p = sub.add_parser(
+        "query",
+        help="Search reasoning_atoms in Qdrant by semantic proximity",
+    )
+    query_p.add_argument("text", nargs="+", help="Query text (space-separated words)")
+    query_p.add_argument("--author", dest="author_filter", default=None, help="Filter by author agent-id")
+    query_p.add_argument("--thread", dest="thread_filter", default=None, help="Filter by thread slug")
+    query_p.add_argument("--limit", type=int, default=5, help="Max results (default 5)")
+    query_p.add_argument("--qdrant-url", dest="qdrant_url", default=None, help="Qdrant endpoint URL")
+
     args = parser.parse_args()
 
     if args.cmd in ("validate", "check"):
@@ -376,6 +386,22 @@ def _cli() -> None:
             print(
                 f"Publication: should_publish={decision.should_publish}  reason={decision.reason}"
             )
+    elif args.cmd == "query":
+        query_text = " ".join(args.text)
+        results = query_atoms(
+            query_text,
+            qdrant_url=args.qdrant_url,
+            author_filter=args.author_filter,
+            thread_filter=args.thread_filter,
+            limit=args.limit,
+        )
+        if not results:
+            print("No atoms found.")
+        else:
+            for r in results:
+                print(
+                    f"[score={r['score']:.3f}] {r['author']} | {r['thread']} | {r['content'][:120]}"
+                )
     else:
         parser.print_help()
 
