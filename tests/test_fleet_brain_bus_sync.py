@@ -1,4 +1,4 @@
-"""Tests for fleet_brain_bus_sync — AgentBus → agent_messages sync module."""
+"""Tests for fleet_brain_bus_sync - AgentBus -> agent_messages sync module."""
 from __future__ import annotations
 
 import json
@@ -63,7 +63,7 @@ class TestSync:
             for i in range(n)
         ]
 
-    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync.psycopg.connect")
     @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
     def test_sync_inserts_new_events(
         self, mock_fetch: MagicMock, mock_connect: MagicMock
@@ -74,15 +74,7 @@ class TestSync:
         broadcasts = self._make_broadcasts(3)
         mock_fetch.return_value = broadcasts
 
-        # _upsert_message returns True (new insert)
-        conn.cursor.return_value.fetchone.side_effect = [
-            None,  # _read_cursor — no existing cursor
-            None,  # _upsert_message first event
-            None,
-            None,
-        ]
-
-        with patch("mac.fleet_brain_bus_sync._upsert_message", return_value=True) as mock_up:
+        with patch("mac.fleet_brain_bus_sync._upsert_message", return_value=True):
             result = sync(limit=10)
 
         assert result["ok"] is True
@@ -90,7 +82,7 @@ class TestSync:
         assert result["inserted"] == 3
         assert result["skipped"] == 0
 
-    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync.psycopg.connect")
     @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
     def test_sync_skips_duplicates(
         self, mock_fetch: MagicMock, mock_connect: MagicMock
@@ -109,7 +101,7 @@ class TestSync:
         assert result["inserted"] == 0
         assert result["skipped"] == 2
 
-    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync.psycopg.connect")
     @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
     def test_sync_empty_feed(
         self, mock_fetch: MagicMock, mock_connect: MagicMock
@@ -124,7 +116,7 @@ class TestSync:
         assert result["fetched"] == 0
         assert result["inserted"] == 0
 
-    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync.psycopg.connect")
     @patch("mac.fleet_brain_bus_sync._fetch_broadcasts", side_effect=Exception("network error"))
     def test_sync_returns_error_on_fetch_failure(
         self, mock_fetch: MagicMock, mock_connect: MagicMock
@@ -137,7 +129,7 @@ class TestSync:
         assert result["ok"] is False
         assert "error" in result
 
-    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync.psycopg.connect")
     @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
     def test_sync_advances_cursor(
         self, mock_fetch: MagicMock, mock_connect: MagicMock

@@ -1,15 +1,15 @@
-"""fleet_brain_bus_sync — poll the MAC AgentBus broadcast feed and mirror events
+"""fleet_brain_bus_sync - poll the MAC AgentBus broadcast feed and mirror events
 into the local natasha-pg ``agent_messages`` table.
 
 Usage::
 
     python -m mac.fleet_brain_bus_sync [--limit N] [--reset-cursor]
 
-Environment (all optional — falls back to ~/.mac/mac.env):
+Environment (all optional - falls back to ~/.mac/mac.env):
 
-    MAC_HUB_URL          — hub API base URL (default http://100.72.16.110:8789)
-    MAC_WORKER_TOKEN     — bearer token for hub auth
-    NATASHA_PG_DSN       — local PG connection string
+    MAC_HUB_URL          - hub API base URL (default http://100.72.16.110:8789)
+    MAC_WORKER_TOKEN     - bearer token for hub auth
+    NATASHA_PG_DSN       - local PG connection string
                            (default dbname=natasha user=natasha host=localhost port=5433)
 
 The cursor (last consumed sequence number) is persisted in
@@ -29,10 +29,10 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# -- Config ------------------------------------------------------------------
 
 _ENV_FILE = pathlib.Path.home() / ".mac" / "mac.env"
 _JOB_NAME = "agentbus_broadcast_sync"
@@ -66,11 +66,11 @@ def _get_token(env: Dict[str, str]) -> str:
     return ""
 
 
-# ── Cursor persistence ────────────────────────────────────────────────────────
+# -- Cursor persistence -------------------------------------------------------
 
 
 def _read_cursor(conn: Any) -> int:
-    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT metadata FROM cron_job_state WHERE job_name = %s",
             (_JOB_NAME,),
@@ -82,6 +82,10 @@ def _read_cursor(conn: Any) -> int:
 
 
 def _write_cursor(conn: Any, sequence: int) -> None:
+    payload = {
+        "last_sequence": sequence,
+        "last_sync_at": datetime.now(timezone.utc).isoformat(),
+    }
     with conn.cursor() as cur:
         cur.execute(
             """INSERT INTO cron_job_state (job_name, last_run_at, run_count, metadata)
@@ -93,24 +97,14 @@ def _write_cursor(conn: Any, sequence: int) -> None:
             """,
             (
                 _JOB_NAME,
-                psycopg2.extras.Json(
-                    {
-                        "last_sequence": sequence,
-                        "last_sync_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
-                psycopg2.extras.Json(
-                    {
-                        "last_sequence": sequence,
-                        "last_sync_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
+                json.dumps(payload),
+                json.dumps(payload),
             ),
         )
     conn.commit()
 
 
-# ── Hub polling ───────────────────────────────────────────────────────────────
+# -- Hub polling ---------------------------------------------------------------
 
 
 def _fetch_broadcasts(
@@ -128,7 +122,7 @@ def _fetch_broadcasts(
         raise RuntimeError(f"hub broadcast HTTP {exc.code}: {body}") from exc
 
 
-# ── Write to agent_messages ───────────────────────────────────────────────────
+# -- Write to agent_messages ---------------------------------------------------
 
 
 def _upsert_message(conn: Any, event: Dict[str, Any]) -> bool:
@@ -157,7 +151,7 @@ def _upsert_message(conn: Any, event: Dict[str, Any]) -> bool:
                 sender,
                 _AGENT_ID,
                 topic,
-                psycopg2.extras.Json(payload),
+                json.dumps(payload),
                 "agentbus_broadcast",
                 sent_at,
             ),
@@ -167,7 +161,7 @@ def _upsert_message(conn: Any, event: Dict[str, Any]) -> bool:
     return inserted
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 
 
 def sync(limit: int = 200, reset_cursor: bool = False) -> Dict[str, Any]:
@@ -180,7 +174,7 @@ def sync(limit: int = 200, reset_cursor: bool = False) -> Dict[str, Any]:
         return {"ok": False, "error": "no MAC token found in mac.env or environment"}
 
     try:
-        conn = psycopg2.connect(dsn)
+        conn = psycopg.connect(dsn)
     except Exception as exc:
         return {"ok": False, "error": f"PG connect failed: {exc}"}
 
@@ -220,7 +214,7 @@ def sync(limit: int = 200, reset_cursor: bool = False) -> Dict[str, Any]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sync AgentBus broadcasts → agent_messages")
+    ap = argparse.ArgumentParser(description="Sync AgentBus broadcasts -> agent_messages")
     ap.add_argument("--limit", type=int, default=200, help="max events per run")
     ap.add_argument("--reset-cursor", action="store_true", help="re-sync from sequence 0")
     args = ap.parse_args()
@@ -230,7 +224,7 @@ def main() -> int:
         print(
             f"[fleet_brain_bus_sync] ok: fetched={result['fetched']} "
             f"inserted={result['inserted']} skipped={result['skipped']} "
-            f"cursor={result['cursor_before']}→{result['cursor_after']}"
+            f"cursor={result['cursor_before']}->{result['cursor_after']}"
         )
         return 0
     else:

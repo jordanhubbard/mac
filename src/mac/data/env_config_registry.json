@@ -338,6 +338,7 @@
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/fleet_brain_bus_sync.py",
       "src/mac/fleet_env.py",
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
@@ -373,6 +374,17 @@
     "retired": false,
     "sources": [
       "src/mac/fleet_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Api Auth setting: api token  mac.",
+    "family": "api-auth",
+    "name": "MAC_API_TOKEN__MAC",
+    "retired": false,
+    "sources": [
+      "src/mac/fleet_brain_bus_sync.py"
     ],
     "type": "str"
   },
@@ -2143,6 +2155,7 @@
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
+      "src/mac/fleet_brain_bus_sync.py",
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
       "src/mac/hermes_question_gate.py",
@@ -6540,6 +6553,7 @@
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/fleet_brain_bus_sync.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/openshell_collector.py",
@@ -6551,6 +6565,17 @@
       "src/mac/vault.py",
       "src/mac/worker.py",
       "src/mac/worker_token_cli.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker token  mac.",
+    "family": "worker",
+    "name": "MAC_WORKER_TOKEN__MAC",
+    "retired": false,
+    "sources": [
+      "src/mac/fleet_brain_bus_sync.py"
     ],
     "type": "str"
   },
