@@ -382,3 +382,103 @@ def _cli() -> None:
 
 if __name__ == "__main__":
     _cli()
+
+
+def query_atoms(
+    query_text: str,
+    *,
+    qdrant_url: Optional[str] = None,
+    embed_fn: Optional[EmbedFn] = None,
+    author_filter: Optional[str] = None,
+    thread_filter: Optional[str] = None,
+    limit: int = 5,
+    min_score: float = 0.0,
+) -> List[dict]:
+    """Query the reasoning_atoms collection by semantic proximity.
+
+    Returns a list of dicts with keys:
+        ``id``, ``score``, ``author``, ``thread``, ``content``,
+        ``next_focus``, ``empirical``, ``ts``, ``schema_version``,
+        ``provenance``, ``tension``, ``run``
+
+    Parameters
+    ----------
+    query_text:
+        The text to embed and search against.
+    qdrant_url:
+        Qdrant endpoint; falls back to ``QDRANT_URL`` env var or
+        ``http://100.72.16.110:6333``.
+    embed_fn:
+        Callable ``(text: str) -> List[float]`` producing a 2048-dim vector.
+        When omitted, a zero query vector is used (rank-by-payload not score).
+    author_filter:
+        If supplied, restrict results to atoms with this exact author string.
+    thread_filter:
+        If supplied, restrict results to atoms in this thread.
+    limit:
+        Maximum results to return before score filtering.
+    min_score:
+        Drop any result whose cosine similarity is below this threshold.
+        Only meaningful when ``embed_fn`` is provided; zero-vector queries
+        return meaningless scores and ``min_score`` is ignored.
+
+    Requires: ``qdrant-client`` package.
+    """
+    try:
+        from qdrant_client import QdrantClient  # type: ignore[import]
+        from qdrant_client.models import Filter, FieldCondition, MatchValue  # type: ignore[import]
+    except ImportError as exc:
+        raise RuntimeError(
+            "qdrant-client is required for query_atoms: pip install qdrant-client"
+        ) from exc
+
+    qdrant_url = qdrant_url or os.environ.get("QDRANT_URL", "http://100.72.16.110:6333")
+    client = QdrantClient(url=qdrant_url)
+
+    # Build optional filter
+    conditions = []
+    if author_filter:
+        conditions.append(FieldCondition(key="author", match=MatchValue(value=author_filter)))
+    if thread_filter:
+        conditions.append(FieldCondition(key="thread", match=MatchValue(value=thread_filter)))
+    qdrant_filter = Filter(must=conditions) if conditions else None
+
+    # Build query vector
+    if embed_fn is not None:
+        query_vector = embed_fn(query_text)
+    else:
+        sys.stderr.write(
+            "[reasoning_atoms] WARNING: no embed_fn supplied for query_atoms; "
+            "scores will not reflect semantic similarity\n"
+        )
+        query_vector = [0.0] * EMBEDDING_DIMS
+
+    results = client.search(
+        collection_name=QDRANT_COLLECTION,
+        query_vector=query_vector,
+        query_filter=qdrant_filter,
+        limit=limit,
+        with_payload=True,
+        score_threshold=min_score if embed_fn is not None else None,
+    )
+
+    hits = []
+    for hit in results:
+        payload = hit.payload or {}
+        hits.append(
+            {
+                "id": hit.id,
+                "score": hit.score,
+                "author": payload.get("author", ""),
+                "thread": payload.get("thread", ""),
+                "content": payload.get("content", ""),
+                "next_focus": payload.get("next_focus", ""),
+                "empirical": payload.get("empirical", False),
+                "ts": payload.get("ts", ""),
+                "schema_version": payload.get("schema_version", ""),
+                "provenance": payload.get("provenance", []),
+                "tension": payload.get("tension", []),
+                "run": payload.get("run"),
+            }
+        )
+    return hits

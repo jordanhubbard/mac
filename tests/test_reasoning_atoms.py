@@ -210,3 +210,162 @@ def test_make_atom_accepts_run_number() -> None:
         run=42,
     )
     assert atom.run == 42
+
+
+# ── query_atoms ───────────────────────────────────────────────────────────────
+
+
+def _make_qdrant_mock():
+    """Build a minimal qdrant_client mock that satisfies lazy imports in reasoning_atoms."""
+    import sys
+    mock_module = MagicMock()
+    # QdrantClient is what query_atoms does `from qdrant_client import QdrantClient`
+    mock_client_cls = MagicMock()
+    mock_module.QdrantClient = mock_client_cls
+    # models sub-module
+    mock_models = MagicMock()
+    mock_module.models = mock_models
+    mock_models.Filter = MagicMock(return_value=MagicMock(must=[]))
+    mock_models.FieldCondition = MagicMock(return_value=MagicMock(key="author"))
+    mock_models.MatchValue = MagicMock()
+    return mock_module, mock_client_cls
+
+
+def test_query_atoms_returns_hits() -> None:
+    """query_atoms parses Qdrant search results into structured dicts."""
+    import sys
+    from mac.reasoning_atoms import query_atoms
+
+    mock_hit = MagicMock()
+    mock_hit.id = "test-uuid-1"
+    mock_hit.score = 0.87
+    mock_hit.payload = {
+        "author": "agent_natasha",
+        "thread": "shared-persistent-space",
+        "content": "some insight",
+        "next_focus": "next direction",
+        "empirical": True,
+        "ts": "2026-01-01T00:00:00+00:00",
+        "schema_version": "2.0",
+        "provenance": ["soul_abc"],
+        "tension": [],
+        "run": 5,
+    }
+
+    mock_module, mock_client_cls = _make_qdrant_mock()
+    mock_instance = mock_client_cls.return_value
+    mock_instance.search.return_value = [mock_hit]
+
+    orig = sys.modules.pop("qdrant_client", None)
+    sys.modules["qdrant_client"] = mock_module
+    sys.modules["qdrant_client.models"] = mock_module.models
+    try:
+        results = query_atoms(
+            "some insight",
+            qdrant_url="http://localhost:6333",
+            embed_fn=lambda t: [1.0] + [0.0] * 2047,
+        )
+    finally:
+        if orig is None:
+            sys.modules.pop("qdrant_client", None)
+            sys.modules.pop("qdrant_client.models", None)
+        else:
+            sys.modules["qdrant_client"] = orig
+
+    assert len(results) == 1
+    r = results[0]
+    assert r["id"] == "test-uuid-1"
+    assert r["score"] == 0.87
+    assert r["author"] == "agent_natasha"
+    assert r["content"] == "some insight"
+    assert r["next_focus"] == "next direction"
+    assert r["empirical"] is True
+    assert r["provenance"] == ["soul_abc"]
+    assert r["run"] == 5
+
+
+def test_query_atoms_author_filter_passed_to_qdrant() -> None:
+    """author_filter results in a non-None filter passed to Qdrant search."""
+    import sys
+    from mac.reasoning_atoms import query_atoms
+
+    mock_module, mock_client_cls = _make_qdrant_mock()
+
+    # Capture Filter constructor calls to verify a filter is built
+    filter_calls = []
+    def capture_filter(**kwargs):
+        filter_calls.append(kwargs)
+        f = MagicMock()
+        f.must = kwargs.get("must", [])
+        return f
+    mock_module.models.Filter.side_effect = capture_filter
+
+    mock_instance = mock_client_cls.return_value
+    mock_instance.search.return_value = []
+
+    orig = sys.modules.pop("qdrant_client", None)
+    sys.modules["qdrant_client"] = mock_module
+    sys.modules["qdrant_client.models"] = mock_module.models
+    try:
+        query_atoms(
+            "test",
+            qdrant_url="http://localhost:6333",
+            embed_fn=lambda t: [0.0] * 2048,
+            author_filter="agent_bullwinkle",
+        )
+        call_kwargs = mock_instance.search.call_args[1]
+        f = call_kwargs.get("query_filter")
+        # A filter was passed (not None) when author_filter is specified
+        assert f is not None
+        # Filter constructor was called (conditions were built)
+        assert len(filter_calls) == 1
+    finally:
+        if orig is None:
+            sys.modules.pop("qdrant_client", None)
+            sys.modules.pop("qdrant_client.models", None)
+        else:
+            sys.modules["qdrant_client"] = orig
+
+
+def test_query_atoms_empty_collection_returns_empty_list() -> None:
+    """Empty Qdrant result maps to empty list."""
+    import sys
+    from mac.reasoning_atoms import query_atoms
+
+    mock_module, mock_client_cls = _make_qdrant_mock()
+    mock_instance = mock_client_cls.return_value
+    mock_instance.search.return_value = []
+
+    orig = sys.modules.pop("qdrant_client", None)
+    sys.modules["qdrant_client"] = mock_module
+    sys.modules["qdrant_client.models"] = mock_module.models
+    try:
+        results = query_atoms(
+            "anything",
+            qdrant_url="http://localhost:6333",
+            embed_fn=lambda t: [0.0] * 2048,
+        )
+    finally:
+        if orig is None:
+            sys.modules.pop("qdrant_client", None)
+            sys.modules.pop("qdrant_client.models", None)
+        else:
+            sys.modules["qdrant_client"] = orig
+    assert results == []
+
+
+def test_query_atoms_missing_qdrant_client_raises() -> None:
+    """ImportError for qdrant-client surfaces as RuntimeError."""
+    from mac.reasoning_atoms import query_atoms
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _block_qdrant(name, *args, **kwargs):
+        if name == "qdrant_client":
+            raise ImportError("No module named 'qdrant_client'")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_block_qdrant):
+        with pytest.raises(RuntimeError, match="qdrant-client"):
+            query_atoms("test", qdrant_url="http://localhost:6333")
