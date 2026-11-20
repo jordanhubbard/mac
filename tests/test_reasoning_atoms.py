@@ -369,3 +369,141 @@ def test_query_atoms_missing_qdrant_client_raises() -> None:
     with patch("builtins.__import__", side_effect=_block_qdrant):
         with pytest.raises(RuntimeError, match="qdrant-client"):
             query_atoms("test", qdrant_url="http://localhost:6333")
+
+
+# ── CLI query subcommand tests ─────────────────────────────────────────────────
+
+
+def test_cli_query_subcommand_calls_query_atoms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``python -m mac.reasoning_atoms query <text>`` calls query_atoms with query_text."""
+    import sys
+    from mac.reasoning_atoms import _cli
+
+    captured: list[dict] = []
+
+    def _mock_query(query_text: str, **kwargs: object) -> list[dict]:
+        captured.append({"query_text": query_text, "kwargs": kwargs})
+        return []
+
+    monkeypatch.setattr("mac.reasoning_atoms.query_atoms", _mock_query)
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "query", "shared persistent space"])
+
+    _cli()
+
+    assert len(captured) == 1
+    assert captured[0]["query_text"] == "shared persistent space"
+
+
+def test_cli_query_prints_results(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """``query`` subcommand prints JSON-serialisable results to stdout."""
+    import json
+    import sys
+    from mac.reasoning_atoms import _cli
+
+    fake_hit = {
+        "id": "uuid-1",
+        "score": 0.91,
+        "author": "agent_bullwinkle",
+        "thread": "compounding-theorem",
+        "content": "The fleet compounds knowledge only when each run produces an external artifact.",
+        "next_focus": "measure compound rate empirically",
+        "empirical": True,
+        "ts": "2026-11-20T10:00:00+00:00",
+        "schema_version": "2.0",
+        "provenance": ["soul_abc"],
+        "tension": [],
+        "run": 42,
+    }
+
+    monkeypatch.setattr("mac.reasoning_atoms.query_atoms", lambda *a, **kw: [fake_hit])
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "query", "compounding"])
+
+    _cli()
+
+    out = capsys.readouterr().out
+    # Output should contain the author and score
+    assert "agent_bullwinkle" in out
+    assert "0.91" in out
+    assert "compounding-theorem" in out
+
+
+def test_cli_query_author_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--author`` flag is forwarded to query_atoms as author_filter."""
+    import sys
+    from mac.reasoning_atoms import _cli
+
+    captured: list[dict] = []
+
+    def _mock_query(query_text: str, **kwargs: object) -> list[dict]:
+        captured.append(kwargs)
+        return []
+
+    monkeypatch.setattr("mac.reasoning_atoms.query_atoms", _mock_query)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["reasoning_atoms", "query", "some topic", "--author", "agent_rocky"]
+    )
+
+    _cli()
+
+    assert captured[0].get("author_filter") == "agent_rocky"
+
+
+def test_cli_query_limit_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--limit N`` is forwarded to query_atoms as limit=N."""
+    import sys
+    from mac.reasoning_atoms import _cli
+
+    captured: list[dict] = []
+
+    def _mock_query(query_text: str, **kwargs: object) -> list[dict]:
+        captured.append(kwargs)
+        return []
+
+    monkeypatch.setattr("mac.reasoning_atoms.query_atoms", _mock_query)
+    monkeypatch.setattr(
+        sys, "argv", ["reasoning_atoms", "query", "topic", "--limit", "3"]
+    )
+
+    _cli()
+
+    assert captured[0].get("limit") == 3
+
+
+def test_cli_query_empty_results(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """``query`` with no results prints a 'no atoms found' message."""
+    import sys
+    from mac.reasoning_atoms import _cli
+
+    monkeypatch.setattr("mac.reasoning_atoms.query_atoms", lambda *a, **kw: [])
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "query", "nothing"])
+
+    _cli()
+
+    out = capsys.readouterr().out
+    assert "no atoms found" in out.lower() or out.strip() == "[]"
+
+
+def test_cli_query_thread_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--thread`` flag is forwarded to query_atoms as thread_filter."""
+    import sys
+    from mac.reasoning_atoms import _cli
+
+    captured: list[dict] = []
+
+    monkeypatch.setattr(
+        "mac.reasoning_atoms.query_atoms",
+        lambda query_text, **kw: captured.append(kw) or [],  # type: ignore[misc]
+    )
+    monkeypatch.setattr(
+        sys, "argv",
+        ["reasoning_atoms", "query", "some query", "--thread", "compounding-theorem"]
+    )
+
+    _cli()
+
+    assert captured[0].get("thread_filter") == "compounding-theorem"
