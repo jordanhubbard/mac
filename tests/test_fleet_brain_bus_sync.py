@@ -1,182 +1,156 @@
-"""
-Tests for scripts/fleet_brain_bus_sync.py
-
-Tests the pure-Python logic (agent ID mapping, insert SQL generation,
-cursor read/write helpers) using subprocess mocking — no live DB or hub
-connection required.
-"""
-
+"""Tests for fleet_brain_bus_sync — AgentBus → agent_messages sync module."""
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-import types
-import unittest
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from typing import Any, Dict
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from mac.fleet_brain_bus_sync import _get_token, _load_mac_env, sync
 
 
-# ---------------------------------------------------------------------------
-# Load the script as a module (it lives in scripts/, not a package)
-# ---------------------------------------------------------------------------
-_SCRIPT = Path(__file__).parent.parent / "scripts" / "fleet_brain_bus_sync.py"
+class TestGetToken:
+    def test_prefers_mac_worker_token(self) -> None:
+        env = {"MAC_WORKER_TOKEN": "tok1", "MAC_API_TOKEN": "tok2"}
+        assert _get_token(env) == "tok1"
+
+    def test_falls_back_to_api_token(self) -> None:
+        env = {"MAC_API_TOKEN": "tok2"}
+        assert _get_token(env) == "tok2"
+
+    def test_prefers_scoped_worker_token(self) -> None:
+        env = {"MAC_WORKER_TOKEN__MAC": "scopedtok", "MAC_API_TOKEN": "plain"}
+        assert _get_token(env) == "scopedtok"
+
+    def test_returns_empty_when_missing(self) -> None:
+        assert _get_token({}) == ""
 
 
-def _load_bus_sync() -> types.ModuleType:
-    spec = importlib.util.spec_from_file_location("fleet_brain_bus_sync", _SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
-    return mod
+class TestLoadMacEnv:
+    def test_returns_dict(self) -> None:
+        result = _load_mac_env()
+        assert isinstance(result, dict)
+
+    def test_includes_mac_vars_from_os_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MAC_HUB_URL", "http://test-hub:1234")
+        result = _load_mac_env()
+        assert result.get("MAC_HUB_URL") == "http://test-hub:1234"
 
 
-_bus = _load_bus_sync()
+class TestSync:
+    """Unit tests for sync() using mocked PG and HTTP."""
 
+    def _make_conn(self) -> MagicMock:
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = lambda s: s
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchone.return_value = None  # no existing cursor
+        conn.cursor.return_value = cur
+        return conn
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
-class TestHubToLocalAgentMapping(unittest.TestCase):
-    """Agent ID mapping table is correct and covers all fleet agents."""
-
-    def test_known_agents_map_to_local_id(self) -> None:
-        assert _bus.HUB_TO_LOCAL_AGENT_ID["agent_bullwinkle"] == "bullwinkle"
-        assert _bus.HUB_TO_LOCAL_AGENT_ID["agent_rocky"] == "rocky"
-        assert _bus.HUB_TO_LOCAL_AGENT_ID["agent_natasha"] == "natasha"
-        assert _bus.HUB_TO_LOCAL_AGENT_ID["agent_asa"] == "asa"
-
-    def test_hub_system_maps_to_none(self) -> None:
-        assert _bus.HUB_TO_LOCAL_AGENT_ID["hub"] is None
-
-
-class TestGetCursor(unittest.TestCase):
-    """get_cursor returns int from psql output or 0 on failure."""
-
-    def test_returns_int_from_psql_output(self) -> None:
-        with patch("subprocess.check_output", return_value="12345\n") as m:
-            result = _bus.get_cursor({})
-            assert result == 12345
-            # Verify psql was called with the right DB and query fragment
-            args = m.call_args[0][0]
-            assert "psql" in args
-            assert "-d" in args
-            assert "fleet_brain" in args
-
-    def test_returns_zero_on_empty_output(self) -> None:
-        with patch("subprocess.check_output", return_value="\n"):
-            assert _bus.get_cursor({}) == 0
-
-    def test_returns_zero_on_subprocess_error(self) -> None:
-        import subprocess
-
-        with patch(
-            "subprocess.check_output",
-            side_effect=subprocess.CalledProcessError(1, "psql"),
-        ):
-            assert _bus.get_cursor({}) == 0
-
-
-class TestSetCursor(unittest.TestCase):
-    """set_cursor calls psql with an UPSERT for the new sequence."""
-
-    def test_calls_psql_with_correct_sequence(self) -> None:
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            _bus.set_cursor(99999)
-            args = mock_run.call_args[0][0]
-            # Must reference bullwinkle and pass the new cursor value
-            sql_arg = " ".join(args)
-            assert "bullwinkle" in sql_arg
-            assert "99999" in sql_arg
-
-
-class TestInsertMessages(unittest.TestCase):
-    """insert_messages builds correct SQL and counts successful inserts."""
-
-    def _make_event(self, seq: int, agent_id: str = "agent_bullwinkle") -> dict:
-        return {
-            "sequence": seq,
-            "agent_id": agent_id,
-            "event_type": "task.created.v1",
-            "created_at": "2026-11-13T01:00:00Z",
-            "payload": {"task_id": "t1"},
-        }
-
-    def test_dry_run_counts_without_calling_psql(self) -> None:
-        events = [self._make_event(1), self._make_event(2)]
-        with patch("subprocess.run") as mock_run:
-            count = _bus.insert_messages(events, dry_run=True)
-            assert count == 2
-            mock_run.assert_not_called()
-
-    def test_inserts_known_agent_with_local_id(self) -> None:
-        event = self._make_event(100, agent_id="agent_rocky")
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="INSERT 0 1\n", stderr="")
-            count = _bus.insert_messages([event], dry_run=False)
-            assert count == 1
-            sql = mock_run.call_args[0][0]
-            # 'rocky' (not 'agent_rocky') must appear in the INSERT
-            assert any("rocky" in str(arg) for arg in sql)
-
-    def test_skips_hub_events_gracefully(self) -> None:
-        """Hub events have from_agent=None; they should not cause FK errors."""
-        event = self._make_event(200, agent_id="hub")
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="INSERT 0 1\n", stderr="")
-            # Should not raise
-            _bus.insert_messages([event], dry_run=False)
-
-    def test_returns_zero_on_empty_input(self) -> None:
-        with patch("subprocess.run") as mock_run:
-            count = _bus.insert_messages([], dry_run=False)
-            assert count == 0
-            mock_run.assert_not_called()
-
-    def test_counts_only_successful_inserts(self) -> None:
-        events = [self._make_event(i) for i in range(3)]
-        responses = [
-            MagicMock(returncode=0, stdout="INSERT 0 1\n", stderr=""),
-            MagicMock(returncode=1, stdout="", stderr="ERROR: duplicate"),
-            MagicMock(returncode=0, stdout="INSERT 0 1\n", stderr=""),
+    def _make_broadcasts(self, n: int = 3) -> list[Dict[str, Any]]:
+        return [
+            {
+                "sequence": i + 1,
+                "event_id": f"evt_{i:04d}",
+                "agent_id": "agent_natasha",
+                "event_type": "task.created",
+                "payload": {"task_id": f"task_{i:04d}"},
+                "created_at": "2026-11-19T00:00:00Z",
+            }
+            for i in range(n)
         ]
-        with patch("subprocess.run", side_effect=responses):
-            count = _bus.insert_messages(events, dry_run=False)
-            assert count == 2  # only 2 of 3 succeeded
 
+    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
+    def test_sync_inserts_new_events(
+        self, mock_fetch: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        conn = self._make_conn()
+        mock_connect.return_value = conn
 
-class TestFetchBroadcasts(unittest.TestCase):
-    """fetch_broadcasts returns parsed list or [] on error."""
+        broadcasts = self._make_broadcasts(3)
+        mock_fetch.return_value = broadcasts
 
-    def test_returns_parsed_json_on_success(self) -> None:
-        payload = json.dumps([{"sequence": 1, "event_type": "task.created.v1"}])
-        with patch("subprocess.check_output", return_value=payload) as mock_co:
-            result = _bus.fetch_broadcasts(0, 10, {"MAC_WORKER_TOKEN": "tok"})
-            assert len(result) == 1
-            assert result[0]["sequence"] == 1
-            # Verify the right CLI command was constructed
-            args = mock_co.call_args[0][0]
-            assert "mac" in args
-            assert "agentbus" in args
+        # _upsert_message returns True (new insert)
+        conn.cursor.return_value.fetchone.side_effect = [
+            None,  # _read_cursor — no existing cursor
+            None,  # _upsert_message first event
+            None,
+            None,
+        ]
 
-    def test_returns_empty_on_bad_json(self) -> None:
-        with patch("subprocess.check_output", return_value="not json"):
-            result = _bus.fetch_broadcasts(0, 5, {})
-            assert result == []
+        with patch("mac.fleet_brain_bus_sync._upsert_message", return_value=True) as mock_up:
+            result = sync(limit=10)
 
-    def test_returns_empty_on_subprocess_error(self) -> None:
-        import subprocess
+        assert result["ok"] is True
+        assert result["fetched"] == 3
+        assert result["inserted"] == 3
+        assert result["skipped"] == 0
 
-        with patch(
-            "subprocess.check_output",
-            side_effect=subprocess.CalledProcessError(1, "mac"),
-        ):
-            result = _bus.fetch_broadcasts(0, 5, {})
-            assert result == []
+    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
+    def test_sync_skips_duplicates(
+        self, mock_fetch: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        conn = self._make_conn()
+        mock_connect.return_value = conn
 
+        broadcasts = self._make_broadcasts(2)
+        mock_fetch.return_value = broadcasts
 
-if __name__ == "__main__":
-    unittest.main()
+        with patch("mac.fleet_brain_bus_sync._upsert_message", return_value=False):
+            result = sync(limit=10)
+
+        assert result["ok"] is True
+        assert result["fetched"] == 2
+        assert result["inserted"] == 0
+        assert result["skipped"] == 2
+
+    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
+    def test_sync_empty_feed(
+        self, mock_fetch: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        conn = self._make_conn()
+        mock_connect.return_value = conn
+        mock_fetch.return_value = []
+
+        result = sync(limit=10)
+
+        assert result["ok"] is True
+        assert result["fetched"] == 0
+        assert result["inserted"] == 0
+
+    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync._fetch_broadcasts", side_effect=Exception("network error"))
+    def test_sync_returns_error_on_fetch_failure(
+        self, mock_fetch: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        conn = self._make_conn()
+        mock_connect.return_value = conn
+
+        result = sync(limit=10)
+
+        assert result["ok"] is False
+        assert "error" in result
+
+    @patch("mac.fleet_brain_bus_sync.psycopg2.connect")
+    @patch("mac.fleet_brain_bus_sync._fetch_broadcasts")
+    def test_sync_advances_cursor(
+        self, mock_fetch: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        conn = self._make_conn()
+        mock_connect.return_value = conn
+        broadcasts = self._make_broadcasts(3)
+        mock_fetch.return_value = broadcasts
+
+        with patch("mac.fleet_brain_bus_sync._upsert_message", return_value=True):
+            with patch("mac.fleet_brain_bus_sync._write_cursor") as mock_wc:
+                result = sync(limit=10)
+
+        # cursor_after should be max sequence (3)
+        assert result["cursor_after"] == 3
+        mock_wc.assert_called_once_with(conn, 3)

@@ -60,7 +60,7 @@ def _load_mac_env() -> Dict[str, str]:
 
 
 def _get_token(env: Dict[str, str]) -> str:
-    for k in ("MAC_WORKER_TOKEN", "MAC_API_TOKEN", "MAC_WORKER_TOKEN__MAC", "MAC_API_TOKEN__MAC"):
+    for k in ("MAC_WORKER_TOKEN__MAC", "MAC_API_TOKEN__MAC", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"):
         if env.get(k):
             return env[k]
     return ""
