@@ -169,6 +169,18 @@ KNOWN_GOOD = {
         "Generative Agents: Interactive Simulacra of Human Behavior",
         "https://dl.acm.org/doi/10.1145/3586183.3606763"
     ),
+    "norcross2000": (
+        "Psychotherapist self-care: Practitioner-tested, research-informed strategies",
+        "https://psycnet.apa.org/record/2007-18021-010"
+    ),
+    "demers1987": (
+        "Epidemic algorithms for replicated database maintenance",
+        "https://dl.acm.org/doi/10.1145/41840.41841"
+    ),
+    "hayashibara2004": (
+        "The phi accrual failure detector",
+        "https://ieeexplore.ieee.org/document/1353004"
+    ),
     "wegner1987transactive": (
         "Transactive Memory: A Contemporary Analysis of the Group Mind",
         "https://link.springer.com/chapter/10.1007/978-1-4612-4634-3_9"
