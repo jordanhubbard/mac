@@ -218,6 +218,7 @@ def test_make_atom_accepts_run_number() -> None:
 def _make_qdrant_mock():
     """Build a minimal qdrant_client mock that satisfies lazy imports in reasoning_atoms."""
     import sys
+
     mock_module = MagicMock()
     # QdrantClient is what query_atoms does `from qdrant_client import QdrantClient`
     mock_client_cls = MagicMock()
@@ -293,11 +294,13 @@ def test_query_atoms_author_filter_passed_to_qdrant() -> None:
 
     # Capture Filter constructor calls to verify a filter is built
     filter_calls = []
+
     def capture_filter(**kwargs):
         filter_calls.append(kwargs)
         f = MagicMock()
         f.must = kwargs.get("must", [])
         return f
+
     mock_module.models.Filter.side_effect = capture_filter
 
     mock_instance = mock_client_cls.return_value
@@ -442,8 +445,7 @@ def test_cli_query_author_flag(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("mac.reasoning_atoms.query_atoms", _mock_query)
     monkeypatch.setattr(
-        sys, "argv",
-        ["reasoning_atoms", "query", "some topic", "--author", "agent_rocky"]
+        sys, "argv", ["reasoning_atoms", "query", "some topic", "--author", "agent_rocky"]
     )
 
     _cli()
@@ -463,9 +465,7 @@ def test_cli_query_limit_flag(monkeypatch: pytest.MonkeyPatch) -> None:
         return []
 
     monkeypatch.setattr("mac.reasoning_atoms.query_atoms", _mock_query)
-    monkeypatch.setattr(
-        sys, "argv", ["reasoning_atoms", "query", "topic", "--limit", "3"]
-    )
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "query", "topic", "--limit", "3"])
 
     _cli()
 
@@ -500,10 +500,149 @@ def test_cli_query_thread_flag(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda query_text, **kw: captured.append(kw) or [],  # type: ignore[misc]
     )
     monkeypatch.setattr(
-        sys, "argv",
-        ["reasoning_atoms", "query", "some query", "--thread", "compounding-theorem"]
+        sys, "argv", ["reasoning_atoms", "query", "some query", "--thread", "compounding-theorem"]
     )
 
     _cli()
 
     assert captured[0].get("thread_filter") == "compounding-theorem"
+
+
+# ── write subcommand tests ─────────────────────────────────────────────────────
+
+
+def _make_valid_atom_dict() -> dict:
+    """Helper: minimal valid v2 atom as a dict."""
+    return {
+        "author": "agent_bullwinkle",
+        "thread": "test-thread",
+        "content": "Empirical observation: hybrid search reduces miss rate by 15%.",
+        "next_focus": "run A/B test with larger query set",
+        "provenance": ["soul_node_abc123"],
+        "empirical": True,
+    }
+
+
+def test_cli_write_calls_write_atom_to_qdrant(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempdirFixture
+) -> None:
+    """``write <file>`` reads JSON and calls write_atom_to_qdrant, prints point ID."""
+    import sys
+    import json
+    from mac.reasoning_atoms import _cli
+
+    atom_file = tmp_path / "atom.json"
+    atom_file.write_text(json.dumps(_make_valid_atom_dict()))
+
+    written: list = []
+
+    def _mock_write(atom, *, point_id=None, qdrant_url=None, embed_fn=None):
+        written.append(atom)
+        return "test-point-uuid-1234"
+
+    monkeypatch.setattr("mac.reasoning_atoms.write_atom_to_qdrant", _mock_write)
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "write", str(atom_file)])
+
+    from io import StringIO
+
+    captured_out = StringIO()
+    monkeypatch.setattr(sys, "stdout", captured_out)
+
+    _cli()
+
+    assert len(written) == 1
+    assert written[0].author == "agent_bullwinkle"
+    assert "test-point-uuid-1234" in captured_out.getvalue()
+
+
+def test_cli_write_prints_point_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempdirFixture, capsys: pytest.CaptureFixture
+) -> None:
+    """``write`` output includes the point UUID returned by write_atom_to_qdrant."""
+    import sys
+    import json
+    from mac.reasoning_atoms import _cli
+
+    atom_file = tmp_path / "atom.json"
+    atom_file.write_text(json.dumps(_make_valid_atom_dict()))
+
+    monkeypatch.setattr(
+        "mac.reasoning_atoms.write_atom_to_qdrant", lambda atom, **kw: "dead-beef-0000"
+    )
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "write", str(atom_file)])
+    _cli()
+
+    out = capsys.readouterr().out
+    assert "dead-beef-0000" in out
+
+
+def test_cli_write_invalid_atom_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempdirFixture
+) -> None:
+    """``write`` with an atom missing required fields exits with code 1."""
+    import sys
+    import json
+    from mac.reasoning_atoms import _cli
+
+    bad = {"author": "agent_bullwinkle"}  # missing content, thread, next_focus, provenance
+    atom_file = tmp_path / "bad.json"
+    atom_file.write_text(json.dumps(bad))
+
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "write", str(atom_file)])
+
+    with pytest.raises(SystemExit) as exc_info:
+        _cli()
+    assert exc_info.value.code != 0
+
+
+def test_cli_write_forwards_qdrant_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempdirFixture
+) -> None:
+    """``--qdrant-url`` flag is forwarded to write_atom_to_qdrant."""
+    import sys
+    import json
+    from mac.reasoning_atoms import _cli
+
+    atom_file = tmp_path / "atom.json"
+    atom_file.write_text(json.dumps(_make_valid_atom_dict()))
+
+    captured: list = []
+
+    def _mock_write(atom, *, point_id=None, qdrant_url=None, embed_fn=None):
+        captured.append(qdrant_url)
+        return "some-id"
+
+    monkeypatch.setattr("mac.reasoning_atoms.write_atom_to_qdrant", _mock_write)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["reasoning_atoms", "write", str(atom_file), "--qdrant-url", "http://localhost:6333"],
+    )
+    _cli()
+
+    assert captured[0] == "http://localhost:6333"
+
+
+def test_cli_write_dry_run_does_not_call_qdrant(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempdirFixture, capsys: pytest.CaptureFixture
+) -> None:
+    """``--dry-run`` validates and prints the atom but does NOT call write_atom_to_qdrant."""
+    import sys
+    import json
+    from mac.reasoning_atoms import _cli
+
+    atom_file = tmp_path / "atom.json"
+    atom_file.write_text(json.dumps(_make_valid_atom_dict()))
+
+    write_called: list = []
+
+    monkeypatch.setattr(
+        "mac.reasoning_atoms.write_atom_to_qdrant",
+        lambda atom, **kw: write_called.append(True) or "should-not-appear",
+    )
+    monkeypatch.setattr(sys, "argv", ["reasoning_atoms", "write", str(atom_file), "--dry-run"])
+    _cli()
+
+    out = capsys.readouterr().out
+    assert not write_called, "write_atom_to_qdrant should not be called in dry-run mode"
+    assert "dry" in out.lower() or "agent_bullwinkle" in out

@@ -361,10 +361,31 @@ def _cli() -> None:
         help="Search reasoning_atoms in Qdrant by semantic proximity",
     )
     query_p.add_argument("text", nargs="+", help="Query text (space-separated words)")
-    query_p.add_argument("--author", dest="author_filter", default=None, help="Filter by author agent-id")
-    query_p.add_argument("--thread", dest="thread_filter", default=None, help="Filter by thread slug")
+    query_p.add_argument(
+        "--author", dest="author_filter", default=None, help="Filter by author agent-id"
+    )
+    query_p.add_argument(
+        "--thread", dest="thread_filter", default=None, help="Filter by thread slug"
+    )
     query_p.add_argument("--limit", type=int, default=5, help="Max results (default 5)")
-    query_p.add_argument("--qdrant-url", dest="qdrant_url", default=None, help="Qdrant endpoint URL")
+    query_p.add_argument(
+        "--qdrant-url", dest="qdrant_url", default=None, help="Qdrant endpoint URL"
+    )
+
+    write_p = sub.add_parser(
+        "write",
+        help="Write a validated atom JSON file to Qdrant (use --dry-run to validate only)",
+    )
+    write_p.add_argument("file", help="Path to JSON file with atom payload")
+    write_p.add_argument(
+        "--qdrant-url", dest="qdrant_url", default=None, help="Qdrant endpoint URL"
+    )
+    write_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Validate the atom and print it without writing to Qdrant",
+    )
 
     args = parser.parse_args()
 
@@ -402,6 +423,25 @@ def _cli() -> None:
                 print(
                     f"[score={r['score']:.3f}] {r['author']} | {r['thread']} | {r['content'][:120]}"
                 )
+    elif args.cmd == "write":
+        with open(args.file) as fh:
+            data = json.load(fh)
+        try:
+            atom = ReasoningAtom(
+                **{k: v for k, v in data.items() if k in ReasoningAtom.__dataclass_fields__}
+            )  # type: ignore[attr-defined]
+            validate_atom(atom)
+        except (ValueError, TypeError) as e:
+            print(f"INVALID: {e}", file=sys.stderr)
+            sys.exit(1)
+        if args.dry_run:
+            import dataclasses
+
+            print(f"[dry-run] valid atom from {args.file}:")
+            print(json.dumps(dataclasses.asdict(atom), indent=2))
+        else:
+            pid = write_atom_to_qdrant(atom, qdrant_url=args.qdrant_url)
+            print(f"Written: {pid}")
     else:
         parser.print_help()
 
