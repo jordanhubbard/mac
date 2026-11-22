@@ -24,7 +24,7 @@ Environment (all optional -- falls back to ~/.mac/mac.env):
 
     MAC_HUB_URL          -- hub API base URL (default http://100.72.16.110:8789)
     MAC_WORKER_TOKEN     -- bearer token for hub auth
-    FLEET_LIVENESS_AGENT -- agent_id used for watchdog queries (default: bullwinkle)
+    FLEET_LIVENESS_AGENT -- agent_id used for watchdog queries (overrides MAC_AGENT_ID; default: agent_bullwinkle)
 """
 
 from __future__ import annotations
@@ -60,8 +60,10 @@ from mac import mac_paths as _mac_paths
 def _env_file_candidates():
     """Return env file candidates via mac_paths (no hard-coded home literals)."""
     return [_mac_paths.mac_env_file(), _mac_paths.deploy_env_file()]
+
+
 _DEFAULT_HUB = "http://100.72.16.110:8789"
-_DEFAULT_AGENT = "bullwinkle"
+_DEFAULT_AGENT = "agent_bullwinkle"
 _DEFAULT_THRESHOLD_HOURS = 4
 
 
@@ -89,7 +91,7 @@ def _get_config() -> dict[str, str]:
     return {
         "hub": env.get("MAC_HUB_URL", _DEFAULT_HUB).rstrip("/"),
         "token": env.get("MAC_WORKER_TOKEN", env.get("MAC_API_TOKEN", "")),
-        "agent": env.get("FLEET_LIVENESS_AGENT", _DEFAULT_AGENT),
+        "agent": env.get("FLEET_LIVENESS_AGENT", env.get("MAC_AGENT_ID", _DEFAULT_AGENT)),
     }
 
 
