@@ -519,9 +519,9 @@ def query_atoms(
         )
         query_vector = [0.0] * EMBEDDING_DIMS
 
-    results = client.search(
+    results = client.query_points(
         collection_name=QDRANT_COLLECTION,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=qdrant_filter,
         limit=limit,
         with_payload=True,
@@ -529,7 +529,7 @@ def query_atoms(
     )
 
     hits = []
-    for hit in results:
+    for hit in results.points:
         payload = hit.payload or {}
         hits.append(
             {
