@@ -255,7 +255,9 @@ def test_query_atoms_returns_hits() -> None:
 
     mock_module, mock_client_cls = _make_qdrant_mock()
     mock_instance = mock_client_cls.return_value
-    mock_instance.search.return_value = [mock_hit]
+    mock_qp_result = MagicMock()
+    mock_qp_result.points = [mock_hit]
+    mock_instance.query_points.return_value = mock_qp_result
 
     orig = sys.modules.pop("qdrant_client", None)
     sys.modules["qdrant_client"] = mock_module
@@ -304,7 +306,7 @@ def test_query_atoms_author_filter_passed_to_qdrant() -> None:
     mock_module.models.Filter.side_effect = capture_filter
 
     mock_instance = mock_client_cls.return_value
-    mock_instance.search.return_value = []
+    mock_instance.query_points.return_value = MagicMock(points=[])
 
     orig = sys.modules.pop("qdrant_client", None)
     sys.modules["qdrant_client"] = mock_module
@@ -316,7 +318,7 @@ def test_query_atoms_author_filter_passed_to_qdrant() -> None:
             embed_fn=lambda t: [0.0] * 2048,
             author_filter="agent_bullwinkle",
         )
-        call_kwargs = mock_instance.search.call_args[1]
+        call_kwargs = mock_instance.query_points.call_args[1]
         f = call_kwargs.get("query_filter")
         # A filter was passed (not None) when author_filter is specified
         assert f is not None
@@ -337,7 +339,7 @@ def test_query_atoms_empty_collection_returns_empty_list() -> None:
 
     mock_module, mock_client_cls = _make_qdrant_mock()
     mock_instance = mock_client_cls.return_value
-    mock_instance.search.return_value = []
+    mock_instance.query_points.return_value = MagicMock(points=[])
 
     orig = sys.modules.pop("qdrant_client", None)
     sys.modules["qdrant_client"] = mock_module
