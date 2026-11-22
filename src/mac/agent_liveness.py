@@ -54,10 +54,12 @@ SILENT_ALERT_EVENT_TYPE = "agent.silent.alert.v1"
 # Config helpers (mirrors fleet_brain_bus_sync pattern)
 # ---------------------------------------------------------------------------
 
-_ENV_FILE_CANDIDATES = [
-    Path.home() / ".mac" / "mac.env",
-    Path.home() / ".mac" / ".env",
-]
+from mac import mac_paths as _mac_paths
+
+
+def _env_file_candidates():
+    """Return env file candidates via mac_paths (no hard-coded home literals)."""
+    return [_mac_paths.mac_env_file(), _mac_paths.deploy_env_file()]
 _DEFAULT_HUB = "http://100.72.16.110:8789"
 _DEFAULT_AGENT = "bullwinkle"
 _DEFAULT_THRESHOLD_HOURS = 4
@@ -65,7 +67,7 @@ _DEFAULT_THRESHOLD_HOURS = 4
 
 def _load_mac_env() -> dict[str, str]:
     env: dict[str, str] = {}
-    for path in _ENV_FILE_CANDIDATES:
+    for path in _env_file_candidates():
         if path.exists():
             for line in path.read_text().splitlines():
                 line = line.strip()
