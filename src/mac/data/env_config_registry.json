@@ -330,6 +330,7 @@
       "scripts/escrow-upstream-key.sh",
       "scripts/fleet_brain_bus_sync.py",
       "scripts/migrate-tokenhub-vault.sh",
+      "src/mac/agent_liveness.py",
       "src/mac/api.py",
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
@@ -2148,6 +2149,7 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "deploy/systemd/mac-fleet-context.service",
+      "src/mac/agent_liveness.py",
       "src/mac/claude_hooks.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
@@ -6547,6 +6549,7 @@
     "sources": [
       "deploy/mac-crash-observer.py",
       "scripts/fleet_brain_bus_sync.py",
+      "src/mac/agent_liveness.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/credential_aliases.py",
