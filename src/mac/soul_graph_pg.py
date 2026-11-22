@@ -103,6 +103,11 @@ class SoulGraphPG(SoulGraph):
         if node_id in self.nodes:
             self._dirty_ids.add(node_id)
 
+    def unpin(self, node_id: str):
+        super().unpin(node_id)
+        if node_id in self.nodes:
+            self._dirty_ids.add(node_id)
+
     def touch(self, node_id: str, propagate_parents: bool = True) -> Optional[SoulNode]:
         node = super().touch(node_id, propagate_parents=propagate_parents)
         if node:

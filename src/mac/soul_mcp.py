@@ -26,6 +26,7 @@ soul_discover   walk the DAG from a seed node
 soul_by_tag     cross-cut the graph on a tag
 soul_splay      explicitly access (promote) a node
 soul_pin        pin a node as an axiom (never decays)
+soul_unpin      remove axiom status so a node decays normally
 soul_explore    add a hypothesis to the exploration branch
 soul_promote    graduate a hypothesis into the core graph
 soul_add        add a node with optional DAG parents and tags
@@ -219,6 +220,18 @@ class SoulTools:
             return _error("Node %r not found." % node_id)
         self._g.pin(node_id)
         return _text({"pinned": node_id, "content": node.content})
+
+    def soul_unpin(self, node_id: str) -> JsonDict:
+        """Remove axiom status from a node so it decays normally again.
+        Use when a pinned node is stale, resolved, or superseded and should
+        no longer be injected as a permanent axiom."""
+        node = self._g.get(node_id)
+        if node is None:
+            return _error("Node %r not found." % node_id)
+        if not node.pinned:
+            return _text({"already_unpinned": node_id, "content": node.content})
+        self._g.unpin(node_id)
+        return _text({"unpinned": node_id, "content": node.content})
 
     def soul_explore(self, id: str, content: str, tags: Optional[List[str]] = None) -> JsonDict:
         """Add a hypothesis to the exploration branch, isolated from the core
@@ -521,6 +534,15 @@ class SoulTools:
         {
             "name": "soul_pin",
             "description": "Pin a node as an axiom: it never decays.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"node_id": {"type": "string"}},
+                "required": ["node_id"],
+            },
+        },
+        {
+            "name": "soul_unpin",
+            "description": "Remove axiom status from a node so it decays normally again. Use for stale, resolved, or superseded pinned nodes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"node_id": {"type": "string"}},

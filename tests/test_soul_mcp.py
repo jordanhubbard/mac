@@ -71,6 +71,28 @@ def test_add_link_and_pin_use_the_real_engine():
     assert tools.soul_pin("missing").get("isError")
 
 
+def test_soul_unpin_removes_axiom_status():
+    import math
+
+    g = _graph()
+    tools = SoulTools(g)
+    # pin a non-pinned node first
+    _payload(tools.soul_add("Stale resolved belief.", id="u1"))
+    _payload(tools.soul_pin("u1"))
+    assert g.nodes["u1"].pinned
+    # unpin it
+    result = _payload(tools.soul_unpin("u1"))
+    assert result["unpinned"] == "u1"
+    assert not g.nodes["u1"].pinned
+    # score should be finite again
+    assert g.nodes["u1"].recency_score() < math.inf
+    # idempotent: already-unpinned node returns a benign response
+    result2 = _payload(tools.soul_unpin("u1"))
+    assert result2["already_unpinned"] == "u1"
+    # missing node is an error
+    assert tools.soul_unpin("missing").get("isError")
+
+
 def test_promote_moves_only_the_named_hypothesis():
     g = _graph()
     tools = SoulTools(g)
@@ -109,7 +131,12 @@ def test_stdio_server_speaks_mcp_and_saves_only_after_writes(tmp_path):
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "soul_hot", "arguments": {}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "soul_hot", "arguments": {}},
+        },
     )
     assert [r["id"] for r in replies] == [1, 2, 3]
     assert {t["name"] for t in replies[1]["result"]["tools"]} >= {"soul_prime", "soul_related"}
@@ -117,8 +144,12 @@ def test_stdio_server_speaks_mcp_and_saves_only_after_writes(tmp_path):
 
     _rpc(
         path,
-        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-         "params": {"name": "soul_add", "arguments": {"content": "first memory", "id": "m1"}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "soul_add", "arguments": {"content": "first memory", "id": "m1"}},
+        },
     )
     assert "m1" in SoulGraph.load(path).nodes
     reply = _rpc(path, {"jsonrpc": "2.0", "id": 5, "method": "nope"})[0]
@@ -133,6 +164,7 @@ def test_the_default_soul_file_lives_in_the_agent_home(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 # Cross-agent dedup: same concept from two agents → one node, no duplicate
 # ---------------------------------------------------------------------------
+
 
 def _cross_agent_graph() -> SoulGraph:
     """Simulate a graph loaded with --cross-agent: nodes from two agents."""
@@ -184,7 +216,9 @@ def test_soul_add_pinned_gets_fleet_canonical_tag_when_no_visibility():
     """Pinned node without a visibility: tag → auto-tagged visibility:fleet-canonical."""
     g = SoulGraph(name="t")
     tools = SoulTools(g)
-    result = _payload(tools.soul_add("Agents must file all work as MAC tasks.", pinned=True, id="p1"))
+    result = _payload(
+        tools.soul_add("Agents must file all work as MAC tasks.", pinned=True, id="p1")
+    )
     assert "deduped" not in result
     assert "visibility:fleet-canonical" in result["tags"]
 
@@ -215,8 +249,7 @@ def test_soul_link_relation_in_tool_spec():
     spec = next(s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_link")
     props = spec["inputSchema"]["properties"]
     assert "relation" in props, (
-        "soul_link TOOL_SPEC missing 'relation' property — "
-        "MCP clients cannot pass typed edges"
+        "soul_link TOOL_SPEC missing 'relation' property — MCP clients cannot pass typed edges"
     )
     assert props["relation"]["type"] == "string"
     assert "contradicts" in props["relation"]["enum"]
@@ -242,7 +275,6 @@ def test_soul_link_contradicts_relation():
     result = _payload(tools.soul_link("a1", "contra1", relation="contradicts"))
     assert result.get("relation") == "contradicts"
     assert g.nodes["contra1"].metadata.get("parent_rels", {}).get("a1") == "contradicts"
-
 
 
 # ---------------------------------------------------------------------------
@@ -309,11 +341,22 @@ def test_soul_search_with_hybrid_path(monkeypatch):
         extra: Dict[str, Any] = field(default_factory=dict)
 
     fake_results = [
-        _FakeResult("i2", "bullwinkle", "Bullwinkle handles RAG retrieval.", ["crew", "rag"], 0.9, "hybrid", 0),
-        _FakeResult("l1", "bullwinkle", "curl is blocked; use urllib.", ["lesson"], 0.7, "hybrid", 1),
+        _FakeResult(
+            "i2",
+            "bullwinkle",
+            "Bullwinkle handles RAG retrieval.",
+            ["crew", "rag"],
+            0.9,
+            "hybrid",
+            0,
+        ),
+        _FakeResult(
+            "l1", "bullwinkle", "curl is blocked; use urllib.", ["lesson"], 0.7, "hybrid", 1
+        ),
     ]
 
     import types
+
     fake_module = types.ModuleType("mac.semantic_world_search")
 
     def _hybrid_search(query, **kwargs):
@@ -322,6 +365,7 @@ def test_soul_search_with_hybrid_path(monkeypatch):
     fake_module.hybrid_search = _hybrid_search
 
     import sys
+
     monkeypatch.setitem(sys.modules, "mac.semantic_world_search", fake_module)
 
     g = _graph()

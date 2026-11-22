@@ -422,6 +422,17 @@ class SoulGraph:
             self.nodes[node_id].pinned = True
             self.splay.access(node_id, math.inf)
 
+    def unpin(self, node_id: str):
+        """Remove axiom status from a node — it will decay normally again."""
+        if node_id in self.nodes:
+            node = self.nodes[node_id]
+            node.pinned = False
+            # Restore a finite score so the splay tree can decay it.
+            # Use access_count as a proxy for earned relevance so the node
+            # doesn't immediately fall to the bottom.
+            restored_score = float(max(node.access_count, 1))
+            self.splay.access(node_id, restored_score)
+
     def touch(self, node_id: str, propagate_parents: bool = True) -> Optional[SoulNode]:
         """Access a node — promotes it in splay tree.
 
