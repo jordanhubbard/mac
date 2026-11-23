@@ -168,6 +168,7 @@
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac-openshell-supervisor.service",
       "scripts/run-contract-tests.sh",
+      "src/mac/agent_liveness.py",
       "src/mac/cli.py",
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
