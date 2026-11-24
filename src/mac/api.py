@@ -5390,6 +5390,46 @@ def create_app(
     def set_project_dispatch(project: str, body: ProjectDispatch) -> Dict[str, Any]:
         return cp.set_project_dispatch(project, paused=body.paused, actor=body.actor).to_dict()
 
+    @app.get("/projects/{project}/registration")
+    def get_project_registration(project: str) -> Dict[str, Any]:
+        """Return the bounded canonical registration record for a registered project.
+
+        Schema: ``mac.project_registration.v1``
+
+        Only fields from the durable ``ProjectRecord`` are returned — no tasks,
+        bridge items, repositories, raw metadata, credentials, or worker data.
+        A 404 is raised when the project is not registered (i.e. it was created
+        manually without a repository contract and has no ProjectRecord row).
+
+        Fields:
+        - ``schema``: ``mac.project_registration.v1``
+        - ``id``: canonical project identifier
+        - ``name``: canonical project name
+        - ``description``: project description (may be empty)
+        - ``status``: registration status (``active`` / ``paused``)
+        - ``created_at``: ISO-8601 UTC timestamp of initial registration
+        - ``updated_at``: ISO-8601 UTC timestamp of last update
+        - ``repository_registration``: canonical ``url#branch`` if set, else ``null``
+        """
+        try:
+            rec = cp.get_project_record(project)
+        except NotFoundError:
+            raise NotFoundError("project not registered: %s" % project)
+        raw = rec.to_dict()
+        # Explicit allowlist — never expose raw metadata, credentials, or
+        # unrelated worker/agent data.
+        repo_reg = (raw.get("metadata") or {}).get("repository_registration") or None
+        return {
+            "schema": "mac.project_registration.v1",
+            "id": raw["id"],
+            "name": raw["name"],
+            "description": raw.get("description") or "",
+            "status": raw.get("status") or "unknown",
+            "created_at": raw.get("created_at"),
+            "updated_at": raw.get("updated_at"),
+            "repository_registration": repo_reg,
+        }
+
     @app.get("/projects/{project}")
     def get_project(project: str) -> Dict[str, Any]:
         return cp.get_project(project)
@@ -5508,7 +5548,9 @@ def create_app(
         if principal.agent_id and not principal.is_admin:
             task = cp.get_task(task_id)
             if str(task.owner_agent_id or "") != str(principal.agent_id):
-                raise AuthorizationError("agent %s does not own task %s" % (principal.agent_id, task_id))
+                raise AuthorizationError(
+                    "agent %s does not own task %s" % (principal.agent_id, task_id)
+                )
             if requested_author_kind == "hub":
                 return "hub", "harness:%s" % principal.agent_id
             return "agent", str(principal.agent_id)
