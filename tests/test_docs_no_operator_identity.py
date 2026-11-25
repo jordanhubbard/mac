@@ -83,6 +83,7 @@ def _scanned_files() -> list[Path]:
             "docs/investigations/arxiv-paper-v0.md",
             "docs/investigations/process-summary.md",  # submission metadata; names agent authors
             "docs/investigations/aixiv.json",  # aiXiv submission config; names agent authors
+            "docs/investigations/buddy-check-paper.tex",  # published paper; names fleet agents as authors
         ):
             continue
         path = (ROOT / rel).resolve()
