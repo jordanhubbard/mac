@@ -819,6 +819,31 @@ class SoulGraph:
         pinned = [n for n in self.nodes.values() if n.pinned]
         lines.append(f"  Pinned axioms: {len(pinned)}")
         lines.append(f"  Tags: {sorted(self._tag_index.keys())}")
+
+        # ── Edge health metrics ────────────────────────────────────────────
+        all_ids = set(self.nodes.keys())
+        nodes_with_edges = set()
+        edge_type_counts: dict[str, int] = {}
+        for node in self.nodes.values():
+            if node.parents or node.children:
+                nodes_with_edges.add(node.id)
+            for parent_id in node.parents:
+                rel = node.metadata.get("parent_rels", {}).get(parent_id, "child")
+                edge_type_counts[rel] = edge_type_counts.get(rel, 0) + 1
+
+        orphan_ids = all_ids - nodes_with_edges
+        orphan_count = len(orphan_ids)
+        total = len(all_ids)
+        isolated_pct = round(100 * orphan_count / total) if total else 0
+        lines.append(
+            f"  Orphan nodes (no edges): {orphan_count} / {total} ({isolated_pct}% isolated)"
+        )
+        if edge_type_counts:
+            dist = ", ".join(
+                f"{rel}={cnt}" for rel, cnt in sorted(edge_type_counts.items(), key=lambda x: -x[1])
+            )
+            lines.append(f"  Edge type distribution: {dist}")
+
         lines.append(f"  Hot nodes (top 5):")
         for n in self.hot(5):
             pin_mark = " 📌" if n.pinned else ""

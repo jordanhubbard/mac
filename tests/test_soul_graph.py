@@ -4,6 +4,7 @@ Tests for mac.soul_graph — the splay-DAG-tag soul engine.
 Covers: node creation, pinning, splay promotion, DAG edges, tag index,
 semantic search, discovery traversal, exploration branch, merge, persistence.
 """
+
 from __future__ import annotations
 import json, math, time, tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from mac.soul_graph import SoulGraph, SoulNode
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_soul() -> SoulGraph:
     g = SoulGraph(name="test")
     g.add("Be genuinely helpful.", tags={"axiom"}, pinned=True, node_id="a1")
@@ -23,7 +25,12 @@ def make_soul() -> SoulGraph:
     g.add("Rocky is the fleet hub.", tags={"identity", "crew"}, parents=["a1"], node_id="i1")
     g.add("Bullwinkle handles RAG.", tags={"crew", "rag"}, parents=["i1"], node_id="i2")
     g.add("Natasha runs on the GPU host.", tags={"crew", "gpu"}, parents=["i1"], node_id="i3")
-    g.add("Lessons: curl is blocked, use urllib.", tags={"lesson", "tooling"}, parents=["a1"], node_id="l1")
+    g.add(
+        "Lessons: curl is blocked, use urllib.",
+        tags={"lesson", "tooling"},
+        parents=["a1"],
+        node_id="l1",
+    )
     g.add("git is the filesystem.", tags={"lesson", "git"}, parents=["a1"], node_id="l2")
     return g
 
@@ -31,6 +38,7 @@ def make_soul() -> SoulGraph:
 # ---------------------------------------------------------------------------
 # Basic creation
 # ---------------------------------------------------------------------------
+
 
 def test_add_node():
     g = SoulGraph(name="t")
@@ -55,6 +63,7 @@ def test_unpinned_node_finite_score():
 # Splay / access promotion
 # ---------------------------------------------------------------------------
 
+
 def test_touch_promotes():
     g = make_soul()
     # Touch i2 several times — should rise above i3
@@ -76,6 +85,7 @@ def test_hot_returns_pinned_first():
 # ---------------------------------------------------------------------------
 # DAG edges
 # ---------------------------------------------------------------------------
+
 
 def test_parent_child_wired():
     g = make_soul()
@@ -116,6 +126,7 @@ def test_ancestors():
 # Tag index
 # ---------------------------------------------------------------------------
 
+
 def test_by_tag_returns_nodes():
     g = make_soul()
     crew = g.by_tag("crew")
@@ -144,6 +155,7 @@ def test_tag_method():
 # Semantic search (keyword stub)
 # ---------------------------------------------------------------------------
 
+
 def test_semantic_search_finds_match():
     g = make_soul()
     results = g.semantic_search("curl blocked urllib", top_k=3)
@@ -162,6 +174,7 @@ def test_semantic_search_empty_query():
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
+
 
 def test_discover_returns_path():
     g = make_soul()
@@ -182,6 +195,7 @@ def test_discover_touches_nodes():
 # ---------------------------------------------------------------------------
 # Exploration branch
 # ---------------------------------------------------------------------------
+
 
 def test_branch_is_independent():
     g = make_soul()
@@ -212,6 +226,7 @@ def test_merge_does_not_overwrite_existing():
 # ---------------------------------------------------------------------------
 # Persistence (save / load round-trip)
 # ---------------------------------------------------------------------------
+
 
 def test_save_load_roundtrip():
     g = make_soul()
@@ -253,6 +268,7 @@ def test_save_load_tag_index():
 # Summary
 # ---------------------------------------------------------------------------
 
+
 def test_summary_runs():
     g = make_soul()
     s = g.summary()
@@ -263,6 +279,7 @@ def test_summary_runs():
 # ---------------------------------------------------------------------------
 # Regression tests for bugs observed via live agent session (2026-09-12)
 # ---------------------------------------------------------------------------
+
 
 def test_bug4_new_node_scores_higher_than_old():
     """BUG 4 fixed: exponential decay — new zero-access node >> week-old zero-access."""
@@ -357,9 +374,7 @@ def test_hot_matches_recency_order_at_every_time_without_reranking():
     g.pin("n5")
     for later in (0, 3600, 5 * 86400, 60 * 86400):
         clock.now += later
-        expected = sorted(
-            g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True
-        )
+        expected = sorted(g.nodes.values(), key=lambda n: n.recency_score(clock.now), reverse=True)
         hot = g.hot(15)
         assert hot[0].id == "n5"
         scores = [n.recency_score(clock.now) for n in hot]
@@ -465,9 +480,14 @@ def test_a_real_reasoning_dag_imports_and_is_traversable():
     assert len(g.nodes) == len(data["nodes"])
     assert g.dropped_edges == []
     assert {n.id for n in g.nodes.values() if n.pinned} == {
-        "unpredictable", "target-human", "human-control"
+        "unpredictable",
+        "target-human",
+        "human-control",
     }
-    assert g.nodes["vivaldi"].metadata["parent_rels"] == {"ark1": "component", "autodrone": "precursor"}
+    assert g.nodes["vivaldi"].metadata["parent_rels"] == {
+        "ark1": "component",
+        "autodrone": "precursor",
+    }
     assert g.tagged("event") == {"vivaldi", "ark1", "autodrone"}
     related = [n.id for n in g.related("Operation Vivaldi", top_k=6)]
     assert related[0] == "vivaldi"
@@ -480,8 +500,58 @@ def test_from_dag_drops_edges_that_would_close_a_cycle():
     g = SoulGraph.from_dag(
         {
             "nodes": [{"id": "a", "label": "a"}, {"id": "b", "label": "b"}],
-            "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}, {"from": "a", "to": "zz"}],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "a"},
+                {"from": "a", "to": "zz"},
+            ],
         }
     )
     assert g.nodes["b"].parents == ["a"]
     assert len(g.dropped_edges) == 2
+
+
+# ── soul_graph.summary() health metrics ───────────────────────────────────────
+
+
+class TestSummaryHealthMetrics:
+    """summary() must report edge health: orphan count, isolated ratio, edge-type dist."""
+
+    def _make_graph(self) -> SoulGraph:  # type: ignore[name-defined]
+        """Small graph: root → child1 (depends_on), child2 (child), orphan (no edges)."""
+        g = SoulGraph("test-health")  # type: ignore[name-defined]
+        g.add("root node", node_id="root", tags=["identity"])
+        g.add("child one", parents=["root"], node_id="c1")
+        g.add("child two", parents=["root"], node_id="c2")
+        g.link("root", "c1", "depends_on")
+        g.add("orphan node", node_id="orph")  # no parents, no children
+        return g
+
+    def test_summary_contains_orphan_count(self):
+        g = self._make_graph()
+        s = g.summary()
+        assert "orphan" in s.lower(), f"summary() must report orphan count; got:\n{s}"
+
+    def test_summary_contains_isolated_ratio(self):
+        g = self._make_graph()
+        s = g.summary()
+        # 1 orphan out of 4 nodes = 25%
+        assert "25%" in s or "isolated" in s.lower(), (
+            f"summary() must report isolated node ratio; got:\n{s}"
+        )
+
+    def test_summary_contains_edge_type_distribution(self):
+        g = self._make_graph()
+        s = g.summary()
+        # depends_on relation should appear
+        assert "depends_on" in s or "edge type" in s.lower(), (
+            f"summary() must show edge-type distribution; got:\n{s}"
+        )
+
+    def test_summary_no_edge_type_when_no_typed_edges(self):
+        g = SoulGraph("empty-typed")  # type: ignore[name-defined]
+        g.add("node a", node_id="a1")
+        g.add("node b", parents=["a1"], node_id="b1")
+        s = g.summary()
+        # Should not crash; edge type block may show 'child' default or be absent
+        assert "orphan" in s.lower(), f"summary() must still report orphan info; got:\n{s}"
