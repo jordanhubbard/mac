@@ -204,6 +204,38 @@ class SoulTools:
             frontier = next_frontier
         return _text({"seed": seed.id, "hops": hops, "discovered": [_brief(n) for n in discovered]})
 
+    def soul_ancestors(self, node_id: str) -> JsonDict:
+        """Walk the DAG *upward* from ``node_id``, returning all ancestor nodes.
+
+        Useful for understanding the provenance of a belief: why does this node
+        exist, what principle or lesson caused it?  Complements ``soul_discover``
+        (which walks children) and ``soul_fisheye`` (which mixes semantic and
+        graph context).  Returns the ancestor set without the seed node itself.
+        """
+        g = self._g
+        node = g.get(node_id)
+        if node is None:
+            return _error("Node %r not found." % node_id)
+        ancestor_ids = g.ancestors(node_id)
+        ancestors = [
+            dict(_brief(g.nodes[aid]), pinned=g.nodes[aid].pinned)
+            for aid in ancestor_ids
+            if aid in g.nodes
+        ]
+        # Sort by score descending so the most recently-accessed ancestors
+        # surface first — these are more likely to be the proximate causes.
+        ancestors.sort(
+            key=lambda n: n.get("score", 0) if isinstance(n.get("score"), (int, float)) else 0,
+            reverse=True,
+        )
+        return _text(
+            {
+                "node_id": node_id,
+                "ancestor_count": len(ancestors),
+                "ancestors": ancestors,
+            }
+        )
+
     def soul_by_tag(self, tag: str) -> JsonDict:
         nodes = self._g.by_tag(tag)
         return _text({"tag": tag, "count": len(nodes), "nodes": [_brief(n) for n in nodes]})
@@ -511,6 +543,22 @@ class SoulTools:
                     "hops": {"type": "integer", "default": 2},
                 },
                 "required": ["seed_id"],
+            },
+        },
+        {
+            "name": "soul_ancestors",
+            "description": (
+                "Walk the DAG upward from a node and return all ancestor nodes. "
+                "Use to understand *why* a belief exists — trace the causal chain "
+                "or provenance of a soul graph node. Complements soul_discover "
+                "(children) and soul_related (semantic siblings)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "string"},
+                },
+                "required": ["node_id"],
             },
         },
         {
