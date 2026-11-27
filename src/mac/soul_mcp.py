@@ -236,6 +236,39 @@ class SoulTools:
             }
         )
 
+    def soul_path(self, from_id: str, to_id: str) -> JsonDict:
+        """Find the shortest DAG path between two nodes.
+
+        Returns the ordered list of nodes from ``from_id`` to ``to_id`` via
+        the DAG child-edges, using BFS.  Useful for understanding the chain
+        of reasoning that connects two distant beliefs, or confirming that two
+        nodes are related at all.
+
+        Returns an empty path list (not an error) when no directed path exists.
+        Bidirectional checks (from→to then to→from) can surface relationships
+        in either direction.
+        """
+        g = self._g
+        if from_id not in g.nodes:
+            return _error("Node %r not found." % from_id)
+        if to_id not in g.nodes:
+            return _error("Node %r not found." % to_id)
+        path_ids = g.path(from_id, to_id)
+        path_nodes = [
+            dict(_brief(g.nodes[pid]), pinned=g.nodes[pid].pinned)
+            for pid in path_ids
+            if pid in g.nodes
+        ]
+        return _text(
+            {
+                "from_id": from_id,
+                "to_id": to_id,
+                "length": len(path_ids),
+                "connected": bool(path_ids),
+                "path": path_nodes,
+            }
+        )
+
     def soul_by_tag(self, tag: str) -> JsonDict:
         nodes = self._g.by_tag(tag)
         return _text({"tag": tag, "count": len(nodes), "nodes": [_brief(n) for n in nodes]})
@@ -559,6 +592,24 @@ class SoulTools:
                     "node_id": {"type": "string"},
                 },
                 "required": ["node_id"],
+            },
+        },
+        {
+            "name": "soul_path",
+            "description": (
+                "Find the shortest directed path between two nodes in the soul DAG. "
+                "Answers: 'how are these two beliefs connected?' — returns the ordered "
+                "chain of nodes from from_id to to_id. Returns an empty path when no "
+                "directed edge-chain exists (try swapping from/to for the reverse direction). "
+                "Complements soul_ancestors (all ancestors) and soul_discover (fan-out from one node)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from_id": {"type": "string"},
+                    "to_id": {"type": "string"},
+                },
+                "required": ["from_id", "to_id"],
             },
         },
         {

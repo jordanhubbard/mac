@@ -410,3 +410,59 @@ def test_soul_search_dispatches_via_mcp():
     assert not (result.get("isError") and "unknown tool" in str(result).lower()), (
         "soul_search must be a registered dispatch target"
     )
+
+
+# ---------------------------------------------------------------------------
+# soul_path MCP tool tests
+# ---------------------------------------------------------------------------
+
+
+def test_soul_path_in_tool_spec():
+    """soul_path must be declared in TOOL_SPECS with correct schema."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_path"), None)
+    assert spec is not None, "soul_path missing from TOOL_SPECS"
+    props = spec["inputSchema"]["properties"]
+    assert "from_id" in props, "soul_path inputSchema must have from_id"
+    assert "to_id" in props, "soul_path inputSchema must have to_id"
+    assert set(spec["inputSchema"].get("required", [])) == {"from_id", "to_id"}
+
+
+def test_soul_path_connected_nodes():
+    """soul_path returns ordered path for a connected DAG chain."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_path("a1", "i2"))
+    assert result["connected"] is True
+    ids = [n["id"] for n in result["path"]]
+    assert ids[0] == "a1"
+    assert ids[-1] == "i2"
+    assert result["length"] == len(ids)
+
+
+def test_soul_path_unconnected_nodes_returns_empty():
+    """soul_path returns empty path when no directed route exists."""
+    g = _graph()
+    tools = SoulTools(g)
+    # No path from i2 back to a1 in a DAG
+    result = _payload(tools.soul_path("i2", "a1"))
+    assert result["connected"] is False
+    assert result["path"] == []
+    assert result["length"] == 0
+
+
+def test_soul_path_missing_node_returns_error():
+    """soul_path returns isError for a missing node."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.soul_path("a1", "does_not_exist")
+    assert result.get("isError"), "Expected isError for missing target node"
+
+
+def test_soul_path_dispatches_via_mcp():
+    """soul_path is callable through the MCP dispatch layer."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_path", {"from_id": "a1", "to_id": "i1"})
+    assert not (result.get("isError") and "unknown tool" in str(result).lower()), (
+        "soul_path must be a registered dispatch target"
+    )

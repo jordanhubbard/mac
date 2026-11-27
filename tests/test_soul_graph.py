@@ -555,3 +555,53 @@ class TestSummaryHealthMetrics:
         s = g.summary()
         # Should not crash; edge type block may show 'child' default or be absent
         assert "orphan" in s.lower(), f"summary() must still report orphan info; got:\n{s}"
+
+
+# ---------------------------------------------------------------------------
+# soul_path: BFS shortest path through the DAG
+# ---------------------------------------------------------------------------
+
+
+class TestSoulPath:
+    """Tests for SoulGraph.path() — shortest directed path between two nodes."""
+
+    def _make_graph(self) -> SoulGraph:
+        g = SoulGraph("path-test")
+        g.add("root belief", node_id="root")
+        g.add("child of root", parents=["root"], node_id="c1")
+        g.add("grandchild of root", parents=["c1"], node_id="gc1")
+        g.add("sibling of child", parents=["root"], node_id="c2")
+        g.add("orphan node", node_id="orphan")
+        return g
+
+    def test_path_finds_direct_child(self):
+        g = self._make_graph()
+        p = g.path("root", "c1")
+        assert p == ["root", "c1"], f"Expected ['root', 'c1'] but got {p}"
+
+    def test_path_finds_two_hop_descendant(self):
+        g = self._make_graph()
+        p = g.path("root", "gc1")
+        assert p == ["root", "c1", "gc1"], f"Expected 2-hop path but got {p}"
+
+    def test_path_returns_empty_for_no_route(self):
+        g = self._make_graph()
+        # No path from child back to parent in a DAG
+        p = g.path("c1", "root")
+        assert p == [], f"Expected empty path (no upward route in DAG) but got {p}"
+
+    def test_path_returns_empty_to_orphan(self):
+        g = self._make_graph()
+        p = g.path("root", "orphan")
+        assert p == [], f"Expected empty path to unconnected orphan but got {p}"
+
+    def test_path_missing_node_returns_empty(self):
+        g = self._make_graph()
+        p = g.path("root", "does_not_exist")
+        assert p == [], f"Expected empty path for missing node but got {p}"
+
+    def test_path_self_to_self(self):
+        g = self._make_graph()
+        # BFS: start == goal, return immediately
+        p = g.path("root", "root")
+        assert p == ["root"], f"Expected ['root'] for same-node path but got {p}"
