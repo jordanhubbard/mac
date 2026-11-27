@@ -270,9 +270,7 @@ def frozen_inputs_changed(root: Path, kind: str, base: str, head: str) -> bool:
     trees = tuple(f"{tree}/" for tree in spec["trees"])
     for raw in result.stdout.splitlines():
         path = Path(raw)
-        if raw in files or (
-            raw.startswith(trees) and not _ignored_copied_path(path)
-        ):
+        if raw in files or (raw.startswith(trees) and not _ignored_copied_path(path)):
             return True
     return False
 
@@ -525,8 +523,24 @@ def probe_reuse(plan: dict[str, Any], docker: str) -> dict[str, str]:
             allow_failure=True,
         )
         if completed.returncode != 0:
-            detail = (completed.stderr + "\n" + completed.stdout).lower()
-            if any(token in detail for token in ("manifest unknown", "name unknown")):
+            detail = (completed.stderr + "\n" + completed.stdout).strip()
+            missing_manifest = r"(?:Error response from daemon: )?(?:manifest unknown|name unknown)(?:: (?:manifest unknown|name unknown))?"
+            content_tag = plan["content_tag"]
+            not_found = f'Error response from daemon: failed to resolve reference "{content_tag}": {content_tag}: not found'
+            if detail == not_found:
+                # The containerd image store drops the registry error code from
+                # the pull failure. Check the tag directly before rebuilding.
+                manifest = _run(
+                    [docker, "manifest", "inspect", content_tag],
+                    env=environment,
+                    allow_failure=True,
+                )
+                detail = (manifest.stderr + "\n" + manifest.stdout).strip()
+                if manifest.returncode == 0:
+                    raise IdentityError(
+                        "the frozen image manifest exists but the anonymous pull failed"
+                    )
+            if re.fullmatch(missing_manifest, detail, flags=re.IGNORECASE):
                 return {"reuse": "false", "digest": "", "build_revision": ""}
             raise IdentityError("could not determine whether the frozen image exists")
         image = _inspect(docker, plan["content_tag"])
@@ -920,9 +934,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.action == "inputs-changed":
-            value = frozen_inputs_changed(
-                args.root.resolve(), args.kind, args.base, args.head
-            )
+            value = frozen_inputs_changed(args.root.resolve(), args.kind, args.base, args.head)
             _github_outputs(args.github_output, {"changed": str(value).lower()})
         elif args.action == "plan":
             value = build_plan(

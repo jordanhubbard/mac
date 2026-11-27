@@ -347,11 +347,6 @@ class TestQueryReadingsFunction(unittest.TestCase):
         fake_psycopg.connect = MagicMock(return_value=mock_conn)
         fake_row = types.ModuleType("psycopg.rows")
         fake_row.dict_row = dict
-        sys.modules["psycopg"] = fake_psycopg
-        sys.modules["psycopg.rows"] = fake_row
-        try:
+        with patch.dict(sys.modules, {"psycopg": fake_psycopg, "psycopg.rows": fake_row}):
             result = query_readings(sensor_id=None, limit=10, db_url="postgresql://fake/db")
-        finally:
-            del sys.modules["psycopg"]
-            del sys.modules["psycopg.rows"]
         self.assertIsInstance(result, list)

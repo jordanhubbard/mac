@@ -445,3 +445,48 @@ def test_ci_reuses_only_verified_content_identity_and_still_emits_receipts() -> 
         assert "scripts/image-publication-identity.py receipt" in job
         assert f"{directory}/publication-receipt.json" in job
         assert "cancel-in-progress: false" in job
+
+
+@pytest.mark.parametrize(
+    "inspect_status,inspect_detail,allow_build",
+    [
+        (1, "manifest unknown", True),
+        (1, "denied", False),
+        (1, "toomanyrequests: Rate exceeded", False),
+        (0, '{"schemaVersion":2}', False),
+    ],
+)
+def test_containerd_not_found_requires_manifest_confirmation(
+    tmp_path, monkeypatch, inspect_status, inspect_detail, allow_build
+):
+    module = _load_module()
+    root = _minimal_root(tmp_path, module, "mac")
+    plan = module.build_plan(root, "mac", "a" * 40, [])
+    tag = plan["content_tag"]
+    calls = []
+
+    def run(command, *, env, allow_failure):
+        calls.append(command)
+        assert allow_failure
+        assert json.loads((Path(env["DOCKER_CONFIG"]) / "config.json").read_text()) == {"auths": {}}
+        if command[1] == "pull":
+            detail = (
+                f'Error response from daemon: failed to resolve reference "{tag}": {tag}: not found'
+            )
+            return subprocess.CompletedProcess(command, 1, "", detail)
+        return subprocess.CompletedProcess(command, inspect_status, "", inspect_detail)
+
+    monkeypatch.setattr(module, "_run", run)
+    if allow_build:
+        assert module.probe_reuse(plan, "docker") == {
+            "reuse": "false",
+            "digest": "",
+            "build_revision": "",
+        }
+    else:
+        with pytest.raises(module.IdentityError):
+            module.probe_reuse(plan, "docker")
+    assert calls == [
+        ["docker", "pull", "--platform", "linux/amd64", tag],
+        ["docker", "manifest", "inspect", tag],
+    ]
