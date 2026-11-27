@@ -8119,9 +8119,41 @@ class ControlPlane:
             or "unassigned"
         )
 
+    def _project_summary_tasks(self) -> List[Task]:
+        """Read the project-summary inputs without task bodies or executor evidence.
+
+        Project polling must retain every task for counts and cross-project join
+        semantics, but must not deserialize the entire execution ledger. Keep
+        just the metadata consumed by the context and dependency/hold helpers.
+        """
+        rows = self.store.query_all(
+            """
+            SELECT id, title, '' AS description, project, priority, state,
+                   required_capabilities, dependencies,
+                   COALESCE((
+                       SELECT jsonb_object_agg(key, value)
+                       FROM jsonb_each(tasks.metadata::jsonb)
+                       WHERE key IN (
+                           'origin', 'memory_boundary', 'no_dispatch',
+                           'semantic_retry', 'dependency_policy', 'coordination',
+                           'repository_ref_lifecycle', 'dependency_resolution'
+                       )
+                       AND (
+                           key NOT IN ('origin', 'memory_boundary')
+                           OR tasks.state NOT IN ('completed', 'cancelled', 'failed')
+                       )
+                   ), '{}'::jsonb) AS metadata,
+                   owner_agent_id, created_by_human, lease_id, leased_until,
+                   attempt_count, max_attempts, started_at, completed_at,
+                   created_at, updated_at
+            FROM tasks ORDER BY priority DESC, created_at
+            """
+        )
+        return [self._task_from_row(row) for row in rows]
+
     def list_projects(self) -> List[JsonDict]:
         return self._hermes_project_contexts(
-            self.list_tasks(),
+            self._project_summary_tasks(),
             self.list_agents(),
             [item.to_dict() for item in self.list_project_items()],
             [repository.to_dict() for repository in self.list_project_repositories()],
