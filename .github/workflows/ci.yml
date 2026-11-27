@@ -530,11 +530,14 @@ jobs:
           PNPM_VERSION: "11.13.1"
           OPENCODE_VERSION: "1.18.18"
         run: deploy/openshell/prepare-runtime-image-assets.sh
+      - name: Acquire pinned BuildKit image
+        id: buildkit-image
+        run: scripts/acquire-ci-buildkit.sh
       - name: Set up Docker Buildx
         # docker/setup-buildx-action v3
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          driver-opts: image=public.ecr.aws/vend/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          driver-opts: image=${{ steps.buildkit-image.outputs.image }}
       - name: Build OpenShell runtime (smoke build, not pushed)
         # One native platform is enough to exercise every in-build smoke on PRs.
         # docker/build-push-action v6
@@ -615,14 +618,14 @@ jobs:
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
           platforms: arm64
+      - name: Acquire pinned BuildKit image
+        id: buildkit-image
+        run: scripts/acquire-ci-buildkit.sh
       - name: Set up Docker Buildx
         # docker/setup-buildx-action v3
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          # Pull buildkit from the ECR Public mirror instead of Docker Hub:
-          # GitHub-hosted runners share IPs and hit Docker Hub's anonymous pull
-          # rate limit. Same digest as moby/buildkit:buildx-stable-1.
-          driver-opts: image=public.ecr.aws/vend/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          driver-opts: image=${{ steps.buildkit-image.outputs.image }}
       - name: Build container image (smoke build, not pushed)
         if: steps.image-reuse-eligibility.outputs.reuse != 'true'
         # docker/build-push-action v6
@@ -963,12 +966,14 @@ jobs:
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
           platforms: arm64
+      - name: Acquire pinned BuildKit image
+        id: buildkit-image
+        run: scripts/acquire-ci-buildkit.sh
       - name: Set up Docker Buildx
         # docker/setup-buildx-action v3
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          # ECR Public buildkit mirror; see the docker job above.
-          driver-opts: image=public.ecr.aws/vend/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          driver-opts: image=${{ steps.buildkit-image.outputs.image }}
       - id: publish
         name: Publish immutable multi-platform OpenShell runtime
         if: steps.image-reuse-eligibility.outputs.reuse != 'true'
@@ -1173,12 +1178,14 @@ jobs:
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
           platforms: arm64
+      - name: Acquire pinned BuildKit image
+        id: buildkit-image
+        run: scripts/acquire-ci-buildkit.sh
       - name: Set up Docker Buildx
         # docker/setup-buildx-action v3
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          # ECR Public buildkit mirror; see the docker job above.
-          driver-opts: image=public.ecr.aws/vend/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          driver-opts: image=${{ steps.buildkit-image.outputs.image }}
       - id: context
         name: Audit and digest trusted certifier context
         run: |

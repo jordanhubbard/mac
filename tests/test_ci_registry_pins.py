@@ -1,21 +1,10 @@
-"""CI must not pull its buildkit or collector images from anonymous Docker Hub.
-
-On 2026-10-09 the GitHub-hosted runner IPs hit Docker Hub's unauthenticated
-pull rate limit, which failed every retry and blocked PR #966. Two pulls
-remained after the PostgreSQL images moved to ECR Public:
-
-* ``docker/setup-buildx-action`` pulled ``moby/buildkit:buildx-stable-1``.
-* The container-contract relay collector pulled
-  ``otel/opentelemetry-collector-contrib:0.100.0``.
-
-Both now come from mirrors at a pinned digest. These contracts keep a future
-edit from quietly reintroducing the anonymous pull, which only shows up as a
-red job on a shared runner IP.
-"""
+"""CI preloads BuildKit by digest and uses a pinned relay collector mirror."""
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -26,7 +15,6 @@ SETUP_BUILDX = "docker/setup-buildx-action@"
 #: Docker's registry hosts. A reference to one of these without a login is the
 #: anonymous pull that hit the rate limit.
 DOCKER_HUB_HOSTS = ("registry-1.docker.io", "index.docker.io", "docker.io")
-BUILDKIT_MIRROR = "public.ecr.aws/vend/moby/buildkit"
 COLLECTOR_REPO = "otel/opentelemetry-collector-contrib"
 COLLECTOR_MIRROR = (
     "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib"
@@ -56,7 +44,7 @@ def test_ci_surface_does_not_reference_docker_hub() -> None:
             )
 
 
-def test_every_setup_buildx_step_pins_the_buildkit_mirror_by_digest() -> None:
+def test_every_setup_buildx_step_uses_the_acquired_buildkit_image() -> None:
     yaml = pytest.importorskip("yaml")
     buildx_steps = 0
     for path in _workflow_paths():
@@ -80,13 +68,13 @@ def test_every_setup_buildx_step_pins_the_buildkit_mirror_by_digest() -> None:
                     f"{where}: setup-buildx has no image= driver-opt, so it pulls "
                     "moby/buildkit from anonymous Docker Hub"
                 )
-                image = image_opts[0]
-                assert image.startswith(BUILDKIT_MIRROR), (
-                    f"{where}: buildkit image must come from {BUILDKIT_MIRROR}, got {image}"
-                )
-                assert DIGEST.search(image), (
-                    f"{where}: buildkit image is not pinned by digest: {image}"
-                )
+                assert driver_opts == "image=${{ steps.buildkit-image.outputs.image }}"
+                preceding = job["steps"][: job["steps"].index(step)]
+                assert any(
+                    candidate.get("id") == "buildkit-image"
+                    and candidate.get("run") == "scripts/acquire-ci-buildkit.sh"
+                    for candidate in preceding
+                ), where
     assert buildx_steps == 5, (
         f"expected the 5 known setup-buildx steps, found {buildx_steps}; "
         "a new step must be pinned too"
@@ -106,3 +94,47 @@ def test_relay_collector_pulls_the_collector_from_a_pinned_ghcr_mirror() -> None
         f"the relay collector image must come from {COLLECTOR_MIRROR}, got {image}"
     )
     assert DIGEST.search(image), f"the relay collector image is not pinned by digest: {image}"
+
+
+@pytest.mark.parametrize("upstream_available", [True, False])
+def test_buildkit_registry_fallback_keeps_the_pin(tmp_path, upstream_available):
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "$PULL_LOG"\n'
+        'case "$*" in "pull docker.io/moby/buildkit@"*) exit "$UPSTREAM_STATUS";; esac\n'
+        "exit 1\n"
+    )
+    docker.chmod(0o700)
+    output = tmp_path / "output"
+    pulls = tmp_path / "pulls"
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "acquire-ci-buildkit.sh")],
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "GITHUB_OUTPUT": str(output),
+            "PULL_LOG": str(pulls),
+            "UPSTREAM_STATUS": "0" if upstream_available else "1",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    attempted = [
+        line.removeprefix("pull ")
+        for line in pulls.read_text().splitlines()
+        if line.startswith("pull ")
+    ]
+    assert len(attempted) == 2
+    mirror, upstream = attempted
+    assert mirror.startswith("public.ecr.aws/vend/moby/buildkit@")
+    assert upstream.startswith("docker.io/moby/buildkit@")
+    assert mirror.split("@")[1] == upstream.split("@")[1]
+    assert DIGEST.search(upstream)
+    if upstream_available:
+        assert result.returncode == 0, result.stderr
+        assert output.read_text() == f"image={upstream}\n"
+    else:
+        assert result.returncode == 1
+        assert not output.exists()
