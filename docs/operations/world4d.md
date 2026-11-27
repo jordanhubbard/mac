@@ -1,5 +1,11 @@
 # Running the World4D simulation after a reboot
 
+> World4D is a research environment. Keep its simulation, presence publishing,
+> and snapshot jobs disabled during ordinary fleet operation. Use the
+> [fleet communication and decision memory plan](../investigations/fleet-communication-and-memory-design.md)
+> for the production direction. The setup below applies to deliberate,
+> isolated research runs.
+
 The external World4D prototype supplies the simulation SDK, daemon and renderer.
 `src/mac/world4d_service.py` supplies its missing process lifecycle: a macOS
 LaunchDaemon starts the worlds at boot, independently restarts an exited or
