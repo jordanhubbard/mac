@@ -172,6 +172,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/arxiv-paper-v0.md`](../investigations/arxiv-paper-v0.md) | Substrate Asymmetry in Multi-Agent Epistemic Networks: Measuring Cross-Agent Information Flow vs. Axiom Propagation |
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | supplemental reference | [`investigations/dream-cycle-output-quality.md`](../investigations/dream-cycle-output-quality.md) | Dream-cycle output quality |
+| supplemental reference | [`investigations/fleet-communication-and-memory-design.md`](../investigations/fleet-communication-and-memory-design.md) | Fleet communication and decision memory after World4D |
 | runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
 | supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
 | supplemental reference | [`investigations/hub-cpu-20261126.md`](../investigations/hub-cpu-20261126.md) | Hub CPU and World4D containment |
