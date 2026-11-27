@@ -447,8 +447,9 @@ def _run(
     return completed
 
 
-def _inspect(docker: str, reference: str) -> dict[str, Any]:
-    completed = _run([docker, "image", "inspect", reference])
+def _inspect(docker: str, reference: str, *, platform: str, env: dict[str, str]) -> dict[str, Any]:
+    # The containerd store can retain multiple variants of the same reference.
+    completed = _run([docker, "image", "inspect", "--platform", platform, reference], env=env)
     try:
         values = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -517,8 +518,9 @@ def probe_reuse(plan: dict[str, Any], docker: str) -> dict[str, str]:
     _validate_plan(plan)
     directory, environment = _anonymous_environment()
     try:
+        platform = "linux/amd64"
         completed = _run(
-            [docker, "pull", "--platform", "linux/amd64", plan["content_tag"]],
+            [docker, "pull", "--platform", platform, plan["content_tag"]],
             env=environment,
             allow_failure=True,
         )
@@ -543,8 +545,8 @@ def probe_reuse(plan: dict[str, Any], docker: str) -> dict[str, str]:
             if re.fullmatch(missing_manifest, detail, flags=re.IGNORECASE):
                 return {"reuse": "false", "digest": "", "build_revision": ""}
             raise IdentityError("could not determine whether the frozen image exists")
-        image = _inspect(docker, plan["content_tag"])
-        digest, revision = _validate_image(image, plan, platform="linux/amd64")
+        image = _inspect(docker, plan["content_tag"], platform=platform, env=environment)
+        digest, revision = _validate_image(image, plan, platform=platform)
         return {"reuse": "true", "digest": digest, "build_revision": revision}
     finally:
         directory.cleanup()
@@ -688,9 +690,9 @@ def verify_image(
     evidence: list[dict[str, Any]] = []
     try:
         for platform in plan["platforms"]:
-            _run([docker, "image", "rm", "-f", reference], allow_failure=True)
+            _run([docker, "image", "rm", "-f", reference], env=environment, allow_failure=True)
             _run([docker, "pull", "--platform", platform, reference], env=environment)
-            image = _inspect(docker, reference)
+            image = _inspect(docker, reference, platform=platform, env=environment)
             observed_digest, observed_revision = _validate_image(
                 image, plan, platform=platform, expected_revision=build_revision
             )

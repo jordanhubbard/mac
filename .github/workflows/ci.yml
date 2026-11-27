@@ -1264,14 +1264,15 @@ jobs:
           rm -rf "$empty_config"
           install -d -m 0700 "$empty_config"
           printf '{"auths":{}}\n' > "$empty_config/config.json"
+          export DOCKER_CONFIG="$empty_config"
           for platform in linux/amd64 linux/arm64; do
-            expected_arch="${platform#linux/}"
             docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
-            DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
-            test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
-            test "$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
-            test "$(docker inspect --format='{{ .Config.User }}' "$exact_ref")" = sandbox
-            DOCKER_CONFIG="$empty_config" docker run --rm --network none \
+            docker pull --platform "$platform" "$exact_ref"
+            inspect=(docker image inspect --platform "$platform")
+            test "$("${inspect[@]}" --format='{{ .Architecture }}' "$exact_ref")" = "${platform#linux/}"
+            test "$("${inspect[@]}" --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
+            test "$("${inspect[@]}" --format='{{ .Config.User }}' "$exact_ref")" = sandbox
+            docker run --rm --network none \
               --platform "$platform" "$exact_ref" \
               /opt/mac-certifier/bin/run-contract-tests --image-self-test
           done

@@ -490,3 +490,58 @@ def test_containerd_not_found_requires_manifest_confirmation(
         ["docker", "pull", "--platform", "linux/amd64", tag],
         ["docker", "manifest", "inspect", tag],
     ]
+
+
+def test_verify_inspects_each_pulled_platform(tmp_path, monkeypatch):
+    module = _load_module()
+    root = _minimal_root(tmp_path, module, "openshell-runtime")
+    revision = "a" * 40
+    digest = "sha256:" + "b" * 64
+    build_args = [
+        f"{name}={value}"
+        for name, value in module.IMAGE_SPECS["openshell-runtime"]["build_args"].items()
+    ]
+    plan = module.build_plan(root, "openshell-runtime", revision, build_args)
+    reference = f"{plan['repository']}@{digest}"
+    inspections = []
+    smokes = []
+
+    def run(command, *, env=None, allow_failure=False):
+        if command[1:3] == ["image", "inspect"]:
+            # The store defaults to the host platform even after an ARM pull.
+            platform = (
+                command[command.index("--platform") + 1]
+                if "--platform" in command
+                else "linux/amd64"
+            )
+            inspections.append(platform)
+            image = {
+                "Os": "linux",
+                "Architecture": platform.split("/", 1)[1],
+                "RepoDigests": [reference],
+                "Config": {
+                    "Labels": {
+                        "org.opencontainers.image.source": module.SOURCE,
+                        "org.opencontainers.image.revision": revision,
+                        "io.mac.frozen-inputs.sha256": plan["frozen_inputs_sha256"],
+                        "io.mac.image-kind": plan["kind"],
+                    }
+                },
+            }
+            return subprocess.CompletedProcess(command, 0, json.dumps([image]), "")
+        if command[1] == "run":
+            smokes.append(command[command.index("--platform") + 1])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "_run", run)
+    result = module.verify_image(plan, "docker", digest, revision)
+
+    assert inspections == smokes == plan["platforms"]
+    assert [entry["platform"] for entry in result["platforms"]] == plan["platforms"]
+
+
+def test_certifier_readback_inspects_each_pulled_platform():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    readback = workflow.split("name: Prove anonymous exact-digest certifier readback", 1)[1]
+    readback = readback.split("name: Sign GitHub build provenance", 1)[0]
+    assert 'docker image inspect --platform "$platform"' in readback
