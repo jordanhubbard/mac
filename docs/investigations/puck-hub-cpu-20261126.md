@@ -1,0 +1,59 @@
+# Puck hub CPU and World4D containment
+
+MAC task: `task_f19a2f0b444b4b53a75c21301068da33`.
+
+The operator approved pausing the test/fleet World4D simulations and reducing
+repeated hub task reads while retaining Rocky and WebMux availability.
+
+## Cause and scope
+
+On 2026-11-26 the hub Python process used 76-78% of one core in repeated
+samples. Active database queries repeatedly loaded the entire task ledger;
+logs showed GET /tasks requests taking 10-46 seconds and event-loop stalls.
+Project Tracker v1.0.0 polls /projects and /tasks every five seconds. The
+project-summary endpoint additionally loaded full task descriptions and all
+executor metadata merely to calculate counts and small task frontiers.
+
+The two supervised World4D worlds ticked once per second, creating short-lived
+psql processes and doing physics/behavior/snapshot work even without viewers.
+A database pause alone does not suspend those additional loops. Cumulative
+PostgreSQL scan counters are historical work, not a current CPU measurement.
+
+## Runtime changes
+
+- Disabled and booted out `system/com.mac.world4d`. Marked the `test` and
+  `fleet` world_state rows paused, with all stored world data retained.
+  Frozen ticks were 798352 and 450674 respectively.
+- Project Tracker's host-local launcher now imports its original startService,
+  stops the default timer and restarts it with pollIntervalMs=60000. This
+  retains startup synchronization, complete snapshots and explicit refreshes.
+  The released package is unchanged. The override is
+  `~/.local/share/project-tracker/cpu-throttled-service.mjs`; its configured
+  launcher is `~/.local/share/project-tracker/launch.py`.
+- The project-summary query projects only summary fields and metadata needed
+  for origins, memory boundaries, joins, holds and retry eligibility. It still
+  includes every task so counts and cross-project dependencies remain exact.
+  General task listing and detail responses retain their full semantics.
+
+## Rollback
+
+Restore `~/.local/share/project-tracker/launch.py.before-cpu-throttle-20261126`
+to `launch.py`, then kickstart `system/com.project-tracker.service` to restore
+five-second polling. The override is tied to the existing pinned v1.0.0 release;
+review the launcher when upgrading Project Tracker.
+
+To restore simulation, enable `system/com.mac.world4d`, then bootstrap
+`/Library/LaunchDaemons/com.mac.world4d.plist`. Runtime startup clears paused
+flags. Do this only on operator direction: continuous simulation was explicitly
+paused to reclaim resources, not because stored worlds were disposable.
+
+Revert the associated project-summary commit to restore the previous query.
+
+## Verification
+
+The projection regression compares complete summaries with the old full-task
+path, including large task bodies, held and scheduled-retry tasks, cross-project
+joins, cancelled dependency dispositions and all-settled joins. The unbounded
+list_tasks method is forbidden during the new project-list call.
+
+Runtime and test evidence will be recorded in the task before closure.
