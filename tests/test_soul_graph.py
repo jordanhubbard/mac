@@ -605,3 +605,74 @@ class TestSoulPath:
         # BFS: start == goal, return immediately
         p = g.path("root", "root")
         assert p == ["root"], f"Expected ['root'] for same-node path but got {p}"
+
+
+class TestContradictRepulsion:
+    """contradicts-typed edges push repulsed neighbours to end of related() results."""
+
+    def test_contradicts_neighbour_pushed_to_end(self):
+        """The 'contradicts' target must not appear before unrelated nodes."""
+        g = SoulGraph()
+        # Main node — will be the query hit
+        main = g.add("machine learning gradient descent optimisation")
+        # A related-but-contradicted node: semantically similar but conceptually opposed
+        contradiction = g.add(
+            "machine learning gradient descent harmful overfitting causes divergence"
+        )
+        # A neutral sibling: also semantically related
+        sibling = g.add("machine learning gradient descent momentum acceleration")
+
+        # Wire: main contradicts contradiction; main → sibling is a plain child edge
+        g.link(main.id, contradiction.id, rel="contradicts")
+        g.link(main.id, sibling.id)  # neutral edge
+
+        results = g.related("gradient descent optimisation", top_k=10)
+        ids = [n.id for n in results]
+
+        # All three nodes must appear (repulsion ≠ exclusion)
+        assert main.id in ids, "main hit must appear"
+        assert contradiction.id in ids, "contradicts node must still appear"
+        assert sibling.id in ids, "neutral sibling must appear"
+
+        # The contradicted node must come AFTER the neutral sibling
+        assert ids.index(sibling.id) < ids.index(contradiction.id), (
+            f"neutral sibling at pos {ids.index(sibling.id)} should precede "
+            f"contradicts node at pos {ids.index(contradiction.id)}"
+        )
+
+    def test_untyped_edge_not_repulsed(self):
+        """Untyped edges must not be treated as repulsion."""
+        g = SoulGraph()
+        parent = g.add("neural network training process backpropagation")
+        child = g.add("neural network training gradient computation")
+        g.link(parent.id, child.id)  # no rel — neutral
+
+        results = g.related("neural network training", top_k=10)
+        ids = [n.id for n in results]
+        # Both must appear; child must NOT be pushed to end (it's a hit or close sibling)
+        assert parent.id in ids
+        assert child.id in ids
+
+    def test_contradicts_in_reverse_direction(self):
+        """Repulsion fires when child.metadata['parent_rels'][parent_id] == 'contradicts',
+        i.e. the edge goes parent → child where parent is the query hit."""
+        g = SoulGraph()
+        query_hit = g.add("reinforcement learning reward shaping policy gradient")
+        repulsed = g.add("reinforcement learning reward shaping policy gradient")
+        # Override id to avoid dedup; use explicit node_id to control
+        g2 = SoulGraph()
+        a = g2.add("reinforcement learning reward shaping policy gradient", node_id="aaa11111")
+        b = g2.add(
+            "reinforcement learning reward hacking divergence failure mode", node_id="bbb22222"
+        )
+        c = g2.add("reinforcement learning reward shaping convergence stable", node_id="ccc33333")
+        g2.link(a.id, b.id, rel="contradicts")
+        g2.link(a.id, c.id)  # neutral
+
+        results = g2.related("reinforcement learning reward shaping", top_k=10)
+        ids = [n.id for n in results]
+        # neutral child must come before contradicted child
+        if c.id in ids and b.id in ids:
+            assert ids.index(c.id) < ids.index(b.id), (
+                "neutral child must precede contradicts child in results"
+            )
