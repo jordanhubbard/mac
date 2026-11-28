@@ -166,6 +166,7 @@ nav:
   - Runbooks:
       - Production deployment: production-deployment.md
       - Fleet update: operations/fleet-update.md
+      - precis local database: operations/precis-local-database.md
       - Hub availability: hub-availability.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
