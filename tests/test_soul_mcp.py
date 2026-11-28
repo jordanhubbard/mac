@@ -466,3 +466,77 @@ def test_soul_path_dispatches_via_mcp():
     assert not (result.get("isError") and "unknown tool" in str(result).lower()), (
         "soul_path must be a registered dispatch target"
     )
+
+
+# ---------------------------------------------------------------------------
+# soul_ancestors MCP tool tests
+# ---------------------------------------------------------------------------
+
+def test_soul_ancestors_in_tool_spec():
+    """soul_ancestors must be declared in TOOL_SPECS with correct schema."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_ancestors"), None)
+    assert spec is not None, "soul_ancestors missing from TOOL_SPECS"
+    props = spec["inputSchema"]["properties"]
+    assert "node_id" in props, "soul_ancestors inputSchema must have node_id"
+    assert "node_id" in spec["inputSchema"].get("required", [])
+
+
+def test_soul_ancestors_leaf_node():
+    """A leaf node (no parents) should return an empty ancestor set."""
+    g = _graph()
+    tools = SoulTools(g)
+    data = _payload(tools.soul_ancestors("a1"))
+    assert data["node_id"] == "a1"
+    assert data["ancestor_count"] == 0
+    assert data["ancestors"] == []
+
+
+def test_soul_ancestors_child_returns_parent():
+    """A node with one parent should return exactly that parent."""
+    g = _graph()
+    tools = SoulTools(g)
+    data = _payload(tools.soul_ancestors("i1"))
+    ids = [n["id"] for n in data["ancestors"]]
+    assert "a1" in ids, "Direct parent a1 must appear in ancestors of i1"
+    assert data["ancestor_count"] == len(data["ancestors"])
+
+
+def test_soul_ancestors_deep_node_returns_full_chain():
+    """A node with grandparent chain should return all transitive ancestors."""
+    g = _graph()
+    tools = SoulTools(g)
+    # i2 -> i1 -> a1
+    data = _payload(tools.soul_ancestors("i2"))
+    ids = set(n["id"] for n in data["ancestors"])
+    assert "i1" in ids, "i1 must appear as ancestor of i2"
+    assert "a1" in ids, "a1 must appear as transitive ancestor of i2"
+    # seed node itself must NOT be included
+    assert "i2" not in ids, "soul_ancestors must not include the seed node"
+
+
+def test_soul_ancestors_missing_node_returns_error():
+    """soul_ancestors returns isError for a node that does not exist."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.soul_ancestors("does_not_exist")
+    assert result.get("isError"), "Expected isError for missing node_id"
+
+
+def test_soul_ancestors_dispatches_via_mcp():
+    """soul_ancestors is callable through the MCP dispatch layer."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_ancestors", {"node_id": "i2"})
+    assert not (result.get("isError") and "unknown tool" in str(result).lower()), (
+        "soul_ancestors must be a registered dispatch target"
+    )
+
+
+def test_soul_ancestors_excludes_seed_sibling():
+    """Siblings of the seed (same parent, different child) must not appear."""
+    g = _graph()
+    # l1 is a sibling of i1 under a1; it should not appear in i1's ancestors
+    tools = SoulTools(g)
+    data = _payload(tools.soul_ancestors("i1"))
+    ids = [n["id"] for n in data["ancestors"]]
+    assert "l1" not in ids, "Sibling l1 must not appear as ancestor of i1"
