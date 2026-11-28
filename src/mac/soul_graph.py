@@ -601,18 +601,39 @@ class SoulGraph:
         task builds on, this found 0.60 of the dependencies older than six
         hours in its top five, against 0.20 for keyword search alone: the hit
         is usually a recent sibling, and the old foundation is its parent.
+
+        Repulsion weighting: neighbours connected via a ``'contradicts'`` edge
+        are pushed to the end of results.  They remain visible (they are known
+        exceptions, not noise) but do not lead recall.  The relation type is
+        read from ``child.metadata['parent_rels'][parent_id]``; untyped edges
+        are treated as neutral.
         """
-        out: list[SoulNode] = []
+        normal: list[SoulNode] = []
+        repulsed: list[SoulNode] = []
         seen: set[str] = set()
-        for node, _ in self.semantic_search(query, top_k, recency_weight=recency_weight):
-            for nid in [node.id] + list(node.parents) + list(node.children):
+
+        def _is_contradicts(nid: str, parent_id: str) -> bool:
+            """True if the edge parent_id → nid is typed 'contradicts'."""
+            node = self.nodes.get(nid)
+            if node is None:
+                return False
+            return node.metadata.get("parent_rels", {}).get(parent_id) == "contradicts"
+
+        for hit, _ in self.semantic_search(query, top_k, recency_weight=recency_weight):
+            for nid in [hit.id] + list(hit.parents) + list(hit.children):
                 if nid in seen or nid not in self.nodes:
                     continue
                 seen.add(nid)
-                out.append(self.nodes[nid])
-            if len(out) >= top_k:
+                neighbour = self.nodes[nid]
+                # Check if any edge connecting this neighbour to the hit is 'contradicts'
+                if _is_contradicts(nid, hit.id) or _is_contradicts(hit.id, nid):
+                    repulsed.append(neighbour)
+                else:
+                    normal.append(neighbour)
+            if len(normal) + len(repulsed) >= top_k:
                 break
-        out = out[:top_k]
+
+        out = (normal + repulsed)[:top_k]
         if touch:
             for node in out:
                 self.touch(node.id, propagate_parents=False)
