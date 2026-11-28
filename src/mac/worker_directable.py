@@ -58,6 +58,16 @@ from mac.worker_reflect import hermes_oneshot_command
 JsonDict = Dict[str, Any]
 
 
+def directable_stream_allowed(stream_id: str, raw_allowlist: Optional[str]) -> bool:
+    """Apply an optional exact stream allowlist; configured invalid input denies all."""
+    if raw_allowlist is None:
+        return True
+    values = [item.strip() for item in raw_allowlist.split(",")]
+    if not values or any(not re.fullmatch(r"bus_[A-Za-z0-9]+", item) for item in values):
+        return False
+    return stream_id in values
+
+
 def _bounded_float(value: Any, minimum: float, maximum: float, default: float) -> float:
     try:
         parsed = float(value)

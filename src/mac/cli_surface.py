@@ -198,6 +198,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("cli-session", "auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)"),
             ("sandbox-image", "the sandbox IMAGE: its bill of materials"),
             ("runtime", "runtime images and environment definitions"),
+            ("worker-slot", "FIFO admission to shared heavy-worker capacity"),
             ("secret", "secret storage, rotation and access audit"),
             ("database", "control-plane database maintenance"),
             ("migrate", "schema and data migrations"),

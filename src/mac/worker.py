@@ -1391,7 +1391,9 @@ class SlackChatRelayMixin:
 
     def _load_chat_questions(self) -> List[JsonDict]:
         entries = self._load_chat_state().get("questions")
-        return [dict(e) for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+        return (
+            [dict(e) for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+        )
 
     def _save_chat_questions(self, entries: List[JsonDict]) -> None:
         self._save_chat_state({**self._load_chat_state(), "questions": entries})
@@ -1451,7 +1453,10 @@ class SlackChatRelayMixin:
         watched: List[JsonDict] = []
         for entry in entries:
             note_id = str(entry.get("notification_id") or "")
-            if not note_id or now - float(entry.get("posted_at") or 0) > CHAT_QUESTION_WATCH_SECONDS:
+            if (
+                not note_id
+                or now - float(entry.get("posted_at") or 0) > CHAT_QUESTION_WATCH_SECONDS
+            ):
                 continue
             if note_id not in open_by_note:
                 open_by_note[note_id] = self._chat_question_open(note_id)
@@ -1464,7 +1469,10 @@ class SlackChatRelayMixin:
         for (account_name, channel_id), group in channels.items():
             account = accounts.get(account_name) or {}
             token = str(
-                account.get("bot_token") or account.get("token") or account.get("slack_bot_token") or ""
+                account.get("bot_token")
+                or account.get("token")
+                or account.get("slack_bot_token")
+                or ""
             ).strip()
             if not token:
                 continue
@@ -1518,8 +1526,18 @@ class SlackChatRelayMixin:
                 match = _QUESTION_CODE_ANSWER.match(str(message.get("text") or ""))
                 entry = by_code.get("Q%s" % match.group(1)) if match else None
                 if entry is not None:
-                    answers.append((str(message["ts"]), entry, message, match.group(2).strip(), str(message["ts"])))
-        for ts, entry, message, body, receipt_ts in sorted(answers, key=lambda item: float(item[0])):
+                    answers.append(
+                        (
+                            str(message["ts"]),
+                            entry,
+                            message,
+                            match.group(2).strip(),
+                            str(message["ts"]),
+                        )
+                    )
+        for ts, entry, message, body, receipt_ts in sorted(
+            answers, key=lambda item: float(item[0])
+        ):
             note_id = str(entry.get("notification_id") or "")
             if not body or ts in (entry.get("seen") or []) or not open_by_note.get(note_id, True):
                 continue
@@ -1579,11 +1597,16 @@ class SlackChatRelayMixin:
                 user = ensure_json_object(slack.users_info(user=user_id).get("user"))
                 profile = ensure_json_object(user.get("profile"))
                 name = str(
-                    profile.get("display_name") or profile.get("real_name") or user.get("name") or ""
+                    profile.get("display_name")
+                    or profile.get("real_name")
+                    or user.get("name")
+                    or ""
                 ).strip()
             except Exception:  # noqa: BLE001 - fall back to the user id.
                 pass
-            self._slack_user_names[user_id] = "%s (slack:%s)" % (name, user_id) if name else "slack:%s" % user_id
+            self._slack_user_names[user_id] = (
+                "%s (slack:%s)" % (name, user_id) if name else "slack:%s" % user_id
+            )
         return self._slack_user_names[user_id]
 
 
@@ -2711,7 +2734,9 @@ class MacWorker(
         path = task_dir / human_reports.WORKSPACE_REPORTS_FILE
         try:
             if path.is_file() and not path.is_symlink():
-                reports.extend(human_reports.parse_workspace_reports(path.read_text(encoding="utf-8")))
+                reports.extend(
+                    human_reports.parse_workspace_reports(path.read_text(encoding="utf-8"))
+                )
         except Exception as exc:  # noqa: BLE001
             self._observe_log(
                 "worker.human_reports.read_failed",
@@ -2761,7 +2786,9 @@ class MacWorker(
                     subject_type="task",
                     subject_id=task_id,
                     detail={
-                        "status": (result or {}).get("status") if isinstance(result, dict) else None,
+                        "status": (result or {}).get("status")
+                        if isinstance(result, dict)
+                        else None,
                         "report": report.get("report"),
                     },
                 )
@@ -3015,6 +3042,15 @@ class MacWorker(
             # off the poll thread and only marks the stream processed after its
             # reply publishes, so a crash re-tries.
             if _env_bool("MAC_WORKER_DIRECTABLE", False):
+                from mac.worker_directable import directable_stream_allowed
+
+                if topic in {
+                    PEER_MESSAGE_TOPIC,
+                    HUMAN_DIRECTIVE_TOPIC,
+                } and not directable_stream_allowed(
+                    stream_id, os.environ.get("MAC_WORKER_DIRECTABLE_STREAM_IDS")
+                ):
+                    continue
                 if (
                     topic == PEER_MESSAGE_TOPIC
                     and content_type == PEER_MESSAGE_CONTENT_TYPE
@@ -5029,7 +5065,9 @@ class MacWorker(
             level = "warning"
         print("mac-agent: %s" % message, file=sys.stderr, flush=True)
         self._observe_log(
-            "worker.heartbeat.resources_skipped" if reason else "worker.heartbeat.resources_restored",
+            "worker.heartbeat.resources_skipped"
+            if reason
+            else "worker.heartbeat.resources_restored",
             level=level,
             subject_type="agent",
             subject_id=self.agent_id,
@@ -5599,7 +5637,9 @@ def _target_slack_route(target: JsonDict) -> tuple[str, str]:
 CHAT_QUESTION_WATCH_SECONDS = 14 * 24 * 3600
 
 #: A channel message answering a question by its code: "Q7 blue", "q7: blue".
-_QUESTION_CODE_ANSWER = re.compile(r"^\s*[*_`]*Q(\d+)[*_`]*(?:\s*[:,.\-\u2013\u2014]\s*|\s+)(.+)$", re.I | re.S)
+_QUESTION_CODE_ANSWER = re.compile(
+    r"^\s*[*_`]*Q(\d+)[*_`]*(?:\s*[:,.\-\u2013\u2014]\s*|\s+)(.+)$", re.I | re.S
+)
 
 #: Lines of a question notification that tell an operator which CLI command
 #: answers it. In Slack they invite Hermes to answer for the person, so the

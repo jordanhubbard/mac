@@ -161,6 +161,12 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
 
     work_context = adapter.work_context(registration["hermes_instance"]["id"])
     assert work_context["schema"] == "mac.hermes_work_context.v1"
+    admission = work_context["worker_admission"]
+    assert admission["contract"] == "webmux-worker-queue/v1"
+    assert admission["intent_ingress"] == "registered_persona_task"
+    assert admission["executor_command"] == "mac admin worker-slot"
+    assert any("not permission" in item for item in admission["instructions"])
+    assert any("fail closed" in item for item in admission["instructions"])
     assert work_context["projects"][0]["project"] == "deploy"
     assert work_context["tasks"][0]["id"] == task["id"]
     assert (

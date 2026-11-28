@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-47 administrative commands live under `mac admin` (`mac admin help` lists them).
+48 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -256,6 +256,7 @@ Fleet and machines:
   cli-session    auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)
   sandbox-image  the sandbox IMAGE: its bill of materials
   runtime        runtime images and environment definitions
+  worker-slot    FIFO admission to shared heavy-worker capacity
   secret         secret storage, rotation and access audit
   database       control-plane database maintenance
   migrate        schema and data migrations

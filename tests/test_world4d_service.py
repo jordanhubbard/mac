@@ -1,5 +1,6 @@
 """Real process controls for startup, progress loss, restart and bounded shutdown."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,10 +12,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 import pytest
 
 from mac import world4d_service as service
+from tests.world4d_nonce_fixture import keeper_cleanup_proof
 
 
 def free_port():
@@ -51,15 +54,27 @@ def config(tmp_path):
         "def main():\n    raise AssertionError('must never post directly')\n"
     )
     (source / "world4d_daemon.py").write_text("""
-import argparse, json, time
+import argparse, json, time, os, uuid
+from urllib.parse import urlparse, parse_qs
 from http.server import BaseHTTPRequestHandler, HTTPServer
 p=argparse.ArgumentParser()
 p.add_argument('--world'); p.add_argument('--port',type=int); p.add_argument('--hz')
 a=p.parse_args(); start=time.monotonic(); frozen=None; danger=False
+fixture_instance=uuid.uuid4().hex
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def do_GET(self):
         global frozen, danger
+        route=urlparse(self.path)
+        if route.path=='/fixture-proof':
+            challenge=parse_qs(route.query).get('challenge',[''])[0]
+            if len(challenge)!=32 or any(c not in '0123456789abcdef' for c in challenge):
+                self.send_error(400); return
+            body=json.dumps({'instance':fixture_instance,'pid':os.getpid(),
+                             'world':a.world,'challenge':challenge}).encode()
+            self.send_response(200); self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length',str(len(body)))
+            self.end_headers(); self.wfile.write(body); return
         if self.path=='/hold':
             self.send_response(200); self.end_headers(); time.sleep(3); return
         tick=int((time.monotonic()-start)*10) if frozen is None else frozen
@@ -224,34 +239,299 @@ def test_install_refuses_ambiguous_ports_and_unsafe_log_names(config):
         service.validate_config(config)
 
 
+@pytest.mark.process_e2e
 def test_supervisor_crash_releases_world_ports_for_its_replacement(config):
+    artifact = Path(config["root"]) / "crash-release-evidence"
+    artifact.mkdir(mode=0o700)
+    evidence = {"schema": "mac.world4d.original_crash_fixture.v1", "phases": [], "snapshots": []}
+    started = time.monotonic()
+
+    def record():
+        path = artifact / "observations.json"
+        path.write_text(json.dumps(evidence, sort_keys=True) + "\n")
+        path.chmod(0o600)
+
+    def snapshot(phase):
+        # These are THIS original service's keeper files, never the separate
+        # TREE fixtures. Preserve exact raw fixed-field bytes even on failure.
+        files = []
+        for source in sorted(Path(config["root"]).glob("guardian-*.jsonl")):
+            raw = source.read_bytes()
+            target = artifact / (phase + "-" + source.name)
+            target.write_bytes(raw)
+            target.chmod(0o600)
+            files.append(
+                {
+                    "file": source.name,
+                    "snapshot": target.name,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "bytes": len(raw),
+                }
+            )
+        evidence["snapshots"].append(
+            {"phase": phase, "elapsed": time.monotonic() - started, "files": files}
+        )
+        record()
+
+    def application(port, deadline):
+        challenge = uuid.uuid4().hex
+        result = {"port": port, "challenge": challenge, "valid": False, "outcome": "no_reply"}
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return result
+        try:
+            # Fresh challenge is echoed by the fixture, not supplied identity;
+            # stale HTTP/proxy data cannot stand in for a live payload instance.
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/fixture-proof?challenge={challenge}",
+                timeout=min(0.1, remaining),
+            ) as response:
+                body = response.read(513)
+            proof = json.loads(body)
+            if (
+                len(body) <= 512
+                and type(proof) is dict
+                and proof.get("challenge") == challenge
+                and type(proof.get("pid")) is int
+                and proof["pid"] > 0
+                and isinstance(proof.get("instance"), str)
+                and len(proof["instance"]) == 32
+                and all(c in "0123456789abcdef" for c in proof["instance"])
+            ):
+                result.update(
+                    valid=True,
+                    outcome="matched",
+                    instance=proof["instance"],
+                    pid=proof["pid"],
+                    world=proof.get("world"),
+                )
+            else:
+                result["outcome"] = "invalid_reply"
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            result["outcome"] = "no_reply"
+            result["errno"] = (
+                exc.errno if isinstance(exc, OSError) and type(exc.errno) is int else None
+            )
+        return result
+
+    def ready_instance(deadline, phase):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{config['monitor_port']}/health", timeout=min(2, remaining)
+        ) as response:
+            status = json.load(response)
+        proofs = {world["port"]: application(world["port"], deadline) for world in status["worlds"]}
+        evidence["phases"].append(
+            {"phase": phase, "elapsed": time.monotonic() - started, "proofs": proofs}
+        )
+        record()
+        expected = {(w["name"], w["port"]) for w in config["worlds"]}
+        observed = {(w["name"], w["port"]) for w in status["worlds"]}
+        if (
+            status["ready"]
+            and observed == expected
+            and len(status["worlds"]) == len(expected)
+            and all(
+                proofs[w["port"]].get("valid")
+                and proofs[w["port"]]["pid"] == w["pid"]
+                and proofs[w["port"]].get("world") == w["name"]
+                for w in status["worlds"]
+            )
+            and time.monotonic() <= deadline
+        ):
+            return status, proofs
+        return None
+
+    pinned_keepers = []
+    keeper_observation = 0
+
+    def keeper_drain_proof():
+        nonlocal keeper_observation
+        if not sys.platform.startswith("linux"):
+            return {"required": False, "platform": "portable", "proven": None}
+        keeper_observation += 1
+        rows = []
+        for source, identity, prefix in pinned_keepers:
+            row = {"file": source.name, "proven": False}
+            try:
+                info = source.stat()
+                raw = source.read_bytes()
+                target = artifact / (f"keeper-proof-{keeper_observation:03d}-" + source.name)
+                target.write_bytes(raw)
+                target.chmod(0o600)
+                row.update(
+                    snapshot=target.name, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw)
+                )
+                row["same_pinned_file"] = (info.st_dev, info.st_ino) == identity and raw.startswith(
+                    prefix
+                )
+                row.update(
+                    keeper_cleanup_proof(
+                        raw,
+                        pinned_prefix=prefix,
+                        same_file=(info.st_dev, info.st_ino) == identity,
+                        posix=os.name == "posix",
+                        supervisor_returncode=proc.returncode,
+                        now=time.monotonic(),
+                        release_deadline=release_deadline,
+                    )
+                )
+            except (OSError, ValueError) as exc:
+                # A partial append or not-yet-drained keeper is retried ONLY
+                # inside the already-running original release12s window.
+                row["errno"] = exc.errno if isinstance(exc, OSError) else None
+            rows.append(row)
+        return {
+            "required": True,
+            "files": rows,
+            "deadline": min((row["deadline"] for row in rows if row.get("proven")), default=None),
+            "proven": len(rows) == len(config["worlds"]) == 2
+            and all(row["proven"] for row in rows),
+        }
+
     proc = launch(config)
     replacement = None
     try:
-        status = eventually(lambda: json.loads(get(config["monitor_port"])))
+        helper = Path(service.__file__).with_name("world4d_owned_child.py")
+        if helper.is_file():
+            raw = helper.read_bytes()
+            (artifact / "actual-service-helper.py").write_bytes(raw)
+            (artifact / "actual-service-helper.py").chmod(0o400)
+            evidence["service_helper_sha256"] = hashlib.sha256(raw).hexdigest()
+        # No autonomous fixture exit is introduced to mask crash cleanup.
+        # Each existing eventually window retains its original12s budget.
+        startup_deadline = time.monotonic() + 12
+        status, old_proofs = eventually(lambda: ready_instance(startup_deadline, "before-crash"))
         old_pids = {world["pid"] for world in status["worlds"]}
+        evidence["old_pids"] = sorted(old_pids)
+        snapshot("before-crash")
+        if sys.platform.startswith("linux"):
+            # No renderer/snapshot child is launched by this fixture. Pin the
+            # TWO original world keepers before death, never replacement files.
+            for source in sorted(Path(config["root"]).glob("guardian-*.jsonl")):
+                info = source.stat()
+                pinned_keepers.append((source, (info.st_dev, info.st_ino), source.read_bytes()))
+            evidence["pinned_precrash_keepers"] = [
+                {
+                    "file": source.name,
+                    "device": identity[0],
+                    "inode": identity[1],
+                    "prefix_sha256": hashlib.sha256(raw).hexdigest(),
+                    "prefix_bytes": len(raw),
+                }
+                for source, identity, raw in pinned_keepers
+            ]
+            record()
+            assert len(pinned_keepers) == len(config["worlds"]) == 2
         proc.kill()
         proc.wait(timeout=5)
+        release_deadline = time.monotonic() + 12
+        evidence["supervisor_returncode"] = proc.returncode
+        record()
+        if os.name == "posix":
+            assert proc.returncode == -signal.SIGKILL
 
         def ports_released():
-            for world in config["worlds"]:
-                with socket.socket() as sock:
-                    if sock.connect_ex(("127.0.0.1", world["port"])) == 0:
-                        return False
-            return True
+            proofs = {
+                world["port"]: application(world["port"], release_deadline)
+                for world in config["worlds"]
+            }
+            attempts = []
+            reservations = []
+            try:
+                for world in config["worlds"]:
+                    port = world["port"]
+                    proof = proofs[port]
+                    row = {
+                        "port": port,
+                        "application": proof,
+                        "tcp_result": None,
+                        "bind_listen": False,
+                    }
+                    remaining = release_deadline - time.monotonic()
+                    if remaining > 0:
+                        with socket.socket() as diagnostic:
+                            diagnostic.settimeout(min(0.05, remaining))
+                            try:
+                                row["tcp_result"] = diagnostic.connect_ex(("127.0.0.1", port))
+                            except OSError as exc:
+                                row["tcp_errno"] = exc.errno
+                    # Actual binding/listening at every EXACT original port is
+                    # mandatory; no SO_REUSEPORT, no replacement masking a leak.
+                    reserved = socket.socket()
+                    reservations.append(reserved)
+                    reserved.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    try:
+                        reserved.bind(("127.0.0.1", port))
+                        reserved.listen(1)
+                        row["bind_listen"] = True
+                    except OSError as exc:
+                        row["bind_errno"] = exc.errno
+                    row["old_identity_absent"] = not (
+                        proof.get("valid") and proof.get("instance") == old_proofs[port]["instance"]
+                    )
+                    attempts.append(row)
+                keeper_proof = keeper_drain_proof()
+                evidence["phases"].append(
+                    {
+                        "phase": "release",
+                        "keeper_proof": keeper_proof,
+                        "elapsed": time.monotonic() - started,
+                        "attempts": attempts,
+                    }
+                )
+                record()
+                success = (
+                    time.monotonic() <= release_deadline
+                    and (
+                        not keeper_proof["required"]
+                        or keeper_proof["proven"]
+                        and time.monotonic() <= keeper_proof["deadline"]
+                    )
+                    and all(row["bind_listen"] and row["old_identity_absent"] for row in attempts)
+                )
+                if success:
+                    evidence["chosen_release_proof"] = evidence["phases"][-1]
+                    record()
+                    if time.monotonic() <= release_deadline and (
+                        not keeper_proof["required"] or time.monotonic() <= keeper_proof["deadline"]
+                    ):
+                        return True
+                    evidence.pop("chosen_release_proof")
+                    record()
+                return False
+            finally:
+                for reserved in reservations:
+                    reserved.close()
 
         eventually(ports_released)
+        snapshot("released")
         replacement = launch(config)
-        status = eventually(lambda: json.loads(get(config["monitor_port"])))
+        replacement_deadline = time.monotonic() + 12
+        status, new_proofs = eventually(lambda: ready_instance(replacement_deadline, "replacement"))
         assert status["ready"]
         assert old_pids.isdisjoint(world["pid"] for world in status["worlds"])
+        assert all(
+            new_proofs[world["port"]]["instance"] != old_proofs[world["port"]]["instance"]
+            for world in config["worlds"]
+        )
     finally:
-        if proc.poll() is None:
-            proc.terminate()
-            proc.wait(timeout=10)
-        if replacement is not None:
-            replacement.terminate()
-            assert replacement.wait(timeout=10) == 0
+        # Evidence I/O failures must still run the ORIGINAL cleanup; they are
+        # errors, never permission to leave a fixture supervisor alive.
+        try:
+            snapshot("before-final-cleanup")
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=10)
+                if replacement is not None:
+                    replacement.terminate()
+                    assert replacement.wait(timeout=10) == 0
+            finally:
+                snapshot("after-final-cleanup")
 
 
 @pytest.fixture

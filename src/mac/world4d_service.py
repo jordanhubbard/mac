@@ -7,7 +7,12 @@ launchd. World data remains in the existing PostgreSQL database.
 from __future__ import annotations
 
 import argparse
-import fcntl
+from contextlib import contextmanager, ExitStack
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import hashlib
 import json
 import math
@@ -18,6 +23,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -30,6 +36,14 @@ try:
     from .world4d_presence import project_fields
 except ImportError:
     from world4d_presence import project_fields
+
+if sys.platform.startswith("linux"):
+    try:
+        from .world4d_owned_child import OwnedChild
+    except ImportError:
+        from world4d_owned_child import OwnedChild
+else:
+    OwnedChild = None
 
 
 STORAGE_POLICY = """
@@ -92,7 +106,8 @@ class StorageGuard:
             PGOPTIONS=f"-c lock_timeout=2000 -c statement_timeout={timeout * 1000}",
             PGCONNECT_TIMEOUT="5",
         )
-        result = subprocess.run(
+        run = OwnedChild.run if sys.platform.startswith("linux") else subprocess.run
+        result = run(
             ["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1"],
             input=statement,
             capture_output=True,
@@ -201,7 +216,7 @@ def streaming_handler(base, state):
     return Handler
 
 
-def run_child(reader: int, script: str) -> None:
+def run_child(reader: int | None, script: str) -> None:
     def watch_parent():
         try:
             os.read(reader, 1)
@@ -210,7 +225,8 @@ def run_child(reader: int, script: str) -> None:
             # that ignore TERM. Normal supervisor stops use TERM first.
             os.killpg(os.getpgrp(), signal.SIGKILL)
 
-    threading.Thread(target=watch_parent, daemon=True).start()
+    if reader is not None:
+        threading.Thread(target=watch_parent, daemon=True).start()
     runtime = runpy.run_path(script, run_name="world4d_service_runtime")
     entry = runtime["main"]
     state = entry.__globals__
@@ -259,6 +275,9 @@ def fingerprint(name: str, data: dict) -> str:
 
 
 def stop_process(proc: subprocess.Popen) -> None:
+    if OwnedChild is not None and isinstance(proc, OwnedChild):
+        proc.stop()
+        return
     # Each daemon owns a separate session, including its psql subprocesses.
     # Kill the group even when the parent already exited: children may survive.
     try:
@@ -316,15 +335,30 @@ class World:
         ]
         argv.extend(self.settings.get("args", []))
         try:
-            self.proc = subprocess.Popen(
-                argv,
+            options = dict(
                 env={**os.environ, "MAC_WORLD4D_MONITOR_PORT": str(self.config["monitor_port"])},
                 cwd=self.config["source"],
                 stdout=self.log,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,
-                pass_fds=(reader,),
             )
+            if sys.platform.startswith("linux"):
+                # Actual custody is established by OwnedChild, not by this
+                # private payload entrypoint name. Only keeper owns reader.
+                argv[3] = "_guardian-child"
+                argv[4] = "-1"
+                self.proc = OwnedChild.start(
+                    argv,
+                    parent_reader=reader,
+                    telemetry_dir=self.config["root"],
+                    **options,
+                )
+            else:
+                self.proc = subprocess.Popen(
+                    argv,
+                    start_new_session=True,
+                    pass_fds=(reader,),
+                    **options,
+                )
             self.parent_writer = writer
         except BaseException:
             os.close(writer)
@@ -385,14 +419,12 @@ def render_snapshot(config: dict) -> str:
         "print('🌌 *World4D live snapshot*\\n\\n' + "
         "'\\n\\n'.join(build_post(world=w['name'],port=w['port']) for w in worlds))"
     )
-    proc = subprocess.Popen(
-        [config["python"], "-c", script, json.dumps(config["worlds"])],
-        cwd=config["source"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    argv = [config["python"], "-c", script, json.dumps(config["worlds"])]
+    options = dict(cwd=config["source"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if sys.platform.startswith("linux"):
+        proc = OwnedChild.start(argv, telemetry_dir=config["root"], **options)
+    else:
+        proc = subprocess.Popen(argv, start_new_session=True, **options)
     try:
         output, _errors = proc.communicate(timeout=45)
         if proc.returncode:
@@ -505,7 +537,31 @@ def load_environment(path: str) -> None:
     os.environ["PGOPTIONS"] = "-c statement_timeout=10000"
 
 
+@contextmanager
+def reserve_world_ports(worlds: list[dict]):
+    """Prove all exact world listeners available while holding them together.
+
+    TCP acceptance alone can be a transport response without an application.
+    Actual bind+listen refuses an independent listener. These temporary sockets
+    never enable SO_REUSEPORT and close before any owned payload starts. This is
+    a preflight check, not an atomic descriptor handoff to the later payload.
+    """
+    with ExitStack() as reservations:
+        for world in worlds:
+            port = world["port"]
+            try:
+                probe = reservations.enter_context(socket.socket())
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("127.0.0.1", port))
+                probe.listen(1)
+            except OSError as exc:
+                raise RuntimeError(f"cannot reserve world port {port}") from exc
+        yield
+
+
 def run(config: dict) -> None:
+    if fcntl is None:
+        raise RuntimeError("World4D supervisor requires POSIX file locks")
     validate_config(config)
     load_environment(config["environment_file"])
     root = Path(config["root"])
@@ -521,14 +577,10 @@ def run(config: dict) -> None:
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         try:
-            # Refuse to take over an independently running world.
-            import socket
-
-            for world in worlds:
-                with socket.socket() as probe:
-                    if probe.connect_ex(("127.0.0.1", world.settings["port"])) == 0:
-                        raise RuntimeError(f"world port {world.settings['port']} is already in use")
-            thread.start()
+            # Hold ALL world ports coherently through monitor startup, then
+            # close ALL reservations before the first World.start below.
+            with reserve_world_ports(config["worlds"]):
+                thread.start()
             while not stop.is_set():
                 if storage:
                     storage.poll()
@@ -590,6 +642,13 @@ def validate_config(config: dict) -> None:
 def prepare(config_path: Path) -> Path:
     config = json.loads(config_path.read_text())
     validate_config(config)
+    for payload in (
+        Path(__file__),
+        Path(__file__).with_name("world4d_presence.py"),
+        Path(__file__).with_name("world4d_owned_child.py"),
+    ):
+        if not payload.is_file():
+            raise ValueError("service standalone payload is incomplete")
     source = Path(config["source"]).resolve()
     root = Path(config["root"]).resolve()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -622,8 +681,13 @@ def prepare(config_path: Path) -> Path:
     installed_config.write_text(json.dumps(config, indent=2))
     installed_config.chmod(0o600)
     runner = root / "service.py"
-    shutil.copy2(Path(__file__), runner)
-    shutil.copy2(Path(__file__).with_name("world4d_presence.py"), root / "world4d_presence.py")
+    for source_file, destination in (
+        (Path(__file__), runner),
+        (Path(__file__).with_name("world4d_presence.py"), root / "world4d_presence.py"),
+        (Path(__file__).with_name("world4d_owned_child.py"), root / "world4d_owned_child.py"),
+    ):
+        if not destination.exists() or not source_file.samefile(destination):
+            shutil.copy2(source_file, destination)
     log = str(root / "supervisor.log")
     plist = {
         "Label": "com.mac.world4d",
@@ -645,8 +709,9 @@ def prepare(config_path: Path) -> Path:
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "child":
-        reader, script = int(sys.argv[2]), sys.argv[3]
+    if len(sys.argv) > 1 and sys.argv[1] in {"child", "_guardian-child"}:
+        reader = None if sys.argv[1] == "_guardian-child" else int(sys.argv[2])
+        script = sys.argv[3]
         sys.argv = sys.argv[3:]
         run_child(reader, script)
         return

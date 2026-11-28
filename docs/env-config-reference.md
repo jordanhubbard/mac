@@ -541,6 +541,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Retired beads bridge selector; ignored by current hub-agent resolution. |
 | `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Retired beads bridge selector; ignored by current hub-agent resolution. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
+| `MAC_WORKER_DIRECTABLE_STREAM_IDS` | str | consumer-defined | worker | Worker setting: worker directable stream ids. |
 | `MAC_WORKER_EXECUTOR_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker executor timeout. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |
 | `MAC_WORKER_HOSTNAME` | str | consumer-defined | worker | Worker setting: worker hostname. |
