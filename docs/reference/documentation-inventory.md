@@ -148,6 +148,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
 | supplemental reference | [`fleet-registry-schema.md`](../fleet-registry-schema.md) | Fleet registry schema |
 | supplemental reference | [`fleet-soul-graph-pg-setup.md`](../fleet-soul-graph-pg-setup.md) | Fleet Soul Graph — Postgres Setup Reference |
+| supplemental reference | [`fleet-world-objects-protocol.md`](../fleet-world-objects-protocol.md) | Fleet world-objects protocol |
 | supplemental reference | [`getting-started.md`](../getting-started.md) | MAC Quickstart |
 | supplemental reference | [`guide/01-architecture.md`](../guide/01-architecture.md) | System Architecture |
 | supplemental reference | [`guide/02-getting-started.md`](../guide/02-getting-started.md) | Getting Started |
