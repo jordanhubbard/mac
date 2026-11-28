@@ -19,10 +19,19 @@ import sys
 import time
 import urllib.request
 
+if sys.platform.startswith("linux"):
+    try:
+        from .world4d_owned_child import OwnedChild
+    except ImportError:
+        from world4d_owned_child import OwnedChild
+else:
+    OwnedChild = None
+
 
 def rpc(command, method, params=None):
     request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-    proc = subprocess.run(
+    run = OwnedChild.run if sys.platform.startswith("linux") else subprocess.run
+    proc = run(
         command, input=json.dumps(request) + "\n", text=True, capture_output=True, timeout=30
     )
     if proc.returncode:
@@ -193,11 +202,20 @@ def audit(manifest, config, jobs, hook):
     return errors
 
 
+def _client_path(manifest):
+    target = Path(manifest["client_module"])
+    return (
+        target
+        if target.is_absolute()
+        else Path(manifest["manifest_path"]).resolve().parent / target
+    )
+
+
 def launcher(manifest):
     return (
         "#!/bin/sh\nexec "
         + shlex.join(
-            [manifest["python"], manifest["client_module"], "presence", manifest["manifest_path"]]
+            [manifest["python"], str(_client_path(manifest)), "presence", manifest["manifest_path"]]
         )
         + "\n"
     )
@@ -216,6 +234,19 @@ def install(manifest):
             raise ValueError(f"managed job missing: {job_id}")
         if job_id in manifest.get("report_jobs", []) and not job.get("origin"):
             raise ValueError("report job has no original delivery destination")
+    # Resolve a relative standalone payload against its manifest, never cwd.
+    # All realm/job/delivery validations above precede any file/config writes.
+    manifest = dict(manifest)
+    target = _client_path(manifest)
+    manifest["client_module"] = str(target)
+    helper_source = Path(__file__).with_name("world4d_owned_child.py")
+    helper_target = target.with_name("world4d_owned_child.py")
+    if not Path(__file__).is_file() or not helper_source.is_file():
+        raise ValueError("management standalone payload is incomplete")
+    helper_target.parent.mkdir(parents=True, exist_ok=True)
+    for source, destination in ((Path(__file__), target), (helper_source, helper_target)):
+        if not destination.exists() or not source.samefile(destination):
+            shutil.copy2(source, destination)
     config_path = Path(manifest["hermes_home"]) / "config.yaml"
     backup = (
         Path(manifest["manifest_path"]).parent

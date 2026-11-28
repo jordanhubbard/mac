@@ -183,6 +183,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/process-summary.md`](../investigations/process-summary.md) | Process Summary: Substrate Asymmetry Paper |
 | supplemental reference | [`investigations/read-only-verifier-process-ownership.md`](../investigations/read-only-verifier-process-ownership.md) | Read-only verifier process ownership |
 | supplemental reference | [`investigations/reasoning-atoms-schema-v2.md`](../investigations/reasoning-atoms-schema-v2.md) | reasoning\_atoms schema v2 |
+| supplemental reference | [`investigations/world4d-owned-child-guardian.md`](../investigations/world4d-owned-child-guardian.md) | World4D Linux owned-child guardian |
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
 | supplemental reference | [`memory-fisheye-convention.md`](../memory-fisheye-convention.md) | Memory fisheye convention |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
@@ -226,5 +227,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`task-handoff-convention.md`](../task-handoff-convention.md) | Task handoffs by reference |
 | supplemental reference | [`task-throughput-observability.md`](../task-throughput-observability.md) | Task throughput observability |
 | supplemental reference | [`testing-strategy.md`](../testing-strategy.md) | Test portfolio strategy |
+| supplemental reference | [`worker-admission.md`](../worker-admission.md) | Heavy worker admission |
 | supplemental reference | [`world4d-coordinate-protocol.md`](../world4d-coordinate-protocol.md) | World4D Coordinate Protocol |
 | supplemental reference | [`world4d.md`](../world4d.md) | World4D — Shared 4D World Engine |

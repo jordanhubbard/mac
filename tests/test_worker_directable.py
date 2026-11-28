@@ -20,6 +20,15 @@ from mac.agentbus_control import (
 )
 from mac.agentbus_service import HUMAN_DIRECTIVE_TOPIC
 from mac.worker import MacWorker, WorkerExecution
+from mac.worker_directable import directable_stream_allowed
+
+
+def test_directable_stream_allowlist_is_exact_and_fail_closed():
+    assert directable_stream_allowed("bus_fresh", None)
+    assert directable_stream_allowed("bus_fresh", "bus_fresh,bus_other")
+    assert not directable_stream_allowed("bus_historic", "bus_fresh,bus_other")
+    assert not directable_stream_allowed("bus_fresh", "")
+    assert not directable_stream_allowed("bus_fresh", "not-a-stream")
 
 
 class _Client:

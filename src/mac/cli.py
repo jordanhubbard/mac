@@ -6403,8 +6403,10 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_logout, logout_parser)
 
     from mac.worker_token_cli import register as _register_worker_token
+    from mac.worker_slot_cli import register as _register_worker_slot
 
     _register_worker_token(sub)
+    _register_worker_slot(sub)
 
     client = sub.add_parser(
         "client", help="hub enrollment principals and secure local client profiles"
@@ -8452,9 +8454,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--about-task", help="a peer report: the task whose action you are reporting"
     )
     agent_report.add_argument("--evidence", help="what you saw: a link, sha, log line")
-    agent_report.add_argument(
-        "--key", help="dedupe key; filings that share it notify people once"
-    )
+    agent_report.add_argument("--key", help="dedupe key; filings that share it notify people once")
     agent_report.add_argument(
         "--reporter", help="who is reporting (default: $MAC_AGENT_ID, else $USER)"
     )

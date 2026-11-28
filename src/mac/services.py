@@ -3411,6 +3411,18 @@ class ControlPlane:
                 "agents": "mac",
                 "personality": "hermes",
                 "user_memory": "hermes",
+                "heavy_worker_admission": "webmux-executor-local",
+            },
+            "worker_admission": {
+                "contract": "webmux-worker-queue/v1",
+                "intent_ingress": "registered_persona_task",
+                "executor_command": "mac admin worker-slot",
+                "instructions": [
+                    "Record heavy-work intent as a MAC task for the registered persona; do not forge task origin metadata.",
+                    "Only the intended, provisioned execution actor may use its trusted WebMux CLI and identity to enqueue or acquire.",
+                    "Queue and wait receipts are observations, not permission to run work; execution requires a validated current fenced lease.",
+                    "If actor-local WebMux identity or queue authority is absent, fail closed rather than proxying through the hub or persona.",
+                ],
             },
             "tenant": identity_context["tenant"],
             "hermes_instance": identity_context["hermes_instance"],
@@ -8775,8 +8787,7 @@ class ControlPlane:
     ) -> BreakGlassAuthorization:
         """Refuse the retired direct-host recovery path."""
         raise ValidationError(
-            "host break-glass execution is no longer available; "
-            "task execution is sandbox-only"
+            "host break-glass execution is no longer available; task execution is sandbox-only"
         )
 
     def get_task_break_glass_authorization(self, authorization_id: str) -> BreakGlassAuthorization:
@@ -11004,8 +11015,7 @@ class ControlPlane:
                 )
             )
         open_rows = self.store.query_all(
-            select
-            + " WHERE m.kind = 'question' AND m.author_kind = 'agent'"
+            select + " WHERE m.kind = 'question' AND m.author_kind = 'agent'"
             " AND t.state NOT IN ('completed', 'failed', 'cancelled')"
             " AND NOT EXISTS (SELECT 1 FROM task_messages a WHERE a.reply_to = m.id"
             " AND a.kind = 'answer') ORDER BY m.id ASC LIMIT 100",
@@ -11199,12 +11209,15 @@ class ControlPlane:
             if detail.get("options"):
                 lines.append("Options: %s" % ", ".join(str(o) for o in detail["options"]))
             if detail.get("default") is not None:
-                lines.append("If nobody answers%s, the agent will assume: %s" % (
-                    " by %s" % detail["expires_at"] if detail.get("expires_at") else "",
-                    detail["default"],
-                ))
+                lines.append(
+                    "If nobody answers%s, the agent will assume: %s"
+                    % (
+                        " by %s" % detail["expires_at"] if detail.get("expires_at") else "",
+                        detail["default"],
+                    )
+                )
             lines.append(
-                "Answer: mac task say %s --answer %s \"...\"" % (message.task_id, message.id)
+                'Answer: mac task say %s --answer %s "..."' % (message.task_id, message.id)
             )
             self.record_notification(
                 "task.question",
@@ -11293,7 +11306,12 @@ class ControlPlane:
         if task.state != TaskState.NEEDS_INPUT.value:
             # Parked by `mac task ask` and since answered or closed.
             self.post_task_message(
-                task_id, author_kind="human", author=author, kind="message", body=body, metadata=metadata
+                task_id,
+                author_kind="human",
+                author=author,
+                kind="message",
+                body=body,
+                metadata=metadata,
             )
             return self._question_reply_result("not_waiting", task_id, None)
         self.post_task_message(
@@ -11309,7 +11327,9 @@ class ControlPlane:
             raise ValidationError("notification %s is not a task question" % notification_id)
         detail = ensure_json_object(notification.metadata)
         question_id = detail.get("task_message_id") or detail.get("board_message_id")
-        return self._question_reply_result("status", str(notification.subject_id or ""), question_id)
+        return self._question_reply_result(
+            "status", str(notification.subject_id or ""), question_id
+        )
 
     def _question_reply_result(self, status: str, task_id: str, question_id: Any) -> JsonDict:
         task = self.get_task(task_id)
@@ -11416,7 +11436,11 @@ class ControlPlane:
                     metadata={"overdue": True},
                 )
                 overdue.append(question_id)
-        return {"schema": "mac.task_question_expiry.v1", "defaults_applied": applied, "overdue": overdue}
+        return {
+            "schema": "mac.task_question_expiry.v1",
+            "defaults_applied": applied,
+            "overdue": overdue,
+        }
 
     def list_task_messages(
         self,
@@ -16046,7 +16070,9 @@ class ControlPlane:
                 raise ValidationError("converge_minutes must be positive")
             converge_by = (parse_time(now) + timedelta(minutes=int(converge_minutes))).isoformat()
         with self.store.transaction() as conn:
-            conn.execute("DELETE FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,))
+            conn.execute(
+                "DELETE FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,)
+            )
             conn.execute(
                 """
                 INSERT INTO release_selection
@@ -16075,7 +16101,9 @@ class ControlPlane:
 
     def clear_release_selection(self, *, actor: str) -> JsonDict:
         previous = self.get_release_selection()
-        self.store.execute("DELETE FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,))
+        self.store.execute(
+            "DELETE FROM release_selection WHERE scope = ?", (self.RELEASE_SELECTION_SCOPE,)
+        )
         self._release_selection_cache = None
         self.record_log(
             "fleet.release.cleared",
@@ -16978,7 +17006,9 @@ class ControlPlane:
         # Live agents (and just-departed ones) before offline ones, then cap: in
         # name order, long-gone operator sessions filled the cap and live
         # teammates were cut from every agent's view.
-        members.sort(key=lambda m: m["status"] == AgentStatus.OFFLINE.value and "departed_at" not in m)
+        members.sort(
+            key=lambda m: m["status"] == AgentStatus.OFFLINE.value and "departed_at" not in m
+        )
         return {
             "schema": "mac.fleet_snapshot.v1",
             "generated_at": utcnow(),
@@ -20988,9 +21018,7 @@ class ControlPlane:
                 {
                     "final_sha": merge_sha,
                     "head_sha": (
-                        ensure_json_object(
-                            ensure_json_object(source.metadata).get("verification")
-                        )
+                        ensure_json_object(ensure_json_object(source.metadata).get("verification"))
                         .get("repo", {})
                         .get("head_sha")
                     ),
@@ -23667,9 +23695,7 @@ class ControlPlane:
         their attempt: one coding agent exited on the router's 503, and one
         attempt never started because the route probe timed out."""
         metadata = ensure_json_object(task.metadata)
-        limit = _int_env(
-            "MAC_ROUTER_OUTAGE_REQUEUES", DEFAULT_ROUTER_OUTAGE_REQUEUES, minimum=0
-        )
+        limit = _int_env("MAC_ROUTER_OUTAGE_REQUEUES", DEFAULT_ROUTER_OUTAGE_REQUEUES, minimum=0)
         if _nonnegative_int(metadata.get("router_outage_requeues")) >= limit:
             return False
         row = self.store.query_one(
@@ -23734,9 +23760,7 @@ class ControlPlane:
             return False
         if not isinstance(latest_detail.get("infrastructure_failure"), Mapping):
             return False
-        limit = _int_env(
-            "MAC_INFRASTRUCTURE_REQUEUES", DEFAULT_INFRASTRUCTURE_REQUEUES, minimum=0
-        )
+        limit = _int_env("MAC_INFRASTRUCTURE_REQUEUES", DEFAULT_INFRASTRUCTURE_REQUEUES, minimum=0)
         metadata = ensure_json_object(task.metadata)
         return _nonnegative_int(metadata.get("infrastructure_requeues")) < limit
 
