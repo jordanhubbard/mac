@@ -1,6 +1,6 @@
 ---
 name: problem-response
-description: On any problem: fix it, do RCA, mitigate root cause. Use whenever you encounter a bug, data rot, repeated mistake, or process failure. Never stop at the fix.
+description: "On any problem: fix it, do RCA, mitigate root cause. Use whenever you encounter a bug, data rot, repeated mistake, or process failure. Never stop at the fix."
 ---
 
 # Fix → RCA → Mitigate
