@@ -1754,10 +1754,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bullwinkle-import-path" class="md-nav__link">
+  <a href="#worker-2-import-path" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bullwinkle import path
+        Worker-2 import path
       
     </span>
   </a>
@@ -1765,10 +1765,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rocky-and-natasha" class="md-nav__link">
+  <a href="#hub-and-gpu-worker-agents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Rocky and Natasha
+        Hub and GPU-worker agents
       
     </span>
   </a>
@@ -1807,39 +1807,39 @@ from the live <code>SoulGraphPG</code> backend documented in
 <code>docs/fleet-soul-graph-pg-setup.md</code>; that backend targets the newer
 <code>agent_brain</code> schema, whose ownership column is named <code>agent</code> rather than
 <code>agent_id</code>.</p>
-<h2 id="bullwinkle-import-path">Bullwinkle import path<a class="headerlink" href="#bullwinkle-import-path" title="Permanent link">&para;</a></h2>
-<p>Bullwinkle's original 115 nodes and 101 parent edges followed this data path:</p>
+<h2 id="worker-2-import-path">Worker-2 import path<a class="headerlink" href="#worker-2-import-path" title="Permanent link">&para;</a></h2>
+<p>The first worker agent's original nodes and parent edges followed this data path:</p>
 <ol>
 <li>Read the local JSON graph, historically
-   <code>~/.hermes/memories/bullwinkle_soul.json</code>.</li>
+   <code>~/.hermes/memories/&lt;agent&gt;_soul.json</code>.</li>
 <li>Convert each key in the JSON <code>nodes</code> object into a <code>soul_nodes</code> row.</li>
 <li>Convert every node's <code>parents</code> entries into <code>soul_edges</code> rows directed from
    parent to child.</li>
-<li>Upsert the rows with <code>agent_id='bullwinkle'</code> into <code>fleet_brain</code> in one
+<li>Upsert the rows with <code>agent_id='&lt;agent&gt;'</code> into <code>fleet_brain</code> in one
    transaction.</li>
 </ol>
 <p>That path is implemented by <code>mac.soul_pg_sync.json_to_pg</code>. The import is safe
 to repeat: nodes use <code>ON CONFLICT (node_id, agent_id) DO UPDATE</code>, and duplicate
 edges use <code>ON CONFLICT ... DO NOTHING</code>.</p>
-<h2 id="rocky-and-natasha">Rocky and Natasha<a class="headerlink" href="#rocky-and-natasha" title="Permanent link">&para;</a></h2>
+<h2 id="hub-and-gpu-worker-agents">Hub and GPU-worker agents<a class="headerlink" href="#hub-and-gpu-worker-agents" title="Permanent link">&para;</a></h2>
 <p>Run the same importer on each agent's own host so that the local soul path and
 database credentials never need to be copied between hosts. Supply the short
 fleet identity explicitly; this value is written unchanged to every imported
 node and edge.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">python -m mac.soul_pg_sync import --agent rocky \</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">  --soul /path/to/rocky/soul.json \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">python -m mac.soul_pg_sync import --agent &lt;hub-agent&gt; \</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">  --soul /path/to/&lt;hub-agent&gt;/soul.json \</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">  --db-url postgresql:///fleet_brain</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">python -m mac.soul_pg_sync import --agent natasha \</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">  --soul /path/to/natasha/soul.json \</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">python -m mac.soul_pg_sync import --agent &lt;gpu-worker&gt; \</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">  --soul /path/to/&lt;gpu-worker&gt;/soul.json \</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="go">  --db-url postgresql:///fleet_brain</span>
 </code></pre></div>
 <p>Use <code>DATABASE_URL</code> instead of <code>--db-url</code> when the credential is supplied by the
 runtime environment. Do not put a password-bearing URL in shell history or a
 checked-in file.</p>
 <p>Verify each import independently:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">python -m mac.soul_pg_sync status --agent rocky --db-url postgresql:///fleet_brain</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">python -m mac.soul_pg_sync status --agent natasha --db-url postgresql:///fleet_brain</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">python -m mac.soul_pg_sync status --agent &lt;hub-agent&gt; --db-url postgresql:///fleet_brain</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">python -m mac.soul_pg_sync status --agent &lt;gpu-worker&gt; --db-url postgresql:///fleet_brain</span>
 </code></pre></div>
 <p>The status output reports database node and edge counts and, when <code>--soul</code> is
 provided, the local node count. A successful deployment has non-zero database
