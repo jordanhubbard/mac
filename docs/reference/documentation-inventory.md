@@ -173,6 +173,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/2026-11-03-hierarchical-memory-access-tiers.md`](../investigations/2026-11-03-hierarchical-memory-access-tiers.md) | Hierarchical memory access tiers |
 | supplemental reference | [`investigations/arxiv-paper-v0.md`](../investigations/arxiv-paper-v0.md) | Substrate Asymmetry in Multi-Agent Epistemic Networks: Measuring Cross-Agent Information Flow vs. Axiom Propagation |
 | supplemental reference | [`investigations/condition-5-peer-diagnosis.md`](../investigations/condition-5-peer-diagnosis.md) | Condition-5 Peer Diagnosis |
+| supplemental reference | [`investigations/condition-6-convergence-protocol.md`](../investigations/condition-6-convergence-protocol.md) | Condition-6 Convergence Protocol |
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | supplemental reference | [`investigations/dream-cycle-output-quality.md`](../investigations/dream-cycle-output-quality.md) | Dream-cycle output quality |
 | supplemental reference | [`investigations/fleet-communication-and-memory-design.md`](../investigations/fleet-communication-and-memory-design.md) | Fleet communication and decision memory after World4D |
