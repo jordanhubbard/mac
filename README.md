@@ -157,6 +157,7 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [The UI](docs/guide/04-ui.md) | the read-only console the hub serves at `/ui`, and the unshipped Fleet IDE prototype |
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Trust workflow](docs/guide/06-trust-workflow.md) | one request through acceptance, recovery, and measured results |
+| [Compounding memory regimes](docs/investigations/compounding-memory-bifurcation.md) | weak self-assessed and strong externally auditable compounding |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
 | [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.5.0 deck](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx), each pinned to the commit it describes |
 | [v1.5.0 capabilities (`c7be3a5a`)](docs/presentation/20260914T203809Z-c7be3a5a/README.md) | current release deck: upfront validation, PostgreSQL test isolation, Hermes readiness and task outcomes — [public PPTX](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx) |

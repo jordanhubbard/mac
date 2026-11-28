@@ -172,4 +172,5 @@ nav:
       - Hermes boundary: hermes-boundary.md
       - OpenShell sandbox: openshell-sandbox.md
       - Soul graph (experimental): soul-graph.md
+      - Compounding memory regimes: investigations/compounding-memory-bifurcation.md
       - Historical archive: archive/index.md
