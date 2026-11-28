@@ -172,6 +172,7 @@ marked `historical archive` and must not be read as current behaviour.
 | runbook | [`investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md`](../investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md) | Ovswarm deployment liveness death spiral RCCA, 2026-09-21 |
 | supplemental reference | [`investigations/2026-11-03-hierarchical-memory-access-tiers.md`](../investigations/2026-11-03-hierarchical-memory-access-tiers.md) | Hierarchical memory access tiers |
 | supplemental reference | [`investigations/arxiv-paper-v0.md`](../investigations/arxiv-paper-v0.md) | Substrate Asymmetry in Multi-Agent Epistemic Networks: Measuring Cross-Agent Information Flow vs. Axiom Propagation |
+| supplemental reference | [`investigations/compounding-memory-bifurcation.md`](../investigations/compounding-memory-bifurcation.md) | Weak and Strong Compounding Memory |
 | supplemental reference | [`investigations/condition-5-peer-diagnosis.md`](../investigations/condition-5-peer-diagnosis.md) | Condition-5 Peer Diagnosis |
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | supplemental reference | [`investigations/dream-cycle-output-quality.md`](../investigations/dream-cycle-output-quality.md) | Dream-cycle output quality |
