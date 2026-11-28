@@ -187,6 +187,32 @@ def test_json_to_pg_upserts_nodes_and_edges(sample_soul_json):
     mock_conn.commit.assert_called_once()
 
 
+@pytest.mark.parametrize("agent_id", ["rocky", "natasha"])
+def test_json_to_pg_scopes_fleet_rows_to_requested_agent(sample_soul_json, agent_id):
+    """Each fleet agent's import writes its explicit short identity unchanged."""
+    from mac.soul_pg_sync import json_to_pg
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.__enter__ = MagicMock(return_value=mock_cur)
+    mock_cur.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value = mock_cur
+
+    with patch("mac.soul_pg_sync._connect", return_value=mock_conn):
+        json_to_pg(sample_soul_json, agent_id, db_url="postgresql:///fleet_brain")
+
+    node_calls = [
+        call for call in mock_cur.execute.call_args_list if "INSERT INTO soul_nodes" in call.args[0]
+    ]
+    edge_calls = [
+        call for call in mock_cur.execute.call_args_list if "INSERT INTO soul_edges" in call.args[0]
+    ]
+    assert node_calls
+    assert edge_calls
+    assert all(call.args[1][1] == agent_id for call in node_calls)
+    assert all(call.args[1][2] == agent_id for call in edge_calls)
+
+
 def test_pg_to_json_writes_soul_file(tmp_path):
     from mac.soul_pg_sync import pg_to_json
     from datetime import datetime, timezone
