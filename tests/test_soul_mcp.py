@@ -540,3 +540,187 @@ def test_soul_ancestors_excludes_seed_sibling():
     data = _payload(tools.soul_ancestors("i1"))
     ids = [n["id"] for n in data["ancestors"]]
     assert "l1" not in ids, "Sibling l1 must not appear as ancestor of i1"
+# soul_hot: top-N splay nodes
+# ---------------------------------------------------------------------------
+
+
+def test_soul_hot_returns_top_n_by_splay_score():
+    """soul_hot returns top-n nodes ordered by splay score (pinned=inf beats touched)."""
+    # Use an unpinned-only graph so recency order is unambiguous
+    from mac.soul_graph import SoulGraph
+    g2 = SoulGraph(name="hot_test")
+    g2.add("Node A.", node_id="ha")
+    g2.add("Node B.", node_id="hb")
+    g2.add("Node C.", node_id="hc")
+    tools2 = SoulTools(g2)
+    # touch hb twice → highest recency; hc once → second; ha untouched
+    g2.touch("hb")
+    g2.touch("hb")
+    g2.touch("hc")
+    result = _payload(tools2.soul_hot(n=2))
+    assert isinstance(result, list)
+    assert len(result) <= 2
+    ids = [item["id"] for item in result]
+    # hb touched most recently/frequently → first; hc second
+    assert ids[0] == "hb", f"Expected hb first (most touched), got {ids}"
+    assert len(ids) == 2
+
+
+def test_soul_hot_includes_score_field():
+    """soul_hot result items must carry a 'score' field (pinned or numeric)."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_hot(n=3))
+    for item in result:
+        assert "score" in item, f"Item {item['id']} missing 'score' field"
+        assert "id" in item
+
+
+def test_soul_hot_in_tool_spec():
+    """soul_hot must be declared in TOOL_SPECS."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_hot"), None)
+    assert spec is not None, "soul_hot missing from TOOL_SPECS"
+    props = spec["inputSchema"]["properties"]
+    assert "n" in props
+
+
+def test_soul_hot_dispatches_via_mcp():
+    """soul_hot is callable through the MCP dispatch layer."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_hot", {})
+    assert not result.get("isError"), result
+
+
+# ---------------------------------------------------------------------------
+# soul_by_tag: cross-cut on a tag
+# ---------------------------------------------------------------------------
+
+
+def test_soul_by_tag_returns_nodes_with_matching_tag():
+    """soul_by_tag must return all nodes tagged with the given tag."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_by_tag("crew"))
+    assert result["tag"] == "crew"
+    ids = {item["id"] for item in result["nodes"]}
+    assert "i1" in ids
+    assert "i2" in ids
+    assert "a1" not in ids  # tagged axiom, not crew
+    assert result["count"] == len(result["nodes"])
+
+
+def test_soul_by_tag_empty_for_unknown_tag():
+    """soul_by_tag returns an empty nodes list for a tag that has no nodes."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_by_tag("nonexistent_xyz_tag"))
+    assert result["count"] == 0
+    assert result["nodes"] == []
+
+
+def test_soul_by_tag_in_tool_spec():
+    """soul_by_tag must be declared in TOOL_SPECS with required 'tag'."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_by_tag"), None)
+    assert spec is not None, "soul_by_tag missing from TOOL_SPECS"
+    assert "tag" in spec["inputSchema"].get("required", [])
+
+
+def test_soul_by_tag_dispatches_via_mcp():
+    """soul_by_tag is callable through the MCP dispatch layer."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_by_tag", {"tag": "lesson"})
+    assert not result.get("isError"), result
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["tag"] == "lesson"
+
+
+# ---------------------------------------------------------------------------
+# soul_splay: explicit node promotion
+# ---------------------------------------------------------------------------
+
+
+def test_soul_splay_increments_access_count():
+    """soul_splay must increment the node's access_count."""
+    g = _graph()
+    tools = SoulTools(g)
+    before = g.nodes["i1"].access_count
+    result = _payload(tools.soul_splay("i1"))
+    assert result["id"] == "i1"
+    assert g.nodes["i1"].access_count == before + 1
+
+
+def test_soul_splay_returns_score():
+    """soul_splay must include 'score' in its response."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_splay("a1"))
+    assert "score" in result
+    # pinned nodes report 'pinned' as their score string
+    assert result["score"] == "pinned"
+
+
+def test_soul_splay_missing_node_returns_error():
+    """soul_splay with a nonexistent node_id must return isError."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.soul_splay("does_not_exist")
+    assert result.get("isError"), "Expected isError for missing node"
+
+
+def test_soul_splay_in_tool_spec():
+    """soul_splay must be declared in TOOL_SPECS with required 'node_id'."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_splay"), None)
+    assert spec is not None, "soul_splay missing from TOOL_SPECS"
+    assert "node_id" in spec["inputSchema"].get("required", [])
+
+
+def test_soul_splay_dispatches_via_mcp():
+    """soul_splay is callable through the MCP dispatch layer."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_splay", {"node_id": "i2"})
+    assert not result.get("isError"), result
+
+
+# ---------------------------------------------------------------------------
+# soul_summary: graph-wide stats
+# ---------------------------------------------------------------------------
+
+
+def test_soul_summary_contains_expected_keys():
+    """soul_summary must mention node count, axiom count, and tags in its output."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_summary())
+    # soul_summary returns a human-readable string
+    assert isinstance(result, str), f"Expected str, got {type(result)}"
+    assert "nodes" in result, "soul_summary must mention node count"
+    assert "Pinned axioms" in result, "soul_summary must mention pinned axiom count"
+    assert "Tags" in result, "soul_summary must mention tags"
+
+
+def test_soul_summary_counts_match_graph():
+    """soul_summary output must reflect actual graph node and axiom counts."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = _payload(tools.soul_summary())
+    # e.g. "SoulGraph 't' — 4 nodes"
+    assert str(len(g.nodes)) in result, f"Expected {len(g.nodes)} nodes in summary"
+    # a1 is pinned → at least 1 pinned axiom
+    assert "Pinned axioms: 1" in result, "Expected at least 1 pinned axiom in summary"
+
+
+def test_soul_summary_in_tool_spec():
+    """soul_summary must be declared in TOOL_SPECS."""
+    spec = next((s for s in SoulTools.TOOL_SPECS if s["name"] == "soul_summary"), None)
+    assert spec is not None, "soul_summary missing from TOOL_SPECS"
+
+
+def test_soul_summary_dispatches_via_mcp():
+    """soul_summary is callable through the MCP dispatch layer."""
+    g = _graph()
+    tools = SoulTools(g)
+    result = tools.dispatch("soul_summary", {})
+    assert not result.get("isError"), result
