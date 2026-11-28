@@ -189,6 +189,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
 | supplemental reference | [`operations/fleet-update.md`](../operations/fleet-update.md) | Updating the fleet with `fleet-update` |
 | supplemental reference | [`operations/release-manifest.md`](../operations/release-manifest.md) | The release manifest |
+| supplemental reference | [`operations/soul-postgres-sync.md`](../operations/soul-postgres-sync.md) | Soul graph sync to fleet_brain |
 | supplemental reference | [`operations/world4d.md`](../operations/world4d.md) | Running the World4D simulation after a reboot |
 | supplemental reference | [`peer-repair-design.md`](../peer-repair-design.md) | Peer Repair: agents repairing agents |
 | supplemental reference | [`presentations/agentfabric-overview/README.md`](../presentations/agentfabric-overview/README.md) | AgentFabric overview — authoring package |
